@@ -134,22 +134,22 @@ export function InstallAppModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fadeIn">
       <div className="relative w-full max-w-xl bg-slate-900 border border-white/10 rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
         {/* Header with decorative badge */}
-        <div className="relative p-6 pb-4 bg-gradient-to-r from-indigo-900/60 via-slate-900 to-emerald-950/40 border-b border-white/10">
+        <div className="relative p-4 sm:p-6 pb-3 sm:pb-4 bg-gradient-to-r from-indigo-900/60 via-slate-900 to-emerald-950/40 border-b border-white/10">
           <button
             onClick={onClose}
-            className="absolute top-5 right-5 p-2 rounded-xl text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 transition-all active:scale-95"
+            className="absolute top-3.5 right-3.5 sm:top-5 sm:right-5 p-2 rounded-xl text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 transition-all active:scale-95"
             aria-label="Close modal"
           >
             <X className="w-5 h-5" />
           </button>
 
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/20 text-white">
-              <Smartphone className="w-6 h-6" />
+          <div className="flex items-center gap-2.5 sm:gap-3 pr-8">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-tr from-emerald-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-indigo-500/20 text-white shrink-0">
+              <Smartphone className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-xl font-black text-white tracking-tight">StudentOS Android App</h3>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                <h3 className="text-base sm:text-xl font-black text-white tracking-tight">StudentOS Android App</h3>
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                   {STUDENTOS_RELEASE_INFO.version}
                 </span>
@@ -162,7 +162,7 @@ export function InstallAppModal({
         </div>
 
         {/* Content Body */}
-        <div className="p-6 space-y-6 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10">
+        <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10">
           {/* Device banner */}
           <div className={`p-4 rounded-2xl border ${isAndroid ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-indigo-500/10 border-indigo-500/30'} flex items-start gap-3`}>
             {isAndroid ? (
@@ -183,7 +183,7 @@ export function InstallAppModal({
           </div>
 
           {/* Quick Specifications */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3">
             <div className="p-3 bg-slate-950/60 border border-white/5 rounded-xl text-center">
               <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">File Size</span>
               <span className="text-sm font-black text-white mt-1 block">{STUDENTOS_RELEASE_INFO.apkSize}</span>
@@ -248,9 +248,9 @@ export function InstallAppModal({
           </div>
 
           {/* Download Destination Card & Configuration */}
-          <div className="p-4 bg-slate-950/70 rounded-2xl border border-white/5 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+          <div className="p-3.5 sm:p-4 bg-slate-950/70 rounded-2xl border border-white/5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                 <LinkIcon className="w-3.5 h-3.5 text-indigo-400" />
                 <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300">Download Target</span>
                 {canConfigure ? (
@@ -325,7 +325,7 @@ export function InstallAppModal({
                   />
                 </div>
 
-                <div className="flex items-center gap-2 pt-1">
+                <div className="flex flex-wrap items-center gap-2 pt-1">
                   <button
                     type="submit"
                     disabled={saveLoading}
@@ -384,8 +384,8 @@ export function InstallAppModal({
         </div>
 
         {/* Footer */}
-        <div className="p-4 bg-slate-950/80 border-t border-white/10 flex items-center justify-between text-xs text-slate-400">
-          <span>StudentOS Official App &bull; {STUDENTOS_RELEASE_INFO.apkFileName}</span>
+        <div className="p-3.5 sm:p-4 bg-slate-950/80 border-t border-white/10 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+          <span className="truncate">StudentOS Official App &bull; {STUDENTOS_RELEASE_INFO.apkFileName}</span>
           <button
             onClick={onClose}
             className="px-4 py-2 rounded-xl text-xs font-bold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 transition-all"
@@ -511,15 +511,15 @@ export function AppInstallSection({
   };
 
   return (
-    <div className="p-6 bg-slate-950/60 border border-white/10 rounded-2xl space-y-6">
+    <div className="p-4 sm:p-6 bg-slate-950/60 border border-white/10 rounded-2xl space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center text-white font-black text-xl shadow-lg">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-indigo-600 flex items-center justify-center text-white font-black text-lg sm:text-xl shadow-lg shrink-0">
             📱
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-lg font-black text-white">StudentOS Android App</h3>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+              <h3 className="text-base sm:text-lg font-black text-white">StudentOS Android App</h3>
               <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full">
                 {STUDENTOS_RELEASE_INFO.version}
               </span>
@@ -587,9 +587,9 @@ export function AppInstallSection({
       )}
 
       {/* Destination info and configuration */}
-      <div className="p-4 bg-slate-900/60 rounded-xl border border-white/5 space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+      <div className="p-3.5 sm:p-4 bg-slate-900/60 rounded-xl border border-white/5 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
             <LinkIcon className="w-3.5 h-3.5 text-indigo-400" />
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300">Configured Destination</span>
             {canConfigure ? (
@@ -690,7 +690,7 @@ export function AppInstallSection({
       </div>
 
       {/* Specifications */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
         <div className="p-3 bg-slate-900/60 rounded-xl border border-white/5">
           <span className="text-slate-400 text-[10px] uppercase font-bold">Package</span>
           <p className="text-white font-mono text-[11px] mt-0.5 truncate">{STUDENTOS_RELEASE_INFO.apkFileName}</p>

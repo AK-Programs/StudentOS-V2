@@ -1407,7 +1407,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
       {/* VIEW 1: LOBBY & MEETINGS DASHBOARD */}
       {activeView === 'lobby' && (
-        <main className="flex-1 p-6 max-w-7xl w-full mx-auto space-y-8 animate-fadeIn">
+        <main className="flex-1 p-3 sm:p-6 max-w-7xl w-full mx-auto space-y-5 sm:space-y-8 animate-fadeIn">
           {/* Join Error Banner if invalid ID or ended meeting */}
           {joinError && (
             <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 flex items-center justify-between gap-4 animate-fadeIn">
@@ -1490,17 +1490,17 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
                 <h3 className="text-lg font-black text-white">Join via Code / Password</h3>
                 <p className="text-xs text-slate-300">Enter a secure meeting ID or paste a StudentOS Meet join link.</p>
               </div>
-              <div className="mt-6 flex items-center gap-2 z-10">
+              <div className="mt-6 flex flex-col min-[340px]:flex-row items-stretch min-[340px]:items-center gap-2 z-10">
                 <input
                   type="text"
                   placeholder="e.g. MEET-892-412"
                   value={joinPasswordInput}
                   onChange={(e) => setJoinPasswordInput(e.target.value)}
-                  className="bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none flex-1 focus:border-teal-500"
+                  className="bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white outline-none flex-1 min-w-0 focus:border-teal-500"
                 />
                 <button
                   onClick={handleJoinViaCode}
-                  className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs rounded-xl transition-all"
+                  className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs rounded-xl transition-all shrink-0"
                 >
                   Join
                 </button>
@@ -1587,7 +1587,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
       {/* VIEW 2: MEETING CALENDAR */}
       {activeView === 'calendar' && (
-        <main className="flex-1 p-6 max-w-7xl w-full mx-auto space-y-6 animate-fadeIn">
+        <main className="flex-1 p-3 sm:p-6 max-w-7xl w-full mx-auto space-y-4 sm:space-y-6 animate-fadeIn">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-xl font-black text-white">StudentOS Meeting Calendar</h2>
@@ -1663,7 +1663,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
       {/* VIEW 3: RECORDINGS ARCHIVE */}
       {activeView === 'recordings' && (
-        <main className="flex-1 p-6 max-w-7xl w-full mx-auto space-y-6 animate-fadeIn">
+        <main className="flex-1 p-3 sm:p-6 max-w-7xl w-full mx-auto space-y-4 sm:space-y-6 animate-fadeIn">
           <div>
             <h2 className="text-xl font-black text-white">Class Recordings & AI Summaries</h2>
             <p className="text-xs text-slate-400">Recorded virtual lectures, whiteboard captures, and attendance logs</p>
@@ -1923,23 +1923,23 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
             return (
               <>
-                <header className="px-6 py-3 bg-slate-900/90 border-b border-white/10 flex items-center justify-between gap-4 backdrop-blur-md z-30">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center text-white">
-                      <Video className="w-4 h-4" />
+                <header className="px-2.5 sm:px-6 py-2.5 sm:py-3 bg-slate-900/90 border-b border-white/10 flex flex-wrap items-center justify-between gap-2 sm:gap-4 backdrop-blur-md z-30">
+                  <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-indigo-600 flex items-center justify-center text-white shrink-0">
+                      <Video className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                     </div>
-                    <div>
-                      <h2 className="text-sm font-extrabold text-white line-clamp-1">{activeMeeting.title}</h2>
-                      <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono">
-                        <span>ID: {activeMeeting.id}</span>
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-xs sm:text-sm font-extrabold text-white truncate">{activeMeeting.title}</h2>
+                      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-[9px] sm:text-[10px] text-slate-400 font-mono">
+                        <span className="truncate">ID: {activeMeeting.id}</span>
                         {activeMeeting.password && (
                           <>
-                            <span>•</span>
-                            <span>Pass: {activeMeeting.password}</span>
+                            <span className="hidden min-[340px]:inline">•</span>
+                            <span className="hidden min-[340px]:inline">Pass: {activeMeeting.password}</span>
                           </>
                         )}
-                        <span>•</span>
-                        <span className="text-emerald-400 flex items-center gap-1"><Shield className="w-3 h-3" /> WebRTC Encrypted</span>
+                        <span className="hidden sm:inline">•</span>
+                        <span className="hidden sm:flex text-emerald-400 items-center gap-1"><Shield className="w-3 h-3" /> WebRTC Encrypted</span>
                       </div>
                     </div>
                   </div>
@@ -1978,10 +1978,11 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
                   {/* Leave Room Button */}
                   <button
                     onClick={handleLeaveMeeting}
-                    className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white font-black text-xs rounded-xl shadow transition-all flex items-center gap-2"
+                    className="px-2.5 sm:px-4 py-1.5 sm:py-2 bg-rose-600 hover:bg-rose-500 text-white font-black text-[11px] sm:text-xs rounded-xl shadow transition-all flex items-center gap-1.5 sm:gap-2 shrink-0"
                   >
-                    <PhoneOff className="w-4 h-4" />
-                    Leave Room
+                    <PhoneOff className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                    <span className="hidden min-[330px]:inline">Leave Room</span>
+                    <span className="min-[330px]:hidden">Leave</span>
                   </button>
                 </header>
 
@@ -2048,77 +2049,77 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
               )}
 
               {/* FLOATING IN-MEETING CONTROL BAR */}
-              <div className="p-3 bg-slate-900/90 border border-white/10 rounded-2xl backdrop-blur-xl max-w-3xl w-full mx-auto flex items-center justify-between gap-3 shadow-2xl z-20">
-                <div className="flex items-center gap-2">
+              <div className="p-2 sm:p-3 bg-slate-900/90 border border-white/10 rounded-2xl backdrop-blur-xl max-w-3xl w-full mx-auto flex flex-wrap items-center justify-center sm:justify-between gap-1.5 sm:gap-3 shadow-2xl z-20">
+                <div className="flex items-center gap-1.5 sm:gap-2">
                   <button
                     onClick={() => setIsMicOn(!isMicOn)}
-                    className={`p-3 rounded-2xl transition-all ${isMicOn ? 'bg-slate-800 text-white hover:bg-slate-700' : 'bg-rose-600 text-white shadow-lg shadow-rose-600/30'}`}
+                    className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${isMicOn ? 'bg-slate-800 text-white hover:bg-slate-700' : 'bg-rose-600 text-white shadow-lg shadow-rose-600/30'}`}
                     title="Toggle Microphone"
                   >
-                    {isMicOn ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+                    {isMicOn ? <Mic className="w-4 h-4 sm:w-5 sm:h-5" /> : <MicOff className="w-4 h-4 sm:w-5 sm:h-5" />}
                   </button>
 
                   <button
                     onClick={() => setIsCameraOn(!isCameraOn)}
-                    className={`p-3 rounded-2xl transition-all ${isCameraOn ? 'bg-slate-800 text-white hover:bg-slate-700' : 'bg-rose-600 text-white shadow-lg shadow-rose-600/30'}`}
+                    className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${isCameraOn ? 'bg-slate-800 text-white hover:bg-slate-700' : 'bg-rose-600 text-white shadow-lg shadow-rose-600/30'}`}
                     title="Toggle Camera"
                   >
-                    {isCameraOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+                    {isCameraOn ? <Video className="w-4 h-4 sm:w-5 sm:h-5" /> : <VideoOff className="w-4 h-4 sm:w-5 sm:h-5" />}
                   </button>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-center gap-1.5 sm:gap-2">
                   <button
                     onClick={handleToggleScreenShare}
-                    className={`p-3 rounded-2xl transition-all ${isScreenSharing ? 'bg-teal-600 text-white shadow-lg shadow-teal-600/30' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
+                    className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${isScreenSharing ? 'bg-teal-600 text-white shadow-lg shadow-teal-600/30' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
                     title="Share Screen"
                   >
-                    <Monitor className="w-5 h-5" />
+                    <Monitor className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
 
                   <button
                     onClick={() => setActiveSidePanel(activeSidePanel === 'whiteboard' ? null : 'whiteboard')}
-                    className={`p-3 rounded-2xl transition-all ${activeSidePanel === 'whiteboard' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
+                    className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${activeSidePanel === 'whiteboard' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
                     title="Collaborative Whiteboard"
                   >
-                    <PenTool className="w-5 h-5" />
+                    <PenTool className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
 
                   <button
                     onClick={handleToggleHandRaise}
-                    className={`p-3 rounded-2xl transition-all ${isHandRaised ? 'bg-amber-500 text-slate-950 font-bold shadow-lg shadow-amber-500/30' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
+                    className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${isHandRaised ? 'bg-amber-500 text-slate-950 font-bold shadow-lg shadow-amber-500/30' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
                     title="Raise Hand"
                   >
-                    <Hand className="w-5 h-5" />
+                    <Hand className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
 
                   <button
                     onClick={() => setActiveSidePanel(activeSidePanel === 'transcript' ? null : 'transcript')}
-                    className={`p-3 rounded-2xl transition-all ${activeSidePanel === 'transcript' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
+                    className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${activeSidePanel === 'transcript' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
                     title="Live Transcript & Speech Logs"
                   >
-                    <FileText className="w-5 h-5" />
+                    <FileText className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
 
                   <button
                     onClick={() => setCaptionsEnabled(!captionsEnabled)}
-                    className={`p-3 rounded-2xl transition-all ${captionsEnabled ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
+                    className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${captionsEnabled ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
                     title="Toggle Live Captions Overlay"
                   >
-                    <Sparkles className="w-5 h-5" />
+                    <Sparkles className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 sm:gap-2">
                   <button
                     onClick={() => {
                       setActiveSidePanel(activeSidePanel === 'chat' ? null : 'chat');
                       setUnreadChatCount(0);
                     }}
-                    className={`p-3 rounded-2xl transition-all relative ${activeSidePanel === 'chat' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
+                    className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all relative ${activeSidePanel === 'chat' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
                     title="Meeting Chat"
                   >
-                    <MessageSquare className="w-5 h-5" />
+                    <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5" />
                     {unreadChatCount > 0 && activeSidePanel !== 'chat' && (
                       <span className="absolute -top-1 -right-1 px-1.5 py-0.5 bg-rose-500 text-white rounded-full text-[9px] font-black flex items-center justify-center animate-pulse">
                         {unreadChatCount}
@@ -2128,10 +2129,10 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
                   <button
                     onClick={() => setActiveSidePanel(activeSidePanel === 'participants' ? null : 'participants')}
-                    className={`p-3 rounded-2xl transition-all relative ${activeSidePanel === 'participants' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
+                    className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all relative ${activeSidePanel === 'participants' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
                     title="Participants & Host Controls"
                   >
-                    <Users className="w-5 h-5" />
+                    <Users className="w-4 h-4 sm:w-5 sm:h-5" />
                     {waitingParticipants.length > 0 && (
                       <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] font-black flex items-center justify-center">
                         {waitingParticipants.length}
@@ -2141,10 +2142,10 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
                   <button
                     onClick={() => setActiveSidePanel(activeSidePanel === 'settings' ? null : 'settings')}
-                    className={`p-3 rounded-2xl transition-all ${activeSidePanel === 'settings' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
+                    className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${activeSidePanel === 'settings' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
                     title="Audio & Video Settings"
                   >
-                    <Settings className="w-5 h-5" />
+                    <Settings className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
                 </div>
               </div>
@@ -2152,7 +2153,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
             {/* SIDE PANEL (Chat, Participants, Whiteboard, AI Assistant, Settings) */}
             {activeSidePanel && (
-              <aside className="w-80 md:w-96 bg-slate-900 border-l border-white/10 flex flex-col h-full z-30 shadow-2xl animate-slideLeft">
+              <aside className="fixed inset-0 sm:static sm:inset-auto w-full sm:w-80 md:w-96 bg-slate-900 border-l border-white/10 flex flex-col h-full z-40 shadow-2xl animate-slideLeft">
                 
                 {/* Panel Header */}
                 <div className="p-4 border-b border-white/10 flex items-center justify-between">

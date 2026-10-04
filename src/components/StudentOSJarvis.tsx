@@ -1098,7 +1098,7 @@ Your response MUST be raw JSON format with NO markdown wrapping:
   });
 
   return (
-    <div className="flex flex-col justify-between overflow-hidden relative transition-all duration-300 h-full p-6">
+    <div className="flex flex-col justify-between overflow-hidden relative transition-all duration-300 h-full p-3 sm:p-6">
       
       {/* 1. TOP HUD / HEADER */}
       <div className="flex items-center justify-between pb-6 border-b border-white/5 gap-4 flex-wrap relative">
@@ -1769,32 +1769,36 @@ Your response MUST be raw JSON format with NO markdown wrapping:
                   )}
                 </div>
                 
-                <div className="flex gap-3 relative group-focus-within:shadow-[0_0_40px_-10px_rgba(79,70,229,0.2)] transition-shadow duration-500 rounded-2xl">
-                  <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
-                    <Search className="w-5 h-5 text-indigo-500" />
+                <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 relative group-focus-within:shadow-[0_0_40px_-10px_rgba(79,70,229,0.2)] transition-shadow duration-500 rounded-2xl">
+                  <div className="relative flex-1 min-w-0">
+                    <div className="absolute inset-y-0 left-3.5 sm:left-4 flex items-center pointer-events-none">
+                      <Search className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-500" />
+                    </div>
+                    <input 
+                      type="text"
+                      placeholder="Enter any topic to synthesize notes, or search the web..."
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      className="w-full bg-slate-900 border-2 border-slate-800 rounded-2xl pl-10 sm:pl-12 pr-3 sm:pr-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 focus:bg-slate-950 transition-all font-sans font-medium"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') handleRunInternetSearch(searchQuery);
+                      }}
+                    />
                   </div>
-                  <input 
-                    type="text"
-                    placeholder="Enter any topic to synthesize notes, or search the web..."
-                    value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
-                    className="flex-1 bg-slate-900 border-2 border-slate-800 rounded-2xl pl-12 pr-4 py-3.5 text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 focus:bg-slate-950 transition-all font-sans font-medium"
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') handleRunInternetSearch(searchQuery);
-                    }}
-                  />
-                  <button 
-                    onClick={() => handleRunInternetSearch(searchQuery)}
-                    className="px-6 py-3 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 shadow-lg hover:shadow-indigo-500/25 hover:scale-[1.02] active:scale-95"
-                  >
-                    <Globe className="w-4 h-4" /> Search
-                  </button>
-                  <button 
-                    onClick={() => handleRunResourceDiscovery(searchQuery)}
-                    className="px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 border border-slate-700 shadow-lg hover:scale-[1.02] active:scale-95"
-                  >
-                    <BookOpen className="w-4 h-4" /> Discovery
-                  </button>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => handleRunInternetSearch(searchQuery)}
+                      className="flex-1 sm:flex-initial justify-center px-3.5 sm:px-6 py-2.5 sm:py-3 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 sm:gap-2 shadow-lg hover:shadow-indigo-500/25 hover:scale-[1.02] active:scale-95"
+                    >
+                      <Globe className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" /> <span>Search</span>
+                    </button>
+                    <button 
+                      onClick={() => handleRunResourceDiscovery(searchQuery)}
+                      className="flex-1 sm:flex-initial justify-center px-3.5 sm:px-6 py-2.5 sm:py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 sm:gap-2 border border-slate-700 shadow-lg hover:scale-[1.02] active:scale-95"
+                    >
+                      <BookOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" /> <span>Discovery</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Quick Action Generators */}
@@ -2016,21 +2020,21 @@ Your response MUST be raw JSON format with NO markdown wrapping:
       </div>
 
       {/* 3. INPUT ZONE / SPEECH CONTROLLER */}
-      <div className="pt-4 border-t border-white/10 flex items-center gap-3 bg-slate-900/60 backdrop-blur rounded-2xl mt-2 p-2">
+      <div className="pt-3 sm:pt-4 border-t border-white/10 flex items-center gap-2 sm:gap-3 bg-slate-900/60 backdrop-blur rounded-2xl mt-2 p-2">
         
         {/* Float design mic selector */}
-        <div className="relative group flex items-center justify-center">
+        <div className="relative group flex items-center justify-center shrink-0">
           <button 
             type="button"
             onClick={toggleListening}
-            className={`h-11 w-11 rounded-full flex items-center justify-center transition-all shadow-md ${
+            className={`h-9 w-9 sm:h-11 sm:w-11 rounded-full flex items-center justify-center transition-all shadow-md ${
               isListening 
                 ? 'bg-red-600 animate-pulse text-white shadow-lg shadow-red-950/50 hover:bg-red-500' 
                 : 'bg-slate-800 hover:bg-slate-700 text-indigo-400 hover:text-indigo-300'
             }`}
             title={isListening ? "Stop Listening" : "Start Voice Input"}
           >
-            <Mic className={`w-5 h-5 ${isListening ? 'scale-110' : ''}`} />
+            <Mic className={`w-4 h-4 sm:w-5 sm:h-5 ${isListening ? 'scale-110' : ''}`} />
           </button>
           <div className="hidden group-hover:block absolute -top-8 bg-slate-800 text-[10px] text-white px-2 py-1 rounded shadow pointer-events-none whitespace-nowrap z-50">
             {isListening ? "Listening... Click to stop" : "Start Speech-to-text Input"}
@@ -2038,22 +2042,22 @@ Your response MUST be raw JSON format with NO markdown wrapping:
         </div>
 
         {/* Text submit form bar */}
-        <form onSubmit={handleTextSubmit} className="flex-1 flex gap-2">
+        <form onSubmit={handleTextSubmit} className="flex-1 min-w-0 flex gap-1.5 sm:gap-2">
           <input 
             type="text" 
-            placeholder="Query Orion... (e.g., 'Open Physics Hub', 'Start whiteboard')"
+            placeholder="Query Orion..."
             value={commandText}
             onChange={e => setCommandText(e.target.value)}
             disabled={isProcessing}
-            className="flex-1 bg-slate-950/80 border border-white/10 rounded-2xl px-4 py-2.5 text-xs text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all font-mono disabled:opacity-55"
+            className="flex-1 min-w-0 bg-slate-950/80 border border-white/10 rounded-xl sm:rounded-2xl px-3 sm:px-4 py-2 sm:py-2.5 text-xs text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all font-mono disabled:opacity-55"
           />
 
           <button 
             type="submit" 
             disabled={isProcessing || !commandText.trim()}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-900 text-white disabled:text-slate-500 rounded-2xl font-black text-xs uppercase cursor-pointer transition-all flex items-center gap-1.5"
+            className="px-3 sm:px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-900 text-white disabled:text-slate-500 rounded-xl sm:rounded-2xl font-black text-xs uppercase cursor-pointer transition-all flex items-center gap-1.5 shrink-0"
           >
-            <Send className="w-3.5 h-3.5" /> Execute
+            <Send className="w-3.5 h-3.5" /> <span className="hidden min-[340px]:inline">Execute</span>
           </button>
         </form>
 

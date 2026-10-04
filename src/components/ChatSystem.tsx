@@ -1114,7 +1114,7 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-12 gap-5 h-[calc(100vh-8.5rem)] md:h-[calc(100vh-9.5rem)] min-h-[500px] max-w-7xl mx-auto shadow-2xl animate-fadeIn font-sans">
       
       {/* Left Column: Chat Rooms & Direct Messages Sidebar */}
-      <div className={`md:col-span-4 bg-slate-900/90 border border-white/10 rounded-3xl p-4 flex flex-col min-h-0 justify-between ${showChatSidebarMobile ? 'flex h-full' : 'hidden md:flex'}`}>
+      <div className={`md:col-span-4 bg-slate-900/90 border border-white/10 rounded-3xl p-3 sm:p-4 flex flex-col min-h-0 justify-between ${showChatSidebarMobile ? 'flex h-full' : 'hidden md:flex'}`}>
         <div className="space-y-3.5 flex-1 flex flex-col min-h-0">
           
           {/* Header & New Actions */}
@@ -1301,17 +1301,17 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
       </div>
 
       {/* Right Column: Chat Dialog Box */}
-      <div className={`md:col-span-8 bg-slate-900/90 border border-white/10 rounded-3xl p-5 flex flex-col min-h-0 justify-between ${!showChatSidebarMobile ? 'flex h-full' : 'hidden md:flex'}`}>
+      <div className={`md:col-span-8 bg-slate-900/90 border border-white/10 rounded-3xl p-3 sm:p-5 flex flex-col min-h-0 justify-between ${!showChatSidebarMobile ? 'flex h-full' : 'hidden md:flex'}`}>
         
         {/* Active Header Bar */}
-        <div className="flex items-center justify-between border-b border-white/10 pb-3.5 shrink-0">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3 sm:pb-3.5 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
             <button
               onClick={() => setShowChatSidebarMobile(true)}
-              className="md:hidden p-1.5 bg-white/5 rounded-lg border border-white/10 text-white text-[11px] flex items-center gap-1"
+              className="md:hidden p-1.5 bg-white/5 rounded-lg border border-white/10 text-white text-[11px] flex items-center gap-1 shrink-0"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              Chats
+              <span className="hidden min-[320px]:inline">Chats</span>
             </button>
 
             {/* Clickable Avatar or Icon to view profile or details */}
@@ -1326,28 +1326,28 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                   setShowGroupSettings(true);
                 }
               }}
-              className="flex items-center gap-2.5 text-left hover:opacity-80 transition-opacity"
+              className="flex items-center gap-2 sm:gap-2.5 text-left hover:opacity-80 transition-opacity min-w-0 flex-1"
             >
               {typeof activeDisplayIcon === 'string' && activeDisplayIcon.length > 2 ? (
-                <img src={activeDisplayIcon} alt="" className="w-10 h-10 rounded-2xl object-cover border border-white/10" />
+                <img src={activeDisplayIcon} alt="" className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl object-cover border border-white/10 shrink-0" />
               ) : (
-                <span className="text-2xl p-1.5 bg-slate-950 border border-white/10 rounded-2xl">{activeDisplayIcon}</span>
+                <span className="text-lg sm:text-2xl p-1 sm:p-1.5 bg-slate-950 border border-white/10 rounded-xl sm:rounded-2xl shrink-0">{activeDisplayIcon}</span>
               )}
-              <div>
-                <div className="flex items-center gap-2">
-                  <h4 className="font-black text-sm text-white">{activeDisplayTitle}</h4>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                  <h4 className="font-black text-xs sm:text-sm text-white truncate">{activeDisplayTitle}</h4>
                   {isDirectMessage && (
-                    <span className="text-[9px] bg-teal-500/10 text-teal-400 border border-teal-500/20 px-2 py-0.5 rounded-full font-bold">
+                    <span className="hidden sm:inline-block text-[9px] bg-teal-500/10 text-teal-400 border border-teal-500/20 px-2 py-0.5 rounded-full font-bold shrink-0">
                       Direct Message
                     </span>
                   )}
                   {activeRoomInfo.type === 'channel' && (
-                    <span className="text-[9px] bg-rose-500/10 text-rose-400 border border-rose-500/20 px-2 py-0.5 rounded-full font-bold">
+                    <span className="hidden sm:inline-block text-[9px] bg-rose-500/10 text-rose-400 border border-rose-500/20 px-2 py-0.5 rounded-full font-bold shrink-0">
                       📢 Broadcast Channel
                     </span>
                   )}
                 </div>
-                <p className="text-[10px] text-slate-400 mt-0.5">{activeDisplayDesc}</p>
+                <p className="text-[10px] text-slate-400 mt-0.5 truncate">{activeDisplayDesc}</p>
               </div>
             </button>
           </div>
@@ -1471,7 +1471,7 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                     )}
                   </button>
 
-                  <div className={`max-w-[75%] space-y-1 ${isMine ? 'items-end' : 'items-start'}`}>
+                  <div className={`max-w-[85%] sm:max-w-[75%] min-w-0 space-y-1 ${isMine ? 'items-end' : 'items-start'}`}>
                     
                     {/* Header info */}
                     <div className={`flex items-center gap-1.5 text-[10px] ${isMine ? 'justify-end' : 'justify-start'}`}>
@@ -1675,9 +1675,9 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
             </div>
           )}
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             {/* Upload Attachment */}
-            <label className="p-2.5 bg-slate-950 hover:bg-slate-800 border border-white/10 text-slate-400 hover:text-white rounded-2xl cursor-pointer transition-colors">
+            <label className="p-2 sm:p-2.5 bg-slate-950 hover:bg-slate-800 border border-white/10 text-slate-400 hover:text-white rounded-xl sm:rounded-2xl cursor-pointer transition-colors shrink-0">
               <Paperclip className="w-4 h-4" />
               <input type="file" multiple onChange={handleFileUpload} className="hidden" />
             </label>
@@ -1685,7 +1685,7 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
             {/* Mic / Voice Note Record Button */}
             <button
               onClick={isRecordingAudio ? stopRecording : startRecording}
-              className={`p-2.5 rounded-2xl border transition-all ${isRecordingAudio ? 'bg-rose-600 text-white border-rose-500 animate-pulse' : 'bg-slate-950 border-white/10 text-slate-400 hover:text-white hover:bg-slate-800'}`}
+              className={`p-2 sm:p-2.5 rounded-xl sm:rounded-2xl border transition-all shrink-0 ${isRecordingAudio ? 'bg-rose-600 text-white border-rose-500 animate-pulse' : 'bg-slate-950 border-white/10 text-slate-400 hover:text-white hover:bg-slate-800'}`}
               title={isRecordingAudio ? "Stop Recording" : "Record Voice Note"}
             >
               <Mic className="w-4 h-4" />
@@ -1727,14 +1727,14 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
               }}
               disabled={!canPostInChannel}
               placeholder={canPostInChannel ? `Type a message in ${activeDisplayTitle}... (Use @ to mention)` : "📢 Only teachers & admins can post in this channel"}
-              className="flex-1 bg-slate-950 border border-white/10 rounded-2xl px-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
+              className="flex-1 min-w-0 bg-slate-950 border border-white/10 rounded-xl sm:rounded-2xl px-3 sm:px-4 py-2 sm:py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
             />
 
             {/* Send Button */}
             <button
               onClick={handleSendChat}
               disabled={!canPostInChannel || (!newChatText.trim() && attachedFiles.length === 0)}
-              className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white p-2.5 rounded-2xl font-bold transition-all shadow-lg active:scale-95"
+              className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white p-2 sm:p-2.5 rounded-xl sm:rounded-2xl font-bold transition-all shadow-lg active:scale-95 shrink-0"
             >
               <Send className="w-4 h-4" />
             </button>

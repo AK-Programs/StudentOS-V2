@@ -555,11 +555,11 @@ export default function App() {
 
   const getSidebarBtnClass = (tab: string, type: 'standard' | 'faculty' | 'attendance' | 'admin' = 'standard') => {
     const isActive = activeTab === tab;
-    let base = `w-full flex items-center gap-3.5 transition-all rounded-xl border `;
+    let base = `w-full flex items-center gap-2.5 sm:gap-3.5 transition-all rounded-xl border text-left min-w-0 `;
     if (smartBoardMode) {
-      base += `px-5 py-3.5 text-sm font-black `;
+      base += `px-3.5 sm:px-5 py-3 sm:py-3.5 text-xs sm:text-sm font-black `;
     } else {
-      base += `px-4 py-2.5 text-xs font-semibold `;
+      base += `px-3 sm:px-4 py-2 sm:py-2.5 text-xs font-semibold `;
     }
 
     if (isActive) {
@@ -6155,7 +6155,7 @@ ${roleLabel}: ${userQuery}`;
           )}
 
           {/* Main Workspace Sidebar */}
-          <aside className={`fixed top-0 left-0 h-full bg-slate-900/95 dark:bg-slate-950/90 backdrop-blur-xl border-r border-white/5 z-50 flex flex-col justify-between transition-all duration-300 safe-area-pt safe-area-pb ${sidebarOpen ? 'w-[272px] max-w-[85vw] sm:w-64 p-4 sm:p-6 translate-x-0' : 'w-0 -translate-x-full overflow-hidden p-0 md:w-20 md:p-3 md:translate-x-0 md:overflow-visible'}`}>
+          <aside className={`fixed top-0 left-0 h-full bg-slate-900/95 dark:bg-slate-950/90 backdrop-blur-xl border-r border-white/5 z-50 flex flex-col justify-between transition-all duration-300 safe-area-pt safe-area-pb ${sidebarOpen ? 'w-[min(260px,calc(100vw-2rem))] sm:w-64 p-3 sm:p-6 translate-x-0' : 'w-0 -translate-x-full overflow-hidden p-0 md:w-20 md:p-3 md:translate-x-0 md:overflow-visible'}`}>
             <div className="space-y-6 sm:space-y-8 overflow-y-auto max-h-[calc(100dvh-160px)] pr-1">
               
               {/* Sidebar Header Brand */}
@@ -6541,7 +6541,7 @@ ${roleLabel}: ${userQuery}`;
           </aside>
 
           {/* Main workspace frame */}
-          <div className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ${sidebarOpen ? 'md:ml-64' : 'md:ml-20'}`}>
+          <div className={`flex-1 flex flex-col min-h-screen min-w-0 max-w-full transition-all duration-300 ${sidebarOpen ? 'md:ml-64' : 'md:ml-20'}`}>
             {/* BEAUTIFUL DEMO MODE BANNER */}
             {isDemoMode && (
               <div className="bg-gradient-to-r from-red-600 via-amber-600 to-indigo-600 text-white py-2 px-4 shadow-lg z-50 flex flex-col sm:flex-row items-center justify-between gap-3 border-b border-white/10 shrink-0">
@@ -6623,16 +6623,16 @@ ${roleLabel}: ${userQuery}`;
             <LiveBroadcastBanner currentUser={currentUser} />
 
             {/* Global Workspace Header bar */}
-            <header className="sticky top-0 z-40 px-3 sm:px-6 py-3 sm:py-4 flex items-center justify-between border-b border-white/5 backdrop-blur-xl bg-slate-950/40">
-              <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+            <header className="sticky top-0 z-40 px-2 sm:px-6 py-2 sm:py-4 flex items-center justify-between gap-1.5 sm:gap-3 border-b border-white/5 backdrop-blur-xl bg-slate-950/40">
+              <div className="flex items-center gap-1.5 sm:gap-4 min-w-0 flex-1">
                 <button 
                   onClick={() => setSidebarOpen(!sidebarOpen)}
-                  className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 transition-all shrink-0"
+                  className="p-1.5 sm:p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 transition-all shrink-0"
                 >
-                  <ChevronLeft className={`w-5 h-5 transition-transform duration-300 ${sidebarOpen ? '' : 'rotate-180'}`} />
+                  <ChevronLeft className={`w-4 h-4 sm:w-5 sm:h-5 transition-transform duration-300 ${sidebarOpen ? '' : 'rotate-180'}`} />
                 </button>
-                <div className="min-w-0">
-                  <h2 className="text-sm sm:text-xl font-extrabold tracking-tight text-white font-display truncate">
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-xs sm:text-xl font-extrabold tracking-tight text-white font-display truncate min-w-0">
                     {activeTab === 'dashboard' && 'My Dashboard'}
                     {activeTab === 'meet' && 'StudentOS Meet (Virtual Classroom)'}
                     {['study_hub', 'tasks', 'planner', 'flashcards'].includes(activeTab) && (
@@ -6664,21 +6664,21 @@ ${roleLabel}: ${userQuery}`;
               </div>
 
               {/* Status and Clock widget */}
-              <div className="flex items-center gap-1.5 sm:gap-3 text-xs font-semibold shrink-0">
+              <div className="flex items-center gap-1 sm:gap-3 text-xs font-semibold shrink-0">
                 
                 {/* Classroom Security Center */}
                 {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '') && (
                   <div className="relative">
                     <button
                       onClick={() => setSecurityMenuOpen(!securityMenuOpen)}
-                      className={`px-2.5 sm:px-3 py-2 rounded-xl border flex items-center gap-1.5 sm:gap-2 cursor-pointer transition-all min-h-[38px] ${
+                      className={`p-1.5 sm:px-3 sm:py-2 rounded-xl border flex items-center gap-1.5 sm:gap-2 cursor-pointer transition-all min-h-[32px] sm:min-h-[38px] ${
                         presentationMode 
                           ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg' 
                           : 'bg-slate-900 border-white/5 hover:bg-slate-800 text-slate-300'
                       }`}
                       title="Classroom Security Center"
                     >
-                      <Lock className="w-3.5 h-3.5" />
+                      <Lock className="w-3.5 h-3.5 shrink-0" />
                       <span className="hidden sm:inline">Security</span>
                       {presentationMode && (
                         <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
@@ -6862,7 +6862,7 @@ ${roleLabel}: ${userQuery}`;
                 <button
                   type="button"
                   onClick={() => setIsInstallAppModalOpen(true)}
-                  className={`px-2.5 sm:px-3 py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-md border transition-all active:scale-95 cursor-pointer min-h-[38px] ${
+                  className={`p-1.5 sm:px-3 sm:py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-md border transition-all active:scale-95 cursor-pointer min-h-[32px] sm:min-h-[38px] ${
                     isApkInstalled
                       ? 'bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-300 border-emerald-500/40 shadow-emerald-500/10'
                       : 'bg-gradient-to-r from-emerald-600/90 to-teal-600/90 hover:from-emerald-500 hover:to-teal-500 text-white border-emerald-500/30 shadow-emerald-500/20'
@@ -6882,7 +6882,7 @@ ${roleLabel}: ${userQuery}`;
                 {['super_admin', 'admin', 'teacher', 'coordinator'].includes(effectiveRole) && (
                   <button
                     onClick={() => setIsBroadcastModalOpen(true)}
-                    className="p-2 sm:px-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-indigo-600/20 transition-all active:scale-95 min-h-[38px]"
+                    className="p-1.5 sm:px-3 sm:py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-indigo-600/20 transition-all active:scale-95 min-h-[32px] sm:min-h-[38px]"
                     title="Send School/Class Broadcast Announcement"
                   >
                     <Send className="w-3.5 h-3.5 shrink-0" />
@@ -6894,12 +6894,12 @@ ${roleLabel}: ${userQuery}`;
                 <div className="relative">
                   <button
                     onClick={() => setShowNotifCenter(!showNotifCenter)}
-                    className="relative p-2 rounded-xl bg-slate-900 border border-white/5 hover:bg-slate-800 hover:text-white text-slate-300 transition-all flex items-center justify-center cursor-pointer min-h-[38px] min-w-[38px]"
+                    className="relative p-1.5 sm:p-2 rounded-xl bg-slate-900 border border-white/5 hover:bg-slate-800 hover:text-white text-slate-300 transition-all flex items-center justify-center cursor-pointer min-h-[32px] min-w-[32px] sm:min-h-[38px] sm:min-w-[38px]"
                     title="Academic Notification Hub"
                   >
                     <Bell className="w-4 h-4" />
                     {notifications.filter(n => !n.isRead).length > 0 && (
-                      <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-500 text-[9px] font-bold text-white leading-none scale-100 animate-pulse">
+                      <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5 sm:h-4 sm:w-4 items-center justify-center rounded-full bg-indigo-500 text-[8px] sm:text-[9px] font-bold text-white leading-none scale-100 animate-pulse">
                         {notifications.filter(n => !n.isRead).length}
                       </span>
                     )}
@@ -6916,7 +6916,7 @@ ${roleLabel}: ${userQuery}`;
                 {/* What's New Header Indicator Button */}
                 <button
                   onClick={() => handleTabSelect('whats_new')}
-                  className={`px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 relative border shadow-sm cursor-pointer min-h-[38px] ${
+                  className={`p-1.5 sm:px-3 sm:py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 relative border shadow-sm cursor-pointer min-h-[32px] sm:min-h-[38px] ${
                     activeTab === 'whats_new' || activeTab === 'whats-new'
                       ? 'bg-indigo-600 text-white border-indigo-500 shadow-indigo-600/30'
                       : 'bg-slate-900 border-white/5 hover:bg-slate-800 text-slate-300 hover:text-white'
@@ -6926,7 +6926,7 @@ ${roleLabel}: ${userQuery}`;
                   <Sparkles className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
                   <span className="hidden sm:inline">What's New</span>
                   {whatsNewUnreadCount > 0 && (
-                    <span className="flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-rose-500 text-[9px] font-black text-white leading-none animate-pulse">
+                    <span className="absolute -top-1 -right-1 sm:static flex h-3.5 min-w-3.5 sm:h-4 sm:min-w-4 px-1 items-center justify-center rounded-full bg-rose-500 text-[8px] sm:text-[9px] font-black text-white leading-none animate-pulse">
                       {whatsNewUnreadCount}
                     </span>
                   )}
@@ -6941,7 +6941,7 @@ ${roleLabel}: ${userQuery}`;
             </header>
 
             {/* Base View Layout Wrapper */}
-            <main className={`flex-1 p-3 sm:p-6 md:p-8 pb-24 sm:pb-12 max-w-7xl w-full mx-auto space-y-6 sm:space-y-8 min-w-0 ${fontSize === 'large' ? 'text-lg' : fontSize === 'huge' ? 'text-xl' : 'text-sm'}`}>
+            <main className={`flex-1 p-2 sm:p-6 md:p-8 pb-24 sm:pb-12 max-w-7xl w-full mx-auto space-y-4 sm:space-y-8 min-w-0 ${fontSize === 'large' ? 'text-lg' : fontSize === 'huge' ? 'text-xl' : 'text-sm'}`}>
               
               {/* Tab: Panel Mode Launcher */}
               {activeTab === 'panel_mode' && effectiveRole !== 'student' && (
@@ -11615,7 +11615,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
 
             {/* Mobile Bottom Navigation Bar (Phones < 768px & Installed Mobile PWA) */}
             {!presentationMode && activeTab !== 'whiteboard' && (
-              <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-slate-950/95 backdrop-blur-xl border-t border-white/10 px-2 pt-1.5 pb-2 safe-area-pb flex items-center justify-around">
+              <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-slate-950/95 backdrop-blur-xl border-t border-white/10 px-1 pt-1.5 pb-2 safe-area-pb flex items-center justify-around gap-0.5">
                 {[
                   { id: 'dashboard', label: 'Home', icon: '🏠' },
                   { id: 'study_hub', label: 'Study', icon: '🎯', badge: dueCardsCount > 0 ? dueCardsCount : 0 },
@@ -11630,16 +11630,16 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                       key={item.id}
                       type="button"
                       onClick={() => handleTabSelect(item.id)}
-                      className={`relative flex flex-col items-center justify-center py-1 px-2.5 rounded-xl min-w-[56px] min-h-[44px] transition-all cursor-pointer ${
+                      className={`relative flex flex-col items-center justify-center py-1 px-1 sm:px-2.5 rounded-xl flex-1 min-w-0 min-h-[42px] sm:min-h-[44px] transition-all cursor-pointer ${
                         isActive
                           ? 'text-indigo-400 bg-indigo-500/15 font-extrabold'
                           : 'text-slate-400 hover:text-slate-200 font-semibold'
                       }`}
                     >
-                      <span className="text-base leading-none">{item.icon}</span>
-                      <span className="text-[10px] mt-1 leading-none tracking-tight">{item.label}</span>
+                      <span className="text-sm sm:text-base leading-none">{item.icon}</span>
+                      <span className="text-[9px] sm:text-[10px] mt-1 leading-none tracking-tight truncate max-w-full">{item.label}</span>
                       {item.badge ? (
-                        <span className="absolute top-0.5 right-1.5 px-1 min-w-[14px] h-[14px] rounded-full bg-rose-500 text-white text-[8px] font-black flex items-center justify-center leading-none">
+                        <span className="absolute top-0.5 right-1 px-1 min-w-[14px] h-[14px] rounded-full bg-rose-500 text-white text-[8px] font-black flex items-center justify-center leading-none">
                           {item.badge}
                         </span>
                       ) : null}
@@ -11649,12 +11649,12 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                 <button
                   type="button"
                   onClick={() => setSidebarOpen(true)}
-                  className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl min-w-[56px] min-h-[44px] transition-all cursor-pointer ${
+                  className={`flex flex-col items-center justify-center py-1 px-1 sm:px-2.5 rounded-xl flex-1 min-w-0 min-h-[42px] sm:min-h-[44px] transition-all cursor-pointer ${
                     sidebarOpen ? 'text-indigo-400 bg-indigo-500/15 font-extrabold' : 'text-slate-400 hover:text-slate-200 font-semibold'
                   }`}
                 >
-                  <span className="text-base leading-none">☰</span>
-                  <span className="text-[10px] mt-1 leading-none tracking-tight">Menu</span>
+                  <span className="text-sm sm:text-base leading-none">☰</span>
+                  <span className="text-[9px] sm:text-[10px] mt-1 leading-none tracking-tight truncate max-w-full">Menu</span>
                 </button>
               </nav>
             )}

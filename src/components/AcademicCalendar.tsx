@@ -601,16 +601,16 @@ export default function AcademicCalendar({ currentUser, effectiveRole }: Academi
 
       {/* VIEW: MONTH GRID */}
       {viewMode === 'month' && (
-        <div className="bg-slate-950/60 rounded-3xl border border-white/10 overflow-hidden shadow-2xl">
+        <div className="bg-slate-950/60 rounded-2xl sm:rounded-3xl border border-white/10 overflow-hidden shadow-2xl">
           {/* Day Names */}
-          <div className="grid grid-cols-7 bg-slate-900 border-b border-white/10 text-center py-2.5 text-[11px] font-black uppercase tracking-wider text-slate-400">
+          <div className="grid grid-cols-7 calendar-grid-7 bg-slate-900 border-b border-white/10 text-center py-1.5 sm:py-2.5 text-[9px] sm:text-[11px] font-black uppercase tracking-tighter sm:tracking-wider text-slate-400">
             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
-              <div key={d}>{d}</div>
+              <div key={d} className="truncate px-0.5">{d}</div>
             ))}
           </div>
 
           {/* Days Grid */}
-          <div className="grid grid-cols-7 divide-x divide-y divide-white/5">
+          <div className="grid grid-cols-7 calendar-grid-7 divide-x divide-y divide-white/5">
             {monthData.map((cell, idx) => {
               const dayEvents = filteredEvents.filter(e => {
                 if (!e.startTime) return false;
@@ -628,13 +628,13 @@ export default function AcademicCalendar({ currentUser, effectiveRole }: Academi
                   onClick={() => {
                     if (dayEvents.length > 0) setSelectedEvent(dayEvents[0]);
                   }}
-                  className={`min-h-[64px] sm:min-h-[105px] p-1 sm:p-2 flex flex-col justify-between transition-colors cursor-pointer sm:cursor-default ${
+                  className={`min-h-[48px] sm:min-h-[105px] p-0.5 sm:p-2 flex flex-col justify-between transition-colors cursor-pointer sm:cursor-default ${
                     cell.isCurrentMonth ? 'bg-slate-950/40 hover:bg-slate-900/30' : 'bg-slate-950/80 opacity-40'
                   }`}
                 >
                   <div className="flex items-center justify-between">
                     <span
-                      className={`text-[11px] sm:text-xs font-mono font-bold w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center rounded-full ${
+                      className={`text-[10px] sm:text-xs font-mono font-bold w-4 h-4 sm:w-6 sm:h-6 flex items-center justify-center rounded-full ${
                         isToday ? 'bg-indigo-600 text-white font-black shadow-md shadow-indigo-600/30' : 'text-slate-300'
                       }`}
                     >

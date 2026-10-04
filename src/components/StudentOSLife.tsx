@@ -507,7 +507,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,rgba(99,102,241,0.15),transparent_70%)] pointer-events-none" />
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-4 sm:gap-6 relative z-10">
           <div>
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex flex-wrap items-center gap-2 mb-2">
               <span className="px-3 py-1 bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 text-xs font-black rounded-full uppercase tracking-widest flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Digital School Community
               </span>
@@ -769,11 +769,11 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
 
                 <div className="space-y-4">
                   {newsList.map(item => (
-                    <div key={item.id} className="p-4 rounded-2xl bg-slate-950 border border-white/5 flex gap-4 items-start">
+                    <div key={item.id} className="p-3 sm:p-4 rounded-2xl bg-slate-950 border border-white/5 flex flex-col sm:flex-row gap-3 sm:gap-4 items-start">
                       {item.imageUrl && (
-                        <img src={item.imageUrl} alt={item.title} className="w-20 h-20 rounded-xl object-cover shrink-0 border border-white/10" />
+                        <img src={item.imageUrl} alt={item.title} className="w-full sm:w-20 h-32 sm:h-20 rounded-xl object-cover shrink-0 border border-white/10" />
                       )}
-                      <div className="space-y-1">
+                      <div className="space-y-1 min-w-0">
                         <span className="px-2 py-0.5 bg-amber-500/10 text-amber-300 border border-amber-500/20 text-[9px] font-black rounded-md uppercase">
                           {item.category}
                         </span>
@@ -798,15 +798,15 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
 
                 <div className="space-y-3">
                   {events.map(ev => (
-                    <div key={ev.id} className="p-3.5 rounded-2xl bg-slate-950 border border-white/5 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <div className="px-3 py-2 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-center shrink-0">
+                    <div key={ev.id} className="p-3 sm:p-3.5 rounded-2xl bg-slate-950 border border-white/5 flex flex-wrap items-center justify-between gap-2 sm:gap-3">
+                      <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                        <div className="px-2.5 sm:px-3 py-1.5 sm:py-2 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-center shrink-0">
                           <span className="text-[10px] font-mono text-indigo-300 uppercase block font-bold">{ev.date.split('-')[1]}</span>
                           <span className="text-sm font-black text-white font-mono">{ev.date.split('-')[2]}</span>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <h4 className="text-xs font-bold text-white">{ev.title}</h4>
-                          <span className="text-[10px] text-slate-400">{ev.time || 'All Day'} • {ev.location}</span>
+                          <span className="text-[10px] text-slate-400 block">{ev.time || 'All Day'} • {ev.location}</span>
                         </div>
                       </div>
                       <span className="px-2.5 py-1 bg-slate-900 text-slate-300 border border-white/10 text-[10px] font-bold rounded-lg shrink-0">
@@ -966,7 +966,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
               </div>
 
               {/* Timeframe Filter */}
-              <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-white/5">
+              <div className="flex flex-wrap items-center justify-center gap-1 bg-slate-950 p-1 rounded-xl border border-white/5 w-full md:w-auto">
                 {(['Weekly', 'Monthly', 'Yearly'] as const).map(tf => (
                   <button
                     key={tf}
@@ -997,7 +997,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
               </div>
 
               {/* Rank 1 (Gold - Center & Elevated) */}
-              <div className="bg-gradient-to-b from-indigo-900/60 to-slate-900 border-2 border-amber-500/50 rounded-3xl p-6 text-center shadow-2xl md:order-2 flex flex-col justify-between items-center relative overflow-hidden scale-105">
+              <div className="bg-gradient-to-b from-indigo-900/60 to-slate-900 border-2 border-amber-500/50 rounded-3xl p-5 sm:p-6 text-center shadow-2xl md:order-2 flex flex-col justify-between items-center relative overflow-hidden md:scale-105">
                 <div className="absolute top-2 right-2 text-2xl animate-bounce">👑</div>
                 <div className="w-20 h-20 rounded-full bg-amber-500/20 border-2 border-amber-400 flex items-center justify-center text-4xl shadow-xl mb-3">
                   {MOCK_LEADERBOARD[0].avatar}
@@ -1028,19 +1028,19 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
             <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-3">
               <h3 className="text-sm font-extrabold text-white uppercase tracking-wider mb-4">Complete Leaderboard Standings</h3>
               {MOCK_LEADERBOARD.slice(3).map(user => (
-                <div key={user.rank} className="p-4 rounded-2xl bg-slate-950 border border-white/5 flex items-center justify-between gap-4 hover:border-indigo-500/30 transition-all">
-                  <div className="flex items-center gap-4">
-                    <span className="w-7 h-7 rounded-lg bg-slate-800 text-slate-300 font-black text-xs flex items-center justify-center font-mono">
+                <div key={user.rank} className="p-3 sm:p-4 rounded-2xl bg-slate-950 border border-white/5 flex flex-wrap items-center justify-between gap-2 sm:gap-4 hover:border-indigo-500/30 transition-all">
+                  <div className="flex items-center gap-2.5 sm:gap-4 min-w-0">
+                    <span className="w-7 h-7 rounded-lg bg-slate-800 text-slate-300 font-black text-xs flex items-center justify-center font-mono shrink-0">
                       #{user.rank}
                     </span>
-                    <span className="text-2xl">{user.avatar}</span>
-                    <div>
-                      <h4 className="text-sm font-bold text-white">{user.name}</h4>
-                      <span className="text-[11px] text-slate-400">{user.grade} • House {user.house}</span>
+                    <span className="text-xl sm:text-2xl shrink-0">{user.avatar}</span>
+                    <div className="min-w-0">
+                      <h4 className="text-xs sm:text-sm font-bold text-white truncate">{user.name}</h4>
+                      <span className="text-[10px] sm:text-[11px] text-slate-400 block">{user.grade} • House {user.house}</span>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 sm:gap-3 shrink-0">
                     <span className="px-2.5 py-1 bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 text-[10px] font-bold rounded-lg hidden sm:inline">
                       {user.badge}
                     </span>
@@ -1167,7 +1167,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
         {/* ================= TAB 6: SCHOOL CALENDAR ================= */}
         {activeTab === 'calendar' && (
           <div className="space-y-6 animate-fadeIn">
-            <div className="flex items-center justify-between bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl">
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl">
               <div>
                 <h3 className="text-base font-extrabold text-white">Official School Calendar</h3>
                 <p className="text-xs text-slate-400">Exams, Holidays, Competitions & Parent Meetings</p>
@@ -1198,7 +1198,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
                     <p className="text-xs text-slate-400 leading-relaxed">{ev.description}</p>
                   </div>
 
-                  <div className="pt-3 border-t border-white/5 flex items-center justify-between text-xs text-slate-300 font-medium">
+                  <div className="pt-3 border-t border-white/5 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-300 font-medium">
                     <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-indigo-400" /> {ev.time || 'All Day'}</span>
                     <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5 text-emerald-400" /> {ev.location}</span>
                   </div>
@@ -1211,7 +1211,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
         {/* ================= TAB 7: ACHIEVEMENTS & BADGES ================= */}
         {activeTab === 'achievements' && (
           <div className="space-y-6 animate-fadeIn">
-            <div className="flex items-center justify-between bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl">
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl">
               <div>
                 <h3 className="text-base font-extrabold text-white">Student Achievement Wall</h3>
                 <p className="text-xs text-slate-400">Merit Badges & Honors awarded by Teachers</p>
@@ -1247,7 +1247,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
                     "{b.reason}"
                   </p>
 
-                  <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-white/5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400 pt-1 border-t border-white/5">
                     <span>Awarded by: {b.awardedBy}</span>
                     <span className="font-mono">{b.awardedAt}</span>
                   </div>
@@ -1317,7 +1317,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
         {/* ================= TAB 10: POLLS & VOTING ================= */}
         {activeTab === 'polls' && (
           <div className="space-y-6 animate-fadeIn max-w-3xl mx-auto">
-            <div className="flex items-center justify-between bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl">
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl">
               <div>
                 <h3 className="text-base font-extrabold text-white">School Voting & Polls</h3>
                 <p className="text-xs text-slate-400">Cast your vote on school activities, house choices & feedback</p>

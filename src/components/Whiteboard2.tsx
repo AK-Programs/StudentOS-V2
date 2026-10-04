@@ -1054,41 +1054,41 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     <div className="fixed inset-0 z-50 bg-slate-950 flex flex-col font-sans select-none overflow-hidden">
       
       {/* 1. MAIN HEADER / BRAND BAR */}
-      <div className="h-14 bg-slate-900 border-b border-white/10 flex items-center justify-between px-4 z-20 shrink-0">
-        <div className="flex items-center gap-3">
+      <div className="min-h-[3.25rem] py-1.5 bg-slate-900 border-b border-white/10 flex flex-wrap items-center justify-between gap-1.5 sm:gap-2 px-2 sm:px-4 z-20 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           <button 
             onClick={onClose} 
-            className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all border border-white/5 shadow-md flex items-center gap-1.5"
+            className="px-2.5 sm:px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl text-[11px] sm:text-xs font-black uppercase tracking-wider transition-all border border-white/5 shadow-md flex items-center gap-1"
           >
-            <ChevronLeft className="w-4 h-4" /> Exit Board
+            <ChevronLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> <span>Exit</span>
           </button>
-          <div className="text-white font-black text-sm tracking-widest uppercase flex items-center gap-2">
+          <div className="text-white font-black text-xs sm:text-sm tracking-widest uppercase hidden md:flex items-center gap-2">
             <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse shadow-glow shadow-emerald-500/55" />
             Class SmartBoard 3.0
           </div>
         </div>
         
         {/* Dynamic Tool Selector */}
-        <div className="flex items-center gap-1.5 bg-slate-950 border border-white/10 p-1.5 rounded-2xl shadow-inner max-w-full overflow-x-auto">
+        <div className="flex flex-wrap items-center gap-1 sm:gap-1.5 bg-slate-950 border border-white/10 p-1 sm:p-1.5 rounded-2xl shadow-inner max-w-full">
           <button 
             onClick={() => { setTool('select'); setShapesMenuOpen(false); }} 
-            className={`p-2 rounded-xl transition-all ${tool === 'select' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+            className={`p-1.5 sm:p-2 rounded-xl transition-all ${tool === 'select' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
             title="Select & Move Shapes/Lines"
           >
-            <MousePointer2 className="w-4 h-4" />
+            <MousePointer2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
           
           <button 
             onClick={() => { setTool('pen'); setShapesMenuOpen(false); }} 
-            className={`p-2 rounded-xl transition-all ${tool === 'pen' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+            className={`p-1.5 sm:p-2 rounded-xl transition-all ${tool === 'pen' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
             title="Academic Ink Pen"
           >
-            <Pen className="w-4 h-4" />
+            <Pen className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
           
           <button 
             onClick={() => { setTool('pencil'); setShapesMenuOpen(false); }} 
-            className={`p-2 rounded-xl transition-all ${tool === 'pencil' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+            className={`p-1.5 sm:p-2 rounded-xl transition-all ${tool === 'pencil' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
             title="Fine Graphite Pencil"
           >
             <span className="text-xs font-extrabold font-mono">✏️</span>
@@ -1096,7 +1096,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           
           <button 
             onClick={() => { setTool('marker'); setShapesMenuOpen(false); }} 
-            className={`p-2 rounded-xl transition-all ${tool === 'marker' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+            className={`p-1.5 sm:p-2 rounded-xl transition-all ${tool === 'marker' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
             title="Bold Dry-Erase Marker"
           >
             <span className="text-xs font-extrabold font-mono">🖍️</span>
@@ -1104,26 +1104,26 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           
           <button 
             onClick={() => { setTool('highlighter'); setShapesMenuOpen(false); }} 
-            className={`p-2 rounded-xl transition-all ${tool === 'highlighter' ? 'bg-amber-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+            className={`p-1.5 sm:p-2 rounded-xl transition-all ${tool === 'highlighter' ? 'bg-amber-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
             title="Translucent Text Highlighter"
           >
-            <PenTool className="w-4 h-4" />
+            <PenTool className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
           
           {/* Shapes Dropdown Selector Menu */}
           <div className="relative">
             <button 
               onClick={() => { setShapesMenuOpen(!shapesMenuOpen); setTool('shape'); }} 
-              className={`p-2 px-3 rounded-xl transition-all flex items-center gap-1 border border-transparent ${tool === 'shape' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+              className={`p-1.5 sm:p-2 sm:px-3 rounded-xl transition-all flex items-center gap-1 border border-transparent ${tool === 'shape' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
               title="Interactive Shapes Menu"
             >
-              <Square className="w-4 h-4" />
+              <Square className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               <span className="text-[10px] font-black uppercase tracking-wider hidden md:inline">{shapeType}</span>
-              <ChevronDown className="w-3.5 h-3.5" />
+              <ChevronDown className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
             </button>
             
             {shapesMenuOpen && (
-              <div className="absolute top-full left-0 mt-2 bg-slate-900 border border-white/10 rounded-2xl shadow-2xl p-2.5 flex flex-col gap-1 w-44 z-50 animate-fadeIn max-h-64 overflow-y-auto">
+              <div className="fixed sm:absolute top-24 sm:top-full left-2 sm:left-0 mt-0 sm:mt-2 bg-slate-900 border border-white/10 rounded-2xl shadow-2xl p-2.5 flex flex-col gap-1 w-44 max-w-[calc(100vw-1rem)] z-50 animate-fadeIn max-h-64 overflow-y-auto">
                  <div className="px-2.5 py-1 text-[9px] font-black text-slate-500 uppercase tracking-widest border-b border-white/5 mb-1">Vector Geometries</div>
                  <button onClick={() => { setTool('shape'); setShapeType('line'); setShapesMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${shapeType === 'line' ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Minus className="w-3.5 h-3.5" /> Simple Line</button>
                  <button onClick={() => { setTool('shape'); setShapeType('arrow'); setShapesMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${shapeType === 'arrow' ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>↗ Directed Arrow</button>
@@ -1145,15 +1145,15 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           <div className="relative">
             <button 
               onClick={() => { setEraserMenuOpen(!eraserMenuOpen); if(!eraserMenuOpen) setTool('eraser'); setShapesMenuOpen(false); }} 
-              className={`p-2 rounded-xl transition-all flex items-center gap-1 ${tool === 'eraser' || tool === 'object_eraser' ? 'bg-red-600 text-white shadow-lg shadow-red-600/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+              className={`p-1.5 sm:p-2 rounded-xl transition-all flex items-center gap-1 ${tool === 'eraser' || tool === 'object_eraser' ? 'bg-red-600 text-white shadow-lg shadow-red-600/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
               title="Erase Lines & Shapes"
             >
-              <Eraser className="w-4 h-4" />
+              <Eraser className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               <ChevronDown className="w-3 h-3" />
             </button>
             
             {eraserMenuOpen && (
-              <div className="absolute top-full left-0 mt-2 bg-slate-900 border border-white/10 rounded-2xl shadow-2xl p-2.5 flex flex-col gap-1 w-40 z-50 animate-fadeIn max-h-64 overflow-y-auto">
+              <div className="fixed sm:absolute top-24 sm:top-full left-2 sm:left-0 mt-0 sm:mt-2 bg-slate-900 border border-white/10 rounded-2xl shadow-2xl p-2.5 flex flex-col gap-1 w-40 max-w-[calc(100vw-1rem)] z-50 animate-fadeIn max-h-64 overflow-y-auto">
                  <button onClick={() => { setTool('eraser'); setEraserMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${tool === 'eraser' ? 'bg-red-500/20 text-red-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>Stroke Eraser</button>
                  <button onClick={() => { setTool('object_eraser'); setEraserMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${tool === 'object_eraser' ? 'bg-red-500/20 text-red-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>Object Eraser</button>
               </div>
@@ -1162,16 +1162,16 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
         </div>
 
         {/* Global Action Handlers */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1 sm:gap-2">
           
           <div className="relative">
             <button 
               onClick={() => setAiPromptOpen(!aiPromptOpen)}
-              className="p-2 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold"
+              className="p-1.5 sm:p-2 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold"
               title="AI Whiteboard (Coming Soon)"
             >
               <span>🚀</span>
-              <span>AI Whiteboard</span>
+              <span className="hidden sm:inline">AI Whiteboard</span>
             </button>
             {aiPromptOpen && (
               <div className="fixed sm:absolute top-20 sm:top-full mt-0 sm:mt-2 inset-x-3 sm:inset-x-auto sm:right-0 sm:w-80 bg-slate-900 border border-indigo-500/30 rounded-2xl p-4 sm:p-5 shadow-2xl z-50 space-y-3 backdrop-blur-xl animate-fadeIn">
@@ -1260,21 +1260,21 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       </div>
 
       {/* 2. SECONDARY CONTROLS HUD (ZOOM + SLIDES + ACTIVE OBJECT CONFIG) */}
-      <div className="bg-slate-900/90 border-b border-white/5 py-2 px-4 flex flex-wrap items-center justify-between gap-3 shrink-0 z-10 backdrop-blur-md">
+      <div className="bg-slate-900/90 border-b border-white/5 py-1.5 sm:py-2 px-2 sm:px-4 flex flex-wrap items-center justify-between gap-1.5 sm:gap-3 shrink-0 z-10 backdrop-blur-md">
         
         {/* Dynamic Multi-Slide Manager */}
-        <div className="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-2xl border border-white/5 shadow-md">
-          <span className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mr-1">Slides</span>
+        <div className="flex flex-wrap items-center gap-1 sm:gap-2 bg-slate-950 px-2 sm:px-3 py-1 sm:py-1.5 rounded-2xl border border-white/5 shadow-md">
+          <span className="text-[10px] font-mono text-slate-500 uppercase tracking-widest mr-1 hidden sm:inline">Slides</span>
           <button 
             disabled={activeSlideIdx <= 0}
             onClick={() => { setActiveSlideIdx(prev => prev - 1); setSelectedObj(null); }}
             className="p-1 text-slate-400 hover:text-white disabled:text-slate-700 transition-colors"
             title="Previous Slide"
           >
-            <ChevronLeft className="w-4 h-4" />
+            <ChevronLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
-          <span className="text-xs font-bold text-slate-200 font-mono px-1">
-            {activeSlideIdx + 1} / {slides.length}
+          <span className="text-[11px] sm:text-xs font-bold text-slate-200 font-mono px-1">
+            {activeSlideIdx + 1}/{slides.length}
           </span>
           <button 
             disabled={activeSlideIdx >= slides.length - 1}
@@ -1282,24 +1282,24 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             className="p-1 text-slate-400 hover:text-white disabled:text-slate-700 transition-colors"
             title="Next Slide"
           >
-            <ChevronRight className="w-4 h-4" />
+            <ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
           
-          <div className="h-4 w-px bg-white/10 mx-1" />
+          <div className="h-4 w-px bg-white/10 mx-0.5 sm:mx-1" />
           
           <button 
             onClick={handleAddSlide}
-            className="p-1 px-2.5 bg-indigo-500/10 hover:bg-indigo-600 text-indigo-400 hover:text-white text-[10px] font-black uppercase rounded-lg transition-all flex items-center gap-1 border border-indigo-500/20"
+            className="p-1 sm:px-2.5 bg-indigo-500/10 hover:bg-indigo-600 text-indigo-400 hover:text-white text-[10px] font-black uppercase rounded-lg transition-all flex items-center gap-1 border border-indigo-500/20"
             title="Add New Blank Slide"
           >
-            <Plus className="w-3.5 h-3.5" /> New
+            <Plus className="w-3.5 h-3.5" /> <span className="hidden sm:inline">New</span>
           </button>
           <button 
             onClick={handleDuplicateSlide}
-            className="p-1 px-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-black uppercase rounded-lg transition-all flex items-center gap-1 border border-white/5"
+            className="p-1 sm:px-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-black uppercase rounded-lg transition-all flex items-center gap-1 border border-white/5"
             title="Duplicate Current Elements to New Slide"
           >
-            <Copy className="w-3.5 h-3.5" /> Duplicate
+            <Copy className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Duplicate</span>
           </button>
           <button 
             disabled={slides.length <= 1}
@@ -1312,12 +1312,12 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
         </div>
 
         {/* View Zoom & Navigation Controls */}
-        <div className="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-2xl border border-white/5 shadow-md font-mono">
-          <span className="text-[10px] text-slate-500 uppercase tracking-widest mr-1">Viewport</span>
-          <button onClick={handleZoomOut} className="p-1 text-slate-400 hover:text-white transition-colors" title="Zoom Out"><ZoomOut className="w-4 h-4" /></button>
-          <span className="text-xs text-slate-300 font-bold w-12 text-center">{Math.round(stageScale * 100)}%</span>
-          <button onClick={handleZoomIn} className="p-1 text-slate-400 hover:text-white transition-colors" title="Zoom In"><ZoomIn className="w-4 h-4" /></button>
-          <button onClick={handleResetZoom} className="p-1 ml-1 text-indigo-400 hover:text-indigo-300 transition-colors" title="Fit to Canvas (100%)"><Maximize2 className="w-3.5 h-3.5" /></button>
+        <div className="flex items-center gap-1 sm:gap-2 bg-slate-950 px-2 sm:px-3 py-1 sm:py-1.5 rounded-2xl border border-white/5 shadow-md font-mono">
+          <span className="text-[10px] text-slate-500 uppercase tracking-widest mr-1 hidden sm:inline">Viewport</span>
+          <button onClick={handleZoomOut} className="p-1 text-slate-400 hover:text-white transition-colors" title="Zoom Out"><ZoomOut className="w-3.5 h-3.5 sm:w-4 sm:h-4" /></button>
+          <span className="text-[11px] sm:text-xs text-slate-300 font-bold w-10 sm:w-12 text-center">{Math.round(stageScale * 100)}%</span>
+          <button onClick={handleZoomIn} className="p-1 text-slate-400 hover:text-white transition-colors" title="Zoom In"><ZoomIn className="w-3.5 h-3.5 sm:w-4 sm:h-4" /></button>
+          <button onClick={handleResetZoom} className="p-1 text-indigo-400 hover:text-indigo-300 transition-colors" title="Fit to Canvas (100%)"><Maximize2 className="w-3.5 h-3.5" /></button>
         </div>
 
         {/* Board Background Config */}
@@ -1338,7 +1338,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
 
         {/* Selected Object Advanced Properties Config Panel */}
         {selectedObj ? (
-          <div className="flex items-center gap-3.5 bg-indigo-500/10 border border-indigo-500/30 px-4 py-1.5 rounded-2xl animate-fadeIn max-h-64 overflow-y-auto">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3.5 bg-indigo-500/10 border border-indigo-500/30 px-2.5 sm:px-4 py-1.5 rounded-2xl animate-fadeIn max-h-64 overflow-y-auto">
             <span className="text-[10px] text-indigo-300 uppercase tracking-widest font-black font-mono">Selected: {selectedObj.type}</span>
             
             {/* Color modifier */}
@@ -1459,7 +1459,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           </div>
         ) : (
           /* General Stroke Thickness Controls */
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-4">
             <div className="flex items-center gap-1.5 bg-slate-950 border border-white/5 p-1 rounded-full">
               {[ '#ffffff', '#ef4444', '#3b82f6', '#10b981', '#eab308' ].map(c => (
                 <button 

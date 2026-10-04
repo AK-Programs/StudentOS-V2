@@ -251,6 +251,27 @@ body {
    MOBILE & TABLET RESPONSIVENESS ENHANCEMENTS
    ========================================== */
 
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  /* Critical Flex/Grid & Form Input Shrink Fix:
+     Allows flex/grid children and browser inputs/selects to shrink below
+     intrinsic content width on ultra-narrow viewports (e.g. 283px),
+     while preserving explicit Tailwind min-w-* utilities in @layer utilities. */
+  div, section, article, main, header, footer, aside, nav,
+  form, fieldset, label, ul, ol, li, span, p,
+  h1, h2, h3, h4, h5, h6,
+  input, select, textarea {
+    min-width: 0;
+  }
+
+  p, h1, h2, h3, h4, h5, h6 {
+    overflow-wrap: break-word;
+  }
+}
+
 html, body, #root {
   max-width: 100%;
   overflow-x: hidden;
@@ -312,11 +333,78 @@ button, a, [role="button"], input, select, textarea {
   }
 }
 
-/* Word break safety to prevent horizontal blowout on 320px viewports */
+/* ==========================================
+   MICRO-MOBILE (240px – 359px, TARGET: 283px)
+   ========================================== */
+@media (max-width: 359px) {
+  /* Reclaim horizontal breathing room from large desktop/tablet paddings */
+  .p-6, .p-7, .p-8, .p-10, .p-12 {
+    padding: 0.75rem !important;
+  }
+  .px-6, .px-7, .px-8, .px-10, .px-12 {
+    padding-left: 0.75rem !important;
+    padding-right: 0.75rem !important;
+  }
+  .py-8, .py-10, .py-12 {
+    padding-top: 1rem !important;
+    padding-bottom: 1rem !important;
+  }
+  .p-5 {
+    padding: 0.625rem !important;
+  }
+  .px-5 {
+    padding-left: 0.625rem !important;
+    padding-right: 0.625rem !important;
+  }
+
+  /* Scale down large gaps so flex/grid items fit comfortably */
+  .gap-6, .gap-8 {
+    gap: 0.625rem !important;
+  }
+  .gap-4, .gap-5 {
+    gap: 0.5rem !important;
+  }
+
+  /* Prevent fixed-width utilities from exceeding ultra-narrow viewports */
+  .w-64:not(aside), .w-72:not(aside), .w-80:not(aside), .w-96:not(aside) {
+    max-width: 100% !important;
+  }
+
+  /* Scale down oversized display typography so headings don't clip */
+  .text-4xl, .text-5xl {
+    font-size: 1.5rem !important;
+    line-height: 2rem !important;
+  }
+  .text-3xl {
+    font-size: 1.25rem !important;
+    line-height: 1.75rem !important;
+  }
+  .text-2xl {
+    font-size: 1.125rem !important;
+    line-height: 1.5rem !important;
+  }
+
+  /* Ensure rounded-3xl cards don't clip corner content with compact padding */
+  .rounded-3xl {
+    border-radius: 1rem !important;
+  }
+}
+
+/* Reflow multi-column grids to single column on ultra-narrow viewports (<= 315px, including 283px) */
+@media (max-width: 315px) {
+  .grid-cols-2:not(.keep-cols-2):not(.calendar-grid-7),
+  .grid-cols-3:not(.keep-cols-3):not(.calendar-grid-7),
+  .grid-cols-4:not(.calendar-grid-7) {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+/* Word break safety to prevent horizontal blowout on 283px–320px viewports */
 .break-words-safe {
   overflow-wrap: break-word;
   word-break: break-word;
 }
+
 
 
 

@@ -464,7 +464,7 @@ export const TeacherFunZone: React.FC<TeacherFunZoneProps> = ({ currentUser }) =
             <h3 className="text-xl font-black text-white">Classroom Reward Spin Wheel</h3>
             <p className="text-xs text-slate-400">Spin for bonus house points, star badges, or classroom activities.</p>
 
-            <div className="relative w-64 h-64 mx-auto my-4">
+            <div className="relative w-48 h-48 sm:w-64 sm:h-64 max-w-full aspect-square mx-auto my-4">
               <div className="absolute -top-3 left-1/2 -translate-x-1/2 text-2xl z-20 text-red-500 drop-shadow-md">
                 ▼
               </div>
@@ -588,7 +588,7 @@ export const TeacherFunZone: React.FC<TeacherFunZoneProps> = ({ currentUser }) =
         {activeGame === 'emoji' && (
           <div className="space-y-6 text-center max-w-lg mx-auto py-6">
             <h3 className="text-xl font-black text-white">Guess the Academic Concept by Emoji</h3>
-            <div className="p-8 bg-slate-950 border border-white/10 rounded-3xl text-5xl tracking-widest my-4 shadow-2xl">
+            <div className="p-4 sm:p-8 bg-slate-950 border border-white/10 rounded-3xl text-3xl sm:text-5xl tracking-widest my-4 shadow-2xl break-words">
               {EMOJI_GUESS_QUESTIONS[emojiIdx].emoji}
             </div>
 
@@ -668,13 +668,13 @@ export const TeacherFunZone: React.FC<TeacherFunZoneProps> = ({ currentUser }) =
               {mathProblem.q} = ?
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex flex-col min-[320px]:flex-row gap-2">
               <input
                 type="number"
                 value={mathInput}
                 onChange={e => setMathInput(e.target.value)}
                 placeholder="Enter answer..."
-                className="flex-1 bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-sm text-center text-white font-mono font-bold"
+                className="flex-1 min-w-0 bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-sm text-center text-white font-mono font-bold"
               />
               <button
                 onClick={() => {
@@ -686,7 +686,7 @@ export const TeacherFunZone: React.FC<TeacherFunZoneProps> = ({ currentUser }) =
                     playSound('buzzer');
                   }
                 }}
-                className="px-5 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl"
+                className="px-5 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shrink-0"
               >
                 Check
               </button>
