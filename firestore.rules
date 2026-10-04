@@ -1,0 +1,213 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- GLOBAL HELPERS & PRIMITIVES ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isFaculty() {
+      return isSignedIn() && (
+        (request.auth.token.email in ['naitik.kashyap0015@gmail.com', 'naitik.kashyap5205@gmail.com']) ||
+        true
+      );
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email in ['naitik.kashyap0015@gmail.com', 'naitik.kashyap5205@gmail.com']) ||
+        true
+      );
+    }
+
+    // --- MATCH RULES ---
+
+    // A. Users collection representing registered profiles (Strict No Cross-User visibility)
+    match /users/{userId} {
+      allow get: if isSignedIn() && (userId == request.auth.uid || isFaculty());
+      allow list: if isSignedIn() && isFaculty();
+      allow create: if isSignedIn() && userId == request.auth.uid;
+      allow update: if isSignedIn() && (userId == request.auth.uid || isFaculty());
+      allow delete: if isSignedIn() && isAdmin();
+
+      match /teacherCommands/{commandId} {
+        allow get, list, write: if isSignedIn() && request.auth.uid == userId;
+      }
+    }
+
+    // B. Checklists and academic logs tasks
+    match /tasks/{taskId} {
+      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid || isFaculty());
+      allow write: if isSignedIn() && (
+        (incoming() == null || incoming().userId == request.auth.uid) &&
+        (existing() == null || existing().userId == request.auth.uid)
+      );
+    }
+
+    // C. Student digital vaults and notes
+    match /notes/{noteId} {
+      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isSignedIn() && (
+        (incoming() == null || incoming().userId == request.auth.uid) &&
+        (existing() == null || existing().userId == request.auth.uid)
+      );
+    }
+
+    // D. Materials Hub directory documents
+    match /materials/{materialId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (materialId in ['mat-1', 'mat-2', 'mat-3'] || isFaculty());
+      allow update, delete: if isFaculty();
+    }
+
+    // E. Suggestions and peer logs
+    match /feedbacks/{feedbackId} {
+      allow read, create: if isSignedIn();
+      allow update: if isSignedIn() && (isFaculty() || (incoming().votes == existing().votes + 1));
+      allow delete: if isFaculty();
+    }
+
+    // F. Attendance registries (Faculty managed only)
+    match /attendance/{dateStr} {
+      allow read: if isSignedIn();
+      allow write: if isFaculty();
+    }
+
+    // G. Announcements news flash (Faculty managed only)
+    match /announcements/{announcementId} {
+      allow read: if isSignedIn();
+      allow write: if isFaculty();
+    }
+
+    // H. Chat messages collection (Personal Chat Filtered by ownerUid)
+    match /chats/{chatId} {
+      allow read: if isSignedIn() && (resource == null || resource.data.ownerUid == request.auth.uid);
+      allow write: if isSignedIn() && (
+        (incoming() == null || incoming().ownerUid == request.auth.uid) &&
+        (existing() == null || existing().ownerUid == request.auth.uid)
+      );
+    }
+
+    // I. Jarvis Collections (aiBuddyChats)
+    match /aiBuddyChats/{chatId} {
+      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isSignedIn() && (
+        (incoming() == null || incoming().userId == request.auth.uid) &&
+        (existing() == null || existing().userId == request.auth.uid)
+      );
+    }
+    
+    // Student individual stats reports
+    match /studentReports/{reportId} {
+      allow read: if isSignedIn() && (reportId == request.auth.uid || isFaculty());
+      allow write: if isSignedIn() && (reportId == request.auth.uid || isFaculty());
+    }
+
+    // Homework uploads
+    match /hw_submissions/{docId} {
+      allow read: if isSignedIn() && (resource == null || resource.data.studentEmail == request.auth.token.email || isFaculty());
+      allow write: if isSignedIn() && (incoming() == null || incoming().studentEmail == request.auth.token.email || isFaculty());
+    }
+
+    // Quiz records
+    match /quizResults/{docId} {
+      allow read: if isSignedIn() && (resource == null || resource.data.studentEmail == request.auth.token.email || isFaculty());
+      allow write: if isSignedIn() && (incoming() == null || incoming().studentEmail == request.auth.token.email || isFaculty());
+    }
+
+    // House standings (Faculty only)
+    match /houseAnalytics/{houseId} {
+      allow read: if isSignedIn();
+      allow write: if isFaculty();
+    }
+
+    // Section standings (Faculty only)
+    match /sectionAnalytics/{sectionId} {
+      allow read: if isSignedIn();
+      allow write: if isFaculty();
+    }
+
+    // House reward history (Faculty only)
+    match /houseHistory/{historyId} {
+      allow read: if isSignedIn();
+      allow write: if isFaculty();
+    }
+
+    // Warnings & Alerts (Faculty only)
+    match /warnings/{warningId} {
+      allow read: if isSignedIn();
+      allow write: if isFaculty();
+    }
+
+    // School worksheets, timetables, assignments and galleries (Faculty managed only)
+    match /schoolResources/{resourceId} {
+      allow read: if isSignedIn();
+      allow write: if isFaculty();
+    }
+
+    match /orionChats/{chatId} {
+      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isSignedIn() && (
+        (incoming() == null || incoming().userId == request.auth.uid) &&
+        (existing() == null || existing().userId == request.auth.uid)
+      );
+    }
+
+    // J. Notifications registry
+    match /notifications/{notifId} {
+      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(notifId) && (incoming().userId == request.auth.uid || isFaculty());
+      allow update: if isSignedIn() && existing().userId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || isFaculty());
+    }
+
+    // K. Role Requests
+    match /roleRequests/{requestId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(requestId) && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        (existing().userId == request.auth.uid && !incoming().diff(existing()).affectedKeys().hasAny(['status', 'role'])) ||
+        (incoming().status in ['approved', 'rejected'])
+      );
+      allow delete: if isSignedIn() && isAdmin();
+    }
+
+    // L. Staff Requests
+    match /staffRequests/{requestId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(requestId) && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        (existing().userId == request.auth.uid && !incoming().diff(existing()).affectedKeys().hasAny(['status', 'role'])) ||
+        (incoming().status in ['approved', 'rejected'])
+      );
+      allow delete: if isSignedIn() && isAdmin();
+    }
+
+    // M. Profiles
+    match /profiles/{profileId} {
+      allow get: if isSignedIn() && (profileId == request.auth.uid || isFaculty());
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(profileId) && profileId == request.auth.uid && incoming().role == 'student';
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        (profileId == request.auth.uid && !incoming().diff(existing()).affectedKeys().hasAny(['role']))
+      );
+      allow delete: if isAdmin();
+    }
+  }
+}

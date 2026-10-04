@@ -1,0 +1,322 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Plus Jakarta Sans', sans-serif;
+  --font-display: 'Space Grotesk', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  
+  --color-ruby: #ef4444;
+  --color-emerald-house: #10b981;
+  --color-sapphire: #3b82f6;
+  --color-topaz: #f59e0b;
+}
+
+/* Base custom interactive styles */
+body {
+  font-family: var(--font-sans);
+  background-color: #030712;
+  color: #f3f4f6;
+  overflow-x: hidden;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* Glassmorphic Cards */
+.smart-glass {
+  background: rgba(17, 24, 39, 0.65);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+}
+
+.smart-glass-light {
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.1);
+}
+
+/* Glowing Neon Elements */
+.glow-ruby {
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.25);
+}
+.glow-emerald {
+  box-shadow: 0 0 15px rgba(16, 185, 121, 0.25);
+}
+.glow-sapphire {
+  box-shadow: 0 0 15px rgba(59, 130, 246, 0.25);
+}
+.glow-topaz {
+  box-shadow: 0 0 15px rgba(245, 158, 11, 0.25);
+}
+.glow-indigo {
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.25);
+}
+
+/* Custom drawing canvas background */
+.blackboard {
+  background-color: #151e2d;
+  background-image: radial-gradient(#1e293b 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(99, 102, 241, 0.3);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.5);
+}
+
+/* ==========================================
+   STUDENTOS THEMES ENGINE (5 Complete Themes)
+   ========================================== */
+
+/* 1. Midnight Theme (AMOLED Black + Neon Violet) */
+.theme-midnight, .theme-midnight body {
+  background-color: #000000 !important;
+  color: #fafafa !important;
+}
+.theme-midnight .smart-glass {
+  background: rgba(10, 10, 14, 0.85) !important;
+  border-color: rgba(168, 85, 247, 0.2) !important;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8) !important;
+}
+.theme-midnight .bg-slate-950,
+.theme-midnight .bg-slate-900,
+.theme-midnight .bg-slate-900\/60,
+.theme-midnight .bg-slate-900\/50 {
+  background-color: #09090b !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+.theme-midnight .bg-slate-800 {
+  background-color: #18181b !important;
+}
+.theme-midnight .border-white\/5,
+.theme-midnight .border-white\/10 {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* 2. Ocean Theme (Abyssal Navy + Marine Cyan) */
+.theme-ocean, .theme-ocean body {
+  background-color: #02101e !important;
+  color: #f0f9ff !important;
+}
+.theme-ocean .smart-glass {
+  background: rgba(4, 25, 48, 0.8) !important;
+  border-color: rgba(6, 182, 212, 0.25) !important;
+  box-shadow: 0 8px 32px 0 rgba(2, 16, 30, 0.7) !important;
+}
+.theme-ocean .bg-slate-950,
+.theme-ocean .bg-slate-900,
+.theme-ocean .bg-slate-900\/60,
+.theme-ocean .bg-slate-900\/50 {
+  background-color: #052240 !important;
+  border-color: rgba(6, 182, 212, 0.15) !important;
+}
+.theme-ocean .bg-slate-800 {
+  background-color: #0b3764 !important;
+}
+.theme-ocean .border-white\/5,
+.theme-ocean .border-white\/10 {
+  border-color: rgba(56, 189, 248, 0.15) !important;
+}
+
+/* 3. Aurora Theme (Boreal Pine + Vivid Emerald) */
+.theme-aurora, .theme-aurora body {
+  background-color: #021610 !important;
+  color: #f0fdf4 !important;
+}
+.theme-aurora .smart-glass {
+  background: rgba(3, 34, 24, 0.8) !important;
+  border-color: rgba(16, 185, 129, 0.25) !important;
+  box-shadow: 0 8px 32px 0 rgba(2, 22, 16, 0.7) !important;
+}
+.theme-aurora .bg-slate-950,
+.theme-aurora .bg-slate-900,
+.theme-aurora .bg-slate-900\/60,
+.theme-aurora .bg-slate-900\/50 {
+  background-color: #052e20 !important;
+  border-color: rgba(16, 185, 129, 0.15) !important;
+}
+.theme-aurora .bg-slate-800 {
+  background-color: #0b4733 !important;
+}
+.theme-aurora .border-white\/5,
+.theme-aurora .border-white\/10 {
+  border-color: rgba(52, 211, 153, 0.15) !important;
+}
+
+/* 4. Paper / Light Theme (Editorial Alabaster) */
+.light-theme, .light-theme body,
+.theme-paper, .theme-paper body {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+.light-theme .bg-slate-950,
+.light-theme .bg-slate-900,
+.light-theme .bg-slate-900\/60,
+.light-theme .bg-slate-900\/50,
+.light-theme .bg-black\/40,
+.theme-paper .bg-slate-950,
+.theme-paper .bg-slate-900,
+.theme-paper .bg-slate-900\/60,
+.theme-paper .bg-slate-900\/50,
+.theme-paper .bg-black\/40 {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: rgba(15, 23, 42, 0.08) !important;
+}
+
+.light-theme .text-slate-400,
+.light-theme .text-slate-300,
+.light-theme .text-slate-200,
+.theme-paper .text-slate-400,
+.theme-paper .text-slate-300,
+.theme-paper .text-slate-200 {
+  color: #475569 !important;
+}
+
+.light-theme .text-white,
+.theme-paper .text-white {
+  color: #0f172a !important;
+}
+
+.light-theme .smart-glass,
+.theme-paper .smart-glass {
+  background: rgba(255, 255, 255, 0.9) !important;
+  backdrop-filter: blur(20px) !important;
+  border: 1px solid rgba(15, 23, 42, 0.08) !important;
+  box-shadow: 0 4px 20px 0 rgba(0, 0, 0, 0.05) !important;
+}
+
+.light-theme input,
+.light-theme select,
+.light-theme textarea,
+.theme-paper input,
+.theme-paper select,
+.theme-paper textarea {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+  border-color: rgba(15, 23, 42, 0.15) !important;
+}
+
+.light-theme input::placeholder,
+.light-theme textarea::placeholder,
+.theme-paper input::placeholder,
+.theme-paper textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+.light-theme .bg-slate-800,
+.theme-paper .bg-slate-800 {
+  background-color: #e2e8f0 !important;
+  color: #334155 !important;
+}
+
+.light-theme .border-white\/10,
+.light-theme .border-white\/5,
+.light-theme .border-white\/20,
+.light-theme .border-white\/30,
+.light-theme .border-white\/40,
+.light-theme .border-white\/50,
+.theme-paper .border-white\/10,
+.theme-paper .border-white\/5,
+.theme-paper .border-white\/20,
+.theme-paper .border-white\/30,
+.theme-paper .border-white\/40,
+.theme-paper .border-white\/50 {
+  border-color: rgba(15, 23, 42, 0.08) !important;
+}
+
+/* ==========================================
+   MOBILE & TABLET RESPONSIVENESS ENHANCEMENTS
+   ========================================== */
+
+html, body, #root {
+  max-width: 100%;
+  overflow-x: hidden;
+  min-height: 100%;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Touch action optimization to prevent double-tap zoom delay */
+button, a, [role="button"], input, select, textarea {
+  touch-action: manipulation;
+}
+
+/* Safe area padding for notches, status bars and gesture indicators */
+@supports (padding-top: env(safe-area-inset-top)) {
+  .safe-area-pt {
+    padding-top: max(env(safe-area-inset-top), 0.75rem);
+  }
+  .safe-area-pb {
+    padding-bottom: max(env(safe-area-inset-bottom), 1rem);
+  }
+  .safe-area-pl {
+    padding-left: max(env(safe-area-inset-left), 0.5rem);
+  }
+  .safe-area-pr {
+    padding-right: max(env(safe-area-inset-right), 0.5rem);
+  }
+}
+
+/* Standalone PWA display mode viewport tweaks */
+@media (display-mode: standalone) {
+  body {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  input, textarea, [contenteditable="true"] {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+}
+
+/* Fluid responsive typography and touch optimizations */
+@media (max-width: 640px) {
+  .smart-glass {
+    border-radius: 1.25rem;
+  }
+  
+  /* Prevent table content overflow clipping */
+  .table-responsive {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Compact padding on small screens (320px - 430px) */
+  .modal-viewport-safe {
+    max-width: calc(100vw - 1rem) !important;
+    max-height: calc(100dvh - 2rem) !important;
+  }
+}
+
+/* Word break safety to prevent horizontal blowout on 320px viewports */
+.break-words-safe {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+
+

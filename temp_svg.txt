@@ -1,0 +1,4 @@
+app.post('/api/ai/svg-diagram', async (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  const { query, subject = 'general' } = req.body || {};
+  if (!query) return res.status(400).json({ success: false, error: 'Query is required' });

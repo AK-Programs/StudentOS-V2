@@ -1,0 +1,648 @@
+# StudentOS — Production Stability Pass (Highest Priority)
+
+**This is NOT a feature request.**
+
+Treat this as a **production stabilization sprint**.
+
+Do **NOT** partially fix anything.
+
+Do **NOT** skip any item.
+
+Do **NOT** say something is fixed unless you have verified it.
+
+Complete every module fully before moving to another.
+
+---
+
+# RULES
+
+1. Build production-quality code.
+2. Remove temporary fixes.
+3. Remove duplicate logic.
+4. Remove unnecessary localStorage fallbacks.
+5. Verify every Supabase query.
+6. Verify every API endpoint.
+7. Verify every realtime subscription.
+8. Never break existing working modules.
+9. Test every fix before continuing.
+10. Commit only after all fixes are complete.
+
+---
+
+# PRIORITY 1 — WHITEBOARD AI
+
+This is the biggest remaining module.
+
+## Mermaid AI
+
+Current issue:
+
+AI always generates generic flowcharts like
+
+Topic
+↓
+Core Theory
+↓
+Applications
+
+This is unacceptable.
+
+Instead:
+
+The AI must understand the user's request and generate proper educational Mermaid diagrams.
+
+Examples:
+
+Physics
+
+* Force diagrams
+* Circuit diagrams
+* Energy flow
+* Motion diagrams
+
+Biology
+
+* Cell structure
+* Food chain
+* Human organs
+* Plant systems
+
+Chemistry
+
+* Reaction flow
+* Bond structures
+* Laboratory process
+
+Computer Science
+
+* Flowcharts
+* Algorithms
+* Architecture
+
+Mathematics
+
+* Decision trees
+* Logic flow
+* Number systems
+
+History
+
+* Timelines
+
+Economics
+
+* Market flow
+
+Generate diagrams that actually teach.
+
+---
+
+## SVG AI
+
+Current status:
+
+Fails.
+
+Fix completely.
+
+Generate real SVG educational diagrams.
+
+Examples:
+
+Solar System
+
+Human Heart
+
+Neuron
+
+Atom
+
+DNA
+
+Plant Cell
+
+Animal Cell
+
+Eye
+
+Ear
+
+Circuit
+
+Battery
+
+Volcano
+
+Water Cycle
+
+Electric Motor
+
+Generator
+
+Bridge
+
+Machine
+
+etc.
+
+Do NOT return broken SVG.
+
+Return clean scalable SVG.
+
+---
+
+## AI Routing
+
+Automatically decide
+
+Mermaid
+
+or
+
+SVG
+
+depending on request.
+
+Examples:
+
+"Draw flowchart"
+
+→ Mermaid
+
+"Draw heart"
+
+→ SVG
+
+"Draw solar system"
+
+→ SVG
+
+"Draw algorithm"
+
+→ Mermaid
+
+---
+
+## Whiteboard Objects
+
+Every generated object must support
+
+Move
+
+Rotate
+
+Scale
+
+Resize
+
+Delete
+
+Duplicate
+
+Lock
+
+Unlock
+
+Snap
+
+Layer
+
+Undo
+
+Redo
+
+---
+
+# PRIORITY 2 — CHAT SYSTEM
+
+This module is NOT finished.
+
+Treat it as broken.
+
+---
+
+## AI Buddy
+
+Chats must
+
+Create
+
+Save
+
+Load
+
+Refresh
+
+Sync
+
+Cross-device
+
+Never duplicate
+
+Never disappear
+
+---
+
+Correct Supabase table only
+
+ai_buddy_chats
+
+Never notes.
+
+Never localStorage.
+
+---
+
+## Chat Rooms
+
+Fix
+
+Room creation
+
+Join by code
+
+Room persistence
+
+Refresh
+
+Cross-device
+
+Room owner
+
+Room members
+
+Room editing
+
+Room deletion
+
+Owner controls
+
+Rename group
+
+Change icon
+
+Description
+
+Invite
+
+Remove member
+
+Leave group
+
+Delete group
+
+Exactly like WhatsApp.
+
+---
+
+## Messages
+
+Fix
+
+Realtime
+
+Persistence
+
+Refresh
+
+Cross-device
+
+History
+
+Pagination
+
+Attachments
+
+Images
+
+Reply
+
+Delete
+
+Edit
+
+Timestamp
+
+Read
+
+Delivered
+
+Typing
+
+Online status
+
+Never duplicate.
+
+Never disappear.
+
+---
+
+Correct table
+
+chat_messages
+
+ONLY.
+
+---
+
+# DATABASE AUDIT
+
+Verify every query.
+
+AI Buddy
+
+ai_buddy_chats
+
+Orion
+
+orion_chats
+
+Messages
+
+chat_messages
+
+Rooms
+
+chat_rooms
+
+Notes
+
+notes
+
+Blogs
+
+blogs
+
+Performance
+
+student_reports
+
+Never mix tables.
+
+Never save into notes.
+
+---
+
+# REMOVE LOCAL STORAGE
+
+Only use localStorage when Supabase is completely unavailable.
+
+If Supabase succeeds
+
+Never read localStorage.
+
+Never write localStorage.
+
+---
+
+# WORKSPACE LOCK
+
+Current behavior is wrong.
+
+If Device A locks workspace
+
+Device B
+
+cannot login.
+
+PIN must remain.
+
+No reset.
+
+Cross-device.
+
+Realtime.
+
+Unlock sync.
+
+---
+
+# PERFORMANCE ANALYTICS
+
+Realtime only.
+
+Teacher enters marks
+
+↓
+
+Immediately
+
+Student report
+
+Teacher report
+
+Performance graph
+
+AI prediction
+
+Next exam prediction
+
+Strength
+
+Weakness
+
+Subject analytics
+
+All update.
+
+---
+
+# SUBSTITUTE BOARD
+
+Current implementation is incomplete.
+
+Add
+
+Teacher availability
+
+Custom timings
+
+Lecture swapping
+
+Class-specific assignment
+
+Section-specific assignment
+
+Only teachers of same school
+
+Correct dropdown
+
+Daily timetable
+
+Conflict detection
+
+---
+
+# BLOGS
+
+Fix completely.
+
+Create
+
+Upload
+
+Images
+
+Edit
+
+Delete
+
+Load
+
+Realtime
+
+Rich text
+
+Persistence
+
+---
+
+# NOTIFICATIONS
+
+Add proper realtime notifications.
+
+StudentOS updates
+
+Homework
+
+Marks
+
+Substitute lecture
+
+Announcements
+
+Material uploads
+
+Blog
+
+Feedback
+
+System alerts
+
+---
+
+# FEEDBACK BOARD
+
+Users currently can upvote multiple times.
+
+Fix.
+
+One account
+
+One vote.
+
+---
+
+# FORM VALIDATION
+
+Signup
+
+Name
+
+Letters only.
+
+No numbers.
+
+No symbols.
+
+Validate
+
+Phone
+
+Email
+
+Password
+
+Birthdate
+
+Required fields
+
+Entire application.
+
+---
+
+# UI POLISH
+
+Polish remaining pages
+
+Chats
+
+Teacher
+
+Coordinator
+
+Focus Timer
+
+Whiteboard
+
+Profiles
+
+Analytics
+
+Substitute Board
+
+Blogs
+
+Use one consistent premium design system.
+
+---
+
+# GENERAL CLEANUP
+
+Remove duplicate code.
+
+Remove console spam.
+
+Remove unnecessary rerenders.
+
+Remove dead code.
+
+Optimize queries.
+
+Optimize React rendering.
+
+Optimize realtime.
+
+Optimize memory.
+
+---
+
+# TESTING
+
+Do NOT assume.
+
+Verify.
+
+Test
+
+Desktop
+
+Mobile
+
+Refresh
+
+Logout
+
+Login
+
+Cross-device
+
+Realtime
+
+Supabase
+
+Offline
+
+Online
+
+Only mark a task complete after confirming it works.
+
+---
+
+# FINAL GOAL
+
+StudentOS should behave like a polished commercial ERP platform.
+
+Focus entirely on stability, correctness, realtime synchronization, database integrity, premium UX, and production readiness.
+
+Do not add unrelated new features until every item above is complete and verified.

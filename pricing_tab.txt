@@ -1,0 +1,133 @@
+              {/* Tab: System Premium Tiers View */}
+              {activeTab === 'pricingPage' && (
+                <div className="space-y-6 animate-fadeIn">
+                  <div className="text-center max-w-xl mx-auto space-y-2">
+                    <span className="text-[11px] font-black uppercase text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-3 py-1 rounded-full">System Premium Tier</span>
+                    <h3 className="text-3xl font-black font-display text-white tracking-tight">Active Node Upgrades</h3>
+                    <p className="text-sm text-slate-400">Unlock contextual multi-modal intelligence, vectorized custom uploads, and high priority study pipelines instantly.</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 pt-4">
+                    {/* Tier 1 */}
+                    <div className="smart-glass p-6 rounded-2xl flex flex-col justify-between shadow-sm relative border border-white/5 hover:border-white/20 transition-all">
+                      <div className="space-y-4">
+                        <div className="text-xs font-bold uppercase tracking-widest text-slate-400">Standard Tier</div>
+                        <h4 className="text-xl font-bold text-white">Free Plan</h4>
+                        <div className="text-3xl font-black text-white">₹0 <span className="text-xs text-slate-400 font-normal">/ month</span></div>
+                        <ul className="space-y-2.5 text-xs text-slate-400 border-t border-white/5 pt-4">
+                          <li className="flex items-center gap-2">🟢 20 AI Messages / Day</li>
+                          <li className="flex items-center gap-2">🟢 5 PDF Vectors / Day</li>
+                          <li className="flex items-center gap-2">🟢 5 Image Scans / Day</li>
+                          <li className="flex items-center gap-2 text-slate-600 line-through">❌ Enterprise Cloud Sync</li>
+                        </ul>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          if (currentUser) {
+                            setCurrentUser({ ...currentUser, specialtySubject: 'Free tier user' });
+                          }
+                          showNotification('Current selected node tier: Standard Free');
+                        }}
+                        className="w-full mt-6 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-3 px-4 rounded-xl text-xs tracking-wide uppercase transition-all"
+                      >
+                        Plan Engaged
+                      </button>
+                    </div>
+
+                    {/* Tier 2 */}
+                    <div className="smart-glass p-6 rounded-2xl flex flex-col justify-between shadow-sm relative border border-white/5 hover:border-indigo-500/30 transition-all">
+                      <div className="space-y-4">
+                        <div className="text-xs font-bold uppercase tracking-widest text-indigo-400">Academic Tier</div>
+                        <h4 className="text-xl font-bold text-white">Student Core</h4>
+                        <div className="text-3xl font-black text-white">₹99 <span className="text-xs text-slate-400 font-normal">/ month</span></div>
+                        <ul className="space-y-2.5 text-xs text-slate-400 border-t border-white/5 pt-4">
+                          <li className="flex items-center gap-2">🟢 Complete Chat Access</li>
+                          <li className="flex items-center gap-2">🟢 Vectorized Uploads</li>
+                          <li className="flex items-center gap-2">🟢 Priority Learning Streams</li>
+                          <li className="flex items-center gap-2">🟢 HW Context Solver</li>
+                        </ul>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          if (currentUser) {
+                            const updated = { ...currentUser, specialtySubject: 'Core Pro Student' };
+                            setCurrentUser(updated);
+                            localStorage.setItem('s_os_user', JSON.stringify(updated));
+                          }
+                          showNotification('Core Academic tier upgraded! Enjoy higher limits!');
+                        }}
+                        className="w-full mt-6 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded-xl text-xs tracking-wide uppercase transition-all shadow-md shadow-indigo-500/10"
+                      >
+                        Upgrade Node (₹99)
+                      </button>
+                    </div>
+
+                    {/* Tier 3: Most popular */}
+                    <div className="smart-glass p-6 rounded-2xl flex flex-col justify-between shadow-xl relative border-2 border-indigo-500 bg-gradient-to-b from-slate-900/40 to-indigo-950/20 transform md:scale-[1.03] z-10 transition-all">
+                      <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-bold text-[9px] tracking-widest px-3 py-1 rounded-full shadow-md uppercase">Most Popular</div>
+                      <div className="space-y-4">
+                        <div className="text-xs font-bold uppercase tracking-widest text-purple-400">Accelerated Tier</div>
+                        <h4 className="text-xl font-bold text-white">Pro Node</h4>
+                        <div className="text-3xl font-black text-white">₹149 <span className="text-xs text-slate-400 font-normal">/ month</span></div>
+                        <ul className="space-y-2.5 text-xs text-slate-300 border-t border-white/10 pt-4">
+                          <li className="flex items-center gap-2">⚡ Everything in Academic</li>
+                          <li className="flex items-center gap-2">⚡ Generative Exam Center</li>
+                          <li className="flex items-center gap-2">⚡ Multi-Modal Flashcards</li>
+                          <li className="flex items-center gap-2">⚡ High-Speed Priority Threads</li>
+                        </ul>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          if (currentUser) {
+                            const updated = { ...currentUser, specialtySubject: 'Accelerated Pro StudentOS' };
+                            setCurrentUser(updated);
+                            localStorage.setItem('s_os_user', JSON.stringify(updated));
+                          }
+                          showNotification('Accelerated PRO Node is activated! Unlocked synthetic exams!');
+                        }}
+                        className="w-full mt-6 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold py-3 px-4 rounded-xl text-xs tracking-wide uppercase transition-all shadow-lg shadow-indigo-500/20"
+                      >
+                        Engage Pro (₹149)
+                      </button>
+                    </div>
+
+                    {/* Tier 4 */}
+                    <div className="smart-glass p-6 rounded-2xl flex flex-col justify-between shadow-sm relative border border-white/5 hover:border-amber-500/30 transition-all">
+                      <div className="space-y-4">
+                        <div className="text-xs font-bold uppercase tracking-widest text-amber-500">Ultimate Tier</div>
+                        <h4 className="text-xl font-bold text-white">Enterprise King</h4>
+                        <div className="text-3xl font-black text-white">₹169 <span className="text-xs text-slate-400 font-normal">/ month</span></div>
+                        <ul className="space-y-2.5 text-xs text-slate-400 border-t border-white/5 pt-4">
+                          <li className="flex items-center gap-2">👑 Unlimited Data Exports</li>
+                          <li className="flex items-center gap-2">👑 Multi-modal Token Pools</li>
+                          <li className="flex items-center gap-2">👑 Tailored Workspace UI Styles</li>
+                          <li className="flex items-center gap-2">👑 24/7 Dedicated Support</li>
+                        </ul>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          if (currentUser) {
+                            const updated = { ...currentUser, specialtySubject: 'Ultimate King StudentOS' };
+                            setCurrentUser(updated);
+                            localStorage.setItem('s_os_user', JSON.stringify(updated));
+                          }
+                          showNotification('Ultimate Enterprise King active. Everything has been maximized!');
+                        }}
+                        className="w-full mt-6 bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold py-3 px-4 rounded-xl text-xs tracking-wide uppercase transition-all border border-amber-500/10 hover:border-amber-500/30"
+                      >
+                        Engage King (₹169)
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Tab 3: Whiteboard / Smart Board Classroom - Full Screen Immersive */}
+              {activeTab === 'whiteboard' && (
+                <Whiteboard2 onClose={() => setActiveTab('dashboard')} currentUser={currentUser} />
+              )}
+              {/* Tab: Assignment Center */}

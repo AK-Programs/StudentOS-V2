@@ -1,0 +1,10 @@
+{
+  "name": "Remix StudentOS",
+  "description": "The ultimate collaborative student dashboard and classroom learning suite with interactive smartboards, real-time feedback portals, peer chats, and AI Teacher systems.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

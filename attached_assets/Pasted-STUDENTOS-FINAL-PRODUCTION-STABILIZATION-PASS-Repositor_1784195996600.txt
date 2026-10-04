@@ -1,0 +1,416 @@
+STUDENTOS FINAL PRODUCTION STABILIZATION PASS
+
+Repository:
+https://github.com/AK-Programs/StudentOS
+
+Branch:
+codex/add-new-feature-request
+
+IMPORTANT:
+
+Do NOT only generate code.
+
+Actually:
+
+1. Apply fixes
+2. Verify fixes
+3. Test fixes
+4. Commit fixes
+5. Push fixes
+
+to:
+
+codex/add-new-feature-request
+
+==================================================
+CORE RULE
+
+Everything must load from Supabase.
+
+Do NOT use localStorage for:
+
+- Chats
+- Orion
+- AI Buddy
+- Notifications
+- Workspace Locks
+- Room Codes
+- User State
+
+Only UI preferences may remain local.
+
+==================================================
+ORION
+
+Fix:
+
+- Search API Unreachable
+- Tavily integration
+- Notes generation
+- Notes saving
+- Orion chat persistence
+- Cross-device synchronization
+
+Use ONLY:
+
+TAVILY_API_KEY
+
+Remove:
+
+VITE_TAVILY_API_KEY
+
+Requirements:
+
+- Real-time search results
+- Source links
+- Search snippets
+- Proper notes generation
+- Automatic lecture notes saving
+
+Verify:
+
+Refresh
+Logout/Login
+Different device
+
+==================================================
+AI BUDDY
+
+Current bugs:
+
+- Multiple duplicate chats
+- Same intro messages
+- Missing conversations
+
+Requirements:
+
+- One conversation history
+- Proper sync
+- Cross-device persistence
+- Supabase only
+
+==================================================
+GLOBAL CHATS & GROUP CHATS
+
+Current bugs:
+
+- Room codes invalid
+- Group join fails
+- Chats not syncing
+
+Requirements:
+
+- Create room
+- Edit room name
+- Delete room
+- Join by code
+- Leave room
+- Admin controls
+
+Test:
+
+Device A create room
+Device B join room
+Device C join room
+
+Must work.
+
+Add:
+
+WhatsApp-like group management.
+
+==================================================
+WEBSOCKET / REALTIME
+
+Current bug:
+
+WebSocket handshake fails
+
+Unexpected response code: 200
+
+Replace unsupported websocket implementation.
+
+Use:
+
+Supabase Realtime
+
+For:
+
+- Chats
+- Notifications
+- Presence
+- Orion sync
+- AI Buddy sync
+
+==================================================
+WORKSPACE LOCK
+
+Current bug:
+
+Device A locks workspace
+
+Device B can still login
+
+Fix:
+
+Workspace lock must be account-wide.
+
+When locked:
+
+No device may enter.
+
+Only unlock PIN removes lock.
+
+Must persist through Supabase.
+
+==================================================
+NOTIFICATIONS
+
+Add real notification system.
+
+Requirements:
+
+If Super Admin:
+
+- publishes update
+- posts announcement
+- creates important notice
+
+All users receive notification.
+
+Even if StudentOS is not currently open.
+
+Support:
+
+- In-app notifications
+- Realtime notifications
+- Notification center
+
+==================================================
+BLOGS
+
+Requirements:
+
+- Create
+- Edit
+- Delete
+- Publish
+- Load
+
+Must persist correctly.
+
+Verify:
+
+Refresh
+Logout/Login
+Different device
+
+==================================================
+FEEDBACK BOARD
+
+Current bug:
+
+Users can upvote same post multiple times.
+
+Fix:
+
+One user = one vote.
+
+Store vote history in database.
+
+==================================================
+SIGNUP VALIDATION
+
+Current bug:
+
+Full name accepts numbers.
+
+Requirements:
+
+Allow:
+
+A-Z
+a-z
+spaces
+
+Disallow:
+
+Numbers
+Symbols
+
+Audit all forms for validation.
+
+==================================================
+UI POLISH
+
+Improve:
+
+- Focus Timer
+- Chats
+- Profiles
+- Feedback Board
+- Notifications
+- Homework
+- Material Hub
+- Orion
+
+Add:
+
+- Better transitions
+- Better animations
+- Better hover effects
+- Better loading states
+- Better empty states
+
+==================================================
+THEME TOGGLE
+
+Current bug:
+
+Theme toggle floats on screen.
+
+Fix:
+
+Only visible inside sidebar/settings.
+
+Not permanently floating.
+
+==================================================
+SUBSTITUTE BOARD
+
+Current system insufficient.
+
+Add:
+
+1. Custom class assignment
+2. Custom section assignment
+3. Only teachers from same school
+4. Teacher lecture timings
+5. Teacher lecture swap requests
+6. Emergency substitute requests
+
+Examples:
+
+Teacher A:
+Wants Teacher B to take Period 3
+
+Teacher B:
+Approves
+
+Coordinator:
+Verifies
+
+Schedule updates.
+
+==================================================
+SPORTS / PE / KARATE TEACHERS
+
+Do not force academic modules.
+
+Create dedicated area:
+
+Sports & Activities
+
+Include:
+
+- Attendance
+- Practice logs
+- Event planning
+- Tournament management
+- Performance tracking
+
+Hide:
+
+- Lecture Notes
+- Whiteboard
+- Homework
+
+if not required.
+
+==================================================
+PERFORMANCE ANALYTICS
+
+Requirements:
+
+Real-time graphs.
+
+When teacher enters marks:
+
+Immediately update:
+
+- Student analytics
+- Student report
+- Performance graphs
+- AI predictions
+
+Show:
+
+- Trend graphs
+- Subject strengths
+- Weak areas
+- Next exam prediction
+
+==================================================
+DIRECTORY SYSTEM
+
+Current bug:
+
+Lists empty.
+
+Fix:
+
+Teacher profile:
+Show assigned students.
+
+Coordinator profile:
+Show teachers and students.
+
+Admin profile:
+Show all school users.
+
+Super Admin:
+Show everything.
+
+==================================================
+WHITEBOARD
+
+Continue improvements:
+
+- AI integration
+- Shape editing
+- Shape scaling
+- Shape rotation
+- Shape moving
+- Better eraser
+- Export settings
+- Geometry instruments
+- Tablet support
+- Smart board support
+
+Verify all menus visible.
+
+==================================================
+FINAL VERIFICATION
+
+Provide PASS / FAIL report.
+
+Test:
+
+- Refresh
+- Logout/Login
+- Multiple Tabs
+- Different Devices
+- Production Build
+- Supabase Persistence
+
+After verification:
+
+COMMIT
+
+and
+
+PUSH
+
+all changes to:
+
+codex/add-new-feature-request

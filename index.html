@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
+    <title>Remix StudentOS</title>
+    <meta name="description" content="The ultimate collaborative student dashboard and classroom learning suite with interactive smartboards, real-time feedback portals, peer chats, and AI Teacher systems." />
+    <meta property="og:title" content="Remix StudentOS" />
+    <meta property="og:description" content="The ultimate collaborative student dashboard and classroom learning suite with interactive smartboards, real-time feedback portals, peer chats, and AI Teacher systems." />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#0f172a" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <!-- Live High-Performance PDF.js Parsing Core -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script>
+      if (window.pdfjsLib) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+      }
+    </script>
+
+    <!-- OneSignal Web Push SDK -->
+    <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+    <script>
+      window.OneSignalDeferred = window.OneSignalDeferred || [];
+      OneSignalDeferred.push(async function(OneSignal) {
+        await OneSignal.init({
+          appId: "684d1e00-91ad-4b21-bc86-ef9dfb7e9cb7",
+          safari_web_id: "web.onesignal.auto.337e82fd-eeda-48f8-8fe5-d2f6dec774c2",
+          notifyButton: {
+            enable: true,
+          },
+        });
+      });
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

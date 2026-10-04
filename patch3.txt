@@ -1,0 +1,26 @@
+  const handleJoinRoom = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!joinRoomCode.trim()) return;
+    const code = joinRoomCode.trim().toUpperCase();
+    
+    // Fetch all rooms from Supabase since user might not have it in local state
+    try {
+      const allRooms = await getChatRooms();
+      const room = allRooms.find(r => (r as any).code === code);
+      if (room) {
+        if (!chatRooms.some(r => r.id === room.id)) {
+          setChatRooms(prev => [...prev, room]);
+          saveChatRoom(room).catch(console.error); // Save to local storage for the user
+        }
+        setActiveChatTargetId(room.id);
+        setIsCreatingRoom(false);
+        setJoinRoomCode('');
+        showNotification(`Joined room: ${room.name}`);
+      } else {
+        showNotification('Invalid room code. Please check and try again.');
+      }
+    } catch (err) {
+      console.error(err);
+      showNotification('Failed to join room.');
+    }
+  };

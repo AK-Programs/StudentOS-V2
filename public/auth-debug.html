@@ -1,0 +1,140 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Auth Debug - StudentOS</title>
+    <style>body{font-family: system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial; padding:24px; background:#0f172a; color:#e6eef8;} .box{background:#071129;padding:16px;border-radius:12px;}</style>
+  </head>
+  <body>
+    <h1>StudentOS — Auth Debug</h1>
+    <p class="box">This page helps determine whether the Supabase auth redirect created a session and whether the SIGNED_IN state can be observed.</p>
+
+    <h2>Instructions</h2>
+    <ol>
+      <li>After completing Google sign-in and being redirected back, open this page (bookmark: <code>/auth-debug.html</code> on your site) in the SAME tab.</li>
+      <li>The page will read the URL hash tokens, call Supabase /auth/v1/user using the access_token, and poll localStorage for the Supabase session token.</li>
+      <li>Watch the console for logs: EVENT SIGNED_IN (via localStorage detection), SESSION (parsed hash), USER (fetched from Supabase).</li>
+    </ol>
+
+    <h2>Output</h2>
+    <pre id="out" class="box"></pre>
+
+    <script>
+      (function(){
+        const out = document.getElementById('out');
+        function log(...args){
+          console.log(...args);
+          out.textContent += args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' ') + '\n';
+        }
+
+        const SUPABASE_URL = 'https://zwpoutanhsujezglbson.supabase.co'; // repo value — update if different
+
+        // 1) Parse URL hash tokens (if present)
+        const rawHash = window.location.hash || '';
+        const hash = rawHash.startsWith('#') ? rawHash.slice(1) : rawHash;
+        const params = Object.fromEntries(new URLSearchParams(hash));
+
+        log('--- PARSED URL HASH TOKENS (if any) ---');
+        if (Object.keys(params).length === 0) {
+          log('No hash tokens found in URL.');
+        } else {
+          const sessionObj = {
+            access_token: params.access_token || null,
+            refresh_token: params.refresh_token || null,
+            expires_at: params.expires_at || null,
+            provider_token: params.provider_token || null,
+            token_type: params.token_type || null
+          };
+          log('SESSION (from hash):', sessionObj);
+        }
+
+        // 2) If access_token present, call Supabase /auth/v1/user to verify it returns user
+        async function fetchUserWithToken(token){
+          try {
+            log('\nRequesting GET ' + SUPABASE_URL + '/auth/v1/user with Authorization: Bearer <access_token>');
+            const r = await fetch(SUPABASE_URL + '/auth/v1/user', {
+              headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }
+            });
+            const txt = await r.text();
+            try { var json = JSON.parse(txt); } catch(e) { var json = txt; }
+            log('HTTP', r.status, r.statusText);
+            log('USER (from /auth/v1/user):', json);
+          } catch (e) {
+            log('Error calling /auth/v1/user:', e);
+          }
+        }
+
+        if (params.access_token) {
+          fetchUserWithToken(params.access_token);
+        } else {
+          log('\nNo access_token in URL hash — cannot call /auth/v1/user using redirect token.');
+        }
+
+        // 3) Poll localStorage to detect when Supabase stores the session (this indicates the client-side SDK processed the redirect and emitted SIGNED_IN)
+        log('\n--- LOCALSTORAGE / SESSION DETECTION ---');
+
+        const interestingKeys = ['supabase', 'supabase.auth.token', 'sb:token', 'supabase.auth'];
+        let lastSnapshot = JSON.stringify(Object.keys(localStorage).reduce((acc,k)=>{acc[k]=localStorage.getItem(k);return acc;},{}));
+        let observed = false;
+        let pollCount = 0;
+
+        const poll = setInterval(() => {
+          pollCount++;
+          const currentSnapshot = JSON.stringify(Object.keys(localStorage).reduce((acc,k)=>{acc[k]=localStorage.getItem(k);return acc;},{}));
+          if (currentSnapshot !== lastSnapshot) {
+            log('\n[LOCALSTORAGE CHANGE] Detected change in localStorage (poll #' + pollCount + ')');
+            // inspect keys for likely supabase session token
+            for (let i=0;i<localStorage.length;i++){
+              const k = localStorage.key(i);
+              if (!k) continue;
+              if (k.toLowerCase().includes('supabase') || k.toLowerCase().includes('sb') || k.toLowerCase().includes('auth') ){
+                log('Found key:', k, 'value snippet:', (localStorage.getItem(k)||'').slice(0,200));
+                try {
+                  const parsed = JSON.parse(localStorage.getItem(k)||'null');
+                  if (parsed && (parsed.currentSession || parsed.access_token || parsed.value || parsed.persistSession)){
+                    log('\nEVENT: SIGNED_IN (inferred from localStorage key "' + k + '")');
+                    observed = true;
+                    // If parsed contains access_token, try calling /auth/v1/user with it
+                    const tok = parsed.currentSession?.access_token || parsed?.access_token || (parsed.value && parsed.value.access_token) || null;
+                    if (tok) fetchUserWithToken(tok);
+                  }
+                } catch(e) {
+                  /* ignore parse errors */
+                }
+              }
+            }
+            lastSnapshot = currentSnapshot;
+          }
+
+          // Also if access_token from hash exists but we haven't observed localStorage change, keep polling for 10 seconds
+          if (pollCount > 40 || observed) { // ~20s (40 * 500ms)
+            clearInterval(poll);
+            if (!observed) {
+              log('\nEVENT: SIGNED_IN NOT OBSERVED via localStorage within timeout.');
+            } else {
+              log('\nFinished: SIGNED_IN observed.');
+            }
+          }
+        }, 500);
+
+        // 4) Also output current localStorage keys for immediate visibility
+        log('\nCurrent localStorage keys and short values:');
+        for (let i=0;i<localStorage.length;i++){
+          const k = localStorage.key(i);
+          log(k + ':', (localStorage.getItem(k)||'').slice(0,200));
+        }
+
+        // 5) Expose a helper on window so you can manually re-run checks from the console
+        window.__authDebug = {
+          parsedHash: params,
+          fetchUserWithToken
+        };
+
+        log('\nDebug helper available as window.__authDebug.');
+        log('Examples: window.__authDebug.parsedHash or window.__authDebug.fetchUserWithToken("<token>")');
+
+      })();
+    </script>
+  </body>
+</html>

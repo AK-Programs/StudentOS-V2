@@ -1,0 +1,13 @@
+export async function deleteAiBuddyChat(threadId: string, userId: string): Promise<void> {
+  console.log('[SUPABASE-CHAT] Deleting ai_buddy_chat:', threadId);
+
+  try {
+    await supabase
+      .from('ai_buddy_chats')
+      .delete()
+      .eq('id', threadId)
+      .eq('user_id', userId);
+  } catch (err) {
+    console.warn('[SUPABASE-CHAT] Error deleting from ai_buddy_chats:', err);
+  }
+}

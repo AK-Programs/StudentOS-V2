@@ -1,0 +1,247 @@
+{
+  "entities": {
+    "Task": {
+      "title": "Task",
+      "description": "A student's study task or checklist item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique task ID" },
+        "title": { "type": "string", "description": "Title or summary of the task text" },
+        "completed": { "type": "boolean", "description": "Whether the task has been marked completed" },
+        "dueDate": { "type": "string", "description": "Optional deadline timestamp or date string" },
+        "userId": { "type": "string", "description": "The UID of the student who owns the task" },
+        "createdAt": { "type": "string", "description": "ISO timestamp indicating creation date" }
+      },
+      "required": ["id", "title", "completed", "userId", "createdAt"]
+    },
+    "Note": {
+      "title": "Note",
+      "description": "A personal notebook entry in the student notes digital vault",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique note ID" },
+        "title": { "type": "string", "description": "Title of the note" },
+        "subject": { "type": "string", "description": "Class academic subject category" },
+        "content": { "type": "string", "description": "Full Markdown body content of study guide" },
+        "icon": { "type": "string", "description": "Emoji indicator for visual theme" },
+        "coverBg": { "type": "string", "description": "Visual tailwind gradient background indicator" },
+        "userId": { "type": "string", "description": "Owner UID of notes" },
+        "createdAt": { "type": "string", "description": "Date or ISO timestamp of creation" }
+      },
+      "required": ["id", "title", "content", "userId", "createdAt"]
+    },
+    "Material": {
+      "title": "Material",
+      "description": "An academic resource or self-study notes uploaded on Materials Hub",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique material document ID" },
+        "title": { "type": "string", "description": "Title of academic resource" },
+        "subject": { "type": "string", "description": "Topic or specialization study focus" },
+        "type": { "type": "string", "enum": ["pdf", "link", "formula-sheet", "ppt", "pptx", "doc", "docx", "notes", "assignment", "question-paper", "project"], "description": "Resource node format" },
+        "description": { "type": "string", "description": "Short explanation, AI summary summaries, or questions" },
+        "uploadedBy": { "type": "string", "description": "Name of instructor or author student who uploaded" },
+        "uploaderUid": { "type": "string", "description": "UID of the contributor" },
+        "uploaderHouse": { "type": "string", "description": "House of the contributor" },
+        "uploaderSection": { "type": "string", "description": "Section of the contributor" },
+        "createdAt": { "type": "string", "description": "ISO date string" },
+        "isPublic": { "type": "boolean", "description": "Whether visible to all students globally" },
+        "visibleToGrades": { "type": "array", "description": "List of targets allowed grades" },
+        "visibleToSections": { "type": "array", "description": "List of target Sections allowed" },
+        "visibleToHouses": { "type": "array", "description": "List of target Houses allowed" },
+        "downloads": { "type": "number", "description": "Tally of downloads" },
+        "likes": { "type": "number", "description": "Tally of likes" },
+        "likedBy": { "type": "array", "description": "List of uids who liked" },
+        "views": { "type": "number", "description": "Tally of views" },
+        "isVerified": { "type": "boolean", "description": "Whether verified by a faculty leader (teacher)" },
+        "comments": { "type": "array", "description": "Threaded community comments array" },
+        "questionPaperYear": { "type": "string", "description": "Year of question paper if applicable" },
+        "aiSummary": { "type": "string", "description": "Generated AI Summary" },
+        "aiQuiz": { "type": "string", "description": "Generated AI Quiz" },
+        "aiExplain": { "type": "string", "description": "Generated AI Explanation" },
+        "aiRevisionNotes": { "type": "string", "description": "Generated AI Revision Notes" },
+        "aiImportantQuestions": { "type": "string", "description": "Generated AI Important Questions" }
+      },
+      "required": ["id", "title", "subject", "type", "description", "uploadedBy", "createdAt"]
+    },
+    "FeedbackPost": {
+      "title": "FeedbackPost",
+      "description": "A request or active issue report filed on the StudentOS faculty suggestion box",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique post ID" },
+        "author": { "type": "string", "description": "Name of the publisher" },
+        "role": { "type": "string", "enum": ["student", "teacher"], "description": "School role representation" },
+        "text": { "type": "string", "description": "Body message feedback request" },
+        "votes": { "type": "number", "description": "Tally of peer upvotes" },
+        "category": { "type": "string", "enum": ["facilities", "academic", "events", "other"], "description": "Tag category" },
+        "status": { "type": "string", "enum": ["pending", "in-progress", "solved", "planned"], "description": "Current status" },
+        "createdAt": { "type": "string", "description": "ISO timestamp indicating creation" },
+        "replies": { "type": "array", "description": "Threaded replies sub-array from teachers or admins" }
+      },
+      "required": ["id", "author", "role", "text", "votes", "category", "status", "createdAt"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Daily real-time attendance metric entry for student diaries",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "description": "Calendar ISO date string (YYYY-MM-DD)" },
+        "status": { "type": "string", "enum": ["present", "absent", "late"], "description": "Status recorded" }
+      },
+      "required": ["date", "status"]
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "Campus announcements shown on public notice headers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique document ID" },
+        "title": { "type": "string", "description": "Announcement bold title text" },
+        "content": { "type": "string", "description": "Full notification body paragraph" },
+        "date": { "type": "string", "description": "Formatted date text shown" },
+        "tag": { "type": "string", "description": "Filter classification" },
+        "tagColor": { "type": "string", "description": "Card category color styles" }
+      },
+      "required": ["id", "title", "content", "date", "tag"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Study group and peer chat message logs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "house": { "type": "string" },
+        "message": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "targetId": { "type": "string" },
+        "sharedMaterialId": { "type": "string" }
+      },
+      "required": ["id", "name", "role", "message", "createdAt"]
+    },
+    "StudentReport": {
+      "title": "StudentReport",
+      "description": "Comprehensive student profile metrics for classroom insights",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "classGrade": { "type": "string" },
+        "section": { "type": "string" },
+        "house": { "type": "string" },
+        "streakDays": { "type": "number" },
+        "materialsUploaded": { "type": "number" },
+        "notesCreated": { "type": "number" },
+        "quizzesCompleted": { "type": "number" },
+        "assignmentsCompleted": { "type": "number" },
+        "communityContributions": { "type": "number" },
+        "recentActivity": { "type": "array" }
+      },
+      "required": ["id", "name", "classGrade", "section", "house", "streakDays"]
+    },
+    "HouseAnalytics": {
+      "title": "HouseAnalytics",
+      "description": "Aggregated academic and participation points for school Houses",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "points": { "type": "number" },
+        "materialsShared": { "type": "number" },
+        "quizzesWon": { "type": "number" },
+        "participation": { "type": "number" }
+      },
+      "required": ["id", "points", "materialsShared", "quizzesWon", "participation"]
+    },
+    "SectionAnalytics": {
+      "title": "SectionAnalytics",
+      "description": "Performance tracking aggregated by classroom sections",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "totalStudents": { "type": "number" },
+        "studyActivity": { "type": "number" },
+        "quizScores": { "type": "number" },
+        "materialContributions": { "type": "number" }
+      },
+      "required": ["id", "totalStudents", "studyActivity", "quizScores", "materialContributions"]
+    },
+    "TeacherCommand": {
+      "title": "TeacherCommand",
+      "description": "Command audit log for smart board operations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "commandText": { "type": "string" },
+        "recognizedAt": { "type": "string" },
+        "parsedAction": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "commandText", "recognizedAt", "parsedAction", "status"]
+    },
+    "JarvisHistoryItem": {
+      "title": "JarvisHistoryItem",
+      "description": "Dialogue history and response logs for StudentOS Jarvis Smart Assistant",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "prompt": { "type": "string" },
+        "response": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "actionExecuted": { "type": "string" }
+      },
+      "required": ["id", "prompt", "response", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/studentReports/{reportId}": {
+      "schema": "StudentReport",
+      "description": "Classroom analytics profile, streak counters, and score summary for students"
+    },
+    "/houseAnalytics/{houseId}": {
+      "schema": "HouseAnalytics",
+      "description": "Inter-house champion point boards and material counters"
+    },
+    "/sectionAnalytics/{sectionId}": {
+      "schema": "SectionAnalytics",
+      "description": "Inter-section activity levels, total enrollment and quiz score metric logs"
+    },
+    "/teacherCommands/{commandId}": {
+      "schema": "TeacherCommand",
+      "description": "Executed teacher smart voice board commands audit logs"
+    },
+    "/jarvisHistory/{historyId}": {
+      "schema": "JarvisHistoryItem",
+      "description": "Interaction logging for the StudentOS voice copilot"
+    },
+    "/chats/{chatId}": {
+      "schema": "ChatMessage",
+      "description": "Student real-time study network dialogue posts"
+    },
+    "/tasks/{taskId}": {
+      "schema": "Task",
+      "description": "Individual checklist items for homework, assignments, and study timelines"
+    },
+    "/notes/{noteId}": {
+      "schema": "Note",
+      "description": "Personal textbooks summaries and Markdown summaries captured directly in the notes vault"
+    },
+    "/materials/{materialId}": {
+      "schema": "Material",
+      "description": "Academic resources, textbook pages indexes with filtered grade/house visibility targets"
+    },
+    "/feedbacks/{feedbackId}": {
+      "schema": "FeedbackPost",
+      "description": "Teacher-student interactive forum suggestion cards"
+    },
+    "/attendance/{dateStr}": {
+      "schema": "AttendanceRecord",
+      "description": "Roster logs capturing attendance status for historical tracking"
+    },
+    "/announcements/{announcementId}": {
+      "schema": "Announcement",
+      "description": "Public notice posts of achievements, schedules, and club news"
+    }
+  }
+}

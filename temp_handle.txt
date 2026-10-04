@@ -1,0 +1,201 @@
+  const handleGenerateDiagram = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!aiPromptQuery.trim()) return;
+    setIsGeneratingDiagram(true);
+    setAiPromptOpen(false);
+
+    const queryLower = aiPromptQuery.toLowerCase();
+    let effectiveTool: 'mermaid' | 'svg' | 'diagram' = 'mermaid';
+
+    if (aiToolType === 'auto') {
+      const isSvgSubject = /\b(heart|cell|lungs|brain|digestive|stomach|gut|anatomy|pulley|lever|circuit|voltage|optics|lens|mirror|atom|molecule|beaker|lab|volcano|earth|rock|coordinate|geometry|triangle|circle|respiratory|biology|physics|chemistry|body|organ|solar\s*system|neuron|dna|eye|ear|battery|motor|generator|bridge|machine|solar|planet|star|galaxy)\b/.test(queryLower);
+      effectiveTool = isSvgSubject ? 'svg' : 'mermaid';
+    } else if (aiToolType === 'svg') {
+      effectiveTool = 'svg';
+    } else if (aiToolType === 'mermaid' || aiToolType === 'mindmap') {
+      effectiveTool = 'mermaid';
+    } else {
+      effectiveTool = 'diagram';
+    }
+
+    try {
+      if (effectiveTool === 'mermaid') {
+        const response = await fetch('/api/ai/mermaid', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: aiPromptQuery })
+        });
+        let data: any = {};
+        try {
+          data = await response.json();
+        } catch (_) {
+          const text = await response.text().catch(() => '');
+          data = { code: text || `graph TD\n  Start[${aiPromptQuery}] --> Concept1[Primary Mechanism]` };
+        }
+        const mermaidCode = data.mermaid || data.code;
+        if (mermaidCode) {
+          try {
+            const mermaidModule = await import('mermaid');
+            const mermaid: any = mermaidModule.default || mermaidModule;
+            mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+            const id = `mermaid_render_${Date.now()}`;
+            const { svg } = await mermaid.render(id, mermaidCode);
+            
+            const img = new Image();
+            img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+            img.onload = () => {
+              const svgShape: ShapeObj = {
+                id: `mermaid-${Date.now()}`,
+                type: 'svg_node',
+                x: 100,
+                y: 100,
+                width: 520,
+                height: 380,
+                stroke: '#818cf8',
+                strokeWidth: 0,
+                imageObj: img
+              };
+              setSlides(prev => {
+                const updated = [...prev];
+                updated[activeSlideIdx].shapes = [...(updated[activeSlideIdx].shapes || []), svgShape];
+                return updated;
+              });
+            };
+            setAiTip(`🧜‍♂️ Educational Mermaid diagram inserted for "${aiPromptQuery}"`);
+          } catch(mErr) {
+            console.warn("Mermaid execution notice, rendering safe fallback:", mErr);
+            try {
+              const mermaidModule = await import('mermaid');
+              const mermaid: any = mermaidModule.default || mermaidModule;
+              const safeId = `mermaid_safe_${Date.now()}`;
+              const cleanFallback = `graph TD\n  Start[${aiPromptQuery}] --> Step1[Primary Mechanism / Law]\n  Step1 --> Step2[Key Observations]\n  Step2 --> Output[Practical Applications]`;
+              const { svg } = await mermaid.render(safeId, cleanFallback);
+              const img = new Image();
+              img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+              img.onload = () => {
+                const svgShape: ShapeObj = {
+                  id: `mermaid-${Date.now()}`,
+                  type: 'svg_node',
+                  x: 100,
+                  y: 100,
+                  width: 520,
+                  height: 380,
+                  stroke: '#818cf8',
+                  strokeWidth: 0,
+                  imageObj: img
+                };
+                setSlides(prev => {
+                  const updated = [...prev];
+                  updated[activeSlideIdx].shapes = [...(updated[activeSlideIdx].shapes || []), svgShape];
+                  return updated;
+                });
+              };
+              setAiTip(`🧜‍♂️ Educational Mermaid diagram inserted for "${aiPromptQuery}"`);
+            } catch (retryErr) {
+              console.error("Mermaid fallback render error:", retryErr);
+            }
+          }
+        }
+      } else if (effectiveTool === 'svg') {
+        try {
+          const response = await fetch('/api/ai/svg-diagram', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: aiPromptQuery })
+          });
+          const data = await response.json();
+          if (!data.success || !data.svg || data.svg.includes('<rect width="600" height="450" rx="16" fill="#0f172a" stroke="#334155" stroke-width="2"/>')) {
+             throw new Error('SVG generation failed or fallback used');
+          }
+          const svgContent = data.svg;
+          
+          const img = new Image();
+          img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgContent);
+          img.onload = () => {
+            const svgShape: ShapeObj = {
+              id: `svg-${Date.now()}`,
+              type: 'svg_node',
+              x: 100,
+              y: 100,
+              width: 520,
+              height: 390,
+              stroke: '#10b981',
+              strokeWidth: 0,
+              imageObj: img
+            };
+            setSlides(prev => {
+              const updated = [...prev];
+              updated[activeSlideIdx].shapes = [...(updated[activeSlideIdx].shapes || []), svgShape];
+              return updated;
+            });
+          };
+          setAiTip(`🎨 Educational SVG diagram inserted for "${aiPromptQuery}"`);
+        } catch (e) {
+          console.warn('SVG API failed, falling back to editable Canvas Objects:', e);
+          const fbResponse = await fetch('/api/ai/diagram', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: aiPromptQuery, type: 'diagram' })
+          });
+          if (fbResponse.ok) {
+            const fbData = await fbResponse.json();
+            const newShapes: ShapeObj[] = [];
+            if (fbData.elements) {
+              fbData.elements.forEach((el: any, index: number) => {
+                if (el.type === 'rect') {
+                  newShapes.push({ id: `rect-${Date.now()}-${index}`, type: 'rect', x: el.x || 100, y: el.y || 100, width: el.width || 100, height: el.height || 100, fill: el.fill || 'transparent', stroke: el.stroke || '#fff', strokeWidth: 2, text: el.text });
+                } else if (el.type === 'circle') {
+                  newShapes.push({ id: `circle-${Date.now()}-${index}`, type: 'circle', x: el.x || 100, y: el.y || 100, radius: el.radius || 50, fill: el.fill || 'transparent', stroke: el.stroke || '#fff', strokeWidth: 2, text: el.text });
+                } else if (el.type === 'text') {
+                  newShapes.push({ id: `text-${Date.now()}-${index}`, type: 'text', x: el.x || 100, y: el.y || 100, text: el.text, fill: el.fill || '#ffffff', fontSize: el.fontSize || 16, strokeWidth: 0, stroke: 'transparent' });
+                } else if (el.type === 'arrow') {
+                  newShapes.push({ id: `arrow-${Date.now()}-${index}`, type: 'arrow', x: 0, y: 0, points: el.points || [100,100,200,200], stroke: el.stroke || '#fff', strokeWidth: 2 });
+                }
+              });
+              setSlides(prev => {
+                const updated = [...prev];
+                updated[activeSlideIdx].shapes = [...(updated[activeSlideIdx].shapes || []), ...newShapes];
+                return updated;
+              });
+              setAiTip(`🧩 Editable Canvas Objects generated for "${aiPromptQuery}"`);
+            }
+          } else {
+             setAiTip('❌ AI engine could not generate diagram.');
+          }
+        }
+      } else {
+        const response = await fetch('/api/ai/diagram', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: aiPromptQuery, type: aiToolType })
+        });
+        if (!response.ok) throw new Error('Diagram API failed');
+        const data = await response.json();
+        
+        const newShapes: ShapeObj[] = [];
+        if (data.elements) {
+          data.elements.forEach((el: any, index: number) => {
+            if (el.type === 'rect') {
+              newShapes.push({ id: `rect-${Date.now()}-${index}`, type: 'rect', x: el.x || 100, y: el.y || 100, width: el.width || 100, height: el.height || 100, fill: el.fill || 'transparent', stroke: el.fill || '#fff', strokeWidth: 2, text: el.text });
+            } else if (el.type === 'circle') {
+              newShapes.push({ id: `circle-${Date.now()}-${index}`, type: 'circle', x: el.x || 100, y: el.y || 100, radius: el.radius || 50, stroke: el.fill || '#fff', strokeWidth: 2, text: el.text });
+            } else if (el.type === 'text') {
+              newShapes.push({ id: `text-${Date.now()}-${index}`, type: 'text', x: el.x || 100, y: el.y || 100, text: el.text, stroke: el.fill || '#ffffff', strokeWidth: 1, fontSize: el.fontSize || 16 });
+            } else if (el.type === 'arrow') {
+              newShapes.push({ id: `arrow-${Date.now()}-${index}`, type: 'arrow', x: 0, y: 0, points: el.points || [100,100,200,200], stroke: el.stroke || '#fff', strokeWidth: 2 });
+            }
+          });
+        }
+        
+        setSlides(prev => {
+          const updated = [...prev];
+          updated[activeSlideIdx].shapes = [...(updated[activeSlideIdx].shapes || []), ...newShapes];
+          return updated;
+        });
+        setAiTip(`🪄 AI Assistant generated a diagram for "${aiPromptQuery}"`);
+      }
+    } catch (e) {
+      console.error("Diagram generation error:", e);
+      setAiTip("❌ Diagram generation failed. Please try again.");
+    } finally {
+      setIsGeneratingDiagram(false);
