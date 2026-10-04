@@ -538,7 +538,7 @@ export const SportsActivitiesPortal = ({ currentUser, showNotification }: any) =
       <div className="bg-slate-950/40 border border-white/15 p-3.5 sm:p-6 rounded-2xl sm:rounded-3xl min-h-[350px]">
         {activeTab === 'participation' && (
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+            <table className="w-full min-w-[540px] text-left border-collapse">
               <thead>
                 <tr className="border-b border-white/10 text-slate-400 text-xs uppercase tracking-wider">
                   <th className="pb-3 pl-2">Student</th>
@@ -625,7 +625,7 @@ export const SportsActivitiesPortal = ({ currentUser, showNotification }: any) =
 
         {activeTab === 'competitions' && (
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+            <table className="w-full min-w-[540px] text-left border-collapse">
               <thead>
                 <tr className="border-b border-white/10 text-slate-400 text-xs uppercase tracking-wider">
                   <th className="pb-3 pl-2">League / Competition</th>

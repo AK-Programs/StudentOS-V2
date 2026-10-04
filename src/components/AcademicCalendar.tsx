@@ -697,7 +697,7 @@ export default function AcademicCalendar({ currentUser, effectiveRole }: Academi
       {viewMode === 'agenda' && (
         <div className="space-y-3">
           {filteredEvents.length === 0 ? (
-            <div className="p-12 text-center bg-slate-950/60 border border-white/5 rounded-2xl space-y-2">
+            <div className="p-6 sm:p-12 text-center bg-slate-950/60 border border-white/5 rounded-2xl space-y-2">
               <CalendarIcon className="w-8 h-8 text-slate-600 mx-auto" />
               <p className="text-sm font-bold text-slate-300">No events scheduled</p>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
@@ -849,7 +849,7 @@ export default function AcademicCalendar({ currentUser, effectiveRole }: Academi
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Event Type</label>
                   <select
@@ -883,7 +883,7 @@ export default function AcademicCalendar({ currentUser, effectiveRole }: Academi
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Date</label>
                   <input

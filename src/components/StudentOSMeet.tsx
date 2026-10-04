@@ -2571,14 +2571,14 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
       {/* CREATE / SCHEDULE MEETING MODAL */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-6 animate-fadeIn">
-          <div className="max-w-xl w-full bg-slate-900 border border-white/10 rounded-3xl p-6 shadow-2xl space-y-6">
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 animate-fadeIn">
+          <div className="max-w-xl w-full max-h-[90vh] overflow-y-auto bg-slate-900 border border-white/10 rounded-3xl p-5 sm:p-6 shadow-2xl space-y-5 sm:space-y-6">
             <div className="flex items-center justify-between border-b border-white/10 pb-4">
-              <h3 className="text-lg font-black text-white flex items-center gap-2">
-                <Video className="w-5 h-5 text-indigo-400" />
-                Schedule New Virtual Class / Meeting
+              <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
+                <Video className="w-5 h-5 text-indigo-400 shrink-0" />
+                <span>Schedule New Virtual Class / Meeting</span>
               </h3>
-              <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-white">
+              <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-white p-1">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -2596,7 +2596,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-mono font-bold text-slate-400 uppercase">Subject</label>
                   <input
@@ -2617,7 +2617,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-mono font-bold text-slate-400 uppercase">Start Time</label>
                   <input

@@ -1174,7 +1174,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
               <span>AI Whiteboard</span>
             </button>
             {aiPromptOpen && (
-              <div className="absolute top-full mt-2 right-0 w-80 bg-slate-900 border border-indigo-500/30 rounded-2xl p-5 shadow-2xl z-50 space-y-3 backdrop-blur-xl animate-fadeIn">
+              <div className="fixed sm:absolute top-20 sm:top-full mt-0 sm:mt-2 inset-x-3 sm:inset-x-auto sm:right-0 sm:w-80 bg-slate-900 border border-indigo-500/30 rounded-2xl p-4 sm:p-5 shadow-2xl z-50 space-y-3 backdrop-blur-xl animate-fadeIn">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="text-xl">🚀</span>

@@ -108,7 +108,7 @@ export default function UserImportCSV() {
         <p className="text-xs text-slate-400">Upload a CSV file to create users in bulk. Required headers: Name, Email, Role, Class, Section.</p>
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-3 sm:gap-4">
         <input 
           type="file" 
           accept=".csv" 
@@ -120,21 +120,21 @@ export default function UserImportCSV() {
           onClick={() => fileInputRef.current?.click()}
           className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl border border-white/10 transition-colors flex items-center gap-2"
         >
-          <FileText className="w-4 h-4" /> {file ? file.name : "Select CSV File"}
+          <FileText className="w-4 h-4 shrink-0" /> <span className="truncate max-w-[180px]">{file ? file.name : "Select CSV File"}</span>
         </button>
         <button 
           onClick={processCSV}
           disabled={!file || isProcessing}
           className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-colors flex items-center gap-2"
         >
-          {isProcessing ? 'Processing...' : <><Upload className="w-4 h-4" /> Start Import</>}
+          {isProcessing ? 'Processing...' : <><Upload className="w-4 h-4 shrink-0" /> Start Import</>}
         </button>
       </div>
 
       {report && (
         <div className="bg-slate-950 p-4 rounded-xl border border-white/5 space-y-4">
           <h5 className="text-white text-sm font-bold">Import Report</h5>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-4">
             <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-lg text-center">
               <span className="block text-2xl font-black text-emerald-400">{report.imported}</span>
               <span className="text-[10px] uppercase font-bold text-emerald-500/70 tracking-wider">Imported</span>

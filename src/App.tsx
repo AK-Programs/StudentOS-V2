@@ -428,7 +428,12 @@ export default function App() {
     };
   }, [currentUser?.uid, effectiveRole]);
   const [assignmentSearchQuery, setAssignmentSearchQuery] = useState<string>('');
-  const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth >= 1024;
+    }
+    return true;
+  });
   const [clock, setClock] = useState<string>('');
   
   // Homework filter states
@@ -5392,7 +5397,7 @@ ${roleLabel}: ${userQuery}`;
                 ></div>
               </div>
               <div className="flex justify-between items-center text-[9px] font-mono font-bold text-slate-500 tracking-widest">
-                <span>REVISION v3.12 (A-CORE)</span>
+                <span>REVISION v{APP_VERSION} (A-CORE)</span>
                 <span className="text-indigo-400">{loadingProgress}%</span>
               </div>
             </div>
@@ -5401,22 +5406,22 @@ ${roleLabel}: ${userQuery}`;
       )}
 
       {/* Absolute Dynamic Alert Center */}
-      <div className="fixed top-6 right-6 z-50 flex flex-col gap-2.5 max-w-sm pointer-events-none">
+      <div className="fixed top-4 sm:top-6 right-4 sm:right-6 left-4 sm:left-auto z-50 flex flex-col gap-2.5 sm:max-w-sm pointer-events-none">
         {toasts.map(t => (
           <div key={t.id} className="smart-glass animate-bounce text-xs font-semibold px-4 py-3.5 rounded-xl border border-white/10 text-white shadow-xl flex items-center gap-2 pointer-events-auto bg-slate-900/90">
-            <Sparkles className="w-4 h-4 text-amber-400 animate-spin" />
-            <span>{t.msg}</span>
+            <Sparkles className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
+            <span className="break-words min-w-0">{t.msg}</span>
           </div>
         ))}
       </div>
 
       {/* Onboarding Authentication Modal Gate */}
       {!currentUser && !firebaseLoading && !dataLoading && (
-        <div id="onboarding-gate-modal" className="fixed inset-0 bg-slate-950/95 backdrop-blur-xl z-50 overflow-y-auto flex items-start sm:items-center justify-center p-4">
+        <div id="onboarding-gate-modal" className="fixed inset-0 bg-slate-950/95 backdrop-blur-xl z-50 overflow-y-auto flex items-start sm:items-center justify-center p-3 sm:p-4">
           <div className="absolute top-1/4 left-1/4 w-[500px] h-[500px] bg-indigo-600/20 rounded-full blur-[120px] pointer-events-none animate-pulse" style={{ animationDuration: '4s' }} />
           <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-emerald-600/10 rounded-full blur-[100px] pointer-events-none animate-pulse" style={{ animationDuration: '5s' }} />
           
-          <div className="smart-glass max-w-xl w-full p-8 sm:p-10 my-auto rounded-[2.5rem] border border-white/10 shadow-2xl shadow-indigo-900/20 relative overflow-hidden space-y-8 animate-fadeIn" style={{ animationDuration: '0.8s' }}>
+          <div className="smart-glass max-w-xl w-full p-5 sm:p-8 md:p-10 my-auto rounded-3xl sm:rounded-[2.5rem] border border-white/10 shadow-2xl shadow-indigo-900/20 relative overflow-hidden space-y-6 sm:space-y-8 animate-fadeIn" style={{ animationDuration: '0.8s' }}>
             <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 via-transparent to-violet-500/5 pointer-events-none" />
             
             <div className="text-center space-y-4 relative z-10">
@@ -5461,7 +5466,7 @@ ${roleLabel}: ${userQuery}`;
                         Continue with Google
                       </button>
 
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <button
                           id="google-signin-select-btn"
                           type="button"
@@ -5621,11 +5626,11 @@ ${roleLabel}: ${userQuery}`;
                         <button
                           type="button"
                           onClick={() => setIsInstallAppModalOpen(true)}
-                          className="w-full py-2.5 px-3 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/10 hover:border-emerald-500/30 text-slate-300 hover:text-white text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer group"
+                          className="w-full py-2.5 px-3 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/10 hover:border-emerald-500/30 text-slate-300 hover:text-white text-xs font-semibold flex flex-wrap items-center justify-center gap-2 transition-all cursor-pointer group"
                         >
-                          <Smartphone className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
+                          <Smartphone className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform shrink-0" />
                           <span>Prefer mobile? <strong>Download StudentOS APK</strong></span>
-                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">v3.12</span>
+                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">v{APP_VERSION}</span>
                         </button>
                       </div>
                     </div>
@@ -6048,17 +6053,17 @@ ${roleLabel}: ${userQuery}`;
                     </div>
 
                     <div className="p-4 rounded-2xl bg-slate-900/80 border border-white/5 space-y-3.5 text-xs text-left">
-                      <div className="flex justify-between items-center py-1 border-b border-white/5">
-                        <span className="text-slate-400 uppercase font-black tracking-widest text-[9px]">Target Account Role</span>
-                        <span className="font-extrabold text-indigo-400 uppercase tracking-wide">{regRole}</span>
+                      <div className="flex justify-between items-center gap-2 py-1 border-b border-white/5">
+                        <span className="text-slate-400 uppercase font-black tracking-widest text-[9px] shrink-0">Target Account Role</span>
+                        <span className="font-extrabold text-indigo-400 uppercase tracking-wide truncate">{regRole}</span>
                       </div>
-                      <div className="flex justify-between items-center py-1 border-b border-white/5">
-                        <span className="text-slate-400 uppercase font-black tracking-widest text-[9px]">Full Name</span>
-                        <span className="font-bold text-white">{regName}</span>
+                      <div className="flex justify-between items-center gap-2 py-1 border-b border-white/5">
+                        <span className="text-slate-400 uppercase font-black tracking-widest text-[9px] shrink-0">Full Name</span>
+                        <span className="font-bold text-white truncate">{regName}</span>
                       </div>
-                      <div className="flex justify-between items-center py-1 border-b border-white/5">
-                        <span className="text-slate-400 uppercase font-black tracking-widest text-[9px]">School Email</span>
-                        <span className="font-mono text-white">{regEmail}</span>
+                      <div className="flex justify-between items-center gap-2 py-1 border-b border-white/5">
+                        <span className="text-slate-400 uppercase font-black tracking-widest text-[9px] shrink-0">School Email</span>
+                        <span className="font-mono text-white truncate max-w-[180px] sm:max-w-xs">{regEmail}</span>
                       </div>
 
                       {regRole === 'student' && (
@@ -6113,11 +6118,11 @@ ${roleLabel}: ${userQuery}`;
                       ⚙️ By proceeding, your institutional clearance request is logged. Standard accounts gain immediate access while administrative roles route into approval queues.
                     </div>
 
-                    <div className="flex justify-between items-center pt-4 border-t border-white/5">
+                    <div className="flex flex-col-reverse sm:flex-row justify-between items-stretch sm:items-center gap-2.5 pt-4 border-t border-white/5">
                       <button
                         type="button"
                         onClick={() => setRegStep('profile')}
-                        className="px-5 py-2.5 text-xs font-bold text-slate-400 hover:text-white transition-all"
+                        className="px-5 py-2.5 text-xs font-bold text-slate-400 hover:text-white transition-all text-center"
                       >
                         ← Back
                       </button>
@@ -6125,7 +6130,7 @@ ${roleLabel}: ${userQuery}`;
                         id="submit-onboarding-btn"
                         type="button"
                         onClick={handleOnboardingLogin}
-                        className="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-extrabold uppercase tracking-wider transition-all shadow-lg shadow-indigo-500/25 active:scale-98"
+                        className="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-extrabold uppercase tracking-wider transition-all shadow-lg shadow-indigo-500/25 active:scale-98 text-center"
                       >
                         Create Profile & Enter StudentOS
                       </button>
@@ -6141,22 +6146,22 @@ ${roleLabel}: ${userQuery}`;
       {currentUser && (
         <div className="flex min-h-screen relative">
           
-          {/* Sidebar Overlay (Closes sidebar on outside click for Mobile/Tablet/Desktop) */}
+          {/* Sidebar Overlay (Closes sidebar on outside click for Mobile/Tablet) */}
           {sidebarOpen && (
             <div 
-              className="fixed inset-0 z-40 bg-black/50 md:bg-transparent"
+              className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs md:hidden"
               onClick={() => setSidebarOpen(false)}
             />
           )}
 
           {/* Main Workspace Sidebar */}
-          <aside className={`fixed top-0 left-0 h-full bg-slate-900/95 dark:bg-slate-950/80 backdrop-blur-xl border-r border-white/5 z-50 flex flex-col justify-between transition-all duration-300 p-6 ${sidebarOpen ? 'w-64 translate-x-0' : 'w-0 -translate-x-full md:w-20 md:translate-x-0'}`}>
-            <div className="space-y-8 overflow-y-auto max-h-[calc(100vh-140px)] pr-1">
+          <aside className={`fixed top-0 left-0 h-full bg-slate-900/95 dark:bg-slate-950/90 backdrop-blur-xl border-r border-white/5 z-50 flex flex-col justify-between transition-all duration-300 safe-area-pt safe-area-pb ${sidebarOpen ? 'w-[272px] max-w-[85vw] sm:w-64 p-4 sm:p-6 translate-x-0' : 'w-0 -translate-x-full overflow-hidden p-0 md:w-20 md:p-3 md:translate-x-0 md:overflow-visible'}`}>
+            <div className="space-y-6 sm:space-y-8 overflow-y-auto max-h-[calc(100dvh-160px)] pr-1">
               
               {/* Sidebar Header Brand */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-2xl bg-indigo-600 flex items-center justify-center font-black text-white text-lg shadow-lg">S</div>
+                  <div className="h-10 w-10 rounded-2xl bg-indigo-600 flex items-center justify-center font-black text-white text-lg shadow-lg shrink-0">S</div>
                   {sidebarOpen && (
                     <div className="flex flex-col">
                       <span className="text-sm font-black text-white leading-none">StudentOS</span>
@@ -6164,6 +6169,16 @@ ${roleLabel}: ${userQuery}`;
                     </div>
                   )}
                 </div>
+                {sidebarOpen && (
+                  <button
+                    type="button"
+                    onClick={() => setSidebarOpen(false)}
+                    className="md:hidden p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
+                    aria-label="Close navigation menu"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
               </div>
 
               {/* Navigation Elements */}
@@ -6649,14 +6664,14 @@ ${roleLabel}: ${userQuery}`;
               </div>
 
               {/* Status and Clock widget */}
-              <div className="flex items-center gap-2 sm:gap-4 text-xs font-semibold">
+              <div className="flex items-center gap-1.5 sm:gap-3 text-xs font-semibold shrink-0">
                 
                 {/* Classroom Security Center */}
                 {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '') && (
                   <div className="relative">
                     <button
                       onClick={() => setSecurityMenuOpen(!securityMenuOpen)}
-                      className={`px-3 py-2 rounded-xl border flex items-center gap-2 cursor-pointer transition-all ${
+                      className={`px-2.5 sm:px-3 py-2 rounded-xl border flex items-center gap-1.5 sm:gap-2 cursor-pointer transition-all min-h-[38px] ${
                         presentationMode 
                           ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg' 
                           : 'bg-slate-900 border-white/5 hover:bg-slate-800 text-slate-300'
@@ -6671,7 +6686,7 @@ ${roleLabel}: ${userQuery}`;
                     </button>
 
                     {securityMenuOpen && (
-                      <div className="absolute right-0 mt-3 w-72 rounded-2xl border border-white/10 bg-slate-950 p-4 shadow-2xl z-50 space-y-3.5 animate-fadeIn text-slate-100">
+                      <div className="fixed sm:absolute inset-x-3 sm:inset-x-auto sm:right-0 top-16 sm:top-auto sm:mt-3 sm:w-72 max-w-[calc(100vw-1.5rem)] rounded-2xl border border-white/10 bg-slate-950 p-4 shadow-2xl z-50 space-y-3.5 animate-fadeIn text-slate-100">
                         <div className="pb-2 border-b border-white/5 flex items-center justify-between">
                           <span className="text-xs uppercase font-mono tracking-wider font-extrabold text-indigo-400 flex items-center gap-1.5">
                             🔒 Classroom Panel
@@ -6847,7 +6862,7 @@ ${roleLabel}: ${userQuery}`;
                 <button
                   type="button"
                   onClick={() => setIsInstallAppModalOpen(true)}
-                  className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-md border transition-all active:scale-95 cursor-pointer ${
+                  className={`px-2.5 sm:px-3 py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-md border transition-all active:scale-95 cursor-pointer min-h-[38px] ${
                     isApkInstalled
                       ? 'bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-300 border-emerald-500/40 shadow-emerald-500/10'
                       : 'bg-gradient-to-r from-emerald-600/90 to-teal-600/90 hover:from-emerald-500 hover:to-teal-500 text-white border-emerald-500/30 shadow-emerald-500/20'
@@ -6855,22 +6870,22 @@ ${roleLabel}: ${userQuery}`;
                   title={isApkInstalled ? 'StudentOS Android App (APK) Installed - Click to Manage' : 'Download & Install StudentOS Android App (APK)'}
                 >
                   {isApkInstalled ? (
-                    <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                   ) : (
-                    <Smartphone className="w-3.5 h-3.5 text-emerald-100" />
+                    <Smartphone className="w-3.5 h-3.5 text-emerald-100 shrink-0" />
                   )}
                   <span className="hidden sm:inline">{isApkInstalled ? 'Installed' : 'Install App'}</span>
-                  <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 rounded bg-black/30 text-emerald-200 font-extrabold">APK</span>
+                  <span className="hidden md:inline text-[9px] uppercase font-mono px-1.5 py-0.5 rounded bg-black/30 text-emerald-200 font-extrabold">APK</span>
                 </button>
 
                 {/* Broadcast Action Button */}
                 {['super_admin', 'admin', 'teacher', 'coordinator'].includes(effectiveRole) && (
                   <button
                     onClick={() => setIsBroadcastModalOpen(true)}
-                    className="p-2 px-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-indigo-600/20 transition-all active:scale-95"
+                    className="p-2 sm:px-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-indigo-600/20 transition-all active:scale-95 min-h-[38px]"
                     title="Send School/Class Broadcast Announcement"
                   >
-                    <Send className="w-3.5 h-3.5" />
+                    <Send className="w-3.5 h-3.5 shrink-0" />
                     <span className="hidden sm:inline">Broadcast</span>
                   </button>
                 )}
@@ -6879,7 +6894,7 @@ ${roleLabel}: ${userQuery}`;
                 <div className="relative">
                   <button
                     onClick={() => setShowNotifCenter(!showNotifCenter)}
-                    className="relative p-2 rounded-xl bg-slate-900 border border-white/5 hover:bg-slate-800 hover:text-white text-slate-300 transition-all flex items-center justify-center cursor-pointer"
+                    className="relative p-2 rounded-xl bg-slate-900 border border-white/5 hover:bg-slate-800 hover:text-white text-slate-300 transition-all flex items-center justify-center cursor-pointer min-h-[38px] min-w-[38px]"
                     title="Academic Notification Hub"
                   >
                     <Bell className="w-4 h-4" />
@@ -6901,14 +6916,14 @@ ${roleLabel}: ${userQuery}`;
                 {/* What's New Header Indicator Button */}
                 <button
                   onClick={() => handleTabSelect('whats_new')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 relative border shadow-sm cursor-pointer ${
+                  className={`px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 relative border shadow-sm cursor-pointer min-h-[38px] ${
                     activeTab === 'whats_new' || activeTab === 'whats-new'
                       ? 'bg-indigo-600 text-white border-indigo-500 shadow-indigo-600/30'
                       : 'bg-slate-900 border-white/5 hover:bg-slate-800 text-slate-300 hover:text-white'
                   }`}
                   title="What's New in StudentOS"
                 >
-                  <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
                   <span className="hidden sm:inline">What's New</span>
                   {whatsNewUnreadCount > 0 && (
                     <span className="flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-rose-500 text-[9px] font-black text-white leading-none animate-pulse">
@@ -6918,7 +6933,7 @@ ${roleLabel}: ${userQuery}`;
                 </button>
 
                 {effectiveRole === 'student' && currentUser.house && (
-                  <span className={`px-3 py-1.5 rounded-full ${getHouseBadgeColor(currentUser.house)} font-bold tracking-wide uppercase text-[10px]`}>
+                  <span className={`hidden lg:inline-flex px-3 py-1.5 rounded-full ${getHouseBadgeColor(currentUser.house)} font-bold tracking-wide uppercase text-[10px]`}>
                     📍 {currentUser.house} House
                   </span>
                 )}
@@ -6930,35 +6945,35 @@ ${roleLabel}: ${userQuery}`;
               
               {/* Tab: Panel Mode Launcher */}
               {activeTab === 'panel_mode' && effectiveRole !== 'student' && (
-                <div className="space-y-6 animate-fadeIn h-[calc(100vh-140px)] flex flex-col pt-4">
+                <div className="space-y-6 animate-fadeIn min-h-[calc(100dvh-140px)] flex flex-col pt-2 sm:pt-4">
                   {/* Banner */}
-                  <div className="p-10 rounded-3xl relative overflow-hidden flex flex-col items-center justify-center text-center gap-4 border border-indigo-500/20 bg-slate-900 shadow-2xl z-10 shrink-0">
+                  <div className="p-5 sm:p-8 md:p-10 rounded-3xl relative overflow-hidden flex flex-col items-center justify-center text-center gap-3 sm:gap-4 border border-indigo-500/20 bg-slate-900 shadow-2xl z-10 shrink-0">
                     <div className="absolute top-0 w-full h-full bg-indigo-500/10 blur-3xl pointer-events-none"></div>
                     <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400 bg-indigo-500/10 px-3 py-1.5 rounded-full relative z-10">Multi-Tool Terminal • Academic Hub</span>
-                    <h2 className="text-4xl md:text-5xl font-black text-white font-display relative z-10 tracking-tight">System Panel Mode</h2>
-                    <p className="text-slate-400 max-w-lg text-sm relative z-10 leading-relaxed">Quickly launch and access essential academic tools, interactive whiteboards, smart assistant Orion, or focus timers.</p>
+                    <h2 className="text-2xl sm:text-4xl md:text-5xl font-black text-white font-display relative z-10 tracking-tight">System Panel Mode</h2>
+                    <p className="text-slate-400 max-w-lg text-xs sm:text-sm relative z-10 leading-relaxed">Quickly launch and access essential academic tools, interactive whiteboards, smart assistant Orion, or focus timers.</p>
                   </div>
 
                   {/* Options Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 flex-1 min-h-0">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 flex-1 min-h-0">
                     <div 
                       onClick={() => handleTabSelect('whiteboard')}
-                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-8 hover:bg-slate-800 transition-all hover:border-indigo-500/50 hover:shadow-[0_0_40px_-5px_rgba(99,102,241,0.2)] flex flex-col items-center justify-center text-center gap-4 h-full"
+                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-indigo-500/50 hover:shadow-[0_0_40px_-5px_rgba(99,102,241,0.2)] flex flex-col items-center justify-center text-center gap-4 h-full"
                     >
-                      <div className="w-24 h-24 bg-indigo-500/10 text-indigo-400 flex items-center justify-center rounded-[2rem] text-5xl group-hover:scale-110 transition-transform">✏️</div>
+                      <div className="w-16 h-16 sm:w-24 sm:h-24 bg-indigo-500/10 text-indigo-400 flex items-center justify-center rounded-2xl sm:rounded-[2rem] text-3xl sm:text-5xl group-hover:scale-110 transition-transform">✏️</div>
                       <div>
-                        <h3 className="text-xl font-bold text-white tracking-tight mb-2">Class Whiteboard</h3>
+                        <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight mb-2">Class Whiteboard</h3>
                         <p className="text-xs text-slate-500 max-w-[200px] mx-auto leading-relaxed">Launch the interactive full-screen classroom smart board projection.</p>
                       </div>
                     </div>
 
                     <div 
                       onClick={() => handleTabSelect('materials')}
-                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-8 hover:bg-slate-800 transition-all hover:border-emerald-500/50 hover:shadow-[0_0_40px_-5px_rgba(16,185,129,0.2)] flex flex-col items-center justify-center text-center gap-4 h-full"
+                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-emerald-500/50 hover:shadow-[0_0_40px_-5px_rgba(16,185,129,0.2)] flex flex-col items-center justify-center text-center gap-4 h-full"
                     >
-                      <div className="w-24 h-24 bg-emerald-500/10 text-emerald-400 flex items-center justify-center rounded-[2rem] text-5xl group-hover:scale-110 transition-transform">📚</div>
+                      <div className="w-16 h-16 sm:w-24 sm:h-24 bg-emerald-500/10 text-emerald-400 flex items-center justify-center rounded-2xl sm:rounded-[2rem] text-3xl sm:text-5xl group-hover:scale-110 transition-transform">📚</div>
                       <div>
-                        <h3 className="text-xl font-bold text-white tracking-tight mb-2">
+                        <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight mb-2">
                           {effectiveRole === 'teacher' ? 'Teacher Materials Vault' : 'Materials Hub'}
                         </h3>
                         <p className="text-xs text-slate-500 max-w-[200px] mx-auto leading-relaxed">
@@ -6969,11 +6984,11 @@ ${roleLabel}: ${userQuery}`;
 
                     <div 
                       onClick={() => handleTabSelect('ai_teacher')}
-                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-8 hover:bg-slate-800 transition-all hover:border-pink-500/50 hover:shadow-[0_0_40px_-5px_rgba(236,72,153,0.2)] flex flex-col items-center justify-center text-center gap-4 h-full"
+                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-pink-500/50 hover:shadow-[0_0_40px_-5px_rgba(236,72,153,0.2)] flex flex-col items-center justify-center text-center gap-4 h-full"
                     >
-                      <div className="w-24 h-24 bg-pink-500/10 text-pink-400 flex items-center justify-center rounded-[2rem] text-5xl group-hover:scale-110 transition-transform">🤖</div>
+                      <div className="w-16 h-16 sm:w-24 sm:h-24 bg-pink-500/10 text-pink-400 flex items-center justify-center rounded-2xl sm:rounded-[2rem] text-3xl sm:text-5xl group-hover:scale-110 transition-transform">🤖</div>
                       <div>
-                        <h3 className="text-xl font-bold text-white tracking-tight mb-2">
+                        <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight mb-2">
                           {effectiveRole === 'teacher' ? 'AI Admin & Assessor' : 'AI Assistant'}
                         </h3>
                         <p className="text-xs text-slate-500 max-w-[200px] mx-auto leading-relaxed">
@@ -6984,23 +6999,23 @@ ${roleLabel}: ${userQuery}`;
 
                     <div 
                       onClick={() => setIsJarvisActive(true)}
-                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-8 hover:bg-slate-800 transition-all hover:border-cyan-500/50 hover:shadow-[0_0_40px_-5px_rgba(6,182,212,0.2)] flex flex-col items-center justify-center text-center gap-4 relative overflow-hidden h-full"
+                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-cyan-500/50 hover:shadow-[0_0_40px_-5px_rgba(6,182,212,0.2)] flex flex-col items-center justify-center text-center gap-4 relative overflow-hidden h-full"
                     >
                       <div className="absolute -inset-4 bg-gradient-to-tr from-cyan-500/10 to-transparent blur-2xl opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                      <div className="w-24 h-24 bg-cyan-500/10 text-cyan-400 flex items-center justify-center rounded-[2rem] text-5xl group-hover:scale-110 transition-transform relative z-10">🎙️</div>
+                      <div className="w-16 h-16 sm:w-24 sm:h-24 bg-cyan-500/10 text-cyan-400 flex items-center justify-center rounded-2xl sm:rounded-[2rem] text-3xl sm:text-5xl group-hover:scale-110 transition-transform relative z-10">🎙️</div>
                       <div className="relative z-10">
-                        <h3 className="text-xl font-black text-white tracking-tight mb-2 uppercase">Orion Copilot</h3>
+                        <h3 className="text-lg sm:text-xl font-black text-white tracking-tight mb-2 uppercase">Orion Copilot</h3>
                         <p className="text-xs text-slate-500 max-w-[200px] mx-auto leading-relaxed">Activate the voice-command smart classroom AI assistant.</p>
                       </div>
                     </div>
 
                     <div 
                       onClick={() => handleTabSelect('notes')}
-                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-8 hover:bg-slate-800 transition-all hover:border-amber-500/50 hover:shadow-[0_0_40px_-5px_rgba(245,158,11,0.2)] flex flex-col items-center justify-center text-center gap-4 h-full"
+                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-amber-500/50 hover:shadow-[0_0_40px_-5px_rgba(245,158,11,0.2)] flex flex-col items-center justify-center text-center gap-4 h-full"
                     >
-                      <div className="w-24 h-24 bg-amber-500/10 text-amber-400 flex items-center justify-center rounded-[2rem] text-5xl group-hover:scale-110 transition-transform">📝</div>
+                      <div className="w-16 h-16 sm:w-24 sm:h-24 bg-amber-500/10 text-amber-400 flex items-center justify-center rounded-2xl sm:rounded-[2rem] text-3xl sm:text-5xl group-hover:scale-110 transition-transform">📝</div>
                       <div>
-                        <h3 className="text-xl font-bold text-white tracking-tight mb-2">
+                        <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight mb-2">
                           {effectiveRole === 'teacher' ? 'Teaching Records' : 'My Notes'}
                         </h3>
                         <p className="text-xs text-slate-500 max-w-[200px] mx-auto leading-relaxed">
@@ -7011,11 +7026,11 @@ ${roleLabel}: ${userQuery}`;
 
                     <div 
                       onClick={() => handleTabSelect('pomodoro')}
-                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-8 hover:bg-slate-800 transition-all hover:border-red-500/50 hover:shadow-[0_0_40px_-5px_rgba(239,68,68,0.2)] flex flex-col items-center justify-center text-center gap-4 h-full"
+                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-red-500/50 hover:shadow-[0_0_40px_-5px_rgba(239,68,68,0.2)] flex flex-col items-center justify-center text-center gap-4 h-full"
                     >
-                      <div className="w-24 h-24 bg-red-500/10 text-red-400 flex items-center justify-center rounded-[2rem] text-5xl group-hover:scale-110 transition-transform">⏲️</div>
+                      <div className="w-16 h-16 sm:w-24 sm:h-24 bg-red-500/10 text-red-400 flex items-center justify-center rounded-2xl sm:rounded-[2rem] text-3xl sm:text-5xl group-hover:scale-110 transition-transform">⏲️</div>
                       <div>
-                        <h3 className="text-xl font-bold text-white tracking-tight mb-2">Focus Timer</h3>
+                        <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight mb-2">Focus Timer</h3>
                         <p className="text-xs text-slate-500 max-w-[200px] mx-auto leading-relaxed">Customizable work sessions with auditory bell sound alerts.</p>
                       </div>
                     </div>
@@ -7603,7 +7618,7 @@ ${roleLabel}: ${userQuery}`;
 
                   {/* Sub-tab 2: Task Manager View */}
                   {studyHubSubTab === 'tasks' && (
-                    <div className="smart-glass p-8 rounded-3xl space-y-6 max-w-3xl mx-auto animate-fadeIn">
+                    <div className="smart-glass p-4 sm:p-6 md:p-8 rounded-3xl space-y-6 max-w-3xl mx-auto animate-fadeIn">
                       <div className="space-y-2">
                         <h3 className="text-2xl font-black font-display text-white">Target Tasks & Focus Objectives</h3>
                         <p className="text-xs text-slate-400">Record syllabus preparation sequences, project homework, and term tests timelines.</p>
@@ -7659,7 +7674,7 @@ ${roleLabel}: ${userQuery}`;
 
                   {/* Sub-tab 3: Study Planner View */}
                   {studyHubSubTab === 'planner' && (
-                    <div className="smart-glass p-8 rounded-3xl space-y-6 max-w-4xl mx-auto animate-fadeIn">
+                    <div className="smart-glass p-4 sm:p-6 md:p-8 rounded-3xl space-y-6 max-w-4xl mx-auto animate-fadeIn">
                       <div className="space-y-2">
                         <h3 className="text-2xl font-black font-display text-white">Target Study Time Planner</h3>
                         <p className="text-xs text-slate-400">Map targeted times against core disciplines and organize class exam sequences.</p>
@@ -7737,7 +7752,7 @@ ${roleLabel}: ${userQuery}`;
                           ))}
 
                           {schedules.length === 0 && (
-                            <div className="col-span-2 text-center py-8 text-slate-500 border border-dashed border-white/5 rounded-2xl">
+                            <div className="col-span-1 sm:col-span-2 text-center py-8 text-slate-500 border border-dashed border-white/5 rounded-2xl">
                               No study schedules saved. Map your day above!
                             </div>
                           )}
@@ -7753,28 +7768,28 @@ ${roleLabel}: ${userQuery}`;
                 <div className="space-y-6 animate-fadeIn">
                   
                   {/* Notes Header Mode Selector */}
-                  <div className="flex items-center justify-between bg-slate-900/80 p-2 rounded-2xl border border-white/5">
-                    <div className="flex items-center gap-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-900/80 p-2 sm:p-2.5 rounded-2xl border border-white/5">
+                    <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:gap-2">
                       <button
                         onClick={() => setNotesViewMode('collaborative')}
-                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                        className={`flex-1 sm:flex-initial justify-center px-3 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
                           notesViewMode === 'collaborative'
                             ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg'
                             : 'text-slate-400 hover:text-white hover:bg-white/5'
                         }`}
                       >
-                        <span>📝 Collaborative Lecture Notes</span>
-                        <span className="text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-md uppercase tracking-wider font-extrabold">Realtime Docs</span>
+                        <span>📝 Collaborative Notes</span>
+                        <span className="hidden md:inline text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-md uppercase tracking-wider font-extrabold">Realtime Docs</span>
                       </button>
                       <button
                         onClick={() => setNotesViewMode('vault')}
-                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+                        className={`flex-1 sm:flex-initial justify-center px-3 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
                           notesViewMode === 'vault'
                             ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg'
                             : 'text-slate-400 hover:text-white hover:bg-white/5'
                         }`}
                       >
-                        <span>🔒 Personal Vault Canvas</span>
+                        <span>🔒 Personal Vault</span>
                       </button>
                     </div>
 
@@ -7783,12 +7798,11 @@ ${roleLabel}: ${userQuery}`;
                         setStudyHubSubTab('flashcards');
                         handleTabSelect('study_hub');
                       }}
-                      className="px-3.5 py-2 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                      className="px-3.5 py-2 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 text-xs font-bold transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
                       title="Open Interactive Flashcards & SM-2 Study Center"
                     >
-                      <Brain className="w-3.5 h-3.5 text-purple-400" />
-                      <span className="hidden sm:inline">Flashcards Study Center</span>
-                      <span className="sm:hidden">Cards</span>
+                      <Brain className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                      <span>Flashcards Study Center</span>
                       {dueCardsCount > 0 && (
                         <span className="px-1.5 py-0.5 rounded-full bg-rose-500 text-white font-mono text-[9px] font-black animate-pulse">
                           {dueCardsCount}
@@ -8018,23 +8032,23 @@ ${roleLabel}: ${userQuery}`;
                               </div>
 
                               {/* Workspace Editor vs Preview switches */}
-                              <div className="flex items-center justify-between border-b border-white/5 pb-3">
-                                <div className="flex gap-2.5">
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-white/5 pb-3">
+                                <div className="flex flex-wrap gap-2">
                                   <button
                                     onClick={() => setNoteEditMode(true)}
                                     className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${noteEditMode ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white bg-white/5'}`}
                                   >
-                                    ✍️ Markdown Notion Editor
+                                    ✍️ Markdown Editor
                                   </button>
                                   <button
                                     onClick={() => setNoteEditMode(false)}
                                     className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${!noteEditMode ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white bg-white/5'}`}
                                   >
-                                    👁️ Reader View (Preview)
+                                    👁️ Reader View
                                   </button>
                                 </div>
 
-                                <div className="flex items-center gap-3">
+                                <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 sm:gap-3">
                                   {/* Export Buttons */}
                                   <div className="flex items-center gap-1.5">
                                     <button
@@ -8106,8 +8120,8 @@ ${roleLabel}: ${userQuery}`;
                                   </div>
 
                                   {/* Notion-styled AI Toolbar expansion card */}
-                                  <div className="bg-slate-950/60 p-4 rounded-2xl border border-indigo-500/10 space-y-3 shadow-inner">
-                                    <div className="flex items-center justify-between">
+                                  <div className="bg-slate-950/60 p-3.5 sm:p-4 rounded-2xl border border-indigo-500/10 space-y-3 shadow-inner">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
                                       <div className="flex items-center gap-2">
                                         <span className="text-indigo-400">⚡</span>
                                         <p className="text-xs font-black text-white font-display uppercase tracking-wider">Gemini Notion Note Companion</p>
@@ -8260,22 +8274,22 @@ ${activeNote.content}`);
 
               {/* Tab: Deep Focus Interval Timer View */}
               {activeTab === 'pomodoro' && (
-                <div className="smart-glass p-8 rounded-3xl space-y-6 max-w-2xl mx-auto text-center animate-fadeIn">
+                <div className="smart-glass p-4 sm:p-6 md:p-8 rounded-3xl space-y-6 max-w-2xl mx-auto text-center animate-fadeIn">
                   <div className="space-y-2">
-                    <h3 className="text-2xl font-black font-display text-white">Deep Work Engine</h3>
+                    <h3 className="text-xl sm:text-2xl font-black font-display text-white">Deep Work Engine</h3>
                     <p className="text-xs text-slate-400">Isolate distractions and sustain baseline focus metrics over intervals. Earn 50 house points on session completion.</p>
                   </div>
 
-                  <div className="py-12 px-6 rounded-3xl bg-slate-950/60 border border-white/5 shadow-inner relative overflow-hidden flex flex-col items-center justify-center space-y-6">
+                  <div className="py-8 sm:py-12 px-4 sm:px-6 rounded-3xl bg-slate-950/60 border border-white/5 shadow-inner relative overflow-hidden flex flex-col items-center justify-center space-y-6">
                     {/* Glowing pulse rings active only when counting down */}
                     {pomodoroRunning && (
                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                        <div className="absolute h-64 w-64 rounded-full border border-indigo-500/20 animate-ping"></div>
-                        <div className="absolute h-96 w-96 rounded-full border border-indigo-500/5 animate-pulse"></div>
+                        <div className="absolute h-56 w-56 sm:h-64 sm:w-64 rounded-full border border-indigo-500/20 animate-ping"></div>
+                        <div className="absolute h-72 w-72 sm:h-96 sm:w-96 rounded-full border border-indigo-500/5 animate-pulse"></div>
                       </div>
                     )}
 
-                    <div className="text-5xl md:text-7xl font-black font-mono tracking-wider text-white bg-slate-900/80 px-6 md:px-8 py-4 md:py-5 rounded-2xl border border-white/10 shadow-lg relative z-10 select-none">
+                    <div className="text-4xl sm:text-5xl md:text-7xl font-black font-mono tracking-wider text-white bg-slate-900/80 px-4 sm:px-6 md:px-8 py-3 sm:py-4 md:py-5 rounded-2xl border border-white/10 shadow-lg relative z-10 select-none">
                       {Math.floor(pomodoroSeconds / 3600) > 0 ? `${Math.floor(pomodoroSeconds / 3600).toString().padStart(2, '0')}:` : ''}{Math.floor((pomodoroSeconds % 3600) / 60).toString().padStart(2, '0')}:{(pomodoroSeconds % 60).toString().padStart(2, '0')}
                     </div>
                     <p className="text-[10px] md:text-xs uppercase font-bold tracking-widest text-indigo-400 relative z-10 px-4">
@@ -8788,7 +8802,7 @@ ${activeNote.content}`);
                             <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-widest">📚 Material Hub Contributions summary</h4>
                             <p className="text-[11px] text-slate-400">Contribution index tracking peer utility points for your identity profile.</p>
                           </div>
-                          <div className="grid grid-cols-3 gap-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                             <div className="p-4 bg-slate-900/60 rounded-xl border border-white/5 text-center space-y-1">
                               <span className="text-2xl block">📤</span>
                               <p className="text-xl font-extrabold text-white">{totalUploads}</p>
@@ -9214,7 +9228,7 @@ ${activeNote.content}`);
 
                       if (filtered.length === 0) {
                         return (
-                          <div className="col-span-2 smart-glass p-12 text-center space-y-3 rounded-3xl border border-dashed border-white/5">
+                          <div className="col-span-1 lg:col-span-2 smart-glass p-6 sm:p-12 text-center space-y-3 rounded-3xl border border-dashed border-white/5">
                             <span className="text-4xl block">✨</span>
                             <h4 className="text-sm font-bold text-white uppercase tracking-wider">Academic Clear Space</h4>
                             <p className="text-xs text-slate-400 max-w-md mx-auto">No online assignments matched the current grade level or filter credentials. Check out alternative grades or enjoy your free hours!</p>
@@ -9308,7 +9322,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                             </div>
 
                             {/* Options panel */}
-                            <div className="flex items-center justify-between pt-3 border-t border-white/5 text-xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-white/5 text-xs">
                               
                               {/* Progress checkbox */}
                               <button
@@ -10747,15 +10761,15 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                   
                   {/* Quiz starter screen */}
                   {!quizStarted ? (
-                    <div className="smart-glass p-8 rounded-3xl space-y-6 text-center shadow-lg">
+                    <div className="smart-glass p-5 sm:p-8 rounded-3xl space-y-6 text-center shadow-lg">
                       <div className="h-14 w-14 rounded-3xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center text-3xl mx-auto border border-indigo-500/20">🧠</div>
                       <div className="space-y-1.5">
-                        <h3 className="text-2xl font-black font-display text-white">Section Aptitude Evaluation Node</h3>
+                        <h3 className="text-xl sm:text-2xl font-black font-display text-white">Section Aptitude Evaluation Node</h3>
                         <p className="text-xs text-slate-400 max-w-sm mx-auto">Evaluate your comprehensive subject mastery. Scoring above critical thresholds earns substantial house credit standings!</p>
                       </div>
 
                       {effectiveRole === 'student' ? (
-                        <div className="grid grid-cols-2 gap-3 pt-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                           {Object.keys(MOCK_QUIZZES).map(subject => (
                             <button 
                               key={subject}
@@ -10794,7 +10808,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                       const question = questions[quizCurrentIndex];
                       
                       return (
-                        <div className="smart-glass p-8 rounded-3xl space-y-6 border border-indigo-500/20 shadow-xl animate-fadeIn">
+                        <div className="smart-glass p-4 sm:p-6 md:p-8 rounded-3xl space-y-6 border border-indigo-500/20 shadow-xl animate-fadeIn">
                           
                           {/* Quiz status indicators */}
                           <div className="flex items-center justify-between flex-wrap gap-2 text-xs">
@@ -10962,7 +10976,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                               <p className="text-xs text-slate-300 leading-relaxed">{post.text}</p>
 
                               {/* Footer action detail */}
-                              <div className="flex items-center justify-between pt-3 border-t border-white/5 text-xs">
+                              <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-white/5 text-xs">
                                 <button 
                                   onClick={() => upvoteFeedback(post.id)}
                                   className="flex items-center gap-1 bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg text-slate-300 font-bold transition-all"
@@ -10972,7 +10986,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
 
                                 {/* Faculty specific override action buttons */}
                                 {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '') && (
-                                  <div className="flex items-center gap-1.5 font-mono text-[9px] font-black uppercase">
+                                  <div className="flex flex-wrap items-center gap-1.5 font-mono text-[9px] font-black uppercase">
                                     <button 
                                       onClick={() => handleFacultyStatusUpdate(post.id, 'in-progress')}
                                       className="p-1 px-2 border border-amber-500/20 text-amber-400 hover:bg-amber-500/10 rounded"
@@ -11161,7 +11175,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                                   </div>
                                   <button
                                     onClick={(e) => handleDeleteThread(t.id, e)}
-                                    className="opacity-0 group-hover:opacity-100 p-1.5 rounded hover:bg-white/10 text-slate-400 hover:text-red-400 transition-all shrink-0"
+                                    className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 p-1.5 rounded hover:bg-white/10 text-slate-400 hover:text-red-400 transition-all shrink-0"
                                     title="Delete conversation"
                                   >
                                     <Trash className="w-3.5 h-3.5" />
@@ -11176,7 +11190,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                   </AnimatePresence>
 
                   {/* Primary Chat Dialog Pane */}
-                  <div className="smart-glass p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl min-h-[580px] h-[calc(100vh-210px)] max-h-[760px] flex flex-col justify-between shadow-lg relative border border-white/5">
+                  <div className="smart-glass p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl min-h-[480px] sm:min-h-[580px] h-[calc(100dvh-220px)] max-h-[760px] flex flex-col justify-between shadow-lg relative border border-white/5">
                     
                     {/* Header: Controls, Selectors & Actions */}
                     <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-white/5 pb-3">
@@ -11599,6 +11613,52 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
 
             </main>
 
+            {/* Mobile Bottom Navigation Bar (Phones < 768px & Installed Mobile PWA) */}
+            {!presentationMode && activeTab !== 'whiteboard' && (
+              <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-slate-950/95 backdrop-blur-xl border-t border-white/10 px-2 pt-1.5 pb-2 safe-area-pb flex items-center justify-around">
+                {[
+                  { id: 'dashboard', label: 'Home', icon: '🏠' },
+                  { id: 'study_hub', label: 'Study', icon: '🎯', badge: dueCardsCount > 0 ? dueCardsCount : 0 },
+                  { id: 'peer_chat', label: 'Chat', icon: '🌍' },
+                  { id: 'ai_teacher', label: 'AI Tutor', icon: '🤖' },
+                ].map((item) => {
+                  const isActive = item.id === 'study_hub'
+                    ? ['study_hub', 'tasks', 'planner', 'flashcards'].includes(activeTab)
+                    : activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => handleTabSelect(item.id)}
+                      className={`relative flex flex-col items-center justify-center py-1 px-2.5 rounded-xl min-w-[56px] min-h-[44px] transition-all cursor-pointer ${
+                        isActive
+                          ? 'text-indigo-400 bg-indigo-500/15 font-extrabold'
+                          : 'text-slate-400 hover:text-slate-200 font-semibold'
+                      }`}
+                    >
+                      <span className="text-base leading-none">{item.icon}</span>
+                      <span className="text-[10px] mt-1 leading-none tracking-tight">{item.label}</span>
+                      {item.badge ? (
+                        <span className="absolute top-0.5 right-1.5 px-1 min-w-[14px] h-[14px] rounded-full bg-rose-500 text-white text-[8px] font-black flex items-center justify-center leading-none">
+                          {item.badge}
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => setSidebarOpen(true)}
+                  className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-xl min-w-[56px] min-h-[44px] transition-all cursor-pointer ${
+                    sidebarOpen ? 'text-indigo-400 bg-indigo-500/15 font-extrabold' : 'text-slate-400 hover:text-slate-200 font-semibold'
+                  }`}
+                >
+                  <span className="text-base leading-none">☰</span>
+                  <span className="text-[10px] mt-1 leading-none tracking-tight">Menu</span>
+                </button>
+              </nav>
+            )}
+
             {/* Orion (Jarvis) Drawer Overlay */}
             {isJarvisActive && (
               <>
@@ -11609,8 +11669,8 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                 />
                 
                 {/* Modal Overlay for Orion */}
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-8 animate-fadeIn pointer-events-none">
-                  <div className="w-full max-w-6xl h-full max-h-[85vh] pointer-events-auto shadow-[0_0_80px_-15px_rgba(79,70,229,0.3)] rounded-3xl overflow-hidden relative border border-white/10">
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-8 animate-fadeIn pointer-events-none">
+                  <div className="w-full max-w-6xl h-full max-h-[92dvh] sm:max-h-[85vh] pointer-events-auto shadow-[0_0_80px_-15px_rgba(79,70,229,0.3)] rounded-2xl sm:rounded-3xl overflow-hidden relative border border-white/10">
                     <div className="absolute inset-0 bg-gradient-to-br from-indigo-900/20 via-slate-950/95 to-violet-900/20 backdrop-blur-3xl" />
                     <div className="relative h-full w-full">
                   <StudentOSJarvis 

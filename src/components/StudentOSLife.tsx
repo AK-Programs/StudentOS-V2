@@ -1385,7 +1385,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
       {/* 1. Create Competition Modal */}
       {showCreateCompModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-lg w-full space-y-4 shadow-2xl">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl">
             <h3 className="text-lg font-black text-white">Create New Competition</h3>
             <form onSubmit={handleCreateCompetition} className="space-y-3 text-xs">
               <div>
@@ -1400,7 +1400,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-slate-400 font-bold block mb-1">Category</label>
                   <select
@@ -1450,7 +1450,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
       {/* 2. Award Badge Modal */}
       {showAwardBadgeModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 max-w-md w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl">
             <h3 className="text-lg font-black text-white">Award Student Badge</h3>
             <form onSubmit={handleAwardBadge} className="space-y-3 text-xs">
               <div>
@@ -1465,7 +1465,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-slate-400 font-bold block mb-1">Badge Title</label>
                   <select
@@ -1527,7 +1527,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
       {/* 3. Add Event Modal */}
       {showAddEventModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 max-w-md w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl">
             <h3 className="text-lg font-black text-white">Add Calendar Event</h3>
             <form onSubmit={handleAddEvent} className="space-y-3 text-xs">
               <div>
@@ -1542,7 +1542,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-slate-400 font-bold block mb-1">Date</label>
                   <input

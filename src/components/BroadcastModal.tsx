@@ -154,7 +154,7 @@ export const BroadcastModal: React.FC<BroadcastModalProps> = ({
           </div>
 
           {/* Category & Priority */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
                 Category
@@ -195,7 +195,7 @@ export const BroadcastModal: React.FC<BroadcastModalProps> = ({
                 <Filter className="w-4 h-4 text-indigo-400" />
                 Target Audience
               </div>
-              <div className="grid grid-cols-3 gap-2 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
                 <div>
                   <label className="block text-[10px] text-slate-400 mb-1">Grade</label>
                   <select

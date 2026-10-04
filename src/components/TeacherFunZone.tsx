@@ -303,13 +303,13 @@ export const TeacherFunZone: React.FC<TeacherFunZoneProps> = ({ currentUser }) =
             initial={{ opacity: 0, scale: 0.8, y: -20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.8 }}
-            className="fixed top-12 left-1/2 -translate-x-1/2 z-[9999] bg-gradient-to-r from-amber-500 via-purple-600 to-indigo-600 border-2 border-amber-300 px-8 py-4 rounded-3xl shadow-2xl text-center"
+            className="fixed top-12 left-1/2 -translate-x-1/2 z-[9999] bg-gradient-to-r from-amber-500 via-purple-600 to-indigo-600 border-2 border-amber-300 px-5 sm:px-8 py-3 sm:py-4 rounded-3xl shadow-2xl text-center max-w-[92vw]"
           >
             <div className="flex items-center gap-3">
-              <Trophy className="w-8 h-8 text-amber-300 animate-bounce" />
-              <div>
+              <Trophy className="w-7 h-7 sm:w-8 sm:h-8 text-amber-300 animate-bounce shrink-0" />
+              <div className="min-w-0">
                 <span className="text-[10px] font-black uppercase text-amber-200 tracking-widest block">WINNER CELEBRATION</span>
-                <span className="text-xl font-black text-white">{celebrationWinner}</span>
+                <span className="text-base sm:text-xl font-black text-white truncate block">{celebrationWinner}</span>
               </div>
             </div>
           </motion.div>
@@ -317,9 +317,9 @@ export const TeacherFunZone: React.FC<TeacherFunZoneProps> = ({ currentUser }) =
       </AnimatePresence>
 
       {/* Title & House Scoreboard Bar */}
-      <div className="bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-purple-500/30 shadow-2xl flex flex-col lg:flex-row items-center justify-between gap-6">
+      <div className="bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-purple-500/30 shadow-2xl flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-6">
         <div>
-          <div className="flex items-center gap-2 mb-2">
+          <div className="flex flex-wrap items-center gap-2 mb-2">
             <span className="px-3 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5">
               <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Smart-Board Classroom Experience
             </span>
@@ -327,7 +327,7 @@ export const TeacherFunZone: React.FC<TeacherFunZoneProps> = ({ currentUser }) =
               Interactive Games Engine
             </span>
           </div>
-          <h2 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
+          <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight flex items-center gap-3">
             Teacher <span className="bg-gradient-to-r from-amber-400 via-amber-200 to-yellow-400 bg-clip-text text-transparent">Fun Zone</span>
           </h2>
           <p className="text-xs text-slate-300 mt-1 max-w-xl">
@@ -365,7 +365,7 @@ export const TeacherFunZone: React.FC<TeacherFunZoneProps> = ({ currentUser }) =
         </div>
 
         {/* Live House Scoreboard */}
-        <div className="bg-slate-950/80 p-3 rounded-2xl border border-white/10 flex items-center gap-3">
+        <div className="bg-slate-950/80 p-3 rounded-2xl border border-white/10 flex flex-wrap items-center justify-center sm:justify-start gap-2 sm:gap-3">
           {Object.entries(houseScores).map(([house, pts]) => {
             const colors: Record<string, string> = {
               Ruby: 'text-rose-400 border-rose-500/30 bg-rose-500/10',
@@ -374,9 +374,9 @@ export const TeacherFunZone: React.FC<TeacherFunZoneProps> = ({ currentUser }) =
               Topaz: 'text-amber-400 border-amber-500/30 bg-amber-500/10'
             };
             return (
-              <div key={house} className={`px-3 py-1.5 rounded-xl border flex flex-col items-center ${colors[house]}`}>
+              <div key={house} className={`px-2.5 sm:px-3 py-1.5 rounded-xl border flex flex-col items-center ${colors[house]}`}>
                 <span className="text-[10px] font-black uppercase">{house}</span>
-                <span className="text-sm font-mono font-black">{pts} pts</span>
+                <span className="text-xs sm:text-sm font-mono font-black">{pts} pts</span>
                 <button
                   onClick={() => addHouseScore(house, 10)}
                   className="mt-1 text-[9px] font-bold text-white bg-white/10 hover:bg-white/20 px-1.5 py-0.5 rounded"
@@ -390,7 +390,7 @@ export const TeacherFunZone: React.FC<TeacherFunZoneProps> = ({ currentUser }) =
 
           <button
             onClick={() => setIsFullscreen(!isFullscreen)}
-            className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-white/10 transition-all ml-2"
+            className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-white/10 transition-all sm:ml-2"
             title="Toggle Smart-Board Fullscreen"
           >
             {isFullscreen ? <Minimize className="w-5 h-5 text-amber-400" /> : <Maximize className="w-5 h-5 text-amber-400" />}
