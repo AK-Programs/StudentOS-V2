@@ -9,10 +9,11 @@ import {
   BellRing
 } from 'lucide-react';
 import { 
-  enableOneSignalWebPush, 
-  disableOneSignalWebPush, 
-  getOneSignalPushStatus 
-} from '../lib/oneSignal';
+  enablePusherBeamsPush, 
+  disablePusherBeamsPush, 
+  getPusherBeamsStatus 
+} from '../lib/pusherBeams';
+import { soundService } from '../lib/soundService';
 
 interface ProfileCustomizerProps {
   currentUser: UserProfile;
@@ -66,7 +67,7 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
   const [avatarFrame, setAvatarFrame] = useState<ProfileFrameStyle>((currentUser.avatarFrame as ProfileFrameStyle) || 'none');
   const [accentColor, setAccentColor] = useState<string>(currentUser.accentColor || 'indigo');
   
-  // OneSignal Web Push state
+  // Pusher Beams Web Push state
   const [enableWebPush, setEnableWebPush] = useState<boolean>(() => {
     return Boolean(currentUser.enableWebPush ?? currentUser.raw_data?.enableWebPush ?? false);
   });
@@ -74,7 +75,7 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
   const [pushMsg, setPushMsg] = useState<string | null>(null);
 
   React.useEffect(() => {
-    getOneSignalPushStatus().then((status) => {
+    getPusherBeamsStatus().then((status) => {
       if (status.optedIn) setEnableWebPush(true);
     });
   }, []);
@@ -82,8 +83,9 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
   const handleTogglePush = async (val: boolean) => {
     setPushLoading(true);
     setPushMsg(null);
+    soundService.playToggleSound(val);
     if (val) {
-      const res = await enableOneSignalWebPush(
+      const res = await enablePusherBeamsPush(
         currentUser.uid || currentUser.email,
         currentUser.role,
         {
@@ -94,16 +96,17 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
       );
       if (res.success && res.optedIn) {
         setEnableWebPush(true);
-        setPushMsg('✓ Web push notifications enabled via OneSignal!');
+        soundService.playSuccessSound();
+        setPushMsg('✓ Web push notifications enabled via Pusher Beams!');
         const updated = {
           ...currentUser,
           enableWebPush: true,
-          oneSignalSubscriptionId: res.subscriptionId || currentUser.oneSignalSubscriptionId,
+          pusherBeamsDeviceId: res.deviceId || currentUser.pusherBeamsDeviceId,
           raw_data: {
             ...(currentUser.raw_data || {}),
             enableWebPush: true,
-            oneSignalSubscribed: true,
-            oneSignalSubscriptionId: res.subscriptionId
+            pusherBeamsSubscribed: true,
+            pusherBeamsDeviceId: res.deviceId
           }
         };
         saveSupabaseUserProfile(updated).catch(() => {});
@@ -115,7 +118,7 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
         setPushMsg(res.error || 'Notification permission was not granted by browser.');
       }
     } else {
-      await disableOneSignalWebPush();
+      await disablePusherBeamsPush(currentUser.uid || currentUser.email);
       setEnableWebPush(false);
       setPushMsg('Web push notifications disabled for this device.');
       const updated = {
@@ -124,7 +127,7 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
         raw_data: {
           ...(currentUser.raw_data || {}),
           enableWebPush: false,
-          oneSignalSubscribed: false
+          pusherBeamsSubscribed: false
         }
       };
       saveSupabaseUserProfile(updated).catch(() => {});

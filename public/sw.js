@@ -1,12 +1,12 @@
-// OneSignal SDK Web Push Integration
+// Pusher Beams Web Push Service Worker Integration
 try {
-  importScripts("https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js");
+  importScripts("https://js.pusher.com/beams/service-worker.js");
 } catch (e) {
-  console.warn('[SW] OneSignalSDK.sw.js import notice:', e);
+  // Graceful fallback when offline; native StudentOS push listener below handles VAPID & local dispatches
 }
 
 // StudentOS Service Worker Version & Cache Name
-const SW_VERSION = 'studentos-v2.9.0';
+const SW_VERSION = 'studentos-v3.0.0';
 const CACHE_NAME = `studentos-cache-${SW_VERSION}`;
 
 // Service Worker Installation
@@ -38,7 +38,20 @@ self.addEventListener('push', (event) => {
   let data = { title: '📢 StudentOS Alert', body: 'You have a new school announcement.', linkTab: 'notice_viewer' };
   try {
     if (event.data) {
-      data = event.data.json();
+      const parsed = event.data.json();
+      if (parsed && parsed.notification) {
+        // Pusher Beams web notification format
+        data = {
+          title: parsed.notification.title || '📢 StudentOS Alert',
+          body: parsed.notification.body || '',
+          icon: parsed.notification.icon || '/icons/icon-192.png',
+          linkTab: (parsed.data && parsed.data.linkTab) || 'notice_viewer',
+          url: (parsed.data && parsed.data.url) || parsed.notification.deep_link || '/',
+          tag: (parsed.data && parsed.data.tag) || undefined
+        };
+      } else if (parsed) {
+        data = { ...data, ...parsed };
+      }
     }
   } catch (e) {
     if (event.data) {

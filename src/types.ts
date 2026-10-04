@@ -61,7 +61,7 @@ export interface UserProfile {
   grant_all_permissions?: boolean;
   permissions?: string[];
   enableWebPush?: boolean;
-  oneSignalSubscriptionId?: string;
+  pusherBeamsDeviceId?: string;
   raw_data?: any;
 }
 

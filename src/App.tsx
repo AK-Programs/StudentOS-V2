@@ -279,12 +279,17 @@ export default function App() {
   const [firebaseOnboardingUser, setFirebaseOnboardingUser] = useState<any>(null);
   const [authError, setAuthError] = useState<{ code: string; message: string; hostname: string } | null>(null);
 
-  // Sync device push subscription with active StudentOS user account whenever user changes
+  // Sync device push subscription & Pusher Beams interests with active StudentOS user account whenever user changes
   useEffect(() => {
     if (currentUser?.uid && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-      registerPushSubscription(currentUser.uid);
+      registerPushSubscription(currentUser.uid, {
+        role: currentUser.role,
+        grade: currentUser.grade,
+        section: currentUser.section,
+        house: currentUser.house
+      });
     }
-  }, [currentUser?.uid]);
+  }, [currentUser?.uid, currentUser?.role, currentUser?.grade, currentUser?.section, currentUser?.house]);
 
   // Listen for navigation messages from Service Worker (e.g. when clicking a browser push notification)
   useEffect(() => {
@@ -1201,6 +1206,7 @@ export default function App() {
               setCurrentUser(updated);
               localStorage.setItem('s_os_user', JSON.stringify(updated));
             }
+            soundService.playTimerAlarm();
             showNotification('🍅 Focus interval completed! Your study hours have been logged.');
             return 1500; // Reset focus length
           }
@@ -3011,6 +3017,12 @@ ${resultText}
 
   const toggleTask = async (id: string) => {
     if (!currentUser) return;
+    const target = tasks.find(t => t.id === id);
+    if (target && !target.completed) {
+      soundService.playTaskComplete();
+    } else {
+      soundService.playClick();
+    }
     const updated = tasks.map(t => t.id === id ? { ...t, completed: !t.completed } : t);
     setTasks(updated);
     const updatedUser = { ...currentUser, raw_data: { ...(currentUser.raw_data || {}), tasks: updated } };
@@ -6324,6 +6336,17 @@ ${roleLabel}: ${userQuery}`;
                     </button>
                   )}
 
+                  {!presentationMode && (
+                    <button 
+                      onClick={() => handleTabSelect('life')}
+                      className={getSidebarBtnClass('life')}
+                      title="StudentOS Life: Competitions, Clubs, Events, Polls & Badges"
+                    >
+                      <span>🚀</span>
+                      {sidebarOpen && 'StudentOS Life'}
+                    </button>
+                  )}
+
                   {(!presentationMode || isTabAllowedInPresentation('homework')) && !isSportsTeacher && (
                     <button 
                       onClick={() => handleTabSelect('homework')}
@@ -7220,6 +7243,13 @@ ${roleLabel}: ${userQuery}`;
                               <span className="text-xs font-bold text-white">Assignment Hub</span>
                             </button>
                           )}
+                          <button
+                            onClick={() => handleTabSelect('life')}
+                            className="p-4 bg-gradient-to-br from-indigo-900/80 to-purple-900/80 hover:from-indigo-800 hover:to-purple-800 border border-indigo-500/30 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-400 hover:shadow-lg transition-all shadow-md"
+                          >
+                            <span className="text-2xl">🚀</span>
+                            <span className="text-xs font-bold text-white">StudentOS Life</span>
+                          </button>
                         </>
                       )}
 
@@ -7246,6 +7276,13 @@ ${roleLabel}: ${userQuery}`;
                           >
                             <span className="text-2xl">📅</span>
                             <span className="text-xs font-bold text-white">Study Planner</span>
+                          </button>
+                          <button
+                            onClick={() => handleTabSelect('life')}
+                            className="p-4 bg-gradient-to-br from-indigo-900/80 to-purple-900/80 hover:from-indigo-800 hover:to-purple-800 border border-indigo-500/30 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-400 hover:shadow-lg transition-all shadow-md"
+                          >
+                            <span className="text-2xl">🚀</span>
+                            <span className="text-xs font-bold text-white">StudentOS Life</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('profile')}
@@ -7280,6 +7317,13 @@ ${roleLabel}: ${userQuery}`;
                           >
                             <span className="text-2xl">💎</span>
                             <span className="text-xs font-bold text-white">Blogs Portal</span>
+                          </button>
+                          <button
+                            onClick={() => handleTabSelect('life')}
+                            className="p-4 bg-gradient-to-br from-indigo-900/80 to-purple-900/80 hover:from-indigo-800 hover:to-purple-800 border border-indigo-500/30 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-400 hover:shadow-lg transition-all shadow-md"
+                          >
+                            <span className="text-2xl">🚀</span>
+                            <span className="text-xs font-bold text-white">StudentOS Life</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('profile')}
@@ -7325,6 +7369,49 @@ ${roleLabel}: ${userQuery}`;
                         <h3 className="text-2xl font-black text-white tracking-tight">{currentUser.studyHours || 12} hrs</h3>
                       </div>
                       <div className="h-10 w-10 bg-rose-500/10 rounded-xl flex items-center justify-center text-rose-400">⏱️</div>
+                    </div>
+                  </div>
+
+                  {/* StudentOS Life — Role-Aware Dashboard Community Hub Card (Visible to All Authenticated Roles) */}
+                  <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-indigo-950/80 via-purple-950/60 to-slate-900 border border-indigo-500/30 shadow-xl relative overflow-hidden uiverse-card-hover">
+                    <div className="absolute -right-12 -top-12 w-48 h-48 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+                    <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                      <div className="space-y-1.5 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 text-[10px] font-black uppercase tracking-widest">
+                            🚀 StudentOS Life
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold uppercase">
+                            {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '')
+                              ? `${(effectiveRole || 'faculty').replace('_', ' ')} Access`
+                              : 'Student Community'}
+                          </span>
+                        </div>
+                        <h3 className="text-base sm:text-lg font-black font-display text-white">
+                          {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '')
+                            ? 'Campus Community, Competitions & Merit Badges'
+                            : 'Competitions, Student Clubs, Live Polls & House Spirit'}
+                        </h3>
+                        <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
+                          {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '')
+                            ? 'Organize school-wide competitions, supervise student clubs, publish campus polls, and award official merit badges.'
+                            : 'Register for inter-house hackathons and Olympiads, join student clubs, vote in live school polls, and earn merit badges.'}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleTabSelect('life')}
+                          className="uiverse-btn-primary px-4 py-2.5 rounded-xl text-xs font-bold text-white flex items-center gap-2 cursor-pointer"
+                        >
+                          <span>🚀</span>
+                          <span>
+                            {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '')
+                              ? 'Manage StudentOS Life'
+                              : 'Explore StudentOS Life'}
+                          </span>
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -11563,18 +11650,26 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
 
               {/* Tab 12: StudentOS Life Community Hub */}
               {(activeTab === 'life' || activeTab === 'studentos_life') && (
-                <StudentOSLife currentUser={currentUser || {
-                  uid: 'guest',
-                  name: 'Guest Student',
-                  email: 'guest@studentos.internal',
-                  role: 'student',
-                  house: 'Emerald',
-                  section: 'Solara',
-                  grade: 'Grade 10',
-                  streakDays: 5,
-                  quizzesTaken: 3,
-                  studyHours: 12
-                }} />
+                <StudentOSLife
+                  currentUser={
+                    currentUser
+                      ? { ...currentUser, role: (effectiveRole || currentUser.role) as UserRole }
+                      : {
+                          uid: 'guest',
+                          name: 'Guest Student',
+                          email: 'guest@studentos.internal',
+                          role: 'student',
+                          house: 'Emerald',
+                          section: 'Solara',
+                          grade: 'Grade 10',
+                          streakDays: 5,
+                          quizzesTaken: 3,
+                          studyHours: 12
+                        }
+                  }
+                  onNavigateToTab={handleTabSelect}
+                  onTriggerOrionAction={() => setIsJarvisActive(true)}
+                />
               )}
 
               {/* Tab 13: Teacher Fun Zone */}

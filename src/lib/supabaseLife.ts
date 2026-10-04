@@ -1,8 +1,14 @@
 import { supabase } from './supabase';
 import { 
   Competition, SchoolEvent, Club, StudentBadge, GalleryAlbum, 
-  SchoolNews, SchoolPoll, HouseDetail 
+  SchoolNews, SchoolPoll, HouseDetail, UserRole
 } from '../types';
+
+const STAFF_ROLES: UserRole[] = ['teacher', 'coordinator', 'admin', 'super_admin'];
+
+export const canManageLifeContent = (role?: UserRole | string): boolean => {
+  return Boolean(role && STAFF_ROLES.includes(role as UserRole));
+};
 
 // Realtime channel listener helper
 export const subscribeToLifeTable = (tableName: string, onDataChanged: () => void) => {

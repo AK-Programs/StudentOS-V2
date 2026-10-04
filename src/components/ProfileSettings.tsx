@@ -19,10 +19,12 @@ import {
 } from '../lib/verification';
 import { ProfessionalTabDropdown } from './ProfessionalTabDropdown';
 import { 
-  enableOneSignalWebPush, 
-  disableOneSignalWebPush, 
-  getOneSignalPushStatus 
-} from '../lib/oneSignal';
+  enablePusherBeamsPush, 
+  disablePusherBeamsPush, 
+  getPusherBeamsStatus,
+  sendTestPusherBeamsNotification
+} from '../lib/pusherBeams';
+import { soundService } from '../lib/soundService';
 
 export type SettingsSubSection = 'customization' | 'info' | 'theme' | 'verification' | 'environment' | 'notifications';
 
@@ -118,31 +120,39 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
 
   // Notifications preferences
   const [studyReminders, setStudyReminders] = useState(rawData.notifyStudy !== false);
-  const [chatSounds, setChatSounds] = useState(rawData.notifyChat !== false);
+  const [chatSounds, setChatSounds] = useState(() => soundService.isEnabled() && rawData.notifyChat !== false);
   const [announcementsAlert, setAnnouncementsAlert] = useState(rawData.notifyAnnounce !== false);
 
-  // OneSignal Web Push state
+  // Pusher Beams Web Push state
   const [enableWebPush, setEnableWebPush] = useState<boolean>(() => {
     return Boolean(currentUser.enableWebPush ?? rawData.enableWebPush ?? false);
   });
   const [pushStatusLoading, setPushStatusLoading] = useState<boolean>(false);
   const [pushNotice, setPushNotice] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
-  const [oneSignalStatus, setOneSignalStatus] = useState<{
+  const [beamsStatus, setBeamsStatus] = useState<{
     supported: boolean;
     permission: 'default' | 'granted' | 'denied';
     optedIn: boolean;
-    subscriptionId?: string;
+    deviceId?: string;
+    interests: string[];
   }>({
     supported: true,
     permission: 'default',
-    optedIn: false
+    optedIn: false,
+    interests: []
   });
 
   useEffect(() => {
     let isMounted = true;
-    getOneSignalPushStatus().then((status) => {
+    getPusherBeamsStatus().then((status) => {
       if (isMounted) {
-        setOneSignalStatus(status);
+        setBeamsStatus({
+          supported: status.supported,
+          permission: status.permission,
+          optedIn: status.optedIn,
+          deviceId: status.deviceId,
+          interests: status.interests || []
+        });
         if (status.optedIn) {
           setEnableWebPush(true);
         }
@@ -156,8 +166,8 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
     setPushNotice(null);
 
     if (newVal) {
-      setPushNotice({ text: 'Requesting permission via OneSignal...', type: 'info' });
-      const result = await enableOneSignalWebPush(
+      setPushNotice({ text: 'Initializing Pusher Beams & requesting notification permission...', type: 'info' });
+      const result = await enablePusherBeamsPush(
         currentUser.uid || currentUser.email,
         currentUser.role,
         {
@@ -168,15 +178,17 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
       );
 
       if (result.success && result.optedIn) {
+        soundService.playSuccess();
         setEnableWebPush(true);
-        setOneSignalStatus(prev => ({
+        setBeamsStatus(prev => ({
           ...prev,
           permission: 'granted',
           optedIn: true,
-          subscriptionId: result.subscriptionId
+          deviceId: result.deviceId,
+          interests: result.interests || prev.interests
         }));
         setPushNotice({
-          text: '✓ Web Push Notifications activated! OneSignal is registered to deliver targeted alerts for your role.',
+          text: '✓ Pusher Beams Push Notifications activated! Subscribed to targeted interests for your role and class.',
           type: 'success'
         });
 
@@ -184,12 +196,13 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
         const updated: UserProfile = {
           ...currentUser,
           enableWebPush: true,
-          oneSignalSubscriptionId: result.subscriptionId || currentUser.oneSignalSubscriptionId,
+          pusherBeamsDeviceId: result.deviceId || currentUser.pusherBeamsDeviceId,
           raw_data: {
             ...(currentUser.raw_data || {}),
             enableWebPush: true,
-            oneSignalSubscribed: true,
-            oneSignalSubscriptionId: result.subscriptionId
+            pusherBeamsSubscribed: true,
+            pusherBeamsDeviceId: result.deviceId,
+            pusherBeamsInterests: result.interests
           }
         };
 
@@ -203,18 +216,19 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
         }
       } else {
         setEnableWebPush(false);
-        setOneSignalStatus(prev => ({ ...prev, permission: result.permission || 'denied', optedIn: false }));
+        setBeamsStatus(prev => ({ ...prev, permission: result.permission || 'denied', optedIn: false }));
         setPushNotice({
           text: result.error || 'Notification permission was denied. Please allow notifications in your browser settings.',
           type: 'error'
         });
       }
     } else {
-      await disableOneSignalWebPush();
+      soundService.playToggle(false);
+      await disablePusherBeamsPush(currentUser.uid);
       setEnableWebPush(false);
-      setOneSignalStatus(prev => ({ ...prev, optedIn: false }));
+      setBeamsStatus(prev => ({ ...prev, optedIn: false }));
       setPushNotice({
-        text: 'Web push notifications turned off for this profile.',
+        text: 'Pusher Beams push notifications turned off for this device.',
         type: 'info'
       });
 
@@ -225,7 +239,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
         raw_data: {
           ...(currentUser.raw_data || {}),
           enableWebPush: false,
-          oneSignalSubscribed: false
+          pusherBeamsSubscribed: false
         }
       };
 
@@ -338,7 +352,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
         avatarFrame,
         accentColor,
         enableWebPush,
-        oneSignalSubscriptionId: oneSignalStatus.subscriptionId || currentUser.oneSignalSubscriptionId,
+        pusherBeamsDeviceId: beamsStatus.deviceId || currentUser.pusherBeamsDeviceId,
         raw_data: {
           ...(currentUser.raw_data || {}),
           avatarFrame,
@@ -354,7 +368,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
           notifyChat: chatSounds,
           notifyAnnounce: announcementsAlert,
           enableWebPush,
-          oneSignalSubscriptionId: oneSignalStatus.subscriptionId || currentUser.oneSignalSubscriptionId
+          pusherBeamsDeviceId: beamsStatus.deviceId || currentUser.pusherBeamsDeviceId
         }
       };
 
@@ -1381,7 +1395,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
           </div>
 
           <div className="space-y-4">
-            {/* ONE-SIGNAL WEB PUSH NOTIFICATIONS CARD */}
+            {/* PUSHER BEAMS WEB PUSH NOTIFICATIONS CARD */}
             <div className="p-5 rounded-2xl bg-gradient-to-r from-indigo-950/70 via-slate-900 to-purple-950/70 border border-indigo-500/30 shadow-xl space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex items-start gap-3.5">
@@ -1391,17 +1405,17 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <h4 className="text-sm font-black text-white tracking-tight">
-                        Enable Web Push Notifications
+                        Enable Push Notifications
                       </h4>
-                      <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 font-mono text-[9px] font-black uppercase">
-                        OneSignal SDK
+                      <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono text-[9px] font-black uppercase">
+                        Pusher Beams
                       </span>
-                      {enableWebPush && oneSignalStatus.permission === 'granted' ? (
+                      {enableWebPush && beamsStatus.permission === 'granted' ? (
                         <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                           Subscribed & Active
                         </span>
-                      ) : oneSignalStatus.permission === 'denied' ? (
+                      ) : beamsStatus.permission === 'denied' ? (
                         <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
                           ⚠️ Permission Blocked
                         </span>
@@ -1412,7 +1426,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                       )}
                     </div>
                     <p className="text-xs text-slate-300 leading-relaxed max-w-xl">
-                      Receive immediate desktop, Android APK, and PWA browser alerts for official announcements, assignment deadlines, grade updates, and release notes — even when StudentOS is in the background or closed.
+                      Receive immediate desktop, Android APK, and PWA browser alerts via Pusher Beams for official announcements, assignment deadlines, grade updates, and release notes — targeted strictly to your role and class.
                     </p>
                   </div>
                 </div>
@@ -1428,16 +1442,9 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                     aria-checked={enableWebPush}
                     disabled={pushStatusLoading}
                     onClick={() => handleToggleWebPush(!enableWebPush)}
-                    className={`relative inline-flex h-7 w-13 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50 ${
-                      enableWebPush ? 'bg-indigo-600' : 'bg-slate-800'
-                    }`}
+                    className="uiverse-switch focus:outline-none disabled:opacity-50"
                   >
-                    <span
-                      aria-hidden="true"
-                      className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                        enableWebPush ? 'translate-x-6' : 'translate-x-0'
-                      }`}
-                    />
+                    <span aria-hidden="true" className="uiverse-switch-thumb" />
                   </button>
                 </div>
               </div>
@@ -1464,23 +1471,23 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
               {/* Audience Targeting Segmentation Info */}
               <div className="pt-3 border-t border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[10px] font-black uppercase text-slate-400 font-mono">Targeted Segments:</span>
+                  <span className="text-[10px] font-black uppercase text-slate-400 font-mono">Beams Interests:</span>
                   <span className="px-2 py-0.5 rounded bg-black/30 border border-white/10 text-indigo-300 font-mono text-[10px] font-bold">
-                    role: {currentUser.role || 'student'}
+                    role-{(currentUser.role || 'student').toLowerCase()}
                   </span>
                   {currentUser.grade && (
                     <span className="px-2 py-0.5 rounded bg-black/30 border border-white/10 text-slate-300 font-mono text-[10px]">
-                      grade: {currentUser.grade}
+                      grade-{currentUser.grade}
                     </span>
                   )}
                   {currentUser.section && (
                     <span className="px-2 py-0.5 rounded bg-black/30 border border-white/10 text-slate-300 font-mono text-[10px]">
-                      section: {currentUser.section}
+                      class-{currentUser.grade || '10'}-{currentUser.section}
                     </span>
                   )}
                   {currentUser.house && (
                     <span className="px-2 py-0.5 rounded bg-black/30 border border-white/10 text-slate-300 font-mono text-[10px]">
-                      house: {currentUser.house}
+                      house-{currentUser.house.toLowerCase()}
                     </span>
                   )}
                 </div>
@@ -1489,12 +1496,10 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                   <button
                     type="button"
                     onClick={async () => {
-                      if ('Notification' in window && Notification.permission === 'granted') {
-                        new Notification('🔔 StudentOS Push Notification Verified', {
-                          body: `Targeted update for ${currentUser.name} (${(currentUser.role || 'student').toUpperCase()}). You will receive real-time academic alerts!`,
-                          icon: '/icons/icon-192.png'
-                        });
-                        setPushNotice({ text: '✓ Test notification delivered to your screen!', type: 'success' });
+                      const ok = await sendTestPusherBeamsNotification(currentUser);
+                      if (ok) {
+                        soundService.playSuccess();
+                        setPushNotice({ text: '✓ Pusher Beams test notification delivered to your device!', type: 'success' });
                       } else {
                         handleToggleWebPush(true);
                       }
@@ -1507,43 +1512,65 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
               </div>
             </div>
 
-            <div className="p-4 rounded-2xl bg-slate-900/60 border border-white/5 flex items-center justify-between">
+            <div className="p-4 rounded-2xl bg-slate-900/60 border border-white/5 flex items-center justify-between gap-3">
               <div>
                 <span className="text-xs font-bold text-white block">Homework & Study Reminders</span>
                 <span className="text-[11px] text-slate-400">Receive alerts before assignments and scheduled exams.</span>
               </div>
-              <input
-                type="checkbox"
-                checked={studyReminders}
-                onChange={e => setStudyReminders(e.target.checked)}
-                className="w-4 h-4 rounded text-indigo-600 bg-slate-900 border-white/20 focus:ring-indigo-500"
-              />
+              <button
+                type="button"
+                role="switch"
+                aria-checked={studyReminders}
+                onClick={() => {
+                  const next = !studyReminders;
+                  setStudyReminders(next);
+                  soundService.playToggle(next);
+                }}
+                className="uiverse-switch"
+              >
+                <span aria-hidden="true" className="uiverse-switch-thumb" />
+              </button>
             </div>
 
-            <div className="p-4 rounded-2xl bg-slate-900/60 border border-white/5 flex items-center justify-between">
+            <div className="p-4 rounded-2xl bg-slate-900/60 border border-white/5 flex items-center justify-between gap-3">
               <div>
-                <span className="text-xs font-bold text-white block">Chat & Community Sound Effects</span>
-                <span className="text-[11px] text-slate-400">Play auditory cues when new channel messages or direct chats arrive.</span>
+                <span className="text-xs font-bold text-white block">UI & Community Sound Effects</span>
+                <span className="text-[11px] text-slate-400">Play subtle auditory feedback for actions, timers, and incoming messages.</span>
               </div>
-              <input
-                type="checkbox"
-                checked={chatSounds}
-                onChange={e => setChatSounds(e.target.checked)}
-                className="w-4 h-4 rounded text-indigo-600 bg-slate-900 border-white/20 focus:ring-indigo-500"
-              />
+              <button
+                type="button"
+                role="switch"
+                aria-checked={chatSounds}
+                onClick={() => {
+                  const next = !chatSounds;
+                  setChatSounds(next);
+                  soundService.setEnabled(next);
+                  if (next) soundService.playToggle(true);
+                }}
+                className="uiverse-switch"
+              >
+                <span aria-hidden="true" className="uiverse-switch-thumb" />
+              </button>
             </div>
 
-            <div className="p-4 rounded-2xl bg-slate-900/60 border border-white/5 flex items-center justify-between">
+            <div className="p-4 rounded-2xl bg-slate-900/60 border border-white/5 flex items-center justify-between gap-3">
               <div>
                 <span className="text-xs font-bold text-white block">Official Broadcast Announcements</span>
                 <span className="text-[11px] text-slate-400">Display immediate banner notifications when school faculty publishes broadcasts.</span>
               </div>
-              <input
-                type="checkbox"
-                checked={announcementsAlert}
-                onChange={e => setAnnouncementsAlert(e.target.checked)}
-                className="w-4 h-4 rounded text-indigo-600 bg-slate-900 border-white/20 focus:ring-indigo-500"
-              />
+              <button
+                type="button"
+                role="switch"
+                aria-checked={announcementsAlert}
+                onClick={() => {
+                  const next = !announcementsAlert;
+                  setAnnouncementsAlert(next);
+                  soundService.playToggle(next);
+                }}
+                className="uiverse-switch"
+              >
+                <span aria-hidden="true" className="uiverse-switch-thumb" />
+              </button>
             </div>
           </div>
         </div>

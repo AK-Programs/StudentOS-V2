@@ -28,7 +28,7 @@ import {
   isUserEligibleForNotification,
   requestWebPushPermission
 } from '../lib/notifications';
-import { enableOneSignalWebPush } from '../lib/oneSignal';
+import { enablePusherBeamsPush } from '../lib/pusherBeams';
 import { saveSupabaseUserProfile } from '../lib/supabaseUsers';
 import { soundService } from '../lib/soundService';
 import { supabase } from '../lib/supabase';
@@ -56,7 +56,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
 
   const handleEnablePushPermissions = async () => {
-    const res = await enableOneSignalWebPush(
+    const res = await enablePusherBeamsPush(
       currentUser?.uid || currentUser?.email,
       currentUser?.role,
       {
@@ -70,15 +70,16 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
     await requestWebPushPermission(currentUser?.uid);
 
     if (res.success && currentUser) {
+      soundService.playSuccessSound();
       const updated: UserProfile = {
         ...currentUser,
         enableWebPush: true,
-        oneSignalSubscriptionId: res.subscriptionId || currentUser.oneSignalSubscriptionId,
+        pusherBeamsDeviceId: res.deviceId || currentUser.pusherBeamsDeviceId,
         raw_data: {
           ...(currentUser.raw_data || {}),
           enableWebPush: true,
-          oneSignalSubscribed: true,
-          oneSignalSubscriptionId: res.subscriptionId
+          pusherBeamsSubscribed: true,
+          pusherBeamsDeviceId: res.deviceId
         }
       };
       saveSupabaseUserProfile(updated).catch(() => {});
@@ -125,11 +126,20 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
     const handleStateChange = () => {
       loadNotifications();
     };
+    const handleSoundPrefChange = (e: any) => {
+      if (e.detail && typeof e.detail.muted === 'boolean') {
+        setIsMuted(e.detail.muted);
+      } else {
+        setIsMuted(soundService.getMuted());
+      }
+    };
     window.addEventListener('studentos-notif-state-change', handleStateChange);
+    window.addEventListener('studentos-sound-pref-changed', handleSoundPrefChange);
 
     return () => {
       supabase.removeChannel(channel);
       window.removeEventListener('studentos-notif-state-change', handleStateChange);
+      window.removeEventListener('studentos-sound-pref-changed', handleSoundPrefChange);
     };
   }, [currentUser?.uid, currentUser?.grade, currentUser?.section, currentUser?.role]);
 

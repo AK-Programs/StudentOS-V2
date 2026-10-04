@@ -19,8 +19,10 @@ import {
   fetchGallery, createGalleryAlbum,
   fetchHouses, updateHousePoints,
   fetchPolls, createPoll,
-  fetchNews, subscribeToLifeTable
+  fetchNews, subscribeToLifeTable,
+  canManageLifeContent
 } from '../lib/supabaseLife';
+import { soundService } from '../lib/soundService';
 
 interface StudentOSLifeProps {
   currentUser: UserProfile;
@@ -356,28 +358,36 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
     localStorage.setItem('studentos_polls', JSON.stringify(polls));
   }, [polls]);
 
+  // Role-based access control: Staff (Teacher, Coordinator, Admin, Super Admin) vs Student
+  const isStaffRole = canManageLifeContent(currentUser.role);
+
   // Handlers
   const handleRegisterCompetition = (compId: string) => {
+    soundService.playClick();
     if (registeredCompIds.includes(compId)) {
       setRegisteredCompIds(prev => prev.filter(id => id !== compId));
       setCompetitions(prev => prev.map(c => c.id === compId ? { ...c, registeredCount: Math.max(0, c.registeredCount - 1) } : c));
     } else {
       setRegisteredCompIds(prev => [...prev, compId]);
       setCompetitions(prev => prev.map(c => c.id === compId ? { ...c, registeredCount: c.registeredCount + 1 } : c));
+      soundService.playSuccess();
     }
   };
 
   const handleToggleClub = (clubId: string) => {
+    soundService.playClick();
     if (joinedClubIds.includes(clubId)) {
       setJoinedClubIds(prev => prev.filter(id => id !== clubId));
       setClubs(prev => prev.map(cl => cl.id === clubId ? { ...cl, memberCount: Math.max(0, cl.memberCount - 1) } : cl));
     } else {
       setJoinedClubIds(prev => [...prev, clubId]);
       setClubs(prev => prev.map(cl => cl.id === clubId ? { ...cl, memberCount: cl.memberCount + 1 } : cl));
+      soundService.playSuccess();
     }
   };
 
   const handleVotePoll = (pollId: string, optionId: string) => {
+    soundService.playSuccess();
     setPolls(prev => prev.map(p => {
       if (p.id !== pollId) return p;
       const updatedOptions = p.options.map(opt => {
@@ -397,7 +407,8 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
 
   const handleCreateCompetition = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCompForm.title.trim()) return;
+    if (!isStaffRole || !newCompForm.title.trim()) return;
+    soundService.playSuccess();
     const created: Competition = {
       id: `comp-${Date.now()}`,
       title: newCompForm.title,
@@ -427,7 +438,8 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
 
   const handleAwardBadge = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newBadgeForm.awardedToName.trim()) return;
+    if (!isStaffRole || !newBadgeForm.awardedToName.trim()) return;
+    soundService.playAchievement();
     const newB: StudentBadge = {
       id: `badge-${Date.now()}`,
       title: newBadgeForm.title,
@@ -447,7 +459,8 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
 
   const handleAddEvent = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEventForm.title.trim()) return;
+    if (!isStaffRole || !newEventForm.title.trim()) return;
+    soundService.playSuccess();
     const ev: SchoolEvent = {
       id: `ev-${Date.now()}`,
       title: newEventForm.title,
@@ -466,7 +479,8 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
 
   const handleCreatePoll = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPollForm.question.trim()) return;
+    if (!isStaffRole || !newPollForm.question.trim()) return;
+    soundService.playSuccess();
     const opts = newPollForm.optionsText.split(',').map((t, idx) => ({
       id: `opt-${Date.now()}-${idx}`,
       text: t.trim() || `Option ${idx + 1}`,
@@ -511,26 +525,42 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
               <span className="px-3 py-1 bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 text-xs font-black rounded-full uppercase tracking-widest flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Digital School Community
               </span>
-              <span className="px-2.5 py-0.5 bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold rounded-full">
-                Phase 5 Active
+              <span className="px-2.5 py-0.5 bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold rounded-full uppercase">
+                {isStaffRole ? `${(currentUser.role || 'faculty').replace('_', ' ')} Mode` : 'Student Portal'}
               </span>
             </div>
             <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-white tracking-tight">
               StudentOS <span className="bg-gradient-to-r from-amber-400 via-indigo-300 to-cyan-300 bg-clip-text text-transparent">Life</span>
             </h1>
             <p className="text-slate-300 text-xs sm:text-sm mt-1 max-w-2xl">
-              The vibrant heart of school spirit — competitions, house championships, student clubs, live polls, achievement badges, and school memories.
+              {isStaffRole
+                ? 'Coordinate school-wide competitions, supervise student clubs, publish live campus polls, and award student achievement badges.'
+                : 'The vibrant heart of school spirit — competitions, house championships, student clubs, live polls, achievement badges, and school memories.'}
             </p>
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-            {(currentUser.role === 'teacher' || currentUser.role === 'admin' || currentUser.role === 'coordinator') && (
-              <button
-                onClick={() => setShowCreateCompModal(true)}
-                className="px-3.5 sm:px-4 py-2 sm:py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center gap-2 active:scale-95 whitespace-nowrap"
-              >
-                <Plus className="w-4 h-4" /> Create Competition
-              </button>
+            {isStaffRole && (
+              <>
+                <button
+                  onClick={() => {
+                    soundService.playClick();
+                    setShowCreateCompModal(true);
+                  }}
+                  className="uiverse-btn-primary px-3.5 sm:px-4 py-2 sm:py-2.5 text-white font-bold text-xs rounded-xl flex items-center gap-2 whitespace-nowrap cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" /> Create Competition
+                </button>
+                <button
+                  onClick={() => {
+                    soundService.playClick();
+                    setShowAwardBadgeModal(true);
+                  }}
+                  className="px-3.5 sm:px-4 py-2 sm:py-2.5 bg-purple-600/25 hover:bg-purple-600/40 text-purple-200 border border-purple-500/30 font-bold text-xs rounded-xl transition-all flex items-center gap-2 shadow-md whitespace-nowrap cursor-pointer"
+                >
+                  <Award className="w-4 h-4 text-purple-300" /> Award Badge
+                </button>
+              </>
             )}
             <button
               onClick={() => onTriggerOrionAction?.('Show today\'s summary')}
@@ -626,18 +656,20 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
                 </button>
               </div>
 
-              {/* Card 3: Clubs Joined */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl relative overflow-hidden">
+              {/* Card 3: Clubs Joined / Supervised */}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl relative overflow-hidden uiverse-card-hover">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">School Clubs</span>
                   <Users className="w-5 h-5 text-emerald-400" />
                 </div>
                 <div className="text-2xl font-black text-white mb-1">
-                  {joinedClubIds.length} Joined
+                  {isStaffRole ? `${clubs.length} Active Clubs` : `${joinedClubIds.length} Joined`}
                 </div>
-                <p className="text-xs text-slate-400 mb-4">Coding, Robotics, Music & Debate Clubs active this week.</p>
+                <p className="text-xs text-slate-400 mb-4">
+                  {isStaffRole ? 'Supervise STEM, Robotics, Music & Debate clubs across grades.' : 'Coding, Robotics, Music & Debate Clubs active this week.'}
+                </p>
                 <button onClick={() => setActiveTab('clubs')} className="w-full py-2 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-300 font-bold text-xs rounded-xl transition-all">
-                  Manage Clubs
+                  {isStaffRole ? 'Supervise Clubs' : 'Manage Clubs'}
                 </button>
               </div>
 
@@ -842,10 +874,10 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
                 ))}
               </div>
 
-              {(currentUser.role === 'teacher' || currentUser.role === 'admin' || currentUser.role === 'coordinator') && (
+              {isStaffRole && (
                 <button
                   onClick={() => setShowCreateCompModal(true)}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-1.5 shrink-0"
+                  className="uiverse-btn-primary px-4 py-2 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
                 >
                   <Plus className="w-4 h-4" /> Add New Competition
                 </button>
@@ -923,19 +955,29 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
                         </div>
                       </div>
 
-                      {/* Footer CTA */}
+                      {/* Footer CTA - Role-aware */}
                       <div className="p-5 pt-0">
-                        <button
-                          onClick={() => handleRegisterCompetition(comp.id)}
-                          className={`w-full py-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 ${
-                            isRegistered
-                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                              : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md'
-                          }`}
-                        >
-                          {isRegistered ? <CheckCircle className="w-4 h-4 text-emerald-400" /> : <Trophy className="w-4 h-4" />}
-                          {isRegistered ? 'Registered (Click to Cancel)' : 'Register for Competition'}
-                        </button>
+                        {isStaffRole ? (
+                          <div className="w-full py-2.5 px-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 font-bold text-xs flex items-center justify-between gap-2">
+                            <span className="flex items-center gap-1.5">
+                              <Shield className="w-4 h-4 text-indigo-400 shrink-0" />
+                              <span>Faculty Oversight</span>
+                            </span>
+                            <span className="font-mono text-[11px] text-white">{comp.registeredCount} Participants</span>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => handleRegisterCompetition(comp.id)}
+                            className={`w-full py-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                              isRegistered
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                : 'uiverse-btn-primary text-white shadow-md'
+                            }`}
+                          >
+                            {isRegistered ? <CheckCircle className="w-4 h-4 text-emerald-400" /> : <Trophy className="w-4 h-4" />}
+                            {isRegistered ? 'Registered (Click to Cancel)' : 'Register for Competition'}
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -1145,17 +1187,27 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
                     </div>
 
                     <div className="pt-5">
-                      <button
-                        onClick={() => handleToggleClub(club.id)}
-                        className={`w-full py-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 ${
-                          isJoined
-                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                            : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md'
-                        }`}
-                      >
-                        {isJoined ? <CheckCircle className="w-4 h-4 text-emerald-400" /> : <UserPlus className="w-4 h-4" />}
-                        {isJoined ? 'Joined Club' : 'Join Club'}
-                      </button>
+                      {isStaffRole ? (
+                        <div className="w-full py-2.5 px-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 font-bold text-xs flex items-center justify-between gap-2">
+                          <span className="flex items-center gap-1.5">
+                            <Users className="w-4 h-4 text-emerald-400 shrink-0" />
+                            <span>Advisor Roster</span>
+                          </span>
+                          <span className="font-mono text-[11px] text-white">{club.memberCount} Members</span>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleToggleClub(club.id)}
+                          className={`w-full py-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                            isJoined
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                              : 'uiverse-btn-primary text-white shadow-md'
+                          }`}
+                        >
+                          {isJoined ? <CheckCircle className="w-4 h-4 text-emerald-400" /> : <UserPlus className="w-4 h-4" />}
+                          {isJoined ? 'Joined Club' : 'Join Club'}
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -1173,10 +1225,10 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
                 <p className="text-xs text-slate-400">Exams, Holidays, Competitions & Parent Meetings</p>
               </div>
 
-              {(currentUser.role === 'teacher' || currentUser.role === 'admin' || currentUser.role === 'coordinator') && (
+              {isStaffRole && (
                 <button
                   onClick={() => setShowAddEventModal(true)}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-1.5"
+                  className="uiverse-btn-primary px-4 py-2 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
                 >
                   <Plus className="w-4 h-4" /> Add Event
                 </button>
@@ -1217,10 +1269,10 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
                 <p className="text-xs text-slate-400">Merit Badges & Honors awarded by Teachers</p>
               </div>
 
-              {(currentUser.role === 'teacher' || currentUser.role === 'admin' || currentUser.role === 'coordinator') && (
+              {isStaffRole && (
                 <button
                   onClick={() => setShowAwardBadgeModal(true)}
-                  className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-1.5"
+                  className="uiverse-btn-primary px-4 py-2 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
                 >
                   <Award className="w-4 h-4" /> Award Badge
                 </button>
@@ -1323,10 +1375,10 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
                 <p className="text-xs text-slate-400">Cast your vote on school activities, house choices & feedback</p>
               </div>
 
-              {(currentUser.role === 'teacher' || currentUser.role === 'admin' || currentUser.role === 'coordinator') && (
+              {isStaffRole && (
                 <button
                   onClick={() => setShowCreatePollModal(true)}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-1.5"
+                  className="uiverse-btn-primary px-4 py-2 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
                 >
                   <Plus className="w-4 h-4" /> Create Poll
                 </button>

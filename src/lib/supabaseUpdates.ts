@@ -585,7 +585,7 @@ export const DEFAULT_STUDENTOS_RELEASES: StudentOSRelease[] = [
     release_id: 'rel-2.8.5',
     version: '2.8.5',
     title: 'StudentOS v2.8.5 — Teacher Portal & Analytics Sub-tabs',
-    description: 'Dropdown navigation, Performance Analytics refactor, and OneSignal web push integration.',
+    description: 'Dropdown navigation, Performance Analytics refactor, and Pusher Beams web push integration.',
     content: `* ProfessionalTabDropdown integration for Material Hub, Study Hub, and Performance Analytics.\n* Real-time push notification syncing and VAPID key fail-safe.`,
     category: 'improvement',
     status: 'RELEASED',

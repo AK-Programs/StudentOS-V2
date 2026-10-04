@@ -4,14 +4,15 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { BellRing, Check, RefreshCw, AlertTriangle, ShieldCheck, Send, Sparkles, X } from 'lucide-react';
+import { BellRing, RefreshCw, Send } from 'lucide-react';
 import { UserProfile } from '../types';
-import { 
-  enableOneSignalWebPush, 
-  disableOneSignalWebPush, 
-  getOneSignalPushStatus 
-} from '../lib/oneSignal';
+import {
+  enablePusherBeamsPush,
+  disablePusherBeamsPush,
+  getPusherBeamsStatus
+} from '../lib/pusherBeams';
 import { saveSupabaseUserProfile } from '../lib/supabaseUsers';
+import { soundService } from '../lib/soundService';
 
 interface WebPushNotificationToggleProps {
   currentUser: UserProfile;
@@ -34,11 +35,12 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
   });
   const [loading, setLoading] = useState<boolean>(false);
   const [notice, setNotice] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
-  const [oneSignalStatus, setOneSignalStatus] = useState<{
+  const [beamsStatus, setBeamsStatus] = useState<{
     supported: boolean;
     permission: 'default' | 'granted' | 'denied';
     optedIn: boolean;
-    subscriptionId?: string;
+    deviceId?: string;
+    interests?: string[];
   }>({
     supported: true,
     permission: 'default',
@@ -47,9 +49,9 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
 
   useEffect(() => {
     let isMounted = true;
-    getOneSignalPushStatus().then((status) => {
+    getPusherBeamsStatus().then((status) => {
       if (isMounted) {
-        setOneSignalStatus(status);
+        setBeamsStatus(status);
         if (status.optedIn) {
           setIsEnabled(true);
         }
@@ -64,11 +66,12 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
     if (!currentUser) return;
     setLoading(true);
     setNotice(null);
+    soundService.playToggleSound(checked);
 
     if (checked) {
-      setNotice({ text: 'Prompting for OneSignal web push permission...', type: 'info' });
-      
-      const result = await enableOneSignalWebPush(
+      setNotice({ text: 'Initializing Pusher Beams web push subscription...', type: 'info' });
+
+      const result = await enablePusherBeamsPush(
         currentUser.uid || currentUser.email,
         currentUser.role,
         {
@@ -80,28 +83,29 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
 
       if (result.success && result.optedIn) {
         setIsEnabled(true);
-        setOneSignalStatus(prev => ({
+        setBeamsStatus(prev => ({
           ...prev,
           permission: 'granted',
           optedIn: true,
-          subscriptionId: result.subscriptionId
+          deviceId: result.deviceId,
+          interests: result.interests
         }));
+        soundService.playSuccessSound();
         setNotice({
-          text: '✓ Web Push Notifications enabled! OneSignal will deliver targeted school updates to this device.',
+          text: '✓ Web Push Notifications enabled! Pusher Beams will deliver targeted school updates to this device.',
           type: 'success'
         });
-        showNotification?.('🔔 Web Push Notifications enabled successfully!');
+        showNotification?.('🔔 Pusher Beams Web Push Notifications enabled!');
 
-        // Update profile in Supabase & LocalStorage
         const updatedUser: UserProfile = {
           ...currentUser,
           enableWebPush: true,
-          oneSignalSubscriptionId: result.subscriptionId || currentUser.oneSignalSubscriptionId,
+          pusherBeamsDeviceId: result.deviceId || currentUser.pusherBeamsDeviceId,
           raw_data: {
             ...(currentUser.raw_data || {}),
             enableWebPush: true,
-            oneSignalSubscribed: true,
-            oneSignalSubscriptionId: result.subscriptionId
+            pusherBeamsSubscribed: true,
+            pusherBeamsDeviceId: result.deviceId
           }
         };
 
@@ -115,10 +119,10 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
         }
       } else {
         setIsEnabled(false);
-        setOneSignalStatus(prev => ({ 
-          ...prev, 
-          permission: result.permission || 'denied', 
-          optedIn: false 
+        setBeamsStatus(prev => ({
+          ...prev,
+          permission: result.permission || 'denied',
+          optedIn: false
         }));
         setNotice({
           text: result.error || 'Notification permission was denied. Please allow notifications in your browser or device settings.',
@@ -127,9 +131,9 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
         showNotification?.('⚠️ Web push permission was not granted by the browser.');
       }
     } else {
-      await disableOneSignalWebPush();
+      await disablePusherBeamsPush(currentUser.uid || currentUser.email);
       setIsEnabled(false);
-      setOneSignalStatus(prev => ({ ...prev, optedIn: false }));
+      setBeamsStatus(prev => ({ ...prev, optedIn: false }));
       setNotice({
         text: 'Web push notifications disabled for this account.',
         type: 'info'
@@ -142,7 +146,7 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
         raw_data: {
           ...(currentUser.raw_data || {}),
           enableWebPush: false,
-          oneSignalSubscribed: false
+          pusherBeamsSubscribed: false
         }
       };
 
@@ -164,15 +168,16 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
       return;
     }
     if (Notification.permission === 'granted') {
+      soundService.playMessageSound();
       try {
-        new Notification('🔔 StudentOS Alert Test', {
-          body: 'Your OneSignal Web Push subscription is active and working properly!',
+        new Notification('🔔 StudentOS Pusher Beams Test', {
+          body: 'Your Pusher Beams Web Push subscription is active and delivering targeted alerts!',
           icon: '/icons/icon-192.png',
           badge: '/icons/icon-192.png',
           tag: 'studentos-test'
         });
         showNotification?.('✓ Test notification triggered! Check your desktop/device notification tray.');
-      } catch (e) {
+      } catch (_) {
         showNotification?.('✓ Push subscription active! Device native notification sent.');
       }
     } else {
@@ -181,30 +186,30 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
   };
 
   return (
-    <div className={`rounded-2xl border transition-all ${
-      variant === 'compact' 
-        ? 'p-4 bg-slate-900/80 border-white/10' 
-        : 'p-5 bg-gradient-to-r from-indigo-950/70 via-slate-900 to-purple-950/70 border-indigo-500/30 shadow-xl'
+    <div className={`rounded-2xl border transition-all uiverse-card-hover ${
+      variant === 'compact'
+        ? 'p-4 bg-slate-900/80 border-white/10'
+        : 'p-4 sm:p-5 bg-gradient-to-r from-indigo-950/70 via-slate-900 to-purple-950/70 border-indigo-500/30 shadow-xl'
     }`}>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-start gap-3.5">
+        <div className="flex items-start gap-3.5 min-w-0">
           <div className="p-2.5 rounded-xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 shrink-0 mt-0.5">
             <BellRing className="w-5 h-5" />
           </div>
-          <div className="space-y-1">
+          <div className="space-y-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <h4 className="text-sm font-black text-white tracking-tight">
                 Enable Web Push Notifications
               </h4>
-              <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 font-mono text-[9px] font-black uppercase">
-                OneSignal SDK
+              <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono text-[9px] font-black uppercase">
+                Pusher Beams
               </span>
-              {isEnabled && oneSignalStatus.permission === 'granted' ? (
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5">
+              {isEnabled && beamsStatus.permission === 'granted' ? (
+                <span className="uiverse-status-badge px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   Subscribed & Active
                 </span>
-              ) : oneSignalStatus.permission === 'denied' ? (
+              ) : beamsStatus.permission === 'denied' ? (
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
                   ⚠️ Permission Blocked
                 </span>
@@ -215,12 +220,12 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
               )}
             </div>
             <p className="text-xs text-slate-300 leading-relaxed max-w-xl">
-              Receive immediate desktop, Android APK, and PWA alerts for announcements, assignment deadlines, grade updates, and release notes — even when StudentOS is closed.
+              Receive immediate desktop, Android APK, and PWA alerts via Pusher Beams for announcements, assignment deadlines, grade updates, and release notes — even when StudentOS is closed.
             </p>
           </div>
         </div>
 
-        {/* Toggle Switch */}
+        {/* UIverse-inspired Toggle Switch */}
         <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-center">
           {loading && (
             <RefreshCw className="w-4 h-4 text-indigo-400 animate-spin" />
@@ -231,8 +236,8 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
             aria-checked={isEnabled}
             disabled={loading}
             onClick={() => handleToggle(!isEnabled)}
-            className={`relative inline-flex h-7 w-13 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50 ${
-              isEnabled ? 'bg-indigo-600' : 'bg-slate-800'
+            className={`uiverse-switch relative inline-flex h-7 w-13 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-all duration-200 ease-in-out focus:outline-none disabled:opacity-50 ${
+              isEnabled ? 'bg-indigo-600 shadow-[0_0_14px_rgba(99,102,241,0.55)]' : 'bg-slate-800'
             }`}
           >
             <span
@@ -248,14 +253,14 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
       {/* Feedback Notice */}
       {notice && (
         <div className={`mt-3 p-3 rounded-xl border text-xs font-semibold animate-fadeIn flex items-center justify-between gap-2 ${
-          notice.type === 'success' 
-            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' 
+          notice.type === 'success'
+            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
             : notice.type === 'error'
               ? 'bg-rose-500/10 border-rose-500/20 text-rose-300'
               : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-300'
         }`}>
           <span>{notice.text}</span>
-          <button 
+          <button
             onClick={() => setNotice(null)}
             className="text-slate-400 hover:text-white text-xs font-bold px-1"
           >
@@ -267,7 +272,7 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
       {/* Targeting Segments & Test Push Button */}
       <div className="mt-3 pt-3 border-t border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] font-black uppercase text-slate-400 font-mono">Targeted Segments:</span>
+          <span className="text-[10px] font-black uppercase text-slate-400 font-mono">Beams Interests:</span>
           <span className="px-2 py-0.5 rounded bg-black/30 border border-white/10 text-indigo-300 font-mono text-[10px] font-bold">
             role: {currentUser?.role || 'student'}
           </span>
@@ -288,11 +293,11 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
           )}
         </div>
 
-        {isEnabled && oneSignalStatus.permission === 'granted' && (
+        {isEnabled && beamsStatus.permission === 'granted' && (
           <button
             type="button"
             onClick={handleSendTestPush}
-            className="px-3 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-500/40 text-indigo-200 hover:text-white text-[11px] font-bold transition-all flex items-center gap-1.5 self-start sm:self-auto shrink-0"
+            className="uiverse-btn-primary px-3 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-500/40 text-indigo-200 hover:text-white text-[11px] font-bold transition-all flex items-center gap-1.5 self-start sm:self-auto shrink-0 cursor-pointer"
           >
             <Send className="w-3 h-3" />
             <span>Send Test Alert</span>

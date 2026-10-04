@@ -193,12 +193,27 @@ export function getDeviceId(): string {
 /**
  * Register push subscription and associate with current device & StudentOS account
  */
-export async function registerPushSubscription(userId?: string): Promise<boolean> {
+export async function registerPushSubscription(
+  userId?: string,
+  metadata?: { role?: string; grade?: string; section?: string; house?: string; interests?: string[] }
+): Promise<boolean> {
   if (typeof window === 'undefined' || !('Notification' in window) || !('serviceWorker' in navigator)) {
     return false;
   }
   try {
     const deviceId = getDeviceId();
+    let userMeta = metadata;
+    if (!userMeta) {
+      try {
+        const cachedUser = JSON.parse(localStorage.getItem('s_os_user') || '{}');
+        userMeta = {
+          role: cachedUser.role || 'student',
+          grade: cachedUser.grade || '',
+          section: cachedUser.section || '',
+          house: cachedUser.house || ''
+        };
+      } catch (_) {}
+    }
     let registration = await navigator.serviceWorker.getRegistration('/sw.js');
     if (!registration) {
       registration = await navigator.serviceWorker.register('/sw.js');
@@ -242,7 +257,12 @@ export async function registerPushSubscription(userId?: string): Promise<boolean
             subscription: subJson,
             userId: userId || null,
             deviceId,
-            userAgent
+            userAgent,
+            role: userMeta?.role || 'student',
+            grade: userMeta?.grade || '',
+            section: userMeta?.section || '',
+            house: userMeta?.house || '',
+            interests: userMeta?.interests || []
           })
         });
       } catch (_) {}
@@ -348,16 +368,29 @@ export async function triggerBrowserPushNotification(title: string, options?: No
 export async function saveAppNotification(notif: AppNotification): Promise<{ success: boolean; error?: string }> {
   console.log('[SUPABASE-NOTIFS] Saving notification:', notif.title);
 
-  // Play audio chime locally
-  triggerNotificationSound(notif.type);
+  // Check if the current active browser user is eligible for this notification before triggering local chime/toast
+  let localUserEligible = true;
+  if (typeof window !== 'undefined') {
+    try {
+      const cachedUser = JSON.parse(localStorage.getItem('s_os_user') || '{}');
+      if (cachedUser && (cachedUser.uid || cachedUser.id || cachedUser.role)) {
+        localUserEligible = isUserEligibleForNotification(notif, cachedUser);
+      }
+    } catch (_) {}
+  }
 
-  // Trigger Web Push Notification
-  triggerBrowserPushNotification(notif.title, {
-    body: notif.message,
-    data: { linkTab: notif.linkTab || 'notice_viewer' }
-  });
+  if (localUserEligible) {
+    // Play audio chime locally
+    triggerNotificationSound(notif.type);
 
-  // Call server push endpoint
+    // Trigger Web Push Notification locally if eligible
+    triggerBrowserPushNotification(notif.title, {
+      body: notif.message,
+      data: { linkTab: notif.linkTab || 'notice_viewer' }
+    });
+  }
+
+  // Call server push endpoint (Pusher Beams + targeted Web Push)
   try {
     fetch('/api/push/send', {
       method: 'POST',
@@ -366,7 +399,10 @@ export async function saveAppNotification(notif: AppNotification): Promise<{ suc
         title: notif.title,
         body: notif.message,
         linkTab: notif.linkTab || 'notice_viewer',
-        targetUserId: notif.targetUserId || 'all'
+        targetUserId: notif.targetUserId || 'all',
+        targetRole: notif.targetRole || 'all',
+        targetClass: notif.targetClass || 'all',
+        targetSection: notif.targetSection || 'all'
       })
     }).catch(() => {});
   } catch (_) {}
