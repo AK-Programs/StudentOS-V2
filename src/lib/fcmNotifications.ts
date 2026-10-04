@@ -1,3 +1,11 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ * 
+ * Firebase Cloud Messaging (FCM) & Web Push Engine for StudentOS
+ * Provides reliable foreground & background push delivery for Android Chrome, PWA Standalone, & Desktop.
+ */
+
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getMessaging, getToken, onMessage, isSupported, deleteToken, Messaging } from 'firebase/messaging';
 import { supabase } from './supabase';
@@ -18,6 +26,20 @@ export const DEFAULT_VAPID_KEY = 'BJrzpoU4JY2uj2YmpzKKMoNsa5aHr_iL6rmLvG55NsGqIn
 
 let messagingInstance: Messaging | null = null;
 let messagingSupported: boolean | null = null;
+
+/**
+ * Utility to convert base64 VAPID public key to Uint8Array for PushManager
+ */
+export function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
 
 /**
  * Helper to get or create persistent device ID
@@ -41,13 +63,13 @@ export function getDevicePlatformLabel(): string {
   const isPWA = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone === true;
   
   let os = 'Desktop Web';
-  if (/Android/i.test(ua)) os = 'Android';
-  else if (/iPhone|iPad|iPod/i.test(ua)) os = 'iOS';
-  else if (/Macintosh|Mac OS X/i.test(ua)) os = 'macOS';
-  else if (/Windows/i.test(ua)) os = 'Windows';
-  else if (/Linux/i.test(ua)) os = 'Linux';
+  if (/Android/i.test(ua)) os = 'Android Chrome';
+  else if (/iPhone|iPad|iPod/i.test(ua)) os = 'iOS Safari';
+  else if (/Macintosh|Mac OS X/i.test(ua)) os = 'macOS Chrome/Safari';
+  else if (/Windows/i.test(ua)) os = 'Windows Chrome/Edge';
+  else if (/Linux/i.test(ua)) os = 'Linux Chrome/Firefox';
 
-  return isPWA ? `${os} PWA Standalone` : `${os} Browser`;
+  return isPWA ? `${os} (PWA Standalone)` : `${os} (Browser)`;
 }
 
 /**
@@ -86,7 +108,7 @@ export async function getFCMClient(): Promise<Messaging | null> {
 }
 
 /**
- * Request FCM Push Notification permission and register FCM device token
+ * Request FCM & Web Push Notification permission and register active device token & subscription
  */
 export async function requestFCMPermission(
   userId?: string,
@@ -104,12 +126,12 @@ export async function requestFCMPermission(
     }
 
     if (permission !== 'granted') {
-      console.warn('[FCM] Push Notification permission denied by user.');
+      console.warn('[FCM] Push Notification permission was denied by user.');
       return { success: false, error: 'Notification permission was denied.' };
     }
 
     // 2. Register or retrieve active Service Worker
-    let swRegistration = await navigator.serviceWorker.getRegistration('/sw.js');
+    let swRegistration = await navigator.serviceWorker.getRegistration('/');
     if (!swRegistration) {
       swRegistration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
     }
@@ -127,13 +149,29 @@ export async function requestFCMPermission(
       }
     } catch (_) {}
 
-    // 4. Retrieve FCM Client & Token
+    // 4. Retrieve Web Push native subscription via pushManager
+    let pushSubscription: PushSubscription | null = null;
+    if (swRegistration?.pushManager) {
+      try {
+        pushSubscription = await swRegistration.pushManager.getSubscription();
+        if (!pushSubscription && vapidKey) {
+          pushSubscription = await swRegistration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(vapidKey)
+          });
+        }
+      } catch (subErr: any) {
+        console.warn('[FCM] pushManager subscribe notice:', subErr?.message || subErr);
+      }
+    }
+
+    // 5. Retrieve FCM Client & Token
     const messaging = await getFCMClient();
-    let token: string | null = null;
+    let fcmToken: string | null = null;
 
     if (messaging && swRegistration) {
       try {
-        token = await getToken(messaging, {
+        fcmToken = await getToken(messaging, {
           vapidKey,
           serviceWorkerRegistration: swRegistration
         });
@@ -142,36 +180,45 @@ export async function requestFCMPermission(
       }
     }
 
-    // Fallback: If native FCM token fetch failed, get native pushManager subscription endpoint
-    if (!token && swRegistration?.pushManager) {
-      try {
-        const sub = await swRegistration.pushManager.getSubscription();
-        if (sub) {
-          token = sub.endpoint;
-        }
-      } catch (_) {}
-    }
-
-    if (!token) {
+    const primaryToken = fcmToken || pushSubscription?.endpoint;
+    if (!primaryToken) {
       return { success: false, error: 'Could not generate push registration token for this device.' };
     }
 
-    // 5. Persist token to localStorage
+    // Serialize subscription details (keys + endpoint) for backend dispatching
+    let subscriptionJson: any = null;
+    if (pushSubscription) {
+      const rawJson = pushSubscription.toJSON();
+      subscriptionJson = {
+        endpoint: pushSubscription.endpoint,
+        keys: rawJson.keys || {
+          p256dh: pushSubscription.getKey ? btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(pushSubscription.getKey('p256dh') || new ArrayBuffer(0))))) : '',
+          auth: pushSubscription.getKey ? btoa(String.fromCharCode.apply(null, Array.from(new Uint8Array(pushSubscription.getKey('auth') || new ArrayBuffer(0))))) : ''
+        }
+      };
+    }
+
+    // 6. Persist token to localStorage
     const deviceId = getFCMDeviceId();
     const deviceLabel = getDevicePlatformLabel();
-    localStorage.setItem('s_os_fcm_token', token);
+    localStorage.setItem('s_os_fcm_token', primaryToken);
     localStorage.setItem('s_os_push_enabled', 'true');
+    if (subscriptionJson) {
+      localStorage.setItem('s_os_push_sub', JSON.stringify(subscriptionJson));
+    }
     if (userId) {
       localStorage.setItem('s_os_fcm_user_id', userId);
     }
 
-    // 6. Register token with backend server
+    // 7. Register token & subscription with backend server
     try {
       await fetch('/api/push/fcm-token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          token,
+          token: primaryToken,
+          fcmToken: fcmToken || undefined,
+          subscription: subscriptionJson,
           userId: userId || null,
           deviceId,
           deviceLabel,
@@ -186,24 +233,37 @@ export async function requestFCMPermission(
       console.warn('[FCM] Backend token registration notice:', apiErr);
     }
 
-    // 7. Persist token to Supabase user_push_tokens & push_subscriptions tables
+    // 8. Persist token to Supabase user_push_tokens & push_subscriptions tables
     try {
       const now = new Date().toISOString();
       await supabase.from('user_push_tokens').upsert({
         user_id: userId || null,
-        token: token,
+        token: primaryToken,
         platform: 'web_fcm',
         device_label: deviceLabel,
         is_active: true,
         last_seen_at: now,
         updated_at: now
       }, { onConflict: 'token' });
+
+      if (subscriptionJson?.endpoint) {
+        await supabase.from('push_subscriptions').upsert({
+          user_id: userId || null,
+          endpoint: subscriptionJson.endpoint,
+          p256dh: subscriptionJson.keys?.p256dh || '',
+          auth: subscriptionJson.keys?.auth || '',
+          device_id: deviceId,
+          device_type: deviceLabel,
+          created_at: now,
+          updated_at: now
+        }, { onConflict: 'endpoint' });
+      }
     } catch (sbErr) {
-      console.warn('[FCM] Supabase user_push_tokens notice:', sbErr);
+      console.warn('[FCM] Supabase token persistence notice:', sbErr);
     }
 
-    console.log('[FCM] Push notifications successfully enabled and token registered.');
-    return { success: true, token };
+    console.log(`[FCM] Notification token registered successfully for ${deviceLabel} (Token: ${primaryToken.slice(0, 25)}...).`);
+    return { success: true, token: primaryToken };
   } catch (err: any) {
     console.error('[FCM] Error requesting FCM permission:', err);
     return { success: false, error: err?.message || 'Failed to enable push notifications.' };
@@ -229,7 +289,7 @@ export async function disableFCMPush(userId?: string): Promise<boolean> {
     // 2. Unregister push subscription from ServiceWorker pushManager
     if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
       try {
-        const reg = await navigator.serviceWorker.getRegistration('/sw.js');
+        const reg = await navigator.serviceWorker.getRegistration('/');
         const sub = await reg?.pushManager?.getSubscription();
         if (sub) {
           await sub.unsubscribe();
@@ -259,6 +319,7 @@ export async function disableFCMPush(userId?: string): Promise<boolean> {
     }
 
     localStorage.removeItem('s_os_fcm_token');
+    localStorage.removeItem('s_os_push_sub');
     localStorage.setItem('s_os_push_enabled', 'false');
     console.log('[FCM] Push notifications disabled on this device.');
     return true;
@@ -284,7 +345,7 @@ export async function setupFCMForegroundListener(
       const body = payload.notification?.body || payload.data?.body || payload.data?.message || '';
       const linkTab = payload.data?.linkTab || 'notice_viewer';
 
-      // Play sound
+      // Play notification sound
       soundService.playAnnouncementSound();
 
       // Trigger in-app notification state update
@@ -310,26 +371,36 @@ export async function setupFCMForegroundListener(
 export async function sendTestFCMNotification(
   userId: string,
   userRole?: string
-): Promise<{ success: boolean; message: string }> {
+): Promise<{ success: boolean; message: string; details?: any }> {
   try {
+    const deviceLabel = getDevicePlatformLabel();
     const res = await fetch('/api/push/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         title: '🧪 StudentOS Push Notification Test',
-        body: `FCM push delivery verified on ${getDevicePlatformLabel()} at ${new Date().toLocaleTimeString()}!`,
+        body: `FCM & Web Push delivery verified on ${deviceLabel} at ${new Date().toLocaleTimeString()}!`,
         linkTab: 'notifications',
         targetUserId: userId || 'all',
         targetRole: userRole || 'all'
       })
     });
 
-    if (res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.status === 'ok') {
       soundService.playSuccess();
-      return { success: true, message: 'Test push notification dispatched via Firebase Cloud Messaging!' };
+      const countMsg = data.sentCount > 0 ? `Sent to ${data.sentCount} active device(s)` : 'Dispatched to push queue';
+      return { 
+        success: true, 
+        message: `✓ ${countMsg}. Check your notification drawer!`,
+        details: data
+      };
     }
-    const errData = await res.json().catch(() => ({}));
-    return { success: false, message: errData.error || 'Server could not deliver test push notification.' };
+    return { 
+      success: false, 
+      message: data.error || 'Server could not deliver test push notification.',
+      details: data
+    };
   } catch (err: any) {
     return { success: false, message: err?.message || 'Network error sending test push notification.' };
   }

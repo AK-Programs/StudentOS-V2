@@ -2332,7 +2332,7 @@ What can I clarify today?` }
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   };
 
-  // --- Notion-style Gemini AI Notes transform helper ---
+  // --- Notion-style NVIDIA AI Notes transform helper ---
   const handleAINoteAction = async (action: string) => {
     const activeNote = vaultNotes.find(n => n.id === selectedNoteId);
     if (!activeNote) return;
@@ -2385,7 +2385,7 @@ What can I clarify today?` }
         resultText = resData.text;
       } catch (err: any) {
         console.log("Server API failed, falling back to client-side AI:", err);
-        const { clientSideGemini } = await import('./lib/clientAiFallback');
+        const { clientSideNvidiaAI } = await import('./lib/clientAiFallback');
         let sysInstruction = '';
         if (action === 'summarize') sysInstruction = 'Synthesize into a bulleted cheat-sheet.';
         else if (action === 'expand') sysInstruction = 'Expand and explain with examples.';
@@ -2394,7 +2394,7 @@ What can I clarify today?` }
         else if (action === 'action_items') sysInstruction = 'Extract an action checklist.';
         else sysInstruction = `Execute this instruction: ${aiCustomPrompt}`;
         
-        resultText = await clientSideGemini(`System: ${sysInstruction}
+        resultText = await clientSideNvidiaAI(`System: ${sysInstruction}
 
 Content:
 ${promptText}`);
@@ -2439,7 +2439,7 @@ ${resultText}
             return newNotes;
           });
         }
-        showNotification('⚡ Notion block written successfully with Gemini!');
+        showNotification('⚡ Notion block written successfully with NVIDIA AI!');
         if (action === 'custom') setAiCustomPrompt('');
       }
     } catch (err: any) {
@@ -3901,14 +3901,14 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
         resultText = data.text;
       } catch (err: any) {
         console.log("Server API failed, falling back to client-side AI:", err);
-        const { clientSideGemini } = await import('./lib/clientAiFallback');
+        const { clientSideNvidiaAI } = await import('./lib/clientAiFallback');
         let prompt = '';
         if (action === 'summarize') prompt = `Summarize this material: ${mat.title}. ${mat.description}`;
         else if (action === 'quiz') prompt = `Generate a short quiz for: ${mat.title}. ${mat.description}`;
         else if (action === 'explain') prompt = `Explain this topic simply: ${mat.title}. ${mat.description}`;
         else prompt = `Answer this question: "${aiUserQuestion}" based on ${mat.title}. ${mat.description}`;
         
-        resultText = await clientSideGemini(prompt);
+        resultText = await clientSideNvidiaAI(prompt);
       }
       
       setAiActionResultText(resultText);
@@ -5049,12 +5049,12 @@ ${roleLabel}: ${userQuery}`;
           throw apiErr;
         }
         console.log("Server API failed, falling back to client-side AI:", apiErr);
-        const { clientSideGemini } = await import('./lib/clientAiFallback');
+        const { clientSideNvidiaAI } = await import('./lib/clientAiFallback');
         const historyPayload = (currentThread?.messages || []).map(m => ({
           role: m.role,
           content: m.content
         }));
-        answer = await clientSideGemini(promptWithContext, historyPayload);
+        answer = await clientSideNvidiaAI(promptWithContext, historyPayload);
         const updated = recordLocalMessage(userIdKey, userRoleKey);
         setAiUsageState(updated);
       }
@@ -5087,7 +5087,7 @@ ${roleLabel}: ${userQuery}`;
       const isQuotaErr = err?.isLimitReached || err?.message?.includes('Daily AI message limit') || err?.message?.includes('AI_LIMIT_REACHED');
       const errorContent = isQuotaErr
         ? `⚠️ **Daily AI Buddy Limit Reached**\n\nYou have used your daily query allocation for your tier (${aiUsageState.limit} queries/day). \n\n* **Replenishment**: Queries reset on a rolling 24-hour cycle.\n* **Instant Boost**: Click **"Upgrade Quota"** above to enter an academic study voucher (e.g. \`STUDENTOS-PRO\` or \`EXAM-PREP\`) or request an extra quota grant from your instructors.`
-        : `[Connection Delay] Unable to proxy query to Gemini server layer: ${err.message}. Ensure your local dev server is powered on.`;
+        : `[Connection Delay] Unable to proxy query to NVIDIA AI server layer: ${err.message}. Ensure your local dev server is powered on.`;
 
       setAiThreads(prev => prev.map(t => {
         if (t.id === targetThreadId) {
@@ -8234,7 +8234,7 @@ ${roleLabel}: ${userQuery}`;
                                     <div className="flex flex-wrap items-center justify-between gap-2">
                                       <div className="flex items-center gap-2">
                                         <span className="text-indigo-400">⚡</span>
-                                        <p className="text-xs font-black text-white font-display uppercase tracking-wider">Gemini Notion Note Companion</p>
+                                        <p className="text-xs font-black text-white font-display uppercase tracking-wider">NVIDIA AI Notion Note Companion</p>
                                       </div>
                                       <span className="text-[9px] text-slate-500 bg-white/5 px-2 py-0.5 rounded-full">Highlight text to prompt only selected section!</span>
                                     </div>
@@ -8303,7 +8303,7 @@ ${roleLabel}: ${userQuery}`;
                                     {aiGeneratingNotes && (
                                       <div className="flex items-center gap-2 text-xs text-indigo-400 font-bold animate-pulse pt-1">
                                         <div className="animate-spin h-3 w-3 border-2 border-indigo-500 rounded-full border-t-transparent" />
-                                        <span>🤖 Gemini is redrafting blocks and active summaries. Please wait...</span>
+                                        <span>🤖 NVIDIA AI is redrafting blocks and active summaries. Please wait...</span>
                                       </div>
                                     )}
                                   </div>

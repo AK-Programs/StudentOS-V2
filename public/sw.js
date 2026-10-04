@@ -32,17 +32,17 @@ try {
         linkTab: payload.data?.linkTab || 'notice_viewer',
         url: payload.data?.url || '/'
       },
-      vibrate: [150, 50, 150]
+      vibrate: [200, 100, 200]
     };
 
     return self.registration.showNotification(notificationTitle, notificationOptions);
   });
 } catch (e) {
-  // Graceful fallback: Native Web Push listener below handles all VAPID & FCM pushes directly
+  // Native Web Push listener below handles all VAPID & FCM pushes directly across all browsers
 }
 
 // StudentOS Service Worker Version & Cache Name
-const SW_VERSION = 'studentos-v3.12.0';
+const SW_VERSION = 'studentos-v3.13.0';
 const CACHE_NAME = `studentos-cache-${SW_VERSION}`;
 
 // Service Worker Installation
@@ -70,8 +70,10 @@ self.addEventListener('message', (event) => {
   }
 });
 
-// Native Push Event Listener (handles all FCM and VAPID pushes across browsers and background/PWA)
+// Native Push Event Listener (handles all FCM and VAPID Web Pushes in Android Chrome, PWA, & Background)
 self.addEventListener('push', (event) => {
+  console.log('[SW Push] Push event received:', event);
+
   let data = {
     title: '📢 StudentOS Alert',
     body: 'You have a new school announcement.',
@@ -83,7 +85,7 @@ self.addEventListener('push', (event) => {
     if (event.data) {
       const parsed = event.data.json();
       if (parsed) {
-        // FCM payload format or custom StudentOS payload
+        // Handle FCM standard structure
         if (parsed.notification) {
           data.title = parsed.notification.title || data.title;
           data.body = parsed.notification.body || data.body;
@@ -116,7 +118,7 @@ self.addEventListener('push', (event) => {
     renotify: true,
     requireInteraction: false,
     timestamp: data.timestamp || Date.now(),
-    vibrate: [150, 50, 150],
+    vibrate: [200, 100, 200],
     data: {
       linkTab: data.linkTab || 'notice_viewer',
       url: data.url || '/'
@@ -143,15 +145,17 @@ self.addEventListener('notificationclick', (event) => {
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      // 1. If an existing StudentOS tab is open, focus it and navigate
       for (const client of clientList) {
         if ('focus' in client) {
           client.focus();
           if (targetTab) {
-            client.postMessage({ type: 'STUDENTOS_NAVIGATE_TAB', tab: targetTab });
+            client.postMessage({ type: 'STUDENTOS_NAVIGATE_TAB', tab: targetTab, url: targetUrl });
           }
           return;
         }
       }
+      // 2. Otherwise open a new window
       if (self.clients.openWindow) {
         return self.clients.openWindow(targetUrl);
       }
@@ -159,7 +163,7 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-// Pass-through fetch handler to satisfy PWA installability requirements
+// Pass-through fetch handler for PWA offline compliance
 self.addEventListener('fetch', (event) => {
   event.respondWith(fetch(event.request).catch(() => new Response('Offline')));
 });

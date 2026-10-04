@@ -45,9 +45,9 @@ export async function generateFlashcardsWithAI(params: {
     console.warn('[AI Flashcards] Server API error, attempting client-side fallback:', serverErr);
   }
 
-  // 2. Try client-side direct Gemini (dynamic import)
+  // 2. Try client-side direct NVIDIA AI (dynamic import)
   try {
-    const { clientSideGemini } = await import('./clientAiFallback');
+    const { clientSideNvidiaAI } = await import('./clientAiFallback');
     const prompt = `Create ${count} high-yield active-recall study flashcards for ${difficulty} level in ${subject}.
 Topic: ${topic || 'Extracted from notes'}
 Notes text:
@@ -69,7 +69,7 @@ Output ONLY valid JSON formatted as:
   ]
 }`;
 
-    const rawResponse = await clientSideGemini(prompt, [], 'You are a spaced-repetition flashcard generator. Return ONLY JSON.');
+    const rawResponse = await clientSideNvidiaAI(prompt, [], 'You are a spaced-repetition flashcard generator. Return ONLY JSON.', 'openai/gpt-oss-20b');
     let cleanJson = rawResponse.trim();
     if (cleanJson.startsWith('```json')) cleanJson = cleanJson.replace(/^```json/, '').replace(/```$/, '').trim();
     else if (cleanJson.startsWith('```')) cleanJson = cleanJson.replace(/^```/, '').replace(/```$/, '').trim();

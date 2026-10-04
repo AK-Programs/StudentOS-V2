@@ -709,7 +709,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     showNotification(`✓ Successfully saved "${generatedNotesContent.title}" packet to your Lecture Notes Vault!`);
   };
 
-  // Perform AI parsing fallback with Gemini/OpenRouter using our robust Express server
+  // Perform AI parsing fallback with NVIDIA AI using our robust Express server
   const queryJarvisAIStream = async (command: string): Promise<{ responseText: string; action: string; targetValue?: string; details?: any }> => {
     try {
       const cmdLow = command.toLowerCase().trim();
@@ -806,8 +806,8 @@ Your response MUST be raw JSON format with NO markdown wrapping:
         aiText = data.text;
       } catch (apiErr: any) {
         console.warn("Server API failed for Orion completion:", apiErr.message || apiErr);
-        const { clientSideGemini } = await import('../lib/clientAiFallback');
-        aiText = await clientSideGemini(systemPrompt);
+        const { clientSideNvidiaAI } = await import('../lib/clientAiFallback');
+        aiText = await clientSideNvidiaAI(systemPrompt, [], undefined, 'nvidia/nemotron-3-ultra-550b-a55b');
       }
       
       const cleanJsonString = (raw: string): string => {

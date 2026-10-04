@@ -64,7 +64,7 @@ export const PROMOTIONAL_BANNERS: PromotionalBanner[] = [
     id: 'ai-buddy-smarter-meet',
     title: 'Meet the Smarter StudentOS AI Buddy',
     subtitle: 'Socratic Tutor & Study Engine',
-    description: 'Instant step-by-step math solver, academic voice assistant, and automated homework breakdown powered by Gemini.',
+    description: 'Instant step-by-step math solver, academic voice assistant, and automated homework breakdown powered by NVIDIA AI.',
     ctaText: 'Launch AI Buddy',
     ctaAction: 'navigate',
     ctaPayload: 'jarvis',

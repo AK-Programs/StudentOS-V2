@@ -227,7 +227,7 @@ app.post('/api/push/unsubscribe', async (req, res) => {
 // Targeted Server-Side Push Dispatch via FCM & Web Push
 app.post('/api/push/send', async (req, res) => {
   const { title, body, linkTab, targetUserId, targetRole, targetClass, targetSection, targetSchoolId } = req.body || {};
-  console.log(`[FCM PUSH SEND] Dispatching: "${title}" | User: "${targetUserId || 'all'}" | Role: "${targetRole || 'all'}" | Class: "${targetClass || 'all'}"`);
+  console.log(`[FCM PUSH SEND] Dispatching: "${title}" | Target User: "${targetUserId || 'all'}" | Role: "${targetRole || 'all'}" | Class: "${targetClass || 'all'}"`);
 
   const notifTitle = title || '📢 StudentOS Alert';
   const notifBody = body || '';
@@ -248,6 +248,7 @@ app.post('/api/push/send', async (req, res) => {
     keys?: any;
     userId?: string;
     deviceId?: string;
+    deviceLabel?: string;
     role?: string;
     grade?: string;
     section?: string;
@@ -256,17 +257,22 @@ app.post('/api/push/send', async (req, res) => {
 
   // 1. Gather active tokens from server memory
   memoryFCMTokens.forEach(item => {
-    if (item.isActive && item.token) {
-      tokensToTry.push({
-        endpoint: item.token,
-        keys: item.subscription?.keys,
-        userId: item.userId || undefined,
-        deviceId: item.deviceId,
-        role: item.role,
-        grade: item.grade,
-        section: item.section,
-        schoolId: item.schoolId
-      });
+    if (item.isActive && (item.token || item.subscription?.endpoint)) {
+      const endpoint = item.subscription?.endpoint || (item.token.startsWith('http') ? item.token : '');
+      const keys = item.subscription?.keys;
+      if (endpoint && keys) {
+        tokensToTry.push({
+          endpoint,
+          keys,
+          userId: item.userId || undefined,
+          deviceId: item.deviceId,
+          deviceLabel: item.deviceLabel,
+          role: item.role,
+          grade: item.grade,
+          section: item.section,
+          schoolId: item.schoolId
+        });
+      }
     }
   });
 
@@ -275,14 +281,9 @@ app.post('/api/push/send', async (req, res) => {
   const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
 
   try {
-    const [subRes, tokRes] = await Promise.all([
-      fetch(`${supabaseUrl}/rest/v1/push_subscriptions?select=*`, {
-        headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
-      }),
-      fetch(`${supabaseUrl}/rest/v1/user_push_tokens?select=*&is_active=eq.true`, {
-        headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
-      })
-    ]);
+    const subRes = await fetch(`${supabaseUrl}/rest/v1/push_subscriptions?select=*`, {
+      headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
+    });
 
     if (subRes.ok) {
       const dbSubs = await subRes.json();
@@ -290,26 +291,15 @@ app.post('/api/push/send', async (req, res) => {
         dbSubs.forEach((row: any) => {
           if (row.endpoint && !tokensToTry.some(t => t.endpoint === row.endpoint)) {
             const keys = row.keys || (row.p256dh && row.auth ? { p256dh: row.p256dh, auth: row.auth } : undefined);
-            tokensToTry.push({
-              endpoint: row.endpoint,
-              keys,
-              userId: row.user_id || undefined,
-              deviceId: row.device_id || undefined
-            });
-          }
-        });
-      }
-    }
-
-    if (tokRes.ok) {
-      const dbTokens = await tokRes.json();
-      if (Array.isArray(dbTokens)) {
-        dbTokens.forEach((row: any) => {
-          if (row.token && row.token.startsWith('http') && !tokensToTry.some(t => t.endpoint === row.token)) {
-            tokensToTry.push({
-              endpoint: row.token,
-              userId: row.user_id || undefined
-            });
+            if (keys) {
+              tokensToTry.push({
+                endpoint: row.endpoint,
+                keys,
+                userId: row.user_id || undefined,
+                deviceId: row.device_id || undefined,
+                deviceLabel: row.device_type || 'Browser Device'
+              });
+            }
           }
         });
       }
@@ -320,6 +310,7 @@ app.post('/api/push/send', async (req, res) => {
 
   let sentCount = 0;
   let failCount = 0;
+  const deliveryLogs: any[] = [];
 
   for (const item of tokensToTry) {
     // School isolation: If targetSchoolId is set, prevent cross-school delivery
@@ -359,10 +350,10 @@ app.post('/api/push/send', async (req, res) => {
       }
     }
 
-    // Deliver via webpush if valid push endpoint
+    // Deliver via webpush if valid push endpoint & keys
     if (item.endpoint && item.endpoint.startsWith('http') && item.keys) {
       try {
-        await webpush.sendNotification({
+        const pushResult = await webpush.sendNotification({
           endpoint: item.endpoint,
           keys: item.keys
         }, payload, {
@@ -370,11 +361,30 @@ app.post('/api/push/send', async (req, res) => {
           urgency: 'high'
         });
         sentCount++;
+        const messageId = `fcm_msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        console.log(`[FCM PUSH DISPATCH SUCCESS] Delivered to user="${item.userId || 'anon'}" device="${item.deviceLabel || 'Android/Browser'}" (statusCode: ${pushResult.statusCode}, messageId: ${messageId})`);
+        deliveryLogs.push({
+          userId: item.userId,
+          deviceLabel: item.deviceLabel,
+          status: 'delivered',
+          statusCode: pushResult.statusCode,
+          messageId
+        });
       } catch (pushErr: any) {
         failCount++;
+        console.warn(`[FCM PUSH DISPATCH NOTICE] Delivery issue for user="${item.userId || 'anon'}": ${pushErr?.message || pushErr}`);
+        deliveryLogs.push({
+          userId: item.userId,
+          deviceLabel: item.deviceLabel,
+          status: 'failed',
+          statusCode: pushErr?.statusCode,
+          error: pushErr?.message
+        });
+
         if (pushErr?.statusCode === 410 || pushErr?.statusCode === 404) {
-          const idx = memoryFCMTokens.findIndex(m => m.token === item.endpoint);
+          const idx = memoryFCMTokens.findIndex(m => m.token === item.endpoint || m.subscription?.endpoint === item.endpoint);
           if (idx >= 0) memoryFCMTokens.splice(idx, 1);
+          console.log(`[FCM PUSH CLEANUP] Removed expired push token for user="${item.userId || 'anon'}".`);
         }
       }
     }
@@ -382,10 +392,28 @@ app.post('/api/push/send', async (req, res) => {
 
   return res.json({
     status: 'ok',
-    provider: 'fcm',
+    provider: 'fcm_webpush',
     sentCount,
     failCount,
-    totalCandidates: tokensToTry.length
+    totalCandidates: tokensToTry.length,
+    deliveryLogs
+  });
+});
+
+// Real-time Push Diagnostic Endpoint
+app.get('/api/push/debug-status', (req, res) => {
+  const activeTokens = memoryFCMTokens.filter(t => t.isActive);
+  res.json({
+    vapidConfigured: Boolean(vapidKeys.publicKey && vapidKeys.privateKey),
+    activeTokenCount: activeTokens.length,
+    registeredDevices: activeTokens.map(t => ({
+      userId: t.userId,
+      deviceId: t.deviceId,
+      deviceLabel: t.deviceLabel,
+      role: t.role,
+      hasSubscription: Boolean(t.subscription?.endpoint && t.subscription?.keys),
+      updatedAt: new Date(t.updatedAt).toISOString()
+    }))
   });
 });
 
@@ -901,11 +929,10 @@ app.post('/api/ai/chat', async (req, res) => {
         })
       });
     }
-    const openRouterKey = process.env.OPENROUTER_API_KEY || process.env.VITE_OPENROUTER_API_KEY;
-    const deepseekDirectKey = process.env.DEEPSEEK_API_KEY;
-    console.log(`[SERVER AI DIAGNOSTICS] Keys present: OpenRouter=${Boolean(openRouterKey)}, DeepSeekDirect=${Boolean(deepseekDirectKey)}`);
+    const nvidiaApiKey = process.env.NVIDIA_API_KEY || process.env.VITE_NVIDIA_API_KEY;
+    console.log(`[SERVER AI DIAGNOSTICS] NVIDIA API Key present: ${Boolean(nvidiaApiKey)}`);
     
-    if (!openRouterKey && !deepseekDirectKey) {
+    if (!nvidiaApiKey) {
       const sanitized = sanitizeHistory(history);
       if (sanitized.length > 0) {
         const allUserTexts = [
@@ -1140,10 +1167,9 @@ app.post('/api/ai/notes', async (req, res) => {
     const text = await generateAICompletion(systemInstruction, userPrompt);
     return res.json({ text });
   } catch (apiErr: any) {
-    const openRouterKey = process.env.OPENROUTER_API_KEY;
-    const deepseekKey = process.env.DEEPSEEK_API_KEY;
+    const nvidiaApiKey = process.env.NVIDIA_API_KEY || process.env.VITE_NVIDIA_API_KEY;
     
-    if (!openRouterKey && !deepseekKey) {
+    if (!nvidiaApiKey) {
       // Elegant simulated fallback response
       const fallbacks: { [key: string]: string } = {
         summarize: `### 🤖 Summary Concept Map (Offline Simulation)\n- **Essential Focus**: The provided text block covers core learning modules and academic criteria.\n- **Optimized Synthesis**: Keep study schedules balanced with focused review blocks.`,
@@ -1297,10 +1323,9 @@ app.post('/api/ai/material-action', async (req, res) => {
     const text = await generateAICompletion(systemInstruction, userPrompt);
     return res.json({ text });
   } catch (apiErr: any) {
-    const openRouterKey = process.env.OPENROUTER_API_KEY;
-    const deepseekKey = process.env.DEEPSEEK_API_KEY;
+    const nvidiaApiKey = process.env.NVIDIA_API_KEY || process.env.VITE_NVIDIA_API_KEY;
     
-    if (!openRouterKey && !deepseekKey) {
+    if (!nvidiaApiKey) {
       // Elegant fallbacks
       const simulatedFallbacks: { [key: string]: string } = {
         summarize: `### 📚 Study Summary: ${title}

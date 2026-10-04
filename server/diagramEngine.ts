@@ -435,7 +435,7 @@ function buildDynamicTopicGraph(query: string): ConceptGraph {
 }
 
 /**
- * AI Concept Extractor: Queries DeepSeek V4 Flash via OpenRouter (or Gemini) to produce a rich topic ConceptGraph JSON.
+ * AI Concept Extractor: Queries NVIDIA AI to produce a rich topic ConceptGraph JSON.
  * Validates output to ensure no generic placeholder strings exist.
  */
 async function generateConceptGraphFromAI(query: string, retries = 1): Promise<ConceptGraph | null> {
@@ -517,7 +517,7 @@ export async function getOrGenerateConceptGraph(query: string): Promise<ConceptG
     return preset;
   }
 
-  // 2. Query Gemini AI for custom topic ConceptGraph
+  // 2. Query NVIDIA AI for custom topic ConceptGraph
   const aiGraph = await generateConceptGraphFromAI(cleanQ);
   if (aiGraph) {
     return aiGraph;
