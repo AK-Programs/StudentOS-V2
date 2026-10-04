@@ -356,30 +356,139 @@ export const updateHousePoints = async (houseId: string, deltaPoints: number): P
 };
 
 /* ========================================================================
-   POLLS
+   POLLS & VOTING
    ======================================================================== */
-export const fetchPolls = async (): Promise<SchoolPoll[]> => {
+export const fetchPolls = async (userId?: string): Promise<SchoolPoll[]> => {
   try {
     const { data, error } = await supabase
       .from('life_polls')
       .select('*')
       .order('created_at', { ascending: false });
 
+    // Local storage voted polls mapping
+    let localVotes: Record<string, string> = {};
+    if (typeof window !== 'undefined' && userId) {
+      try {
+        localVotes = JSON.parse(localStorage.getItem(`s_os_poll_votes_${userId}`) || '{}');
+      } catch (_) {}
+    }
+
+    // Try fetching user votes from Supabase life_poll_votes table
+    const remoteVotes: Record<string, string> = {};
+    if (userId) {
+      try {
+        const { data: userVoteRows } = await supabase
+          .from('life_poll_votes')
+          .select('poll_id, option_id')
+          .eq('user_id', userId);
+
+        if (userVoteRows && userVoteRows.length > 0) {
+          userVoteRows.forEach((r: any) => {
+            if (r.poll_id && r.option_id) {
+              remoteVotes[r.poll_id] = r.option_id;
+            }
+          });
+        }
+      } catch (_) {}
+    }
+
     if (error || !data) return [];
 
-    return data.map((item: any) => ({
-      id: item.id,
-      question: item.question,
-      category: item.category || 'General',
-      options: typeof item.options === 'string' ? JSON.parse(item.options) : item.options || [],
-      totalVotes: item.total_votes || 0,
-      createdBy: item.created_by || 'Admin',
-      createdAt: item.created_at || new Date().toISOString(),
-      isActive: item.is_active !== false
-    }));
+    return data.map((item: any) => {
+      const parsedOptions = typeof item.options === 'string' ? JSON.parse(item.options) : item.options || [];
+      const userVotedOptionId = remoteVotes[item.id] || localVotes[item.id] || undefined;
+
+      return {
+        id: item.id,
+        question: item.question,
+        category: item.category || 'General',
+        options: parsedOptions,
+        totalVotes: item.total_votes || 0,
+        createdBy: item.created_by || 'Admin',
+        createdAt: item.created_at || new Date().toISOString(),
+        isActive: item.is_active !== false,
+        userVotedOptionId
+      };
+    });
   } catch (err) {
     console.error('Error fetching polls:', err);
     return [];
+  }
+};
+
+export const votePoll = async (pollId: string, optionId: string, userId?: string): Promise<{ success: boolean; updatedPoll?: SchoolPoll }> => {
+  try {
+    // 1. Fetch latest poll state
+    const { data: pollRow, error: fetchErr } = await supabase
+      .from('life_polls')
+      .select('*')
+      .eq('id', pollId)
+      .single();
+
+    if (fetchErr || !pollRow) {
+      console.warn('Poll not found in database:', pollId);
+      return { success: false };
+    }
+
+    const currentOptions: any[] = typeof pollRow.options === 'string' ? JSON.parse(pollRow.options) : pollRow.options || [];
+    const updatedOptions = currentOptions.map((opt: any) => {
+      if (opt.id === optionId) {
+        return { ...opt, votes: (Number(opt.votes) || 0) + 1 };
+      }
+      return opt;
+    });
+
+    const newTotal = (Number(pollRow.total_votes) || 0) + 1;
+
+    // 2. Update life_polls table
+    await supabase
+      .from('life_polls')
+      .update({
+        options: JSON.stringify(updatedOptions),
+        total_votes: newTotal
+      })
+      .eq('id', pollId);
+
+    // 3. Record user vote in life_poll_votes table
+    if (userId) {
+      try {
+        await supabase
+          .from('life_poll_votes')
+          .upsert({
+            poll_id: pollId,
+            user_id: userId,
+            option_id: optionId,
+            voted_at: new Date().toISOString()
+          }, { onConflict: 'poll_id,user_id' });
+      } catch (_) {}
+
+      // 4. Update local cache
+      if (typeof window !== 'undefined') {
+        try {
+          const cacheKey = `s_os_poll_votes_${userId}`;
+          const current = JSON.parse(localStorage.getItem(cacheKey) || '{}');
+          current[pollId] = optionId;
+          localStorage.setItem(cacheKey, JSON.stringify(current));
+        } catch (_) {}
+      }
+    }
+
+    const updatedPoll: SchoolPoll = {
+      id: pollRow.id,
+      question: pollRow.question,
+      category: pollRow.category || 'General',
+      options: updatedOptions,
+      totalVotes: newTotal,
+      createdBy: pollRow.created_by || 'Admin',
+      createdAt: pollRow.created_at || new Date().toISOString(),
+      isActive: pollRow.is_active !== false,
+      userVotedOptionId: optionId
+    };
+
+    return { success: true, updatedPoll };
+  } catch (err) {
+    console.error('Error voting on poll:', err);
+    return { success: false };
   }
 };
 

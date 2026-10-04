@@ -1,5 +1,3 @@
-import { GoogleGenAI } from '@google/genai';
-
 export function sanitizeHistory(history: any[] = []): any[] {
   if (!Array.isArray(history) || history.length === 0) return [];
   
@@ -25,54 +23,85 @@ export function sanitizeHistory(history: any[] = []): any[] {
   return sanitized;
 }
 
-export async function clientSideGemini(
+/**
+ * Universal Client-Side AI Completion powered exclusively by DeepSeek (or DeepSeek via OpenRouter)
+ */
+export async function clientSideDeepSeek(
   userMessage: string, 
   history: any[] = [], 
   systemInstruction?: string
 ): Promise<string> {
-  const key = (import.meta as any).env.VITE_GEMINI_API_KEY;
   const sanitized = sanitizeHistory(history);
+  const openRouterKey = (import.meta as any).env?.VITE_OPENROUTER_API_KEY || (import.meta as any).env?.OPENROUTER_API_KEY;
+  const deepseekKey = (import.meta as any).env?.VITE_DEEPSEEK_API_KEY || (import.meta as any).env?.DEEPSEEK_API_KEY;
 
-  if (key) {
+  // 1. Direct DeepSeek API if client key present
+  if (deepseekKey) {
     try {
-      const ai = new GoogleGenAI({ apiKey: key });
-      const contents: any[] = [];
-
-      // Ensure first turn in Gemini contents is 'user' for Gemini SDK rules
-      let startIdx = 0;
-      if (sanitized.length > 0 && sanitized[0].role === 'assistant') {
-        contents.push({
-          role: 'user',
-          parts: [{ text: `[Prior Tutor Context]: ${sanitized[0].content}` }]
-        });
-        startIdx = 1;
-      }
-
-      for (let i = startIdx; i < sanitized.length; i++) {
-        contents.push({
-          role: sanitized[i].role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: sanitized[i].content }]
-        });
-      }
-
-      contents.push({ role: 'user', parts: [{ text: userMessage }] });
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents,
-        config: systemInstruction ? { systemInstruction } : undefined
+      const messages = [
+        ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
+        ...sanitized,
+        { role: 'user', content: userMessage }
+      ];
+      const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${deepseekKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages,
+          temperature: 0.7
+        })
       });
-
-      if (response && response.text) {
-        return response.text;
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.choices?.[0]?.message?.content;
+        if (text) return text.trim();
       }
-    } catch (err: any) {
-      console.error('Client-side Gemini failed, using offline response:', err);
+    } catch (e) {
+      console.warn('[Client DeepSeek] Direct API notice:', e);
+    }
+  }
+
+  // 2. OpenRouter DeepSeek if key present
+  if (openRouterKey) {
+    try {
+      const messages = [
+        ...(systemInstruction ? [{ role: 'system', content: systemInstruction }] : []),
+        ...sanitized,
+        { role: 'user', content: userMessage }
+      ];
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${openRouterKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://studentos.edu',
+          'X-Title': 'StudentOS'
+        },
+        body: JSON.stringify({
+          model: 'deepseek/deepseek-chat',
+          messages,
+          temperature: 0.7
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.choices?.[0]?.message?.content;
+        if (text) return text.trim();
+      }
+    } catch (e) {
+      console.warn('[Client DeepSeek] OpenRouter notice:', e);
     }
   }
 
   return getMockAiResponse(userMessage, sanitized);
 }
+
+// Backward-compatible alias
+export const clientSideGemini = clientSideDeepSeek;
 
 /** Use regex word boundaries so partial matches like "workspace" don't fire "work". */
 function hasWord(word: string, text: string): boolean {
@@ -135,7 +164,7 @@ function getMockAiResponse(msg: string, sanitizedHistory: any[] = []): string {
   }
 
   if (p.includes('what can you help') || p.includes('what can you do') || p.includes('help me with')) {
-    return `### 🚀 What I Can Help You With\n\nI am your **StudentOS AI Assistant**! Here is what I can do for you across StudentOS:\n\n1. 🧠 **Academic Explanations**: Ask me anything in Science, Math, Literature, History, or Coding.\n2. 📅 **Study Planning**: Schedule study sessions, create tasks, and manage homework.\n3. 📢 **Automations**: Broadcast school announcements, schedule meetings, and create competitions.\n4. 📝 **Note Summaries & Quizzes**: Summarize lecture materials and practice active recall.\n\nWhat would you like to explore or automate today?`;
+    return `### 🚀 What I Can Help You With\n\nI am your **StudentOS AI Assistant** powered by DeepSeek! Here is what I can do for you across StudentOS:\n\n1. 🧠 **Academic Explanations**: Ask me anything in Science, Math, Literature, History, or Coding.\n2. 📅 **Study Planning**: Schedule study sessions, create tasks, and manage homework.\n3. 📢 **Automations**: Broadcast school announcements, schedule meetings, and create competitions.\n4. 📝 **Note Summaries & Quizzes**: Summarize lecture materials and practice active recall.\n\nWhat would you like to explore or automate today?`;
   }
 
   if (
@@ -167,5 +196,5 @@ function getMockAiResponse(msg: string, sanitizedHistory: any[] = []): string {
   }
 
   // Default initial greeting for brand-new blank threads only
-  return `### 👋 Hey there!\n\nI'm your **StudentOS AI Buddy** — here to help you study smarter, not harder.\n\n* 📚 **Summarize notes** and generate study guides\n* 🧠 **Quiz you** on any topic with active recall questions\n* 🔬 **Explain concepts** in Physics, Chemistry, Computer Science, and more\n* ✅ **Build task checklists** and plan your study sessions\n\nWhat would you like to study today?`;
+  return `### 👋 Hey there!\n\nI'm your **StudentOS AI Buddy** powered by DeepSeek — here to help you study smarter, not harder.\n\n* 📚 **Summarize notes** and generate study guides\n* 🧠 **Quiz you** on any topic with active recall questions\n* 🔬 **Explain concepts** in Physics, Chemistry, Computer Science, and more\n* ✅ **Build task checklists** and plan your study sessions\n\nWhat would you like to study today?`;
 }

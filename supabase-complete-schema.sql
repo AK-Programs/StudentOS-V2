@@ -561,3 +561,202 @@ DROP POLICY IF EXISTS "Orion chats accessible by owner" ON public.orion_chats;
 CREATE POLICY "Orion chats accessible by owner"
   ON public.orion_chats FOR ALL
   USING (user_id = auth.uid()::text OR auth.uid() IS NULL);
+
+-- --------------------------------------------------------
+-- 13. Push Notifications & FCM Tokens (user_push_tokens & push_subscriptions)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.user_push_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT,
+    token TEXT UNIQUE NOT NULL,
+    platform TEXT DEFAULT 'web_fcm',
+    device_label TEXT DEFAULT 'Web Browser',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT true
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_push_tokens_user_id ON public.user_push_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_push_tokens_token ON public.user_push_tokens(token);
+
+ALTER TABLE public.user_push_tokens ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Public can manage push tokens" ON public.user_push_tokens;
+CREATE POLICY "Public can manage push tokens" ON public.user_push_tokens FOR ALL USING (true);
+
+CREATE TABLE IF NOT EXISTS public.push_subscriptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id TEXT,
+    user_id TEXT,
+    endpoint TEXT UNIQUE NOT NULL,
+    keys JSONB,
+    p256dh TEXT,
+    auth TEXT,
+    user_agent TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+ALTER TABLE public.push_subscriptions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Public can manage push subscriptions" ON public.push_subscriptions;
+CREATE POLICY "Public can manage push subscriptions" ON public.push_subscriptions FOR ALL USING (true);
+
+-- --------------------------------------------------------
+-- 14. StudentOS Life Tables (Competitions, Events, Clubs, Badges, Gallery, Houses, Polls, News)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.life_competitions (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT,
+    category TEXT DEFAULT 'General',
+    start_date TEXT,
+    end_date TEXT,
+    location TEXT,
+    mode TEXT DEFAULT 'Offline',
+    type TEXT DEFAULT 'Individual',
+    max_team_size INTEGER DEFAULT 1,
+    eligibility TEXT DEFAULT 'All Grades',
+    prize_pool TEXT,
+    status TEXT DEFAULT 'Upcoming',
+    created_by TEXT,
+    registered_count INTEGER DEFAULT 0,
+    banner_url TEXT,
+    rules JSONB DEFAULT '[]'::jsonb,
+    winners JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+ALTER TABLE public.life_competitions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Competitions readable by all" ON public.life_competitions;
+CREATE POLICY "Competitions readable by all" ON public.life_competitions FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Staff can manage competitions" ON public.life_competitions;
+CREATE POLICY "Staff can manage competitions" ON public.life_competitions FOR ALL USING (true);
+
+CREATE TABLE IF NOT EXISTS public.life_events (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    category TEXT DEFAULT 'General',
+    date TEXT,
+    time TEXT,
+    location TEXT,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+ALTER TABLE public.life_events ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Events readable by all" ON public.life_events;
+CREATE POLICY "Events readable by all" ON public.life_events FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Staff can manage events" ON public.life_events;
+CREATE POLICY "Staff can manage events" ON public.life_events FOR ALL USING (true);
+
+CREATE TABLE IF NOT EXISTS public.life_clubs (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    category TEXT DEFAULT 'General',
+    description TEXT,
+    icon TEXT DEFAULT '⭐',
+    lead_teacher TEXT,
+    student_head TEXT,
+    member_count INTEGER DEFAULT 0,
+    meeting_days TEXT,
+    location TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+ALTER TABLE public.life_clubs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Clubs readable by all" ON public.life_clubs;
+CREATE POLICY "Clubs readable by all" ON public.life_clubs FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Staff can manage clubs" ON public.life_clubs;
+CREATE POLICY "Staff can manage clubs" ON public.life_clubs FOR ALL USING (true);
+
+CREATE TABLE IF NOT EXISTS public.life_achievements (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    icon TEXT DEFAULT '🏆',
+    category TEXT DEFAULT 'Academic',
+    awarded_to_uid TEXT,
+    awarded_to_name TEXT,
+    awarded_by TEXT,
+    reason TEXT,
+    awarded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+ALTER TABLE public.life_achievements ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Badges readable by all" ON public.life_achievements;
+CREATE POLICY "Badges readable by all" ON public.life_achievements FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Staff can award badges" ON public.life_achievements;
+CREATE POLICY "Staff can award badges" ON public.life_achievements FOR ALL USING (true);
+
+CREATE TABLE IF NOT EXISTS public.life_gallery (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    category TEXT DEFAULT 'General',
+    cover_url TEXT,
+    photo_count INTEGER DEFAULT 1,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+ALTER TABLE public.life_gallery ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Gallery readable by all" ON public.life_gallery;
+CREATE POLICY "Gallery readable by all" ON public.life_gallery FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Staff can manage gallery" ON public.life_gallery;
+CREATE POLICY "Staff can manage gallery" ON public.life_gallery FOR ALL USING (true);
+
+CREATE TABLE IF NOT EXISTS public.life_houses (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    color TEXT,
+    points INTEGER DEFAULT 1000,
+    rank INTEGER DEFAULT 1,
+    captain TEXT,
+    vice_captain TEXT,
+    motto TEXT,
+    house_teacher TEXT,
+    trophies INTEGER DEFAULT 0,
+    banner_url TEXT
+);
+ALTER TABLE public.life_houses ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Houses readable by all" ON public.life_houses;
+CREATE POLICY "Houses readable by all" ON public.life_houses FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Staff can manage houses" ON public.life_houses;
+CREATE POLICY "Staff can manage houses" ON public.life_houses FOR ALL USING (true);
+
+CREATE TABLE IF NOT EXISTS public.life_polls (
+    id TEXT PRIMARY KEY,
+    question TEXT NOT NULL,
+    category TEXT DEFAULT 'General',
+    options JSONB NOT NULL DEFAULT '[]'::jsonb,
+    total_votes INTEGER DEFAULT 0,
+    created_by TEXT,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+ALTER TABLE public.life_polls ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Polls readable by all" ON public.life_polls;
+CREATE POLICY "Polls readable by all" ON public.life_polls FOR SELECT USING (true);
+DROP POLICY IF EXISTS "All users can vote or manage polls" ON public.life_polls;
+CREATE POLICY "All users can vote or manage polls" ON public.life_polls FOR ALL USING (true);
+
+CREATE TABLE IF NOT EXISTS public.life_poll_votes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    poll_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    option_id TEXT NOT NULL,
+    voted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(poll_id, user_id)
+);
+ALTER TABLE public.life_poll_votes ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Poll votes accessible by all" ON public.life_poll_votes;
+CREATE POLICY "Poll votes accessible by all" ON public.life_poll_votes FOR ALL USING (true);
+
+CREATE TABLE IF NOT EXISTS public.life_news (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    category TEXT DEFAULT 'News',
+    content TEXT,
+    author TEXT,
+    image_url TEXT,
+    published_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    featured BOOLEAN DEFAULT false
+);
+ALTER TABLE public.life_news ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "News readable by all" ON public.life_news;
+CREATE POLICY "News readable by all" ON public.life_news FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Staff can manage news" ON public.life_news;
+CREATE POLICY "Staff can manage news" ON public.life_news FOR ALL USING (true);
+

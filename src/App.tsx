@@ -25,6 +25,7 @@ import { getVaultNotes, saveVaultNoteToSupabase, deleteVaultNoteFromSupabase } f
 import { getSupabaseUserProfile, saveSupabaseUserProfile } from './lib/supabaseUsers';
 import { getSupabaseHomework, saveSupabaseHomework, deleteSupabaseHomework } from './lib/supabaseHomework';
 import { getAppNotifications, saveAppNotification, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification, generateUUID, registerPushSubscription, getDeviceId } from './lib/notifications';
+import { requestFCMPermission, setupFCMForegroundListener } from './lib/fcmNotifications';
 import { 
   getAiBuddyChats, saveAiBuddyChat, deleteAiBuddyChat, renameAiBuddyChat,
   getPeerMessages, savePeerMessage, deletePeerMessage,
@@ -279,7 +280,7 @@ export default function App() {
   const [firebaseOnboardingUser, setFirebaseOnboardingUser] = useState<any>(null);
   const [authError, setAuthError] = useState<{ code: string; message: string; hostname: string } | null>(null);
 
-  // Sync device push subscription & Pusher Beams interests with active StudentOS user account whenever user changes
+  // Sync device push subscription & FCM tokens with active StudentOS user account whenever user changes
   useEffect(() => {
     if (currentUser?.uid && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
       registerPushSubscription(currentUser.uid, {
@@ -288,8 +289,30 @@ export default function App() {
         section: currentUser.section,
         house: currentUser.house
       });
+      requestFCMPermission(currentUser.uid, {
+        role: currentUser.role,
+        grade: currentUser.grade,
+        section: currentUser.section,
+        house: currentUser.house
+      });
     }
   }, [currentUser?.uid, currentUser?.role, currentUser?.grade, currentUser?.section, currentUser?.house]);
+
+  // Setup FCM Foreground message listener
+  useEffect(() => {
+    let cleanupListener: (() => void) | null = null;
+    setupFCMForegroundListener((payload) => {
+      if (payload.data?.linkTab) {
+        // Optionally update in-app notifications
+      }
+    }).then(unsub => {
+      cleanupListener = unsub;
+    });
+
+    return () => {
+      if (cleanupListener) cleanupListener();
+    };
+  }, []);
 
   // Listen for navigation messages from Service Worker (e.g. when clicking a browser push notification)
   useEffect(() => {

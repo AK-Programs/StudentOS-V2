@@ -7,10 +7,11 @@ import React, { useState, useEffect } from 'react';
 import { BellRing, RefreshCw, Send } from 'lucide-react';
 import { UserProfile } from '../types';
 import {
-  enablePusherBeamsPush,
-  disablePusherBeamsPush,
-  getPusherBeamsStatus
-} from '../lib/pusherBeams';
+  requestFCMPermission,
+  disableFCMPush,
+  getFCMStatus,
+  sendTestFCMNotification
+} from '../lib/fcmNotifications';
 import { saveSupabaseUserProfile } from '../lib/supabaseUsers';
 import { soundService } from '../lib/soundService';
 
@@ -35,31 +36,26 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
   });
   const [loading, setLoading] = useState<boolean>(false);
   const [notice, setNotice] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
-  const [beamsStatus, setBeamsStatus] = useState<{
-    supported: boolean;
-    permission: 'default' | 'granted' | 'denied';
-    optedIn: boolean;
-    deviceId?: string;
-    interests?: string[];
+  const [fcmStatus, setFcmStatus] = useState<{
+    isSupported: boolean;
+    permission: NotificationPermission | 'unsupported';
+    isEnabled: boolean;
+    token: string | null;
+    deviceId: string;
   }>({
-    supported: true,
+    isSupported: true,
     permission: 'default',
-    optedIn: false
+    isEnabled: false,
+    token: null,
+    deviceId: 'dev'
   });
 
   useEffect(() => {
-    let isMounted = true;
-    getPusherBeamsStatus().then((status) => {
-      if (isMounted) {
-        setBeamsStatus(status);
-        if (status.optedIn) {
-          setIsEnabled(true);
-        }
-      }
-    });
-    return () => {
-      isMounted = false;
-    };
+    const status = getFCMStatus();
+    setFcmStatus(status);
+    if (status.isEnabled) {
+      setIsEnabled(true);
+    }
   }, []);
 
   const handleToggle = async (checked: boolean) => {
@@ -69,43 +65,37 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
     soundService.playToggleSound(checked);
 
     if (checked) {
-      setNotice({ text: 'Initializing Pusher Beams web push subscription...', type: 'info' });
+      setNotice({ text: 'Initializing Firebase Cloud Messaging (FCM) push subscription...', type: 'info' });
 
-      const result = await enablePusherBeamsPush(
+      const result = await requestFCMPermission(
         currentUser.uid || currentUser.email,
-        currentUser.role,
         {
+          role: currentUser.role,
           house: currentUser.house || 'None',
           grade: currentUser.grade || '10',
           section: currentUser.section || 'A'
         }
       );
 
-      if (result.success && result.optedIn) {
+      if (result.success) {
         setIsEnabled(true);
-        setBeamsStatus(prev => ({
-          ...prev,
-          permission: 'granted',
-          optedIn: true,
-          deviceId: result.deviceId,
-          interests: result.interests
-        }));
+        setFcmStatus(getFCMStatus());
         soundService.playSuccessSound();
         setNotice({
-          text: '✓ Web Push Notifications enabled! Pusher Beams will deliver targeted school updates to this device.',
+          text: '✓ Web Push Notifications enabled! Firebase Cloud Messaging will deliver targeted school updates to this device.',
           type: 'success'
         });
-        showNotification?.('🔔 Pusher Beams Web Push Notifications enabled!');
+        showNotification?.('🔔 Firebase Cloud Messaging (FCM) Notifications enabled!');
 
         const updatedUser: UserProfile = {
           ...currentUser,
           enableWebPush: true,
-          pusherBeamsDeviceId: result.deviceId || currentUser.pusherBeamsDeviceId,
+          fcmToken: result.token,
           raw_data: {
             ...(currentUser.raw_data || {}),
             enableWebPush: true,
-            pusherBeamsSubscribed: true,
-            pusherBeamsDeviceId: result.deviceId
+            fcmSubscribed: true,
+            fcmToken: result.token
           }
         };
 
@@ -119,11 +109,7 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
         }
       } else {
         setIsEnabled(false);
-        setBeamsStatus(prev => ({
-          ...prev,
-          permission: result.permission || 'denied',
-          optedIn: false
-        }));
+        setFcmStatus(getFCMStatus());
         setNotice({
           text: result.error || 'Notification permission was denied. Please allow notifications in your browser or device settings.',
           type: 'error'
@@ -131,9 +117,9 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
         showNotification?.('⚠️ Web push permission was not granted by the browser.');
       }
     } else {
-      await disablePusherBeamsPush(currentUser.uid || currentUser.email);
+      await disableFCMPush(currentUser.uid || currentUser.email);
       setIsEnabled(false);
-      setBeamsStatus(prev => ({ ...prev, optedIn: false }));
+      setFcmStatus(getFCMStatus());
       setNotice({
         text: 'Web push notifications disabled for this account.',
         type: 'info'
@@ -146,7 +132,7 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
         raw_data: {
           ...(currentUser.raw_data || {}),
           enableWebPush: false,
-          pusherBeamsSubscribed: false
+          fcmSubscribed: false
         }
       };
 
@@ -162,26 +148,13 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
     setLoading(false);
   };
 
-  const handleSendTestPush = () => {
-    if (!('Notification' in window)) {
-      showNotification?.('⚠️ Notifications not supported on this browser.');
-      return;
-    }
-    if (Notification.permission === 'granted') {
-      soundService.playMessageSound();
-      try {
-        new Notification('🔔 StudentOS Pusher Beams Test', {
-          body: 'Your Pusher Beams Web Push subscription is active and delivering targeted alerts!',
-          icon: '/icons/icon-192.png',
-          badge: '/icons/icon-192.png',
-          tag: 'studentos-test'
-        });
-        showNotification?.('✓ Test notification triggered! Check your desktop/device notification tray.');
-      } catch (_) {
-        showNotification?.('✓ Push subscription active! Device native notification sent.');
-      }
+  const handleSendTestPush = async () => {
+    if (!currentUser) return;
+    const res = await sendTestFCMNotification(currentUser.uid || currentUser.email || 'user', currentUser.role);
+    if (res.success) {
+      showNotification?.('✓ FCM test notification triggered! Check your desktop/device notification tray.');
     } else {
-      showNotification?.('⚠️ Browser notification permission is not granted yet.');
+      showNotification?.(`⚠️ ${res.message}`);
     }
   };
 
@@ -202,14 +175,14 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
                 Enable Web Push Notifications
               </h4>
               <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono text-[9px] font-black uppercase">
-                Pusher Beams
+                Firebase FCM
               </span>
-              {isEnabled && beamsStatus.permission === 'granted' ? (
+              {isEnabled && fcmStatus.permission === 'granted' ? (
                 <span className="uiverse-status-badge px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   Subscribed & Active
                 </span>
-              ) : beamsStatus.permission === 'denied' ? (
+              ) : fcmStatus.permission === 'denied' ? (
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
                   ⚠️ Permission Blocked
                 </span>
@@ -220,7 +193,7 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
               )}
             </div>
             <p className="text-xs text-slate-300 leading-relaxed max-w-xl">
-              Receive immediate desktop, Android APK, and PWA alerts via Pusher Beams for announcements, assignment deadlines, grade updates, and release notes — even when StudentOS is closed.
+              Receive immediate desktop, Android APK, and PWA alerts via Firebase Cloud Messaging for announcements, assignment deadlines, grade updates, and release notes — even when StudentOS is closed.
             </p>
           </div>
         </div>
@@ -272,7 +245,7 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
       {/* Targeting Segments & Test Push Button */}
       <div className="mt-3 pt-3 border-t border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] font-black uppercase text-slate-400 font-mono">Beams Interests:</span>
+          <span className="text-[10px] font-black uppercase text-slate-400 font-mono">FCM Targeting:</span>
           <span className="px-2 py-0.5 rounded bg-black/30 border border-white/10 text-indigo-300 font-mono text-[10px] font-bold">
             role: {currentUser?.role || 'student'}
           </span>
@@ -293,14 +266,14 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
           )}
         </div>
 
-        {isEnabled && beamsStatus.permission === 'granted' && (
+        {isEnabled && fcmStatus.permission === 'granted' && (
           <button
             type="button"
             onClick={handleSendTestPush}
             className="uiverse-btn-primary px-3 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-500/40 text-indigo-200 hover:text-white text-[11px] font-bold transition-all flex items-center gap-1.5 self-start sm:self-auto shrink-0 cursor-pointer"
           >
             <Send className="w-3 h-3" />
-            <span>Send Test Alert</span>
+            <span>Send FCM Test Alert</span>
           </button>
         )}
       </div>

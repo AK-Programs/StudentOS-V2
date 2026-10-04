@@ -61,7 +61,8 @@ export interface UserProfile {
   grant_all_permissions?: boolean;
   permissions?: string[];
   enableWebPush?: boolean;
-  pusherBeamsDeviceId?: string;
+  fcmToken?: string;
+  fcmDeviceId?: string;
   raw_data?: any;
 }
 

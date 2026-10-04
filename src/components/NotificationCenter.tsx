@@ -28,7 +28,7 @@ import {
   isUserEligibleForNotification,
   requestWebPushPermission
 } from '../lib/notifications';
-import { enablePusherBeamsPush } from '../lib/pusherBeams';
+import { requestFCMPermission } from '../lib/fcmNotifications';
 import { saveSupabaseUserProfile } from '../lib/supabaseUsers';
 import { soundService } from '../lib/soundService';
 import { supabase } from '../lib/supabase';
@@ -56,10 +56,10 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
 
   const handleEnablePushPermissions = async () => {
-    const res = await enablePusherBeamsPush(
+    const res = await requestFCMPermission(
       currentUser?.uid || currentUser?.email,
-      currentUser?.role,
       {
+        role: currentUser?.role,
         grade: currentUser?.grade || '10',
         section: currentUser?.section || 'A',
         house: currentUser?.house || 'None'
@@ -74,12 +74,12 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
       const updated: UserProfile = {
         ...currentUser,
         enableWebPush: true,
-        pusherBeamsDeviceId: res.deviceId || currentUser.pusherBeamsDeviceId,
+        fcmToken: res.token,
         raw_data: {
           ...(currentUser.raw_data || {}),
           enableWebPush: true,
-          pusherBeamsSubscribed: true,
-          pusherBeamsDeviceId: res.deviceId
+          fcmSubscribed: true,
+          fcmToken: res.token
         }
       };
       saveSupabaseUserProfile(updated).catch(() => {});

@@ -19,11 +19,11 @@ import {
 } from '../lib/verification';
 import { ProfessionalTabDropdown } from './ProfessionalTabDropdown';
 import { 
-  enablePusherBeamsPush, 
-  disablePusherBeamsPush, 
-  getPusherBeamsStatus,
-  sendTestPusherBeamsNotification
-} from '../lib/pusherBeams';
+  requestFCMPermission, 
+  disableFCMPush, 
+  getFCMStatus,
+  sendTestFCMNotification
+} from '../lib/fcmNotifications';
 import { soundService } from '../lib/soundService';
 
 export type SettingsSubSection = 'customization' | 'info' | 'theme' | 'verification' | 'environment' | 'notifications';
@@ -123,42 +123,32 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
   const [chatSounds, setChatSounds] = useState(() => soundService.isEnabled() && rawData.notifyChat !== false);
   const [announcementsAlert, setAnnouncementsAlert] = useState(rawData.notifyAnnounce !== false);
 
-  // Pusher Beams Web Push state
+  // FCM Web Push state
   const [enableWebPush, setEnableWebPush] = useState<boolean>(() => {
     return Boolean(currentUser.enableWebPush ?? rawData.enableWebPush ?? false);
   });
   const [pushStatusLoading, setPushStatusLoading] = useState<boolean>(false);
   const [pushNotice, setPushNotice] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
-  const [beamsStatus, setBeamsStatus] = useState<{
-    supported: boolean;
-    permission: 'default' | 'granted' | 'denied';
-    optedIn: boolean;
-    deviceId?: string;
-    interests: string[];
+  const [fcmStatus, setFcmStatus] = useState<{
+    isSupported: boolean;
+    permission: NotificationPermission | 'unsupported';
+    isEnabled: boolean;
+    token: string | null;
+    deviceId: string;
   }>({
-    supported: true,
+    isSupported: true,
     permission: 'default',
-    optedIn: false,
-    interests: []
+    isEnabled: false,
+    token: null,
+    deviceId: 'dev'
   });
 
   useEffect(() => {
-    let isMounted = true;
-    getPusherBeamsStatus().then((status) => {
-      if (isMounted) {
-        setBeamsStatus({
-          supported: status.supported,
-          permission: status.permission,
-          optedIn: status.optedIn,
-          deviceId: status.deviceId,
-          interests: status.interests || []
-        });
-        if (status.optedIn) {
-          setEnableWebPush(true);
-        }
-      }
-    });
-    return () => { isMounted = false; };
+    const status = getFCMStatus();
+    setFcmStatus(status);
+    if (status.isEnabled) {
+      setEnableWebPush(true);
+    }
   }, []);
 
   const handleToggleWebPush = async (newVal: boolean) => {
@@ -166,29 +156,23 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
     setPushNotice(null);
 
     if (newVal) {
-      setPushNotice({ text: 'Initializing Pusher Beams & requesting notification permission...', type: 'info' });
-      const result = await enablePusherBeamsPush(
+      setPushNotice({ text: 'Initializing Firebase Cloud Messaging (FCM) & requesting permission...', type: 'info' });
+      const result = await requestFCMPermission(
         currentUser.uid || currentUser.email,
-        currentUser.role,
         {
+          role: currentUser.role,
           house: currentUser.house || 'None',
           grade: currentUser.grade || '10',
           section: currentUser.section || 'A'
         }
       );
 
-      if (result.success && result.optedIn) {
+      if (result.success) {
         soundService.playSuccess();
         setEnableWebPush(true);
-        setBeamsStatus(prev => ({
-          ...prev,
-          permission: 'granted',
-          optedIn: true,
-          deviceId: result.deviceId,
-          interests: result.interests || prev.interests
-        }));
+        setFcmStatus(getFCMStatus());
         setPushNotice({
-          text: '✓ Pusher Beams Push Notifications activated! Subscribed to targeted interests for your role and class.',
+          text: '✓ Firebase Cloud Messaging (FCM) Push Notifications activated! Subscribed to targeted updates for your role and class.',
           type: 'success'
         });
 
@@ -196,13 +180,12 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
         const updated: UserProfile = {
           ...currentUser,
           enableWebPush: true,
-          pusherBeamsDeviceId: result.deviceId || currentUser.pusherBeamsDeviceId,
+          fcmToken: result.token,
           raw_data: {
             ...(currentUser.raw_data || {}),
             enableWebPush: true,
-            pusherBeamsSubscribed: true,
-            pusherBeamsDeviceId: result.deviceId,
-            pusherBeamsInterests: result.interests
+            fcmSubscribed: true,
+            fcmToken: result.token
           }
         };
 
@@ -216,7 +199,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
         }
       } else {
         setEnableWebPush(false);
-        setBeamsStatus(prev => ({ ...prev, permission: result.permission || 'denied', optedIn: false }));
+        setFcmStatus(getFCMStatus());
         setPushNotice({
           text: result.error || 'Notification permission was denied. Please allow notifications in your browser settings.',
           type: 'error'
@@ -224,11 +207,11 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
       }
     } else {
       soundService.playToggle(false);
-      await disablePusherBeamsPush(currentUser.uid);
+      await disableFCMPush(currentUser.uid);
       setEnableWebPush(false);
-      setBeamsStatus(prev => ({ ...prev, optedIn: false }));
+      setFcmStatus(getFCMStatus());
       setPushNotice({
-        text: 'Pusher Beams push notifications turned off for this device.',
+        text: 'Push notifications turned off for this device.',
         type: 'info'
       });
 
@@ -239,7 +222,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
         raw_data: {
           ...(currentUser.raw_data || {}),
           enableWebPush: false,
-          pusherBeamsSubscribed: false
+          fcmSubscribed: false
         }
       };
 
@@ -352,7 +335,8 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
         avatarFrame,
         accentColor,
         enableWebPush,
-        pusherBeamsDeviceId: beamsStatus.deviceId || currentUser.pusherBeamsDeviceId,
+        fcmToken: fcmStatus.token || currentUser.fcmToken,
+        fcmDeviceId: fcmStatus.deviceId || currentUser.fcmDeviceId,
         raw_data: {
           ...(currentUser.raw_data || {}),
           avatarFrame,
@@ -368,7 +352,8 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
           notifyChat: chatSounds,
           notifyAnnounce: announcementsAlert,
           enableWebPush,
-          pusherBeamsDeviceId: beamsStatus.deviceId || currentUser.pusherBeamsDeviceId
+          fcmToken: fcmStatus.token || currentUser.fcmToken,
+          fcmDeviceId: fcmStatus.deviceId || currentUser.fcmDeviceId
         }
       };
 
@@ -1395,7 +1380,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
           </div>
 
           <div className="space-y-4">
-            {/* PUSHER BEAMS WEB PUSH NOTIFICATIONS CARD */}
+            {/* FIREBASE CLOUD MESSAGING (FCM) WEB PUSH NOTIFICATIONS CARD */}
             <div className="p-5 rounded-2xl bg-gradient-to-r from-indigo-950/70 via-slate-900 to-purple-950/70 border border-indigo-500/30 shadow-xl space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex items-start gap-3.5">
@@ -1408,14 +1393,14 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                         Enable Push Notifications
                       </h4>
                       <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono text-[9px] font-black uppercase">
-                        Pusher Beams
+                        Firebase FCM
                       </span>
-                      {enableWebPush && beamsStatus.permission === 'granted' ? (
+                      {enableWebPush && fcmStatus.permission === 'granted' ? (
                         <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                           Subscribed & Active
                         </span>
-                      ) : beamsStatus.permission === 'denied' ? (
+                      ) : fcmStatus.permission === 'denied' ? (
                         <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
                           ⚠️ Permission Blocked
                         </span>
@@ -1426,7 +1411,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                       )}
                     </div>
                     <p className="text-xs text-slate-300 leading-relaxed max-w-xl">
-                      Receive immediate desktop, Android APK, and PWA browser alerts via Pusher Beams for official announcements, assignment deadlines, grade updates, and release notes — targeted strictly to your role and class.
+                      Receive immediate desktop, Android APK, and PWA browser alerts via Firebase Cloud Messaging for official announcements, assignment deadlines, grade updates, and release notes — targeted strictly to your role and class.
                     </p>
                   </div>
                 </div>
@@ -1471,7 +1456,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
               {/* Audience Targeting Segmentation Info */}
               <div className="pt-3 border-t border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[10px] font-black uppercase text-slate-400 font-mono">Beams Interests:</span>
+                  <span className="text-[10px] font-black uppercase text-slate-400 font-mono">FCM Targeting:</span>
                   <span className="px-2 py-0.5 rounded bg-black/30 border border-white/10 text-indigo-300 font-mono text-[10px] font-bold">
                     role-{(currentUser.role || 'student').toLowerCase()}
                   </span>
@@ -1496,12 +1481,12 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                   <button
                     type="button"
                     onClick={async () => {
-                      const ok = await sendTestPusherBeamsNotification(currentUser);
-                      if (ok) {
+                      const res = await sendTestFCMNotification(currentUser.uid || currentUser.email, currentUser.role);
+                      if (res.success) {
                         soundService.playSuccess();
-                        setPushNotice({ text: '✓ Pusher Beams test notification delivered to your device!', type: 'success' });
+                        setPushNotice({ text: '✓ FCM test notification delivered to your device!', type: 'success' });
                       } else {
-                        handleToggleWebPush(true);
+                        setPushNotice({ text: `⚠️ ${res.message}`, type: 'error' });
                       }
                     }}
                     className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 text-[11px] font-bold transition-all shrink-0 cursor-pointer self-start sm:self-auto"

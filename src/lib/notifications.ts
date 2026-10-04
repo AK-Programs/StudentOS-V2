@@ -390,7 +390,7 @@ export async function saveAppNotification(notif: AppNotification): Promise<{ suc
     });
   }
 
-  // Call server push endpoint (Pusher Beams + targeted Web Push)
+  // Call server push endpoint (FCM + targeted Web Push)
   try {
     fetch('/api/push/send', {
       method: 'POST',

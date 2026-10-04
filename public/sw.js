@@ -1,12 +1,48 @@
-// Pusher Beams Web Push Service Worker Integration
+// ========================================================
+// StudentOS Service Worker — FCM Push & PWA Offline Engine
+// ========================================================
+
+// Optional Firebase Messaging Scripts Import for compat background handling
 try {
-  importScripts("https://js.pusher.com/beams/service-worker.js");
+  importScripts('https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js');
+  importScripts('https://www.gstatic.com/firebasejs/10.14.0/firebase-messaging-compat.js');
+
+  const defaultFirebaseConfig = {
+    projectId: "gen-lang-client-0785563242",
+    appId: "1:940502459076:web:843c78167b4b83a1c25f91",
+    apiKey: "AIzaSyCtFjAhG_Y3G28t2iDV_0GzNvFRNUj9nFA",
+    authDomain: "gen-lang-client-0785563242.firebaseapp.com",
+    storageBucket: "gen-lang-client-0785563242.firebasestorage.app",
+    messagingSenderId: "940502459076"
+  };
+
+  firebase.initializeApp(defaultFirebaseConfig);
+  const messaging = firebase.messaging();
+
+  messaging.onBackgroundMessage((payload) => {
+    console.log('[SW FCM] Received background message:', payload);
+    const notificationTitle = payload.notification?.title || payload.data?.title || '📢 StudentOS Alert';
+    const notificationOptions = {
+      body: payload.notification?.body || payload.data?.body || payload.data?.message || 'You have a new school update.',
+      icon: payload.notification?.icon || '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      tag: payload.data?.tag || `studentos-fcm-${Date.now()}`,
+      renotify: true,
+      data: {
+        linkTab: payload.data?.linkTab || 'notice_viewer',
+        url: payload.data?.url || '/'
+      },
+      vibrate: [150, 50, 150]
+    };
+
+    return self.registration.showNotification(notificationTitle, notificationOptions);
+  });
 } catch (e) {
-  // Graceful fallback when offline; native StudentOS push listener below handles VAPID & local dispatches
+  // Graceful fallback: Native Web Push listener below handles all VAPID & FCM pushes directly
 }
 
 // StudentOS Service Worker Version & Cache Name
-const SW_VERSION = 'studentos-v3.0.0';
+const SW_VERSION = 'studentos-v3.12.0';
 const CACHE_NAME = `studentos-cache-${SW_VERSION}`;
 
 // Service Worker Installation
@@ -34,23 +70,35 @@ self.addEventListener('message', (event) => {
   }
 });
 
+// Native Push Event Listener (handles all FCM and VAPID pushes across browsers and background/PWA)
 self.addEventListener('push', (event) => {
-  let data = { title: '📢 StudentOS Alert', body: 'You have a new school announcement.', linkTab: 'notice_viewer' };
+  let data = {
+    title: '📢 StudentOS Alert',
+    body: 'You have a new school announcement.',
+    linkTab: 'notice_viewer',
+    url: '/'
+  };
+
   try {
     if (event.data) {
       const parsed = event.data.json();
-      if (parsed && parsed.notification) {
-        // Pusher Beams web notification format
-        data = {
-          title: parsed.notification.title || '📢 StudentOS Alert',
-          body: parsed.notification.body || '',
-          icon: parsed.notification.icon || '/icons/icon-192.png',
-          linkTab: (parsed.data && parsed.data.linkTab) || 'notice_viewer',
-          url: (parsed.data && parsed.data.url) || parsed.notification.deep_link || '/',
-          tag: (parsed.data && parsed.data.tag) || undefined
-        };
-      } else if (parsed) {
-        data = { ...data, ...parsed };
+      if (parsed) {
+        // FCM payload format or custom StudentOS payload
+        if (parsed.notification) {
+          data.title = parsed.notification.title || data.title;
+          data.body = parsed.notification.body || data.body;
+          data.icon = parsed.notification.icon || '/icons/icon-192.png';
+        }
+        if (parsed.data) {
+          data.title = parsed.data.title || data.title;
+          data.body = parsed.data.body || parsed.data.message || data.body;
+          data.linkTab = parsed.data.linkTab || data.linkTab;
+          data.url = parsed.data.url || data.url;
+          data.tag = parsed.data.tag;
+        }
+        if (!parsed.notification && !parsed.data) {
+          data = { ...data, ...parsed };
+        }
       }
     }
   } catch (e) {
@@ -84,24 +132,28 @@ self.addEventListener('push', (event) => {
   );
 });
 
+// Handle Notification Click & Focus / Open StudentOS tab
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
   if (event.action === 'dismiss') return;
+
+  const targetTab = event.notification.data?.linkTab || 'notice_viewer';
+  const targetUrl = event.notification.data?.url || '/';
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
         if ('focus' in client) {
           client.focus();
-          if (event.notification.data && event.notification.data.linkTab) {
-            client.postMessage({ type: 'STUDENTOS_NAVIGATE_TAB', tab: event.notification.data.linkTab });
+          if (targetTab) {
+            client.postMessage({ type: 'STUDENTOS_NAVIGATE_TAB', tab: targetTab });
           }
           return;
         }
       }
       if (self.clients.openWindow) {
-        return self.clients.openWindow(event.notification.data?.url || '/');
+        return self.clients.openWindow(targetUrl);
       }
     })
   );

@@ -9,10 +9,10 @@ import {
   BellRing
 } from 'lucide-react';
 import { 
-  enablePusherBeamsPush, 
-  disablePusherBeamsPush, 
-  getPusherBeamsStatus 
-} from '../lib/pusherBeams';
+  requestFCMPermission, 
+  disableFCMPush, 
+  getFCMStatus 
+} from '../lib/fcmNotifications';
 import { soundService } from '../lib/soundService';
 
 interface ProfileCustomizerProps {
@@ -67,7 +67,7 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
   const [avatarFrame, setAvatarFrame] = useState<ProfileFrameStyle>((currentUser.avatarFrame as ProfileFrameStyle) || 'none');
   const [accentColor, setAccentColor] = useState<string>(currentUser.accentColor || 'indigo');
   
-  // Pusher Beams Web Push state
+  // FCM Web Push state
   const [enableWebPush, setEnableWebPush] = useState<boolean>(() => {
     return Boolean(currentUser.enableWebPush ?? currentUser.raw_data?.enableWebPush ?? false);
   });
@@ -75,9 +75,8 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
   const [pushMsg, setPushMsg] = useState<string | null>(null);
 
   React.useEffect(() => {
-    getPusherBeamsStatus().then((status) => {
-      if (status.optedIn) setEnableWebPush(true);
-    });
+    const status = getFCMStatus();
+    if (status.isEnabled) setEnableWebPush(true);
   }, []);
 
   const handleTogglePush = async (val: boolean) => {
@@ -85,28 +84,28 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
     setPushMsg(null);
     soundService.playToggleSound(val);
     if (val) {
-      const res = await enablePusherBeamsPush(
+      const res = await requestFCMPermission(
         currentUser.uid || currentUser.email,
-        currentUser.role,
         {
+          role: currentUser.role,
           house: currentUser.house || 'None',
           grade: currentUser.grade || '10',
           section: currentUser.section || 'A'
         }
       );
-      if (res.success && res.optedIn) {
+      if (res.success) {
         setEnableWebPush(true);
         soundService.playSuccessSound();
-        setPushMsg('✓ Web push notifications enabled via Pusher Beams!');
+        setPushMsg('✓ Web push notifications enabled via Firebase Cloud Messaging!');
         const updated = {
           ...currentUser,
           enableWebPush: true,
-          pusherBeamsDeviceId: res.deviceId || currentUser.pusherBeamsDeviceId,
+          fcmToken: res.token,
           raw_data: {
             ...(currentUser.raw_data || {}),
             enableWebPush: true,
-            pusherBeamsSubscribed: true,
-            pusherBeamsDeviceId: res.deviceId
+            fcmSubscribed: true,
+            fcmToken: res.token
           }
         };
         saveSupabaseUserProfile(updated).catch(() => {});
@@ -118,7 +117,7 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
         setPushMsg(res.error || 'Notification permission was not granted by browser.');
       }
     } else {
-      await disablePusherBeamsPush(currentUser.uid || currentUser.email);
+      await disableFCMPush(currentUser.uid || currentUser.email);
       setEnableWebPush(false);
       setPushMsg('Web push notifications disabled for this device.');
       const updated = {
@@ -127,7 +126,7 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
         raw_data: {
           ...(currentUser.raw_data || {}),
           enableWebPush: false,
-          pusherBeamsSubscribed: false
+          fcmSubscribed: false
         }
       };
       saveSupabaseUserProfile(updated).catch(() => {});

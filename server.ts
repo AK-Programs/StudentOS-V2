@@ -6,13 +6,11 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { GoogleGenAI } from '@google/genai';
-import { getAIClient, generateAICompletion } from './server/aiClient';
+import { generateAICompletion } from './server/aiClient';
 import dotenv from 'dotenv';
 import { WebSocketServer, WebSocket as WSWebSocket } from 'ws';
 import { generateMermaidDiagram, generateSvgDiagram, generateCanvasElements } from './server/diagramEngine';
 import webpush from 'web-push';
-import PushNotifications from '@pusher/push-notifications-server';
 
 dotenv.config();
 
@@ -21,33 +19,7 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '10mb' }));
 
-// Pusher Beams Server SDK Configuration (Server-side secret is strictly protected)
-const pusherBeamsInstanceId = (process.env.PUSHER_BEAMS_INSTANCE_ID || process.env.VITE_PUSHER_BEAMS_INSTANCE_ID || '').trim();
-const pusherBeamsSecretKey = (process.env.PUSHER_BEAMS_SECRET_KEY || '').trim();
-
-let beamsServerClient: PushNotifications | null = null;
-if (pusherBeamsInstanceId && pusherBeamsSecretKey) {
-  try {
-    beamsServerClient = new PushNotifications({
-      instanceId: pusherBeamsInstanceId,
-      secretKey: pusherBeamsSecretKey,
-    });
-    console.log('[PusherBeams] Server SDK initialized');
-  } catch (err) {
-    console.warn('[PusherBeams] Server SDK initialization notice:', err);
-  }
-}
-
-function sanitizeBeamsInterestServer(raw: string): string {
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_\-=@,.;]/g, '-')
-    .replace(/-+/g, '-')
-    .slice(0, 160);
-}
-
-// VAPID keys for Web Push with file system persistence across server restarts
+// VAPID keys for Web Push / FCM with filesystem persistence across server restarts
 const VAPID_KEY_FILE = process.env.VERCEL
   ? path.join('/tmp', '.vapid-keys.json')
   : path.join(process.cwd(), '.vapid-keys.json');
@@ -79,7 +51,7 @@ function getOrGenerateVapidKeys() {
       fs.writeFileSync(VAPID_KEY_FILE, JSON.stringify(keys, null, 2));
       console.log('[Push] Persisted new matched VAPID keypair');
     } catch (_) {
-      // Handled silently if filesystem is read-only (e.g. serverless)
+      // Handled silently if filesystem is read-only
     }
     return keys;
   } catch (e) {
@@ -97,199 +69,170 @@ if (vapidKeys.publicKey && vapidKeys.privateKey) {
       vapidKeys.publicKey,
       vapidKeys.privateKey
     );
+    console.log('[Push] VAPID / FCM push delivery configured.');
   } catch (e) {
     console.warn('[Push] setVapidDetails notice:', e);
   }
 }
 
-interface DevicePushItem {
-  deviceId: string;
+interface FCMTokenItem {
+  token: string;
   userId: string | null;
+  deviceId: string;
+  deviceLabel?: string;
   role?: string;
   grade?: string;
   section?: string;
   house?: string;
-  interests?: string[];
-  subscription: any;
+  schoolId?: string;
+  subscription?: any;
   userAgent?: string;
+  isActive: boolean;
   updatedAt: number;
 }
 
-const memoryPushSubscriptions: DevicePushItem[] = [];
+const memoryFCMTokens: FCMTokenItem[] = [];
 
-// Client-safe Pusher Beams configuration endpoint (never exposes secretKey)
-app.get('/api/push/beams-config', (req, res) => {
+// Client-safe FCM & Web Push configuration endpoint (never exposes private keys)
+app.get('/api/push/fcm-config', (req, res) => {
   res.json({
-    enabled: Boolean(pusherBeamsInstanceId),
-    instanceId: pusherBeamsInstanceId || null,
-    provider: 'pusher-beams'
+    vapidPublicKey: vapidKeys.publicKey || process.env.VAPID_PUBLIC_KEY || '',
+    provider: 'fcm',
+    projectId: 'gen-lang-client-0785563242'
   });
 });
 
-// Pusher Beams Authenticated User token endpoint
-const handleBeamsAuth = (req: express.Request, res: express.Response) => {
-  const userIdQuery = (req.query.user_id as string) || (req.body && req.body.user_id) || '';
-  const headerUserId = (req.headers['x-studentos-user-id'] as string) || userIdQuery;
-
-  if (!userIdQuery || (headerUserId && userIdQuery !== headerUserId)) {
-    return res.status(401).json({ error: 'Inconsistent or missing user_id for Pusher Beams authentication' });
-  }
-
-  if (!beamsServerClient) {
-    return res.status(503).json({ error: 'Pusher Beams server credentials not configured' });
-  }
-
-  try {
-    const beamsToken = beamsServerClient.generateToken(userIdQuery);
-    return res.send(JSON.stringify(beamsToken));
-  } catch (err: any) {
-    return res.status(500).json({ error: err?.message || 'Failed to generate Pusher Beams token' });
-  }
-};
-
-app.get('/api/push/beams-auth', handleBeamsAuth);
-app.post('/api/push/beams-auth', handleBeamsAuth);
-
 app.get('/api/push/vapid-public-key', (req, res) => {
-  res.json({ publicKey: vapidKeys.publicKey });
+  res.json({ publicKey: vapidKeys.publicKey || process.env.VAPID_PUBLIC_KEY || '' });
 });
 
-app.post('/api/push/unsubscribe', async (req, res) => {
-  const { deviceId, userId } = req.body || {};
-  for (let i = memoryPushSubscriptions.length - 1; i >= 0; i--) {
-    const item = memoryPushSubscriptions[i];
-    if ((deviceId && item.deviceId === deviceId) || (userId && item.userId === userId)) {
-      memoryPushSubscriptions.splice(i, 1);
+// Register FCM Device Token for authenticated user & device
+app.post('/api/push/fcm-token', async (req, res) => {
+  const { token, userId, deviceId, deviceLabel, role, grade, section, house, schoolId, subscription, userAgent } = req.body || {};
+  if (!token) {
+    return res.status(400).json({ error: 'FCM registration token is required.' });
+  }
+
+  const devId = deviceId || 'dev_' + Math.random().toString(36).substring(2, 10);
+  const existingIdx = memoryFCMTokens.findIndex(t => t.token === token || (t.deviceId === devId && t.userId === userId));
+
+  const newItem: FCMTokenItem = {
+    token,
+    userId: userId || null,
+    deviceId: devId,
+    deviceLabel: deviceLabel || 'Web Browser',
+    role: role || 'student',
+    grade: grade || '',
+    section: section || '',
+    house: house || '',
+    schoolId: schoolId || 'default_school',
+    subscription: subscription || null,
+    userAgent: userAgent || '',
+    isActive: true,
+    updatedAt: Date.now()
+  };
+
+  if (existingIdx >= 0) {
+    memoryFCMTokens[existingIdx] = newItem;
+  } else {
+    memoryFCMTokens.push(newItem);
+  }
+
+  console.log(`[FCM SERVER] Registered device token: deviceId=${devId}, userId=${userId || 'anonymous'}, role=${role || 'student'}, label="${newItem.deviceLabel}"`);
+
+  // Persist to Supabase user_push_tokens table
+  try {
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+    const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+    const now = new Date().toISOString();
+
+    await fetch(`${supabaseUrl}/rest/v1/user_push_tokens`, {
+      method: 'POST',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({
+        user_id: userId || null,
+        token: token,
+        platform: 'web_fcm',
+        device_label: deviceLabel || 'Web Browser',
+        is_active: true,
+        last_seen_at: now,
+        updated_at: now
+      })
+    });
+  } catch (sbErr: any) {
+    console.warn('[FCM SERVER] Supabase token sync notice:', sbErr?.message);
+  }
+
+  return res.json({ status: 'ok', deviceId: devId });
+});
+
+// Deactivate FCM Device Token
+app.post('/api/push/fcm-token/delete', async (req, res) => {
+  const { token, deviceId, userId } = req.body || {};
+  for (let i = memoryFCMTokens.length - 1; i >= 0; i--) {
+    const item = memoryFCMTokens[i];
+    if ((token && item.token === token) || (deviceId && item.deviceId === deviceId) || (userId && item.userId === userId)) {
+      item.isActive = false;
     }
   }
   return res.json({ status: 'ok' });
 });
 
+// Backward-compatible subscribe endpoint
 app.post('/api/push/subscribe', async (req, res) => {
-  const { subscription, userId, deviceId, userAgent, role, grade, section, house, interests } = req.body || {};
+  const { subscription, userId, deviceId, userAgent, role, grade, section, house } = req.body || {};
   if (subscription && subscription.endpoint) {
     const devId = deviceId || 'dev_' + Math.random().toString(36).substring(2, 10);
-    const existingIndex = memoryPushSubscriptions.findIndex(
-      s => s.subscription?.endpoint === subscription.endpoint || (s.deviceId && s.deviceId === devId)
-    );
-
-    const newItem: DevicePushItem = {
-      deviceId: devId,
+    const existingIdx = memoryFCMTokens.findIndex(t => t.token === subscription.endpoint || t.deviceId === devId);
+    
+    const newItem: FCMTokenItem = {
+      token: subscription.endpoint,
       userId: userId || null,
+      deviceId: devId,
       role: role || 'student',
       grade: grade || '',
       section: section || '',
       house: house || '',
-      interests: Array.isArray(interests) ? interests : [],
       subscription,
       userAgent: userAgent || '',
+      isActive: true,
       updatedAt: Date.now()
     };
 
-    if (existingIndex >= 0) {
-      memoryPushSubscriptions[existingIndex] = newItem;
+    if (existingIdx >= 0) {
+      memoryFCMTokens[existingIdx] = newItem;
     } else {
-      memoryPushSubscriptions.push(newItem);
-    }
-    console.log(`[SERVER PUSH] Registered device push sub: deviceId=${devId}, userId=${userId || 'anonymous'}, role=${role || 'student'}`);
-
-    // Synchronize to Supabase push_subscriptions table for durable persistence
-    try {
-      const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
-      const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
-      
-      const p256dh = subscription.keys?.p256dh;
-      const auth = subscription.keys?.auth;
-
-      await fetch(`${supabaseUrl}/rest/v1/push_subscriptions`, {
-        method: 'POST',
-        headers: {
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates'
-        },
-        body: JSON.stringify({
-          device_id: devId,
-          user_id: userId || null,
-          endpoint: subscription.endpoint,
-          keys: subscription.keys,
-          p256dh: p256dh,
-          auth: auth,
-          user_agent: userAgent || '',
-          updated_at: new Date().toISOString()
-        })
-      });
-    } catch (dbErr: any) {
-      console.warn('[SERVER PUSH] Database sync note:', dbErr?.message);
+      memoryFCMTokens.push(newItem);
     }
   }
   return res.json({ status: 'ok' });
 });
 
+app.post('/api/push/unsubscribe', async (req, res) => {
+  const { deviceId, userId } = req.body || {};
+  for (let i = memoryFCMTokens.length - 1; i >= 0; i--) {
+    const item = memoryFCMTokens[i];
+    if ((deviceId && item.deviceId === deviceId) || (userId && item.userId === userId)) {
+      item.isActive = false;
+    }
+  }
+  return res.json({ status: 'ok' });
+});
+
+// Targeted Server-Side Push Dispatch via FCM & Web Push
 app.post('/api/push/send', async (req, res) => {
-  const { title, body, linkTab, targetUserId, targetRole, targetClass, targetSection } = req.body || {};
-  console.log(`[SERVER PUSH] Preparing dispatch: "${title}" | Target User: "${targetUserId || 'all'}" | Role: "${targetRole || 'all'}" | Class: "${targetClass || 'all'}"`);
+  const { title, body, linkTab, targetUserId, targetRole, targetClass, targetSection, targetSchoolId } = req.body || {};
+  console.log(`[FCM PUSH SEND] Dispatching: "${title}" | User: "${targetUserId || 'all'}" | Role: "${targetRole || 'all'}" | Class: "${targetClass || 'all'}"`);
 
   const notifTitle = title || '📢 StudentOS Alert';
   const notifBody = body || '';
   const notifLinkTab = linkTab || 'notice_viewer';
-  const notifTag = 'studentos-alert-' + Date.now() + '-' + Math.random().toString(36).substring(2, 8);
-
-  // 1. Dispatch via Pusher Beams Server SDK if configured
-  let beamsPublished = false;
-  if (beamsServerClient) {
-    try {
-      const beamsPayload = {
-        web: {
-          notification: {
-            title: notifTitle,
-            body: notifBody,
-            icon: '/icons/icon-192.png',
-            deep_link: '/',
-          },
-          data: {
-            linkTab: notifLinkTab,
-            url: '/',
-            tag: notifTag,
-          },
-        },
-      };
-
-      if (targetUserId && targetUserId !== 'all') {
-        // Strictly target the specific user (via both Authenticated User & user interest)
-        const userInterest = `user-${sanitizeBeamsInterestServer(targetUserId)}`;
-        await beamsServerClient.publishToInterests([userInterest], beamsPayload);
-        try {
-          await beamsServerClient.publishToUsers([targetUserId], beamsPayload);
-        } catch (_) {}
-        beamsPublished = true;
-      } else {
-        // Compute narrowest target interest so targeted notifications are never broadcast to everyone
-        const targetInterests: string[] = [];
-        if (targetClass && targetClass !== 'all') {
-          const normGrade = sanitizeBeamsInterestServer(targetClass.toString().replace(/grade|class|\s+/gi, ''));
-          if (targetSection && targetSection !== 'all' && targetSection !== 'All Sections') {
-            const normSec = sanitizeBeamsInterestServer(targetSection.toString().replace(/section|\s+/gi, ''));
-            targetInterests.push(`section-${normGrade}-${normSec}`);
-          } else {
-            targetInterests.push(`class-${normGrade}`);
-          }
-        } else if (targetRole && targetRole !== 'all') {
-          targetInterests.push(`role-${sanitizeBeamsInterestServer(targetRole)}`);
-        } else {
-          targetInterests.push('school-all');
-        }
-
-        if (targetInterests.length > 0) {
-          await beamsServerClient.publishToInterests(targetInterests, beamsPayload);
-          beamsPublished = true;
-        }
-      }
-    } catch (beamsErr: any) {
-      console.warn('[PusherBeams] Publish notice:', beamsErr?.message || beamsErr);
-    }
-  }
+  const notifTag = 'studentos-fcm-' + Date.now() + '-' + Math.random().toString(36).substring(2, 8);
 
   const payload = JSON.stringify({
     title: notifTitle,
@@ -300,130 +243,150 @@ app.post('/api/push/send', async (req, res) => {
     timestamp: Date.now()
   });
 
-  const subscriptionsToTry: Array<{
+  const tokensToTry: Array<{
     endpoint: string;
-    keys: any;
+    keys?: any;
     userId?: string;
     deviceId?: string;
     role?: string;
     grade?: string;
     section?: string;
+    schoolId?: string;
   }> = [];
 
-  // 2. Gather from memory push subscriptions
-  memoryPushSubscriptions.forEach(item => {
-    if (item.subscription && item.subscription.endpoint) {
-      subscriptionsToTry.push({
-        endpoint: item.subscription.endpoint,
-        keys: item.subscription.keys,
+  // 1. Gather active tokens from server memory
+  memoryFCMTokens.forEach(item => {
+    if (item.isActive && item.token) {
+      tokensToTry.push({
+        endpoint: item.token,
+        keys: item.subscription?.keys,
         userId: item.userId || undefined,
         deviceId: item.deviceId,
         role: item.role,
         grade: item.grade,
-        section: item.section
+        section: item.section,
+        schoolId: item.schoolId
       });
     }
   });
 
-  // 3. Query push_subscriptions table from Supabase REST API for persistent subscriptions across restarts
+  // 2. Query push_subscriptions and user_push_tokens from Supabase
   const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
   const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
 
   try {
-    const dbRes = await fetch(`${supabaseUrl}/rest/v1/push_subscriptions?select=*`, {
-      headers: {
-        'apikey': supabaseKey,
-        'Authorization': `Bearer ${supabaseKey}`
-      }
-    });
+    const [subRes, tokRes] = await Promise.all([
+      fetch(`${supabaseUrl}/rest/v1/push_subscriptions?select=*`, {
+        headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
+      }),
+      fetch(`${supabaseUrl}/rest/v1/user_push_tokens?select=*&is_active=eq.true`, {
+        headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
+      })
+    ]);
 
-    if (dbRes.ok) {
-      const dbSubs = await dbRes.json();
+    if (subRes.ok) {
+      const dbSubs = await subRes.json();
       if (Array.isArray(dbSubs)) {
         dbSubs.forEach((row: any) => {
-          if (row.endpoint) {
+          if (row.endpoint && !tokensToTry.some(t => t.endpoint === row.endpoint)) {
             const keys = row.keys || (row.p256dh && row.auth ? { p256dh: row.p256dh, auth: row.auth } : undefined);
-            if (keys && !subscriptionsToTry.some(s => s.endpoint === row.endpoint)) {
-              subscriptionsToTry.push({
-                endpoint: row.endpoint,
-                keys: keys,
-                userId: row.user_id || undefined,
-                deviceId: row.device_id || undefined
-              });
-            }
+            tokensToTry.push({
+              endpoint: row.endpoint,
+              keys,
+              userId: row.user_id || undefined,
+              deviceId: row.device_id || undefined
+            });
+          }
+        });
+      }
+    }
+
+    if (tokRes.ok) {
+      const dbTokens = await tokRes.json();
+      if (Array.isArray(dbTokens)) {
+        dbTokens.forEach((row: any) => {
+          if (row.token && row.token.startsWith('http') && !tokensToTry.some(t => t.endpoint === row.token)) {
+            tokensToTry.push({
+              endpoint: row.token,
+              userId: row.user_id || undefined
+            });
           }
         });
       }
     }
   } catch (dbErr: any) {
-    console.warn('[SERVER PUSH] Notice fetching DB push subscriptions:', dbErr?.message);
+    console.warn('[FCM PUSH SEND] Database query notice:', dbErr?.message);
   }
 
   let sentCount = 0;
   let failCount = 0;
 
-  for (const sub of subscriptionsToTry) {
-    // Strict user-level targeting: If targetUserId is specified, ONLY send to subscriptions bound to that exact userId
+  for (const item of tokensToTry) {
+    // School isolation: If targetSchoolId is set, prevent cross-school delivery
+    if (targetSchoolId && item.schoolId && item.schoolId !== targetSchoolId) {
+      continue;
+    }
+
+    // Strict user-level targeting: If targetUserId is specified, only deliver to matching user's devices
     if (targetUserId && targetUserId !== 'all') {
-      if (!sub.userId || sub.userId !== targetUserId) {
+      if (!item.userId || item.userId !== targetUserId) {
         continue;
       }
     }
 
-    // Strict role targeting
-    if (targetRole && targetRole !== 'all' && sub.role) {
-      if (sub.role.toLowerCase() !== targetRole.toLowerCase()) {
+    // Role targeting
+    if (targetRole && targetRole !== 'all' && item.role) {
+      if (item.role.toLowerCase() !== targetRole.toLowerCase()) {
         continue;
       }
     }
 
-    // Strict class/grade targeting
-    if (targetClass && targetClass !== 'all' && sub.grade) {
+    // Class / Grade targeting
+    if (targetClass && targetClass !== 'all' && item.grade) {
       const normT = targetClass.toString().toLowerCase().replace(/class|grade|\s+/g, '');
-      const normU = sub.grade.toString().toLowerCase().replace(/class|grade|\s+/g, '');
+      const normU = item.grade.toString().toLowerCase().replace(/class|grade|\s+/g, '');
       if (normU && !normU.includes(normT) && !normT.includes(normU)) {
         continue;
       }
     }
 
-    // Strict section targeting
-    if (targetSection && targetSection !== 'all' && targetSection !== 'All Sections' && sub.section) {
+    // Section targeting
+    if (targetSection && targetSection !== 'all' && targetSection !== 'All Sections' && item.section) {
       const normTS = targetSection.toString().toLowerCase().trim();
-      const normUS = sub.section.toString().toLowerCase().trim();
+      const normUS = item.section.toString().toLowerCase().trim();
       if (normUS && normUS !== normTS && !normUS.includes(normTS)) {
         continue;
       }
     }
 
-    try {
-      await webpush.sendNotification({
-        endpoint: sub.endpoint,
-        keys: sub.keys
-      }, payload, {
-        TTL: 86400,
-        urgency: 'high'
-      });
-      sentCount++;
-    } catch (pushErr: any) {
-      failCount++;
-      if (pushErr?.statusCode === 410 || pushErr?.statusCode === 404) {
-        const idx = memoryPushSubscriptions.findIndex(m => m.subscription?.endpoint === sub.endpoint);
-        if (idx >= 0) memoryPushSubscriptions.splice(idx, 1);
-
-        try {
-          await fetch(`${supabaseUrl}/rest/v1/push_subscriptions?endpoint=eq.${encodeURIComponent(sub.endpoint)}`, {
-            method: 'DELETE',
-            headers: {
-              'apikey': supabaseKey,
-              'Authorization': `Bearer ${supabaseKey}`
-            }
-          });
-        } catch (_) {}
+    // Deliver via webpush if valid push endpoint
+    if (item.endpoint && item.endpoint.startsWith('http') && item.keys) {
+      try {
+        await webpush.sendNotification({
+          endpoint: item.endpoint,
+          keys: item.keys
+        }, payload, {
+          TTL: 86400,
+          urgency: 'high'
+        });
+        sentCount++;
+      } catch (pushErr: any) {
+        failCount++;
+        if (pushErr?.statusCode === 410 || pushErr?.statusCode === 404) {
+          const idx = memoryFCMTokens.findIndex(m => m.token === item.endpoint);
+          if (idx >= 0) memoryFCMTokens.splice(idx, 1);
+        }
       }
     }
   }
 
-  return res.json({ status: 'ok', provider: 'pusher-beams', beamsPublished, sentCount, failCount, totalCandidates: subscriptionsToTry.length });
+  return res.json({
+    status: 'ok',
+    provider: 'fcm',
+    sentCount,
+    failCount,
+    totalCandidates: tokensToTry.length
+  });
 });
 
 // Removed shared setup, moved to aiClient.ts
@@ -540,9 +503,9 @@ async function checkAndPublishScheduledUpdates(): Promise<{ publishedCount: numb
                     tag: `whats-new-${row.id}`
                   });
 
-                  // Dispatch to memory subscriptions
-                  memoryPushSubscriptions.forEach(sub => {
-                    if (sub.subscription?.endpoint) {
+                  // Dispatch to memory tokens
+                  memoryFCMTokens.forEach(sub => {
+                    if (sub.subscription?.endpoint && sub.subscription?.keys) {
                       webpush.sendNotification(sub.subscription, pushPayload, { TTL: 86400 }).catch(() => {});
                     }
                   });
@@ -939,10 +902,10 @@ app.post('/api/ai/chat', async (req, res) => {
       });
     }
     const openRouterKey = process.env.OPENROUTER_API_KEY || process.env.VITE_OPENROUTER_API_KEY;
-    const geminiKey = process.env.GEMINI_API_KEY;
-    console.log(`[SERVER AI DIAGNOSTICS] Keys present: OpenRouter=${Boolean(openRouterKey)}, Gemini=${Boolean(geminiKey)}`);
+    const deepseekDirectKey = process.env.DEEPSEEK_API_KEY;
+    console.log(`[SERVER AI DIAGNOSTICS] Keys present: OpenRouter=${Boolean(openRouterKey)}, DeepSeekDirect=${Boolean(deepseekDirectKey)}`);
     
-    if (!openRouterKey && !geminiKey) {
+    if (!openRouterKey && !deepseekDirectKey) {
       const sanitized = sanitizeHistory(history);
       if (sanitized.length > 0) {
         const allUserTexts = [
@@ -1115,13 +1078,12 @@ app.post('/api/ai/search', async (req, res) => {
 
     // Synthesis academic summary strictly from findings
     const summaryContext = searchResultsList.map((s, i) => `[Source ${i+1}]: ${s.title} (${s.uri}) - ${s.description}`).join('\n');
-    const summarizerAi = getAIClient();
-    if (summarizerAi) {
+    try {
       summaryText = await generateAICompletion(
-        "You are Orion Search summarizer. Synthesize a 3-4 sentence comprehensive, factual academic summary. Refer only to facts from the provided sources. Do not make up any facts.",
+        "You are Orion Search summarizer powered by DeepSeek. Synthesize a 3-4 sentence comprehensive, factual academic summary. Refer only to facts from the provided sources. Do not make up any facts.",
         `Based strictly on the following live web search findings, write a beautifully structured educational summary for the query "${query}":\n\n${summaryContext}`
       );
-    } else {
+    } catch (_) {
       summaryText = `Academic synthesis of "${query}": Live search returned matching reference channels. We have compiled a curriculum list below covering theoretical methodologies, formula frameworks, and verified practice exercises.`;
     }
 
@@ -1179,9 +1141,9 @@ app.post('/api/ai/notes', async (req, res) => {
     return res.json({ text });
   } catch (apiErr: any) {
     const openRouterKey = process.env.OPENROUTER_API_KEY;
-    const geminiKey = process.env.GEMINI_API_KEY;
+    const deepseekKey = process.env.DEEPSEEK_API_KEY;
     
-    if (!openRouterKey && !geminiKey) {
+    if (!openRouterKey && !deepseekKey) {
       // Elegant simulated fallback response
       const fallbacks: { [key: string]: string } = {
         summarize: `### 🤖 Summary Concept Map (Offline Simulation)\n- **Essential Focus**: The provided text block covers core learning modules and academic criteria.\n- **Optimized Synthesis**: Keep study schedules balanced with focused review blocks.`,
@@ -1247,7 +1209,9 @@ Output ONLY the raw JSON object conforming to the schema.`;
     const rawText = await generateAICompletion({
       systemInstruction,
       prompt,
-      temperature: 0.3
+      temperature: 0.3,
+      jsonMode: true,
+      endpointName: 'AIFlashcards'
     });
 
     let cleaned = rawText.trim();
@@ -1255,7 +1219,10 @@ Output ONLY the raw JSON object conforming to the schema.`;
     else if (cleaned.startsWith('```')) cleaned = cleaned.replace(/^```/, '').replace(/```$/, '').trim();
 
     const parsed = JSON.parse(cleaned);
-    return res.json(parsed);
+    if (parsed && Array.isArray(parsed.cards) && parsed.cards.length > 0) {
+      return res.json(parsed);
+    }
+    throw new Error('Parsed output missing cards array');
   } catch (err: any) {
     console.warn('[AI Flashcards] API completion warning, using fallback generation:', err?.message || err);
 
@@ -1331,9 +1298,9 @@ app.post('/api/ai/material-action', async (req, res) => {
     return res.json({ text });
   } catch (apiErr: any) {
     const openRouterKey = process.env.OPENROUTER_API_KEY;
-    const geminiKey = process.env.GEMINI_API_KEY;
+    const deepseekKey = process.env.DEEPSEEK_API_KEY;
     
-    if (!openRouterKey && !geminiKey) {
+    if (!openRouterKey && !deepseekKey) {
       // Elegant fallbacks
       const simulatedFallbacks: { [key: string]: string } = {
         summarize: `### 📚 Study Summary: ${title}

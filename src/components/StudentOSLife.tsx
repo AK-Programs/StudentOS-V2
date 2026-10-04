@@ -18,7 +18,7 @@ import {
   fetchBadges, awardBadge,
   fetchGallery, createGalleryAlbum,
   fetchHouses, updateHousePoints,
-  fetchPolls, createPoll,
+  fetchPolls, votePoll, createPoll,
   fetchNews, subscribeToLifeTable,
   canManageLifeContent
 } from '../lib/supabaseLife';
@@ -246,6 +246,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
   // Supabase Realtime Sync
   const loadAllLifeData = async () => {
     try {
+      const activeUid = currentUser?.uid || (currentUser as any)?.id;
       const [comps, evs, clbs, bdgs, gal, hses, pls, nws] = await Promise.all([
         fetchCompetitions(),
         fetchSchoolEvents(),
@@ -253,7 +254,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
         fetchBadges(),
         fetchGallery(),
         fetchHouses(),
-        fetchPolls(),
+        fetchPolls(activeUid),
         fetchNews()
       ]);
 
@@ -386,23 +387,37 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
     }
   };
 
-  const handleVotePoll = (pollId: string, optionId: string) => {
+  const handleVotePoll = async (pollId: string, optionId: string) => {
+    const activeUid = currentUser?.uid || (currentUser as any)?.id;
+    const targetPoll = polls.find(p => p.id === pollId);
+    if (targetPoll?.userVotedOptionId) {
+      // User has already cast their vote on this poll
+      return;
+    }
+
     soundService.playSuccess();
     setPolls(prev => prev.map(p => {
       if (p.id !== pollId) return p;
       const updatedOptions = p.options.map(opt => {
         if (opt.id === optionId) {
-          return { ...opt, votes: opt.votes + 1 };
+          return { ...opt, votes: (Number(opt.votes) || 0) + 1 };
         }
         return opt;
       });
       return {
         ...p,
         options: updatedOptions,
-        totalVotes: p.totalVotes + 1,
+        totalVotes: (Number(p.totalVotes) || 0) + 1,
         userVotedOptionId: optionId
       };
     }));
+
+    // Persist to Supabase and cache
+    try {
+      await votePoll(pollId, optionId, activeUid);
+    } catch (err) {
+      console.warn("Notice persisting poll vote to Supabase:", err);
+    }
   };
 
   const handleCreateCompetition = async (e: React.FormEvent) => {

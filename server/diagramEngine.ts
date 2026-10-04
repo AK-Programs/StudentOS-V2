@@ -1,4 +1,4 @@
-import { getAIClient, generateAICompletion } from './aiClient';
+import { generateAICompletion } from './aiClient';
 
 export interface ConceptNode {
   id: string;
