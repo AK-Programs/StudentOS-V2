@@ -304,6 +304,8 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
   const [showAwardBadgeModal, setShowAwardBadgeModal] = useState(false);
   const [showAddEventModal, setShowAddEventModal] = useState(false);
   const [showCreatePollModal, setShowCreatePollModal] = useState(false);
+  const [showAddClubModal, setShowAddClubModal] = useState(false);
+  const [showAddGalleryModal, setShowAddGalleryModal] = useState(false);
   const [selectedAlbum, setSelectedAlbum] = useState<GalleryAlbum | null>(null);
 
   // Form State
@@ -324,6 +326,15 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
 
   const [newPollForm, setNewPollForm] = useState({
     question: '', category: 'Best House' as any, optionsText: ''
+  });
+
+  const [newClubForm, setNewClubForm] = useState({
+    name: '', category: 'Technology', description: '', icon: '💻',
+    leadTeacher: '', studentHead: '', meetingDays: 'Every Wednesday (3:30 PM)', location: 'Activity Hall'
+  });
+
+  const [newGalleryForm, setNewGalleryForm] = useState({
+    title: '', category: 'Campus Life', coverUrl: '', photoCount: 8
   });
 
   // Save changes to LocalStorage
@@ -515,6 +526,51 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
     await createPoll(newP);
     setShowCreatePollModal(false);
     setNewPollForm({ question: '', category: 'Best House', optionsText: '' });
+  };
+
+  const handleCreateClub = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isStaffRole || !newClubForm.name.trim()) return;
+    soundService.playSuccess();
+    const cl: Club = {
+      id: `club-${Date.now()}`,
+      name: newClubForm.name,
+      category: newClubForm.category,
+      description: newClubForm.description || 'Student collaborative interest club.',
+      icon: newClubForm.icon || '⭐',
+      leadTeacher: newClubForm.leadTeacher || currentUser.name || 'Faculty Advisor',
+      studentHead: newClubForm.studentHead || 'Student Representative',
+      memberCount: 1,
+      meetingDays: newClubForm.meetingDays || 'Weekly',
+      location: newClubForm.location || 'Activity Room'
+    };
+    setClubs(prev => [...prev, cl]);
+    await createClub(cl);
+    setShowAddClubModal(false);
+    setNewClubForm({
+      name: '', category: 'Technology', description: '', icon: '💻',
+      leadTeacher: '', studentHead: '', meetingDays: 'Every Wednesday (3:30 PM)', location: 'Activity Hall'
+    });
+  };
+
+  const handleCreateGalleryAlbum = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isStaffRole || !newGalleryForm.title.trim()) return;
+    soundService.playSuccess();
+    const alb: GalleryAlbum = {
+      id: `gal-${Date.now()}`,
+      title: newGalleryForm.title,
+      category: newGalleryForm.category,
+      coverUrl: newGalleryForm.coverUrl || 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?w=800&auto=format&fit=crop&q=80',
+      photoCount: Number(newGalleryForm.photoCount) || 8,
+      createdAt: new Date().toISOString().split('T')[0]
+    };
+    setGallery(prev => [alb, ...prev]);
+    await createGalleryAlbum(alb);
+    setShowAddGalleryModal(false);
+    setNewGalleryForm({
+      title: '', category: 'Campus Life', coverUrl: '', photoCount: 8
+    });
   };
 
   // Mock Leaderboard users
