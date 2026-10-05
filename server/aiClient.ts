@@ -4,33 +4,21 @@
  * 
  * NVIDIA API Central AI Service for StudentOS
  * Exclusively uses official NVIDIA API (https://integrate.api.nvidia.com/v1/chat/completions)
- * Dynamic model selection among verified official NVIDIA models:
- * 1. meta/llama-3.3-70b-instruct (Flagship General / Academic Tutor / Curriculum Explainer)
- * 2. nvidia/llama-3.1-nemotron-70b-instruct (NVIDIA Flagship Reasoning / Multi-step Logic)
- * 3. deepseek-ai/deepseek-r1 (Complex Reasoning / Math Derivations / Proofs)
- * 4. meta/llama-3.1-8b-instruct (Ultra Fast / Flashcards / Summaries / Quizzes / Moderation)
- * 5. nvidia/nemotron-4-340b-instruct (Heavy Academic Synthesis)
+ * Approved Models:
+ * 1. nvidia/nemotron-3-super-120b-a12b (General / Conversational / Study Center / AI Buddy)
+ * 2. nvidia/nemotron-3-ultra-550b-a55b (Complex Reasoning / Orion / Derivations)
+ * 3. openai/gpt-oss-20b (Lightweight / Flashcards / Quick Summaries)
  */
 
 export type NvidiaModel =
   | 'nvidia/nemotron-3-super-120b-a12b'
   | 'nvidia/nemotron-3-ultra-550b-a55b'
-  | 'openai/gpt-oss-20b'
-  | 'meta/llama-3.3-70b-instruct'
-  | 'nvidia/llama-3.1-nemotron-70b-instruct'
-  | 'deepseek-ai/deepseek-r1'
-  | 'meta/llama-3.1-8b-instruct'
-  | 'nvidia/nemotron-4-340b-instruct';
+  | 'openai/gpt-oss-20b';
 
 export const ALLOWED_NVIDIA_MODELS: readonly string[] = [
   'nvidia/nemotron-3-super-120b-a12b',
   'nvidia/nemotron-3-ultra-550b-a55b',
-  'openai/gpt-oss-20b',
-  'meta/llama-3.3-70b-instruct',
-  'nvidia/llama-3.1-nemotron-70b-instruct',
-  'deepseek-ai/deepseek-r1',
-  'meta/llama-3.1-8b-instruct',
-  'nvidia/nemotron-4-340b-instruct'
+  'openai/gpt-oss-20b'
 ] as const;
 
 export interface AICompletionOptions {
@@ -48,13 +36,13 @@ export interface AICompletionOptions {
 
 /**
  * Dynamic task-based NVIDIA model selector.
- * Prioritizes the approved NVIDIA models.
+ * Exclusively uses approved NVIDIA models.
  */
 export function selectNvidiaModel(
   prompt: string,
   options?: { endpointName?: string; taskType?: string; modelOverride?: string }
 ): NvidiaModel {
-  if (options?.modelOverride) {
+  if (options?.modelOverride && ALLOWED_NVIDIA_MODELS.includes(options.modelOverride)) {
     return options.modelOverride as NvidiaModel;
   }
 
@@ -142,17 +130,7 @@ export async function generateAICompletion(
     throw new Error('NVIDIA_API_KEY is not configured on the server.');
   }
 
-  const primaryModel = selectNvidiaModel(prompt, { endpointName, taskType, modelOverride });
-  
-  // Model cascade: try requested approved model first, then verified catalog fallbacks if rejected
-  const candidateModels: string[] = [
-    primaryModel,
-    'nvidia/nemotron-3-super-120b-a12b',
-    'meta/llama-3.3-70b-instruct',
-    'nvidia/llama-3.1-nemotron-70b-instruct',
-    'deepseek-ai/deepseek-r1',
-    'meta/llama-3.1-8b-instruct'
-  ].filter((m, i, arr) => arr.indexOf(m) === i);
+  const selectedModel = selectNvidiaModel(prompt, { endpointName, taskType, modelOverride });
 
   // Image extraction if present
   let imageUrl: string | null = null;
@@ -189,58 +167,48 @@ export async function generateAICompletion(
       : cleanPrompt
   });
 
-  let lastStatus = 0;
-  let lastErrorText = '';
+  const startTime = Date.now();
+  console.log(`[NVIDIA AI DEBUG] Selected model: ${selectedModel}`);
+  console.log(`[NVIDIA AI DEBUG] NVIDIA request started`);
 
-  for (const modelToTry of candidateModels) {
-    const startTime = Date.now();
-    try {
-      console.log(`[NVIDIA AI DEBUG] Selected model: ${modelToTry}`);
-      console.log(`[NVIDIA AI DEBUG] NVIDIA request started`);
-      
-      const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${nvidiaApiKey}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          model: modelToTry,
-          messages,
-          temperature,
-          max_tokens: maxTokens,
-          ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
-        })
-      });
+  try {
+    const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${nvidiaApiKey}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        model: selectedModel,
+        messages,
+        temperature,
+        max_tokens: maxTokens,
+        ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
+      })
+    });
 
-      const durationMs = Date.now() - startTime;
-      lastStatus = response.status;
-      console.log(`[NVIDIA AI DEBUG] NVIDIA HTTP status: ${response.status}`);
+    const durationMs = Date.now() - startTime;
+    console.log(`[NVIDIA AI DEBUG] NVIDIA HTTP status: ${response.status}`);
 
-      if (response.ok) {
-        const data = await response.json();
-        const choiceMsg = data.choices?.[0]?.message;
-        const text = (choiceMsg?.content || choiceMsg?.reasoning || '').trim();
-        if (text) {
-          console.log(`[NVIDIA AI DEBUG] NVIDIA response: ${text.slice(0, 100).replace(/\n/g, ' ')}...`);
-          console.log(`[NVIDIA AI DEBUG] Request completed successfully in ${durationMs}ms`);
-          return text;
-        }
-        console.warn(`[NVIDIA AI DEBUG] Message content was empty on model "${modelToTry}".`);
-      } else {
-        const errText = await response.text();
-        lastErrorText = errText;
-        console.error(`[NVIDIA AI DEBUG] Response body: ${errText.slice(0, 300)}`);
+    if (response.ok) {
+      const data = await response.json();
+      const choiceMsg = data.choices?.[0]?.message;
+      const text = (choiceMsg?.content || choiceMsg?.reasoning || '').trim();
+      if (text) {
+        console.log(`[NVIDIA AI DEBUG] NVIDIA response: ${text.slice(0, 100).replace(/\n/g, ' ')}...`);
+        console.log(`[NVIDIA AI DEBUG] Request completed successfully in ${durationMs}ms`);
+        return text;
       }
-    } catch (apiErr: any) {
-      lastErrorText = apiErr?.message || String(apiErr);
-      console.error(`[AI P0 ERROR] Request ID: ${requestId} - Model ${modelToTry} fetch error:`, lastErrorText);
+      throw new Error(`Empty response content returned by model "${selectedModel}".`);
+    } else {
+      const errText = await response.text();
+      console.error(`[NVIDIA AI DEBUG] Response body: ${errText.slice(0, 300)}`);
+      throw new Error(`NVIDIA API HTTP ${response.status}: ${errText || 'Request failed'}`);
     }
+  } catch (apiErr: any) {
+    console.error(`[AI P0 ERROR] Request ID: ${requestId} - Model ${selectedModel} error:`, apiErr?.message || apiErr);
+    throw apiErr;
   }
-
-  const finalError = new Error(`NVIDIA API request failed (HTTP ${lastStatus || 'NETWORK_ERROR'}): ${lastErrorText || 'Unable to complete request'}`);
-  console.error(`[AI P0 ERROR] Request ID: ${requestId}`, finalError);
-  throw finalError;
 }
 

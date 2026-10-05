@@ -1102,6 +1102,97 @@ app.post('/api/config/apk', (req, res) => {
   });
 });
 
+// Isolated NVIDIA Forensic Diagnostic Route (Rule #2)
+app.all(['/api/debug/nvidia', '/api/debug/nvidia/'], async (req, res) => {
+  const requestId = 'dbg_' + Math.random().toString(36).substring(2, 10);
+  const rawKey =
+    process.env.NVIDIA_API_KEY ||
+    process.env.VITE_NVIDIA_API_KEY ||
+    process.env.NIM_API_KEY ||
+    process.env.NGC_API_KEY ||
+    process.env.AI_API_KEY ||
+    '';
+  const cleanKey = rawKey.trim().replace(/^["']|["']$/g, '');
+  const keyPresent = Boolean(cleanKey);
+
+  console.log(`[NVIDIA AI DEBUG] Request ID: ${requestId}`);
+  console.log(`[NVIDIA AI DEBUG] Route: /api/debug/nvidia`);
+  console.log(`[NVIDIA AI DEBUG] NVIDIA_API_KEY present: ${keyPresent}`);
+
+  if (!keyPresent) {
+    return res.status(500).json({
+      success: false,
+      requestId,
+      error: 'NVIDIA_API_KEY environment variable is not configured on the server.',
+      keyPresent: false
+    });
+  }
+
+  const selectedModel = 'nvidia/nemotron-3-super-120b-a12b';
+
+  try {
+    console.log(`[NVIDIA AI DEBUG] Selected model: ${selectedModel}`);
+    console.log(`[NVIDIA AI DEBUG] NVIDIA request started`);
+
+    const nvidiaResp = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${cleanKey}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        model: selectedModel,
+        messages: [
+          {
+            role: 'user',
+            content: 'Reply with exactly: NVIDIA_TEST_OK'
+          }
+        ],
+        temperature: 0.2,
+        max_tokens: 30
+      })
+    });
+
+    console.log(`[NVIDIA AI DEBUG] NVIDIA HTTP status: ${nvidiaResp.status}`);
+
+    if (nvidiaResp.ok) {
+      const data = await nvidiaResp.json();
+      const choiceMsg = data.choices?.[0]?.message;
+      const text = (choiceMsg?.content || choiceMsg?.reasoning || '').trim();
+      console.log(`[NVIDIA AI DEBUG] NVIDIA response: ${text}`);
+
+      return res.status(200).json({
+        success: true,
+        requestId,
+        httpStatus: 200,
+        model: selectedModel,
+        response: text,
+        keyPresent: true
+      });
+    } else {
+      const errText = await nvidiaResp.text();
+      console.error(`[NVIDIA AI DEBUG] Response body: ${errText.slice(0, 300)}`);
+      return res.status(nvidiaResp.status).json({
+        success: false,
+        requestId,
+        httpStatus: nvidiaResp.status,
+        model: selectedModel,
+        error: errText,
+        keyPresent: true
+      });
+    }
+  } catch (fetchErr: any) {
+    console.error(`[AI P0 ERROR] Request ID: ${requestId} - Direct fetch failed:`, fetchErr);
+    return res.status(500).json({
+      success: false,
+      requestId,
+      error: fetchErr.message || String(fetchErr),
+      keyPresent: true
+    });
+  }
+});
+
 // Mandatory Minimal NVIDIA Server Diagnostic Route
 app.all('/api/ai/minimal-test', async (req, res) => {
   const rawKey =
