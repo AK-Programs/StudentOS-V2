@@ -19,9 +19,8 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '10mb' }));
 
-// Canonical matched VAPID keypair for Web Push / FCM (ensures 100% consistency across Vercel serverless cold starts)
+// VAPID keys for Web Push / FCM
 const CANONICAL_VAPID_PUBLIC_KEY = 'BLdXVgRSMH1XO-DH4Y8hJ5qzd-BlUw6rVC7BmoBvrTp5sbNcrO05MdgeVSSaI7MPZVl_PLJd8nbNy989mkA3Wfs';
-const CANONICAL_VAPID_PRIVATE_KEY = 'sU2176BZPM_YXVCnkceqxV5Oeyrjl8ehA3mt8TTXF8I';
 
 function isValidUUIDServer(str?: string | null): boolean {
   if (!str) return false;
@@ -29,16 +28,9 @@ function isValidUUIDServer(str?: string | null): boolean {
 }
 
 function getOrGenerateVapidKeys() {
-  if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-    return {
-      publicKey: process.env.VAPID_PUBLIC_KEY.trim(),
-      privateKey: process.env.VAPID_PRIVATE_KEY.trim()
-    };
-  }
-  return {
-    publicKey: CANONICAL_VAPID_PUBLIC_KEY,
-    privateKey: CANONICAL_VAPID_PRIVATE_KEY
-  };
+  const publicKey = process.env.VAPID_PUBLIC_KEY ? process.env.VAPID_PUBLIC_KEY.trim() : CANONICAL_VAPID_PUBLIC_KEY;
+  const privateKey = process.env.VAPID_PRIVATE_KEY ? process.env.VAPID_PRIVATE_KEY.trim() : '';
+  return { publicKey, privateKey };
 }
 
 const vapidKeys = getOrGenerateVapidKeys();
