@@ -26,6 +26,7 @@ import {
 } from '../lib/sm2Algorithm';
 import { generateFlashcardsWithAI, GeneratedFlashcardData } from '../lib/aiFlashcards';
 import { getVaultNotes } from '../lib/supabaseNotes';
+import { awardStudentXP } from '../lib/gamification';
 
 interface StudyCenterProps {
   currentUser?: UserProfile | null;
@@ -237,6 +238,7 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
       setCurrentCardIndex(prev => prev + 1);
     } else {
       setSessionCompleted(true);
+      awardStudentXP(currentUser, 'study_flashcards', { flashcardCount: studyCards.length });
       showNotification('🎉 Deck complete! You finished all cards in this session.');
     }
   };
@@ -278,6 +280,7 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
       setCurrentCardIndex(prev => prev + 1);
     } else {
       setSessionCompleted(true);
+      awardStudentXP(currentUser, 'study_flashcards', { flashcardCount: studyCards.length });
       showNotification('🎉 Review session completed! Your memory schedule has been updated.');
     }
   };

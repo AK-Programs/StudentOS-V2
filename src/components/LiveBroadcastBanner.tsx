@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Megaphone, X, BellRing, Sparkles, ShieldAlert, ArrowRight } from 'lucide-react';
 import { soundService } from '../lib/soundService';
 import { supabase } from '../lib/supabase';
+import { triggerBrowserPushNotification } from '../lib/notifications';
 
 interface LiveBroadcastPayload {
   id: string;
@@ -24,23 +25,49 @@ export const LiveBroadcastBanner: React.FC<LiveBroadcastBannerProps> = () => {
 
   useEffect(() => {
     // Subscribe to realtime live broadcasts
-    const channel = supabase.channel('student-os-public');
-    
-    channel.on('broadcast', { event: 'principal_live_broadcast' }, (payload) => {
+    const channel = supabase.channel('student-os-public-banner')
+      .on('broadcast', { event: 'principal_live_broadcast' }, (payload) => {
+        if (payload && payload.payload) {
+          const broadcast = payload.payload as LiveBroadcastPayload;
+          
+          // Trigger live popup & sticky banner
+          setActivePopup(broadcast);
+          setStickyBanner(broadcast);
+
+          // Sound effect
+          soundService.playAnnouncementSound();
+
+          // Trigger Android Chrome / PWA system notification via Service Worker (coalesces with background push via tag)
+          triggerBrowserPushNotification(broadcast.title, {
+            body: broadcast.message,
+            tag: broadcast.id ? `studentos-notif-${broadcast.id}` : `studentos-notif-${Date.now()}`,
+            notifId: broadcast.id,
+            linkTab: 'notice_viewer'
+          });
+        }
+      })
+      .subscribe();
+
+    // Also listen on 'student-os-public' channel in case sender uses that channel name
+    const pubChannel = supabase.channel('student-os-public');
+    pubChannel.on('broadcast', { event: 'principal_live_broadcast' }, (payload) => {
       if (payload && payload.payload) {
         const broadcast = payload.payload as LiveBroadcastPayload;
-        
-        // Trigger live popup & sticky banner
         setActivePopup(broadcast);
         setStickyBanner(broadcast);
-
-        // Sound effect
         soundService.playAnnouncementSound();
+        triggerBrowserPushNotification(broadcast.title, {
+          body: broadcast.message,
+          tag: broadcast.id ? `studentos-notif-${broadcast.id}` : `studentos-notif-${Date.now()}`,
+          notifId: broadcast.id,
+          linkTab: 'notice_viewer'
+        });
       }
-    });
+    }).subscribe();
 
     return () => {
       supabase.removeChannel(channel);
+      supabase.removeChannel(pubChannel);
     };
   }, []);
 

@@ -26,7 +26,8 @@ import {
   deleteNotification,
   triggerNotificationSound,
   isUserEligibleForNotification,
-  requestWebPushPermission
+  requestWebPushPermission,
+  triggerBrowserPushNotification
 } from '../lib/notifications';
 import { requestFCMPermission } from '../lib/fcmNotifications';
 import { saveSupabaseUserProfile } from '../lib/supabaseUsers';
@@ -111,16 +112,23 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
     loadNotifications();
 
     // Subscribe to realtime broadcast notifications
-    const channel = supabase.channel('student-os-public');
-    channel.on('broadcast', { event: 'new_app_notification' }, (payload) => {
-      if (payload && payload.payload) {
-        const notif = payload.payload as AppNotification;
-        if (isUserEligibleForNotification(notif, currentUser || {})) {
-          setNotifications((prev) => [notif, ...prev.filter((n) => n.id !== notif.id)]);
-          triggerNotificationSound(notif.type);
+    const channel = supabase.channel('student-os-public-notifcenter')
+      .on('broadcast', { event: 'new_app_notification' }, (payload) => {
+        if (payload && payload.payload) {
+          const notif = payload.payload as AppNotification;
+          if (isUserEligibleForNotification(notif, currentUser || {})) {
+            setNotifications((prev) => [notif, ...prev.filter((n) => n.id !== notif.id)]);
+            triggerNotificationSound(notif.type);
+            triggerBrowserPushNotification(notif.title, {
+              body: notif.message,
+              tag: notif.id ? `studentos-notif-${notif.id}` : `studentos-notif-${Date.now()}`,
+              notifId: notif.id,
+              linkTab: notif.linkTab || 'notice_viewer'
+            });
+          }
         }
-      }
-    });
+      })
+      .subscribe();
 
     // Listen to local per-user state changes across tabs
     const handleStateChange = () => {

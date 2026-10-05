@@ -804,6 +804,9 @@ Your response MUST be raw JSON format with NO markdown wrapping:
         const data = await response.json();
         if (data.error) throw new Error(data.error);
         aiText = data.text;
+        import('../lib/gamification').then(({ awardStudentXP }) => {
+          awardStudentXP(currentUser, 'use_ai_study');
+        }).catch(() => {});
       } catch (apiErr: any) {
         console.warn("Server API failed for Orion completion:", apiErr.message || apiErr);
         const { clientSideNvidiaAI } = await import('../lib/clientAiFallback');

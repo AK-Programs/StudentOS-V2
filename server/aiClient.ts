@@ -120,7 +120,13 @@ export async function generateAICompletion(
   const selectedModel = selectNvidiaModel(prompt, { endpointName, taskType, modelOverride });
   console.log(`[${endpointName}] Selected NVIDIA Model: "${selectedModel}" (Task: "${taskType}", prompt preview: "${prompt.slice(0, 80).replace(/\n/g, ' ')}...")`);
 
-  const nvidiaApiKey = process.env.NVIDIA_API_KEY || process.env.VITE_NVIDIA_API_KEY;
+  const rawKey =
+    process.env.NVIDIA_API_KEY ||
+    process.env.VITE_NVIDIA_API_KEY ||
+    process.env.NIM_API_KEY ||
+    process.env.NGC_API_KEY ||
+    '';
+  const nvidiaApiKey = rawKey.trim().replace(/^["']|["']$/g, '');
 
   // Image extraction if present
   let imageUrl: string | null = null;

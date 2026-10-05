@@ -24,8 +24,10 @@ import { supabase } from './lib/supabase';
 import { getVaultNotes, saveVaultNoteToSupabase, deleteVaultNoteFromSupabase } from './lib/supabaseNotes';
 import { getSupabaseUserProfile, saveSupabaseUserProfile } from './lib/supabaseUsers';
 import { getSupabaseHomework, saveSupabaseHomework, deleteSupabaseHomework } from './lib/supabaseHomework';
-import { getAppNotifications, saveAppNotification, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification, generateUUID, registerPushSubscription, getDeviceId } from './lib/notifications';
+import { getAppNotifications, saveAppNotification, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification, generateUUID, registerPushSubscription, getDeviceId, triggerBrowserPushNotification, isUserEligibleForNotification, triggerNotificationSound } from './lib/notifications';
 import { requestFCMPermission, setupFCMForegroundListener } from './lib/fcmNotifications';
+import { awardStudentXP } from './lib/gamification';
+import { GamificationRewardToast, DashboardGamificationCard } from './components/StudentGamificationHub';
 import { 
   getAiBuddyChats, saveAiBuddyChat, deleteAiBuddyChat, renameAiBuddyChat,
   getPeerMessages, savePeerMessage, deletePeerMessage,
@@ -1175,6 +1177,7 @@ export default function App() {
     try {
       await markNotificationAsRead(notifId, currentUser?.uid);
       setNotifications(prev => prev.map(n => n.id === notifId ? { ...n, isRead: true } : n));
+      awardStudentXP(currentUser, 'read_notice', { uniqueItemId: notifId });
     } catch (err) {
       console.error('Error marking notification as read:', err);
     }
@@ -1946,12 +1949,35 @@ export default function App() {
 
     // Subscribe to both Postgres changes and Realtime Broadcast channel
     const channel = supabase.channel('student-os-live-sync')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, () => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
+        refreshNotifications();
+        const row = payload?.new as any;
+        if (row && currentUser && isUserEligibleForNotification(row, currentUser)) {
+          const nId = row.id || '';
+          triggerBrowserPushNotification(row.title || '📢 StudentOS Notice', {
+            body: row.message || row.content || '',
+            tag: nId ? `studentos-notif-${nId}` : `studentos-notif-${Date.now()}`,
+            notifId: nId,
+            linkTab: row.link_tab || row.payload?.linkTab || 'notice_viewer'
+          });
+        }
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notifications' }, () => {
         refreshNotifications();
       })
       .on('broadcast', { event: 'new_app_notification' }, (payload) => {
         console.log('[REALTIME-BROADCAST] Received broadcast notification:', payload);
         refreshNotifications();
+        const notif = payload?.payload;
+        if (notif && currentUser && isUserEligibleForNotification(notif, currentUser)) {
+          triggerNotificationSound(notif.type || 'announcement');
+          triggerBrowserPushNotification(notif.title || '📢 StudentOS Notice', {
+            body: notif.message || '',
+            tag: notif.id ? `studentos-notif-${notif.id}` : `studentos-notif-${Date.now()}`,
+            notifId: notif.id,
+            linkTab: notif.linkTab || 'notice_viewer'
+          });
+        }
       })
       .subscribe();
 
@@ -3090,6 +3116,7 @@ ${resultText}
      })();
       setNewNoteTitle('');
       setNewNoteContent('');
+      awardStudentXP(currentUser, 'create_note', { uniqueItemId: noteId });
       showNotification('Lecture notes secured.');
     } catch (err: any) {
       console.error('Error saving note:', err);
@@ -3218,6 +3245,7 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
      })();
       setSelectedNoteId(newId);
       setNoteEditMode(true);
+      awardStudentXP(currentUser, 'create_note', { uniqueItemId: newId });
       showNotification('Study canvas instantiated!');
     } catch (err: any) {
       console.error('Error creating note:', err);
@@ -4327,6 +4355,8 @@ Date: ${new Date().toLocaleDateString()}
     } else {
       // End Quiz loop
       setQuizStarted(false);
+      const pct = questions.length > 0 ? Math.round((quizScore / questions.length) * 100) : 0;
+      awardStudentXP(currentUser, 'complete_quiz', { quizScorePercent: pct });
       showNotification(`Quiz Finished! Accuracy: ${quizScore}/${questions.length}.`);
     }
   };
@@ -5022,6 +5052,7 @@ ${roleLabel}: ${userQuery}`;
         }
         if (parsedRes.error) throw new Error(parsedRes.error);
         answer = parsedRes.text || 'I encountered an issue processing your lesson topic.';
+        awardStudentXP(currentUser, 'use_ai_study');
 
         // Update quota
         if (parsedRes.usage) {
@@ -7395,6 +7426,9 @@ ${roleLabel}: ${userQuery}`;
                     </div>
                   </div>
 
+                  {/* StudentOS Scholar Gamification Summary Card */}
+                  <DashboardGamificationCard currentUser={currentUser} />
+
                   {/* StudentOS Life — Role-Aware Dashboard Community Hub Card (Visible to All Authenticated Roles) */}
                   <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-indigo-950/80 via-purple-950/60 to-slate-900 border border-indigo-500/30 shadow-xl relative overflow-hidden uiverse-card-hover">
                     <div className="absolute -right-12 -top-12 w-48 h-48 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -9368,6 +9402,9 @@ ${activeNote.content}`);
                             return item;
                           }));
                           if (updatedHw) saveSupabaseHomework(updatedHw);
+                          if (!isDone) {
+                            awardStudentXP(currentUser, 'complete_homework', { uniqueItemId: hw.id });
+                          }
                           showNotification(isDone ? 'Marked assignment incomplete.' : 'Excellent work! Assignment marked complete.');
                         };
 
@@ -12104,6 +12141,9 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
         effectiveRole={effectiveRole}
         onNavigateTab={handleTabSelect}
       />
+
+      {/* Global Gamification XP & Level-Up Reward Toast */}
+      <GamificationRewardToast />
 
     </div>
   );

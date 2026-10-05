@@ -1,56 +1,16 @@
 // ========================================================
-// StudentOS Service Worker — FCM Push & PWA Offline Engine
+// StudentOS Service Worker — FCM Web Push & PWA Engine
 // ========================================================
 
-// Optional Firebase Messaging Scripts Import for compat background handling
-try {
-  importScripts('https://www.gstatic.com/firebasejs/10.14.0/firebase-app-compat.js');
-  importScripts('https://www.gstatic.com/firebasejs/10.14.0/firebase-messaging-compat.js');
-
-  const defaultFirebaseConfig = {
-    projectId: "gen-lang-client-0785563242",
-    appId: "1:940502459076:web:843c78167b4b83a1c25f91",
-    apiKey: "AIzaSyCtFjAhG_Y3G28t2iDV_0GzNvFRNUj9nFA",
-    authDomain: "gen-lang-client-0785563242.firebaseapp.com",
-    storageBucket: "gen-lang-client-0785563242.firebasestorage.app",
-    messagingSenderId: "940502459076"
-  };
-
-  firebase.initializeApp(defaultFirebaseConfig);
-  const messaging = firebase.messaging();
-
-  messaging.onBackgroundMessage((payload) => {
-    console.log('[SW FCM] Received background message:', payload);
-    const notificationTitle = payload.notification?.title || payload.data?.title || '📢 StudentOS Alert';
-    const notificationOptions = {
-      body: payload.notification?.body || payload.data?.body || payload.data?.message || 'You have a new school update.',
-      icon: payload.notification?.icon || '/icons/icon-192.png',
-      badge: '/icons/icon-192.png',
-      tag: payload.data?.tag || `studentos-fcm-${Date.now()}`,
-      renotify: true,
-      data: {
-        linkTab: payload.data?.linkTab || 'notice_viewer',
-        url: payload.data?.url || '/'
-      },
-      vibrate: [200, 100, 200]
-    };
-
-    return self.registration.showNotification(notificationTitle, notificationOptions);
-  });
-} catch (e) {
-  // Native Web Push listener below handles all VAPID & FCM pushes directly across all browsers
-}
-
-// StudentOS Service Worker Version & Cache Name
-const SW_VERSION = 'studentos-v3.13.0';
+const SW_VERSION = 'studentos-v3.14.0';
 const CACHE_NAME = `studentos-cache-${SW_VERSION}`;
 
-// Service Worker Installation
+// Service Worker Installation — Activate immediately
 self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
-// Service Worker Activation & Safe Cache Purging
+// Service Worker Activation — Claim all clients immediately
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
@@ -63,99 +23,154 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Update Listener from client
+// Message Listener from client
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
 });
 
-// Native Push Event Listener (handles all FCM and VAPID Web Pushes in Android Chrome, PWA, & Background)
+// ========================================================
+// FCM / Web Push Background & Foreground Notification Handler
+// ========================================================
 self.addEventListener('push', (event) => {
-  console.log('[SW Push] Push event received:', event);
+  console.log('[SW FCM] Push event received by Service Worker');
 
-  let data = {
-    title: '📢 StudentOS Alert',
-    body: 'You have a new school announcement.',
+  let payloadData = {
+    title: '📢 StudentOS Notice',
+    body: 'You have a new school broadcast.',
     linkTab: 'notice_viewer',
-    url: '/'
+    notifId: '',
+    type: 'announcement',
+    schoolId: 'default_school',
+    url: '/?tab=notice_viewer',
+    tag: '',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png'
   };
 
   try {
     if (event.data) {
       const parsed = event.data.json();
       if (parsed) {
-        // Handle FCM standard structure
         if (parsed.notification) {
-          data.title = parsed.notification.title || data.title;
-          data.body = parsed.notification.body || data.body;
-          data.icon = parsed.notification.icon || '/icons/icon-192.png';
+          payloadData.title = parsed.notification.title || payloadData.title;
+          payloadData.body = parsed.notification.body || payloadData.body;
+          payloadData.icon = parsed.notification.icon || payloadData.icon;
+          payloadData.badge = parsed.notification.badge || payloadData.badge;
         }
         if (parsed.data) {
-          data.title = parsed.data.title || data.title;
-          data.body = parsed.data.body || parsed.data.message || data.body;
-          data.linkTab = parsed.data.linkTab || data.linkTab;
-          data.url = parsed.data.url || data.url;
-          data.tag = parsed.data.tag;
+          payloadData.title = parsed.data.title || payloadData.title;
+          payloadData.body = parsed.data.body || parsed.data.message || payloadData.body;
+          payloadData.linkTab = parsed.data.linkTab || parsed.data.route || payloadData.linkTab;
+          payloadData.notifId = parsed.data.notificationId || parsed.data.notifId || parsed.data.id || '';
+          payloadData.type = parsed.data.type || payloadData.type;
+          payloadData.schoolId = parsed.data.schoolId || payloadData.schoolId;
+          payloadData.tag = parsed.data.tag || '';
+          payloadData.url = parsed.data.url || `/?tab=${encodeURIComponent(payloadData.linkTab)}`;
         }
         if (!parsed.notification && !parsed.data) {
-          data = { ...data, ...parsed };
+          payloadData.title = parsed.title || payloadData.title;
+          payloadData.body = parsed.body || parsed.message || payloadData.body;
+          payloadData.linkTab = parsed.linkTab || parsed.route || payloadData.linkTab;
+          payloadData.notifId = parsed.notificationId || parsed.notifId || parsed.id || '';
+          payloadData.type = parsed.type || payloadData.type;
+          payloadData.tag = parsed.tag || '';
+          payloadData.url = parsed.url || `/?tab=${encodeURIComponent(payloadData.linkTab)}`;
         }
       }
     }
   } catch (e) {
     if (event.data) {
-      data.body = event.data.text();
+      payloadData.body = event.data.text();
     }
   }
 
-  const tag = data.tag || `studentos-notif-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-  const options = {
-    body: data.body || '',
-    icon: data.icon || '/icons/icon-192.png',
-    badge: data.badge || '/icons/icon-192.png',
-    tag: tag,
+  // Deterministic tag so foreground & background pushes for the same notice coalesce into ONE notification
+  const deterministicTag =
+    payloadData.tag ||
+    (payloadData.notifId ? `studentos-notif-${payloadData.notifId}` : `studentos-notif-${Date.now()}`);
+
+  const targetUrl = payloadData.url && payloadData.url !== '/'
+    ? payloadData.url
+    : `/?tab=${encodeURIComponent(payloadData.linkTab || 'notice_viewer')}${payloadData.notifId ? `&notifId=${encodeURIComponent(payloadData.notifId)}` : ''}`;
+
+  const notificationOptions = {
+    body: payloadData.body || 'Tap to view in StudentOS.',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    tag: deterministicTag,
     renotify: true,
     requireInteraction: false,
-    timestamp: data.timestamp || Date.now(),
     vibrate: [200, 100, 200],
+    timestamp: Date.now(),
     data: {
-      linkTab: data.linkTab || 'notice_viewer',
-      url: data.url || '/'
+      linkTab: payloadData.linkTab || 'notice_viewer',
+      notifId: payloadData.notifId || '',
+      type: payloadData.type || 'announcement',
+      schoolId: payloadData.schoolId || 'default_school',
+      url: targetUrl
     },
     actions: [
-      { action: 'open', title: 'Open StudentOS' },
+      { action: 'open', title: 'View Notice' },
       { action: 'dismiss', title: 'Dismiss' }
     ]
   };
 
   event.waitUntil(
-    self.registration.showNotification(data.title || '📢 StudentOS Notice', options)
+    self.registration.showNotification(payloadData.title, notificationOptions).then(() => {
+      console.log('[SW FCM] Chrome/Android notification displayed successfully:', {
+        title: payloadData.title,
+        tag: deterministicTag,
+        linkTab: payloadData.linkTab
+      });
+      return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+        clients.forEach((client) => {
+          client.postMessage({
+            type: 'FCM_SW_NOTIFICATION_DISPLAYED',
+            title: payloadData.title,
+            body: payloadData.body,
+            linkTab: payloadData.linkTab,
+            notifId: payloadData.notifId,
+            tag: deterministicTag
+          });
+        });
+      });
+    })
   );
 });
 
-// Handle Notification Click & Focus / Open StudentOS tab
+// ========================================================
+// Notification Click — Focus or Open Correct StudentOS Route
+// ========================================================
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
   if (event.action === 'dismiss') return;
 
-  const targetTab = event.notification.data?.linkTab || 'notice_viewer';
-  const targetUrl = event.notification.data?.url || '/';
+  const data = event.notification.data || {};
+  const targetTab = data.linkTab || 'notice_viewer';
+  const notifId = data.notifId || '';
+  const targetUrl = data.url && data.url !== '/'
+    ? data.url
+    : `/?tab=${encodeURIComponent(targetTab)}${notifId ? `&notifId=${encodeURIComponent(notifId)}` : ''}`;
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      // 1. If an existing StudentOS tab is open, focus it and navigate
       for (const client of clientList) {
         if ('focus' in client) {
-          client.focus();
-          if (targetTab) {
-            client.postMessage({ type: 'STUDENTOS_NAVIGATE_TAB', tab: targetTab, url: targetUrl });
-          }
-          return;
+          return client.focus().then((focusedClient) => {
+            const activeClient = focusedClient || client;
+            activeClient.postMessage({
+              type: 'STUDENTOS_NAVIGATE_TAB',
+              tab: targetTab,
+              linkTab: targetTab,
+              notifId: notifId,
+              url: targetUrl
+            });
+          });
         }
       }
-      // 2. Otherwise open a new window
       if (self.clients.openWindow) {
         return self.clients.openWindow(targetUrl);
       }
@@ -163,7 +178,10 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-// Pass-through fetch handler for PWA offline compliance
+// Pass-through fetch handler for PWA compliance
 self.addEventListener('fetch', (event) => {
-  event.respondWith(fetch(event.request).catch(() => new Response('Offline')));
+  if (event.request.method !== 'GET') return;
+  event.respondWith(
+    fetch(event.request).catch(() => caches.match(event.request).then((r) => r || new Response('Offline')))
+  );
 });

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Megaphone, Send, X, ShieldAlert, Users, Sparkles, Filter, BellRing } from 'lucide-react';
 import { UserProfile, AppNotification } from '../types';
-import { saveAppNotification } from '../lib/notifications';
+import { saveAppNotification, generateUUID } from '../lib/notifications';
 import { supabase } from '../lib/supabase';
 
 interface BroadcastModalProps {
@@ -45,7 +45,7 @@ export const BroadcastModal: React.FC<BroadcastModalProps> = ({
     setIsSubmitting(true);
 
     try {
-      const notifId = `broadcast_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const notifId = generateUUID();
       
       const newNotif: AppNotification = {
         id: notifId,
@@ -55,11 +55,12 @@ export const BroadcastModal: React.FC<BroadcastModalProps> = ({
         createdAt: new Date().toISOString(),
         isRead: false,
         targetUserId: 'all',
-        targetClass: targetGrade !== 'All Grades' ? `${targetGrade}_${targetSection}` : undefined,
-        linkTab: category === 'homework' ? 'homework' : 'dashboard',
+        targetClass: targetGrade !== 'All Grades' ? targetGrade : 'all',
+        targetSection: targetSection !== 'All Sections' ? targetSection : 'all',
+        linkTab: category === 'homework' ? 'homework' : 'notice_viewer',
       };
 
-      // 1. Save to database
+      // 1. Save to database & dispatch server-side FCM / WebPush
       await saveAppNotification(newNotif);
 
       // 2. Broadcast live event on Supabase channel

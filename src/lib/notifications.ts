@@ -201,89 +201,14 @@ export async function registerPushSubscription(
     return false;
   }
   try {
-    const deviceId = getDeviceId();
-    let userMeta = metadata;
-    if (!userMeta) {
-      try {
-        const cachedUser = JSON.parse(localStorage.getItem('s_os_user') || '{}');
-        userMeta = {
-          role: cachedUser.role || 'student',
-          grade: cachedUser.grade || '',
-          section: cachedUser.section || '',
-          house: cachedUser.house || ''
-        };
-      } catch (_) {}
-    }
-    let registration = await navigator.serviceWorker.getRegistration('/sw.js');
-    if (!registration) {
-      registration = await navigator.serviceWorker.register('/sw.js');
-    }
-    await navigator.serviceWorker.ready;
-
-    let applicationServerKey: Uint8Array | undefined;
-    try {
-      const vRes = await fetch('/api/push/vapid-public-key');
-      if (vRes.ok) {
-        const vData = await vRes.json();
-        if (vData.publicKey) {
-          applicationServerKey = urlBase64ToUint8Array(vData.publicKey);
-        }
-      }
-    } catch (_) {}
-
-    let subscription = await registration.pushManager.getSubscription();
-    if (!subscription && applicationServerKey) {
-      try {
-        const subOptions: PushSubscriptionOptionsInit = {
-          userVisibleOnly: true,
-          applicationServerKey
-        };
-        subscription = await registration.pushManager.subscribe(subOptions);
-      } catch (subErr) {
-        console.warn('[WebPush] PushManager subscribe notice:', subErr);
-      }
-    }
-
-    if (subscription) {
-      const subJson = subscription.toJSON();
-      const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'Unknown';
-
-      // 1. Register with backend memory store for device-level targeting
-      try {
-        await fetch('/api/push/subscribe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            subscription: subJson,
-            userId: userId || null,
-            deviceId,
-            userAgent,
-            role: userMeta?.role || 'student',
-            grade: userMeta?.grade || '',
-            section: userMeta?.section || '',
-            house: userMeta?.house || '',
-            interests: userMeta?.interests || []
-          })
-        });
-      } catch (_) {}
-
-      // 2. Upsert subscription and device-user association to Supabase push_subscriptions table
-      try {
-        await supabase.from('push_subscriptions').upsert({
-          device_id: deviceId,
-          user_id: userId || null,
-          endpoint: subJson.endpoint,
-          keys: subJson.keys,
-          p256dh: subJson.keys?.p256dh,
-          auth: subJson.keys?.auth,
-          user_agent: userAgent,
-          updated_at: new Date().toISOString()
-        }, { onConflict: 'endpoint' });
-      } catch (dbErr) {
-        console.warn('[WebPush] Saving subscription to database notice:', dbErr);
-      }
-    }
-    return true;
+    const { requestFCMPermission } = await import('./fcmNotifications');
+    const result = await requestFCMPermission(userId, {
+      role: metadata?.role,
+      grade: metadata?.grade,
+      section: metadata?.section,
+      house: metadata?.house
+    }, { silentIfDefault: true });
+    return result.success;
   } catch (err) {
     console.warn('[WebPush] Subscription error:', err);
     return false;
@@ -297,49 +222,60 @@ export async function requestWebPushPermission(userId?: string): Promise<boolean
   if (typeof window === 'undefined' || !('Notification' in window)) {
     return false;
   }
-  if (Notification.permission === 'granted') {
-    await registerPushSubscription(userId);
-    return true;
+  try {
+    const { requestFCMPermission } = await import('./fcmNotifications');
+    const res = await requestFCMPermission(userId);
+    return res.success;
+  } catch (_) {
+    return false;
   }
-  if (Notification.permission !== 'denied') {
-    try {
-      const permission = await Notification.requestPermission();
-      if (permission === 'granted') {
-        await registerPushSubscription(userId);
-        return true;
-      }
-      return false;
-    } catch (_) {
-      return false;
-    }
-  }
-  return false;
 }
 
 /**
  * Dispatch real browser desktop/mobile push notification via ServiceWorker or Notification API
  */
-export async function triggerBrowserPushNotification(title: string, options?: NotificationOptions & { linkTab?: string }) {
+export async function triggerBrowserPushNotification(
+  title: string,
+  options?: NotificationOptions & { linkTab?: string; notifId?: string }
+) {
   if (typeof window === 'undefined' || !('Notification' in window)) return;
   
   if (Notification.permission === 'granted') {
-    const notifOptions = {
-      icon: '/icon.svg',
-      badge: '/icon.svg',
-      tag: options?.tag || `studentos-alert-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    const notifId = options?.notifId || (options?.data as any)?.notifId || '';
+    const deterministicTag =
+      options?.tag ||
+      (notifId ? `studentos-notif-${notifId}` : `studentos-notif-${Date.now()}`);
+    const linkTab = options?.linkTab || (options?.data as any)?.linkTab || 'notice_viewer';
+
+    const notifOptions: any = {
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      tag: deterministicTag,
       renotify: true,
+      requireInteraction: false,
+      vibrate: [200, 100, 200],
       body: options?.body || '',
       data: {
-        linkTab: options?.linkTab || options?.data?.linkTab || 'notice_viewer'
+        linkTab,
+        notifId,
+        url: `/?tab=${encodeURIComponent(linkTab)}${notifId ? `&notifId=${encodeURIComponent(notifId)}` : ''}`
       },
       ...options
     };
+    notifOptions.icon = '/icons/icon-192.png';
+    notifOptions.badge = '/icons/icon-192.png';
+    notifOptions.tag = deterministicTag;
 
     try {
       if ('serviceWorker' in navigator) {
         const registration = await navigator.serviceWorker.ready;
         if (registration && registration.showNotification) {
           await registration.showNotification(title, notifOptions);
+          console.log('[FCM / SW SYSTEM NOTIFICATION] Displayed in Chrome/Android notification tray:', {
+            title,
+            tag: deterministicTag,
+            linkTab
+          });
           return;
         }
       }
@@ -353,7 +289,7 @@ export async function triggerBrowserPushNotification(title: string, options?: No
         e.preventDefault();
         window.focus();
         if (notifOptions.data?.linkTab && typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('studentos-navigate-tab', { detail: { tab: notifOptions.data.linkTab } }));
+          window.dispatchEvent(new CustomEvent('studentos-navigate-tab', { detail: { tab: notifOptions.data.linkTab, linkTab: notifOptions.data.linkTab } }));
         }
       };
     } catch (e) {
@@ -367,6 +303,10 @@ export async function triggerBrowserPushNotification(title: string, options?: No
  */
 export async function saveAppNotification(notif: AppNotification): Promise<{ success: boolean; error?: string }> {
   console.log('[SUPABASE-NOTIFS] Saving notification:', notif.title);
+
+  const finalId = isValidUUID(notif.id) ? notif.id : generateUUID();
+  const targetUser = notif.targetUserId || 'all';
+  const deterministicTag = `studentos-notif-${finalId}`;
 
   // Check if the current active browser user is eligible for this notification before triggering local chime/toast
   let localUserEligible = true;
@@ -386,7 +326,9 @@ export async function saveAppNotification(notif: AppNotification): Promise<{ suc
     // Trigger Web Push Notification locally if eligible
     triggerBrowserPushNotification(notif.title, {
       body: notif.message,
-      data: { linkTab: notif.linkTab || 'notice_viewer' }
+      tag: deterministicTag,
+      notifId: finalId,
+      data: { linkTab: notif.linkTab || 'notice_viewer', notifId: finalId }
     });
   }
 
@@ -396,19 +338,33 @@ export async function saveAppNotification(notif: AppNotification): Promise<{ suc
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        notificationId: finalId,
         title: notif.title,
         body: notif.message,
+        type: notif.type || 'announcement',
         linkTab: notif.linkTab || 'notice_viewer',
+        tag: deterministicTag,
         targetUserId: notif.targetUserId || 'all',
         targetRole: notif.targetRole || 'all',
         targetClass: notif.targetClass || 'all',
         targetSection: notif.targetSection || 'all'
       })
-    }).catch(() => {});
+    })
+      .then(async (r) => {
+        const resJson = await r.json().catch(() => ({}));
+        console.log('[FCM SERVER DISPATCH LOG]', {
+          notificationId: finalId,
+          targetUser,
+          sentCount: resJson.sentCount ?? 0,
+          totalCandidates: resJson.totalCandidates ?? 0,
+          fcmSendResult: resJson.sentCount > 0 ? 'DELIVERED_TO_FCM' : 'NO_ACTIVE_DEVICE_TOKENS_MATCHED',
+          deliveryLogs: resJson.deliveryLogs || []
+        });
+      })
+      .catch((pushErr) => {
+        console.warn('[FCM SERVER DISPATCH ERROR]', pushErr);
+      });
   } catch (_) {}
-
-  const finalId = isValidUUID(notif.id) ? notif.id : generateUUID();
-  const targetUser = notif.targetUserId || 'all';
 
   const title = notif.title || 'StudentOS Alert';
   const message = notif.message || '';
