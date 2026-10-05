@@ -192,62 +192,58 @@ export async function generateAICompletion(
   });
 
   // Call official NVIDIA API endpoint with model cascade retry
-  if (nvidiaApiKey) {
-    for (const modelToTry of candidateModels) {
-      const startTime = Date.now();
-      try {
-        console.log(`[${endpointName}] Dispatching request to NVIDIA API endpoint https://integrate.api.nvidia.com/v1/chat/completions (Model: ${modelToTry})...`);
-        
-        const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${nvidiaApiKey}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            model: modelToTry,
-            messages,
-            temperature,
-            max_tokens: maxTokens,
-            ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
-          })
-        });
+  if (!nvidiaApiKey) {
+    console.error(`[NVIDIA AI DEBUG] [${endpointName}] API key present: false - NVIDIA_API_KEY environment variable is not configured.`);
+    throw new Error('NVIDIA_API_KEY is not configured on the server.');
+  }
 
-        const durationMs = Date.now() - startTime;
+  let lastStatus = 0;
+  let lastErrorText = '';
 
-        if (response.ok) {
-          const data = await response.json();
-          const choiceMsg = data.choices?.[0]?.message;
-          const text = (choiceMsg?.content || choiceMsg?.reasoning || '').trim();
-          if (text) {
-            console.log(`[${endpointName}] NVIDIA API succeeded in ${durationMs}ms with model "${modelToTry}" (${text.length} chars).`);
-            return text;
-          }
-        } else {
-          const errText = await response.text();
-          console.error(`[${endpointName}] NVIDIA API error response (${response.status}) on model "${modelToTry}": ${errText}`);
-          // If not the last candidate, try next model in cascade
+  for (const modelToTry of candidateModels) {
+    const startTime = Date.now();
+    try {
+      console.log(`[NVIDIA AI DEBUG] [${endpointName}] API key present: true (length: ${nvidiaApiKey.length}), Endpoint: https://integrate.api.nvidia.com/v1/chat/completions, Model: "${modelToTry}"`);
+      
+      const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${nvidiaApiKey}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          model: modelToTry,
+          messages,
+          temperature,
+          max_tokens: maxTokens,
+          ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
+        })
+      });
+
+      const durationMs = Date.now() - startTime;
+      lastStatus = response.status;
+
+      if (response.ok) {
+        const data = await response.json();
+        const choiceMsg = data.choices?.[0]?.message;
+        const text = (choiceMsg?.content || choiceMsg?.reasoning || '').trim();
+        if (text) {
+          console.log(`[NVIDIA AI DEBUG] [${endpointName}] HTTP status: 200, Model: "${modelToTry}", Duration: ${durationMs}ms, Response received: true, Length: ${text.length}`);
+          return text;
         }
-      } catch (apiErr: any) {
-        console.error(`[${endpointName}] NVIDIA API network error on model "${modelToTry}":`, apiErr?.message || apiErr);
+        console.warn(`[NVIDIA AI DEBUG] [${endpointName}] HTTP status: 200 but message content was empty on model "${modelToTry}".`);
+      } else {
+        const errText = await response.text();
+        lastErrorText = errText;
+        console.error(`[NVIDIA AI DEBUG] [${endpointName}] HTTP status: ${response.status}, Model: "${modelToTry}", Duration: ${durationMs}ms, Response body: ${errText}`);
       }
+    } catch (apiErr: any) {
+      lastErrorText = apiErr?.message || String(apiErr);
+      console.error(`[NVIDIA AI DEBUG] [${endpointName}] Network/fetch error on model "${modelToTry}":`, lastErrorText);
     }
-  } else {
-    console.warn(`[${endpointName}] NVIDIA_API_KEY environment variable is not configured.`);
   }
 
-  // Graceful response / Deterministic offline tutor fallback
-  console.log(`[${endpointName}] Generating standard deterministic educational response.`);
-  if (jsonMode || cleanPrompt.includes('json') || cleanPrompt.includes('raw JSON')) {
-    return JSON.stringify({
-      responseText: "NVIDIA AI is ready to assist your curriculum and studies.",
-      action: "general_chat",
-      targetValue: "",
-      details: {}
-    });
-  }
-
-  return `### 💡 NVIDIA AI Academic Insight (${primaryModel})\n\nRegarding your question on **"${cleanPrompt.slice(0, 50)}..."**:\n\n1. **Core Concept**: Break the topic down into fundamental building blocks.\n2. **Academic Analysis**: Link foundational theory directly to practical examples.\n3. **Next Steps**: Would you like a step-by-step problem breakdown, conceptual diagram, or targeted quiz questions?`;
+  throw new Error(`NVIDIA API request failed (HTTP ${lastStatus || 'NETWORK_ERROR'}): ${lastErrorText || 'Unable to complete request'}`);
 }
 

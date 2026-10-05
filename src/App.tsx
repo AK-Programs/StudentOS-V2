@@ -2429,14 +2429,10 @@ What can I clarify today?` }
             instruction: action === 'custom' ? aiCustomPrompt : undefined
           })
         });
-
-        const contentType = response.headers.get('content-type');
-        if (contentType && contentType.includes('text/html')) {
-          throw new Error('API not available (static deployment)');
-        }
         
         if (!response.ok) {
-           throw new Error('API not available (static deployment)');
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.message || errData.error || `HTTP ${response.status}`);
         }
 
         const resData = await response.json();
@@ -2445,20 +2441,9 @@ What can I clarify today?` }
         }
         resultText = resData.text;
       } catch (err: any) {
-        console.log("Server API failed, falling back to client-side AI:", err);
-        const { clientSideNvidiaAI } = await import('./lib/clientAiFallback');
-        let sysInstruction = '';
-        if (action === 'summarize') sysInstruction = 'Synthesize into a bulleted cheat-sheet.';
-        else if (action === 'expand') sysInstruction = 'Expand and explain with examples.';
-        else if (action === 'improve') sysInstruction = 'Proofread and rewrite cleanly.';
-        else if (action === 'quiz') sysInstruction = 'Design a 3-question quiz with an answer key.';
-        else if (action === 'action_items') sysInstruction = 'Extract an action checklist.';
-        else sysInstruction = `Execute this instruction: ${aiCustomPrompt}`;
-        
-        resultText = await clientSideNvidiaAI(`System: ${sysInstruction}
-
-Content:
-${promptText}`);
+        console.error("Notes AI transform error:", err?.message || err);
+        showNotification('AI is temporarily unavailable. Please try again.');
+        return;
       }
 
       if (resultText) {
@@ -3948,13 +3933,9 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
           })
         });
         
-        const contentType = response.headers.get('content-type');
-        if (contentType && contentType.includes('text/html')) {
-          throw new Error('API not available (static deployment)');
-        }
-        
         if (!response.ok) {
-           throw new Error('API not available (static deployment)');
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.message || errData.error || `HTTP ${response.status}`);
         }
         
         const data = await response.json();
@@ -3963,25 +3944,18 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
         }
         resultText = data.text;
       } catch (err: any) {
-        console.log("Server API failed, falling back to client-side AI:", err);
-        const { clientSideNvidiaAI } = await import('./lib/clientAiFallback');
-        let prompt = '';
-        if (action === 'summarize') prompt = `Summarize this material: ${mat.title}. ${mat.description}`;
-        else if (action === 'quiz') prompt = `Generate a short quiz for: ${mat.title}. ${mat.description}`;
-        else if (action === 'explain') prompt = `Explain this topic simply: ${mat.title}. ${mat.description}`;
-        else prompt = `Answer this question: "${aiUserQuestion}" based on ${mat.title}. ${mat.description}`;
-        
-        resultText = await clientSideNvidiaAI(prompt);
+        console.error("Material AI action error:", err?.message || err);
+        setAiActionResultText("### ⚠️ AI Unavailable\n\nAI is temporarily unavailable. Please try again.");
+        showNotification('AI is temporarily unavailable. Please try again.');
+        return;
       }
       
       setAiActionResultText(resultText);
-      showNotification(`✨ AI ${action.toUpperCase()} processes complete!`);
+      showNotification(`✨ AI ${action.toUpperCase()} processed successfully!`);
     } catch (err: any) {
       console.error('AI execution failed:', err);
-      showNotification('Fallback: Engine error connecting to study core AI.');
-      setAiActionResultText(`### ⚠️ AI Processing Error
-
-Could not fetch response. Please verify network interfaces or local API servers.`);
+      showNotification('AI is temporarily unavailable. Please try again.');
+      setAiActionResultText(`### ⚠️ AI Unavailable\n\nAI is temporarily unavailable. Please try again.`);
     } finally {
       setAiActionLoading(false);
     }
@@ -5062,20 +5036,16 @@ ${roleLabel}: ${userQuery}`;
         });
 
         if (res.status === 429) {
-          const limitData = await res.json();
+          const limitData = await res.json().catch(() => ({}));
           const limitErr: any = new Error(limitData.message || 'Daily AI message limit reached.');
           limitErr.isLimitReached = true;
           limitErr.limitData = limitData;
           throw limitErr;
         }
 
-        const contentType = res.headers.get('content-type');
-        if (contentType && contentType.includes('text/html')) {
-          throw new Error('API not available (static deployment)');
-        }
-        
         if (!res.ok) {
-           throw new Error('API not available (static deployment)');
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.message || errData.error || `HTTP ${res.status}`);
         }
 
         const parsedRes = await res.json();
@@ -5114,15 +5084,8 @@ ${roleLabel}: ${userQuery}`;
           setShowQuotaModal(true);
           throw apiErr;
         }
-        console.log("Server API failed, falling back to client-side AI:", apiErr);
-        const { clientSideNvidiaAI } = await import('./lib/clientAiFallback');
-        const historyPayload = (currentThread?.messages || []).map(m => ({
-          role: m.role,
-          content: m.content
-        }));
-        answer = await clientSideNvidiaAI(promptWithContext, historyPayload);
-        const updated = recordLocalMessage(userIdKey, userRoleKey);
-        setAiUsageState(updated);
+        console.error("AI Buddy server chat error:", apiErr?.message || apiErr);
+        throw apiErr;
       }
       
       setAiThreads(prev => prev.map(t => {
@@ -5153,7 +5116,7 @@ ${roleLabel}: ${userQuery}`;
       const isQuotaErr = err?.isLimitReached || err?.message?.includes('Daily AI message limit') || err?.message?.includes('AI_LIMIT_REACHED');
       const errorContent = isQuotaErr
         ? `⚠️ **Daily AI Buddy Limit Reached**\n\nYou have used your daily query allocation for your tier (${aiUsageState.limit} queries/day). \n\n* **Replenishment**: Queries reset on a rolling 24-hour cycle.\n* **Instant Boost**: Click **"Upgrade Quota"** above to enter an academic study voucher (e.g. \`STUDENTOS-PRO\` or \`EXAM-PREP\`) or request an extra quota grant from your instructors.`
-        : `[Connection Delay] Unable to proxy query to NVIDIA AI server layer: ${err.message}. Ensure your local dev server is powered on.`;
+        : `⚠️ **AI is temporarily unavailable**\n\n${err?.message || 'Please try again in a moment.'}`;
 
       setAiThreads(prev => prev.map(t => {
         if (t.id === targetThreadId) {

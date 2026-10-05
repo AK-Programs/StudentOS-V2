@@ -1102,9 +1102,43 @@ app.post('/api/config/apk', (req, res) => {
   });
 });
 
+// Server-side diagnostic test route for NVIDIA API connection
+app.get('/api/ai/diagnostic', async (req, res) => {
+  const rawKey =
+    process.env.NVIDIA_API_KEY ||
+    process.env.VITE_NVIDIA_API_KEY ||
+    process.env.NIM_API_KEY ||
+    process.env.NGC_API_KEY ||
+    process.env.AI_API_KEY ||
+    '';
+  const keyPresent = Boolean(rawKey.trim());
+  
+  try {
+    const text = await generateAICompletion({
+      prompt: 'Say hello in 5 words.',
+      endpointName: 'DiagnosticTest',
+      maxTokens: 30
+    });
+    return res.json({
+      success: true,
+      keyPresent,
+      keyLength: rawKey.trim().length,
+      modelTested: 'meta/llama-3.3-70b-instruct',
+      response: text
+    });
+  } catch (err: any) {
+    return res.status(502).json({
+      success: false,
+      keyPresent,
+      keyLength: rawKey.trim().length,
+      error: err.message || 'Diagnostic request failed'
+    });
+  }
+});
+
 // Secure API endpoint for AI Teacher and Buddy conversations
 app.post('/api/ai/chat', async (req, res) => {
-  const { prompt, history, persona, level, subject, mode, ragContext, userId, userRole } = req.body;
+  const { prompt, history, persona, level, subject, mode, ragContext, userId, userRole, modelOverride } = req.body;
 
   if (!prompt) {
     return res.status(400).json({ error: 'Prompt is required' });
@@ -1127,7 +1161,7 @@ app.post('/api/ai/chat', async (req, res) => {
   }
 
   // Construct context based on chatbot Persona
-  let systemInstruction = 'You are a supportive, encouraging study assistant.';
+  let systemInstruction = 'You are a supportive, encouraging study assistant powered by NVIDIA AI.';
   
   if (persona === 'elara') {
     systemInstruction = `You are Professor Elara, a kind, highly analytical Mathematics and Science teacher. 
@@ -1149,7 +1183,7 @@ app.post('/api/ai/chat', async (req, res) => {
     You have deep knowledge, maintain long conversation memory, and provide concise, highly accurate academic answers.
     You communicate in a natural, conversational, and speech-friendly tone. Do not use overly complex formatting when chatting directly.
     You possess full multi-language capabilities and can fluently respond in English, Hindi, Spanish, or any requested language.
-    You use Google Search to answer real-time questions (like 'Latest ISRO launch'). You prioritize the StudentOS context if provided.`;
+    You prioritize the StudentOS context if provided.`;
   }
 
   // Inject learning style mode
@@ -1160,7 +1194,7 @@ app.post('/api/ai/chat', async (req, res) => {
   } else if (mode === 'coder') {
     systemInstruction += '\n\nMETHOD: Programming Coach. Format solutions with clean, well-commented code blocks, write concise variable maps, outline space/time complexities, and detail systematic debug recommendations.';
   } else if (mode === 'quiz_gen') {
-    systemInstruction += '\n\nMETHOD: Knowledge Examiner / Quiz Mode. Propose one relevant, clear, challenging subject question or scenario and ask the student to solve it. Provide constructive evaluation, grade their answer, and award simulated performance feedback upon their feedback.';
+    systemInstruction += '\n\nMETHOD: Knowledge Examiner / Quiz Mode. Propose one relevant, clear, challenging subject question or scenario and ask the student to solve it.';
   }
 
   if (ragContext) {
@@ -1176,6 +1210,7 @@ app.post('/api/ai/chat', async (req, res) => {
       history: sanitizeHistory(history || []),
       temperature: 0.7,
       jsonMode: isJsonRequested,
+      modelOverride,
       endpointName: 'AIChat'
     });
     console.log(`[SERVER AI /api/ai/chat] Completion generated successfully. Output length: ${text?.length || 0}`);
@@ -1192,6 +1227,7 @@ app.post('/api/ai/chat', async (req, res) => {
     const updatedUsage = getRolling24hUsage(activeUserId, activeRole);
 
     return res.json({ 
+      success: true,
       text,
       usage: {
         used: updatedUsage.used,
@@ -1202,67 +1238,10 @@ app.post('/api/ai/chat', async (req, res) => {
     });
   } catch (apiErr: any) {
     console.error(`[SERVER AI /api/ai/chat ERROR] Provider completion failed: ${apiErr.message || apiErr}`);
-    const isJsonRequested = prompt.includes('raw JSON format') || prompt.includes('MUST be raw JSON format') || prompt.includes('operational actions');
-    if (isJsonRequested) {
-      return res.json({
-        text: JSON.stringify({
-          responseText: "I am ready to assist you. What would you like to automate across StudentOS?",
-          action: "general_chat",
-          targetValue: "",
-          details: {}
-        })
-      });
-    }
-    const nvidiaApiKey = process.env.NVIDIA_API_KEY || process.env.VITE_NVIDIA_API_KEY;
-    console.log(`[SERVER AI DIAGNOSTICS] NVIDIA API Key present: ${Boolean(nvidiaApiKey)}`);
-    
-    if (!nvidiaApiKey) {
-      const sanitized = sanitizeHistory(history);
-      if (sanitized.length > 0) {
-        const allUserTexts = [
-          ...sanitized.filter(m => m.role === 'user').map(m => m.content),
-          prompt
-        ];
-        const fullText = allUserTexts.join('\n');
-
-        const nameMatch = fullText.match(/(?:my name is|i am|call me|name's)\s+([A-Za-z]+)/i);
-        const detectedName = nameMatch ? nameMatch[1] : null;
-
-        const subMatch = fullText.match(/(?:favourite|favorite|like|enjoy|studying|subject)\s+(?:subject\s+is\s+|is\s+|subject\s+)?([A-Za-z]+)/i);
-        const detectedSubject = subMatch ? subMatch[1] : null;
-
-        const p = prompt.toLowerCase();
-        if (p.includes('my name') || p.includes('who am i') || p.includes('what is my name')) {
-          if (detectedName) return res.json({ text: `Your name is **${detectedName}**!` });
-          return res.json({ text: `You haven't told me your name yet! What should I call you?` });
-        }
-
-        if (p.includes('subject') && (p.includes('like') || p.includes('favourite') || p.includes('favorite') || p.includes('which'))) {
-          if (detectedSubject) return res.json({ text: `Your favorite subject is **${detectedSubject}**!` });
-          return res.json({ text: `You haven't mentioned your favorite subject yet! Is it Physics, Math, Chemistry, or Computer Science?` });
-        }
-
-        return res.json({
-          text: `That makes sense! Let's build on that concept. Regarding **"${prompt.length > 40 ? prompt.substring(0, 40) + '...' : prompt}"**, what specific part would you like to explore next?`
-        });
-      }
-
-      // Initial greeting for brand-new blank thread only
-      const fallbacks: { [key: string]: string } = {
-        elara: `Greetings! I am Professor Elara. I'm excited to help you explore ${subject || 'Science & Math'}. What topic shall we dive into?`,
-        ruby: `Welcome! I am Dr. Ruby. Let's analyze ${subject || 'Literature & History'} with academic rigor. What question do you have today?`,
-        solara: `Hey there! Coach Solara here. Ready to tackle ${subject || 'Computer Science'} code and concepts? Ask away!`,
-        study_buddy: `Hey buddy! 🚀 I'm your StudentOS AI Buddy. What are we studying today?`
-      };
-
-      return res.json({ 
-        text: fallbacks[persona] || `I'm here to support you! Let's work on ${subject || 'this topic'} together. Ask me anything!`
-      });
-    }
-
-    console.error('AI chat completions error. Stack trace:', apiErr.stack || apiErr);
-    return res.json({ 
-      text: `Let's focus on studying ${subject || 'your course materials'} step-by-step. Regarding **"${prompt.length > 40 ? prompt.substring(0, 40) + '...' : prompt}"**, what specific part would you like to explore next?`
+    return res.status(502).json({
+      success: false,
+      error: 'AI is temporarily unavailable. Please try again.',
+      details: apiErr.message || String(apiErr)
     });
   }
 });
@@ -1449,31 +1428,13 @@ app.post('/api/ai/notes', async (req, res) => {
 
   try {
     const text = await generateAICompletion(systemInstruction, userPrompt);
-    return res.json({ text });
+    return res.json({ success: true, text });
   } catch (apiErr: any) {
-    const nvidiaApiKey = process.env.NVIDIA_API_KEY || process.env.VITE_NVIDIA_API_KEY;
-    
-    if (!nvidiaApiKey) {
-      // Elegant simulated fallback response
-      const fallbacks: { [key: string]: string } = {
-        summarize: `### 🤖 Summary Concept Map (Offline Simulation)\n- **Essential Focus**: The provided text block covers core learning modules and academic criteria.\n- **Optimized Synthesis**: Keep study schedules balanced with focused review blocks.`,
-        expand: `### 🤖 Detailed Conception Breakdown\n*Let me expand this off-line. Imagine these terms are the key pillars of a cathedral...*\n\n1. **First Principle**: Always identify the foundation concepts first.\n2. **Secondary Support**: Establish secure feedback loops so that any discrepancies are corrected quickly.`,
-        improve: `*Polished study note draft:* Maintain consistent notes review circles to secure top marks and build collaborative team projects.`,
-        quiz: `### 🧠 3-Question Active Comprehension Quiz\n1. Explain the primary bottleneck mentioned in the provided text.\n2. How would you solve for the boundary constraints in standard exam settings?\n3. List two study habits that improve active recall stability.`,
-        action_items: `- [ ] 🎯 Review previous class session summaries\n- [ ] 🧪 Complete relevant laboratory exercises\n- [ ] 📚 Organize upcoming team study chapters`,
-        generate_notes: `### 📚 Lecture Notes: ${content.substring(0, 30)}...\n\n**1. Key Concepts**\n- Core Definition: Essential principles underlying the topic.\n- Mechanics: How these principles interact dynamically.\n\n**2. Important Formulas & Frameworks**\n- E = mc² (Standard model example)\n- $f(x) = y$ (Function mapping)\n\n**3. Summary & Revision**\n- Keep a checklist of these concepts.\n- Review daily for maximum retention.`
-      };
-
-      return res.json({
-        text: fallbacks[action] || `*Processed Custom Action*:\n\nExecuted user prompt: "${instruction}" on content successfully! (Configure an API Key in your Secrets panel to enable production-grade AI synthesis).`
-      });
-    }
-
-    console.error('AI notes transform error:', apiErr);
-    return res.status(500).json({
-      error: 'Engine transformation error',
-      details: apiErr.message,
-      text: `*Offline Fallback Note Transformation*\n\n**Processed Action**: ${action.toUpperCase()}\n\nHere is a clean summary of your key text segment regarding this topic: We identified critical learning objectives, formula constraints, and student evaluations.`
+    console.error('[AI Server] Notes transform error:', apiErr?.message || apiErr);
+    return res.status(502).json({
+      success: false,
+      error: 'AI is temporarily unavailable. Please try again.',
+      details: apiErr.message || String(apiErr)
     });
   }
 });
@@ -1530,44 +1491,15 @@ Output ONLY the raw JSON object conforming to the schema.`;
 
     const parsed = JSON.parse(cleaned);
     if (parsed && Array.isArray(parsed.cards) && parsed.cards.length > 0) {
-      return res.json(parsed);
+      return res.json({ success: true, ...parsed });
     }
     throw new Error('Parsed output missing cards array');
   } catch (err: any) {
-    console.warn('[AI Flashcards] API completion warning, using fallback generation:', err?.message || err);
-
-    // High quality offline fallback generator
-    const fallbackCards = [
-      {
-        front: `What is the core definition and significance of ${topic || 'this concept'}?`,
-        back: `It represents a fundamental principle in ${subject}, providing the foundational framework for analyzing related theoretical systems and practical problems.`,
-        hint: 'Focus on primary function and historical/scientific context.',
-        tags: [subject, 'Fundamentals']
-      },
-      {
-        front: `What are the primary operational mechanisms or components involved in ${topic || 'this process'}?`,
-        back: `1. Initial triggering condition or input phase\n2. Intermediate transformation or active regulatory mechanism\n3. Resulting equilibrium, product, or observable output`,
-        hint: 'Break it into input -> mechanism -> output.',
-        tags: [subject, 'Mechanisms']
-      },
-      {
-        front: `What is a common misconception regarding ${topic || 'this topic'} and how is it resolved?`,
-        back: `Students often confuse the primary cause with a secondary symptom. The distinction lies in verifying empirical conditions and isolating control variables.`,
-        hint: 'Examine cause versus correlation.',
-        tags: [subject, 'Active Recall']
-      },
-      {
-        front: `How does ${topic || 'this principle'} apply in real-world academic or industrial scenarios?`,
-        back: `It provides predictive modeling accuracy and enables engineers and researchers to optimize system throughput while minimizing error variance.`,
-        hint: 'Consider practical engineering or research applications.',
-        tags: [subject, 'Application']
-      }
-    ];
-
-    return res.json({
-      deckTitle: topic ? `${topic} High-Yield Flashcards` : `${subject} Study Deck`,
-      subject: subject || 'General Study',
-      cards: fallbackCards
+    console.error('[AI Flashcards] API completion error:', err?.message || err);
+    return res.status(502).json({
+      success: false,
+      error: 'AI is temporarily unavailable. Please try again.',
+      details: err?.message || String(err)
     });
   }
 });
@@ -1605,78 +1537,13 @@ app.post('/api/ai/material-action', async (req, res) => {
 
   try {
     const text = await generateAICompletion(systemInstruction, userPrompt);
-    return res.json({ text });
+    return res.json({ success: true, text });
   } catch (apiErr: any) {
-    const nvidiaApiKey = process.env.NVIDIA_API_KEY || process.env.VITE_NVIDIA_API_KEY;
-    
-    if (!nvidiaApiKey) {
-      // Elegant fallbacks
-      const simulatedFallbacks: { [key: string]: string } = {
-        summarize: `### 📚 Study Summary: ${title}
-This is an elegant simulated study guide of the material **"${title}"** (to activate premium real-time AI responses, please configure an API key in key Settings).
-
-#### 🎯 Key Learning Objectives
-1. Understand the core principles governing **${title}**.
-2. Outline key components and relationships within the syllabus.
-3. Apply standard concepts to solve active analytical problems.
-
-#### 📝 Executive Core Takeaways
-- **First Principle**: Systematic study tracking boosts memory retention rates.
-- **Critical Model**: A balanced visual analogy simplifies textbook terminology.
-- **Practical Application**: Use active recall quizzes to evaluate subject mastery regularly.`,
-        quiz: `### 🧠 Active Recall Quiz: ${title}
-This is a simulated multiple choice evaluation (configure an API key to generate dynamic infinite quizzes based on customized files).
-
-#### Q1: What is the main objective of studying "${title}"?
-- A) Memorizing definitions blindly without understanding.
-- B) Formulating a structured understanding of its underlying rules and applications.
-- C) Postponing homework assignments until the exam eve.
-- D) Only studying when teachers provide external rewards.
-*Correct Answer: **B**. Section masteries depend on structured understanding of fundamental rules.*
-
-#### Q2: What is a critical study method recommended for this topic?
-- A) Sleeping with the textbook under your pillow.
-- B) Group study chat with completely non-scholastic discussions.
-- C) Active recall testing, spaced repetition, and summarizing ideas.
-- D) Ignoring teacher-verified guidelines.
-*Correct Answer: **C**. Active recall and spaced retrieval are scientifically proven to enhance synaptic storage pathways.*`,
-        explain: `### 📖 Conceptual Explainer: ${title}
-Let's break down the concepts in **"${title}"** using an intuitive analogy (to enable custom explanations, please activate an API key).
-
-#### 🌁 The Analogy
-Think of **${title}** like an architect planning a high-rise building. You cannot start by hanging windows on the 40th floor (complex homework). You must first reinforce the foundational concrete piles deep into the soil (core basics), build the columns (categories), and frame the floors (subject divisions). 
-
-#### 🪜 Step-by-Step Breakdown
-1. **The Core Input**: Start with primitive definitions and simple formula patterns.
-2. **Intermediate Coupling**: Connect individual rules to see how they govern composite states.
-3. **Synthesis & Mastery**: Apply the rules to solve complex questions autonomously.`,
-        revision: `### 📚 Revision Sheet: ${title}
-A compact checklist of the most important concepts to review before tests:
-
-- **Key Concept 1**: Always establish clean baseline values before taking measurements.
-- **Key Formula**: $f(x) = \lim_{h \to 0} \frac{f(x+h) - f(x)}{h}$ (conceptual study maps).
-- **Active Recall Check**: Can you explain the main difference between theoretical models and real-life experimental variables?
-- **Pro-Tip**: Look for **✅ Teacher Verified** icons in your Material Hub feed for high-yield exam material!`,
-        questions: `### 🎯 Important Exam Questions: ${title}
-Anticipated examination questions with structured model answers:
-
-#### Question 1 (Theoretical - 5 Marks)
-Analyze the primary structural benefits of integrating a centralized Material Hub inside a school ecosystem.
-*Model Answer Highlights*: A unified hub creates a structured, peer-collaborative digital archive that bridges student community contributions with official teacher verifications, updating point distributions atomically to encourage high-quality work.
-
-#### Question 2 (Analytical - 10 Marks)
-How do visibility target constraints (restricted grades, sections, or houses) preserve secure and safe information flow?
-*Model Answer Highlights*: Restricting files to targeted classes prevents cognitive overload for younger grades, shields private study notes resources, and directs specific house study materials safely.`
-      };
-
-      return res.json({
-        text: simulatedFallbacks[action] || `### 🤖 AI Response Simulated\n\nAnswer to your custom question about **"${title}"**: ${userQuestion || 'Please configure your official API Key inside Settings to access real-time interactive chats.'}`
-      });
-    }
-
-    console.error('AI material action error. Stack trace:', apiErr.stack || apiErr);
-    return res.json({
-      text: `### 📚 Material Overview: ${title}\n\nHere is a structured educational output for your material: **${title}**.\n\nKey Concepts:\n1. Core concepts and definitions\n2. Analytical applications\n3. High-yield revision points`
+    console.error('[AI Server] Material action error:', apiErr?.message || apiErr);
+    return res.status(502).json({
+      success: false,
+      error: 'AI is temporarily unavailable. Please try again.',
+      details: apiErr?.message || String(apiErr)
     });
   }
 });
@@ -1707,10 +1574,13 @@ Write in crisp, exam-standard Markdown format.`;
 
   try {
     const text = await generateAICompletion(systemInstruction, userPrompt);
-    return res.json({ text });
+    return res.json({ success: true, text });
   } catch (err: any) {
-    return res.json({
-      text: `### 📝 Generated Question Paper: ${subject} (${grade} - ${difficulty})\n\n#### Section A: Multiple Choice Questions (MCQs)\n1. Which of the following is a primary principle of ${subject}?\n- A) Law of Conservation\n- B) Random Approximation\n- C) Constant Decay\n- D) Static Equivalence\n*Answer: **A** - Conservation principles govern physical and mathematical interactions.*\n\n#### Section B: HOTS & Case Study\n**Q2.** A student performs an experiment observing reaction rates under varying temperatures. Analyze why the rate doubles every 10°C rise.\n*Solution: Increased kinetic energy raises collision frequency exceeding activation energy threshold.*\n\n#### Section C: 1 & 2 Mark Questions\n- Define the fundamental theorem related to ${subject}.\n- State two differences between theoretical models and empirical observations.\n\n#### Section D: 5-Mark Question\nDerive the complete mathematical model for ${subject} and draw a neat labeled diagram illustrating the setup.\n\n#### Section E: Assertion-Reason\n**Assertion (A):** Heat flows spontaneously from hotter to colder bodies.\n**Reason (R):** Entropy of an isolated system always increases.\n*Answer: Both A and R are true, and R is the correct explanation of A.*`
+    console.error('[AI Server] Question generator error:', err?.message || err);
+    return res.status(502).json({
+      success: false,
+      error: 'AI is temporarily unavailable. Please try again.',
+      details: err?.message || String(err)
     });
   }
 });
@@ -1735,10 +1605,13 @@ Format the evaluation cleanly in Markdown with actionable feedback for the stude
 
   try {
     const text = await generateAICompletion(systemInstruction, userPrompt);
-    return res.json({ text });
+    return res.json({ success: true, text });
   } catch (err: any) {
-    return res.json({
-      text: `### 📝 Orion AI Homework Review: ${title}\n\n#### 📊 Evaluation Summary\n- **Predicted Score**: **88 / 100** (Grade A-)\n- **Plagiarism Risk**: **2% (Original Content Verified)**\n- **Grammar & Technical Accuracy**: **90%**\n\n#### 🔍 Detailed Findings\n1. **Grammar & Spelling**: Clear writing style with proper academic terminology.\n2. **Logical Reasoning**: Well-structured arguments supporting the core hypothesis.\n3. **Missing Steps**: Step 3 could benefit from explicit variable definitions before derivation.\n4. **Formatting**: Good use of paragraphs and numbered points.\n\n#### 💡 Suggestions for Student Improvement\n- Include a summary conclusion linking back to the initial research question.\n- Cite additional textbook references for the secondary equations.`
+    console.error('[AI Server] Homework checker error:', err?.message || err);
+    return res.status(502).json({
+      success: false,
+      error: 'AI is temporarily unavailable. Please try again.',
+      details: err?.message || String(err)
     });
   }
 });
@@ -1769,10 +1642,13 @@ app.post('/api/ai/pdf-assistant', async (req, res) => {
 
   try {
     const text = await generateAICompletion(systemInstruction, userPrompt);
-    return res.json({ text });
+    return res.json({ success: true, text });
   } catch (err: any) {
-    return res.json({
-      text: `### 📄 AI PDF Assistant Analysis: ${pdfTitle}\n\n**Action Executed**: ${action.toUpperCase()}\n\n- **Summary**: The document covers foundational concepts, structural mechanics, and key analytical frameworks.\n- **Key Definitions**: High-yield terms are highlighted for active recall.\n- **Exam Focus**: Review primary formulas and step-by-step derivations before tests.`
+    console.error('[AI Server] PDF assistant error:', err?.message || err);
+    return res.status(502).json({
+      success: false,
+      error: 'AI is temporarily unavailable. Please try again.',
+      details: err?.message || String(err)
     });
   }
 });
@@ -1796,11 +1672,13 @@ Format beautifully in Markdown.`;
 
   try {
     const text = await generateAICompletion(systemInstruction, userPrompt);
-    return res.json({ text });
+    return res.json({ success: true, text });
   } catch (err: any) {
-    console.error('[AI Server] Presentation error. Stack trace:', err.stack || err);
-    return res.json({
-      text: `### 📊 AI Presentation Companion: ${title}\n\n#### 🎤 Speaker Notes & Slide Guide\n- **Slide 1 (Introduction)**: Welcome the class, state the main inquiry question, and set expectations.\n- **Slide 2 (Core Concepts)**: Explain the fundamental mechanisms using visual diagrams.\n- **Slide 3 (Case Study)**: Walk through a real-world application.\n- **Slide 4 (Key Takeaways)**: Summarize the 3 key rules.\n\n#### 🧠 Audience Engagement Quiz\n1. What is the primary takeaway of this presentation?\n2. Name one real-world application discussed.\n3. How does this concept connect to our syllabus?`
+    console.error('[AI Server] Presentation error:', err?.message || err);
+    return res.status(502).json({
+      success: false,
+      error: 'AI is temporarily unavailable. Please try again.',
+      details: err?.message || String(err)
     });
   }
 });

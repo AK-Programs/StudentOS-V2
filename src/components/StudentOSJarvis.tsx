@@ -800,17 +800,19 @@ Your response MUST be raw JSON format with NO markdown wrapping:
           })
         });
 
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.message || errData.error || `HTTP ${response.status}`);
+        }
         const data = await response.json();
         if (data.error) throw new Error(data.error);
-        aiText = data.text;
+        aiText = data.text || '';
         import('../lib/gamification').then(({ awardStudentXP }) => {
           awardStudentXP(currentUser, 'use_ai_study');
         }).catch(() => {});
       } catch (apiErr: any) {
-        console.warn("Server API failed for Orion completion:", apiErr.message || apiErr);
-        const { clientSideNvidiaAI } = await import('../lib/clientAiFallback');
-        aiText = await clientSideNvidiaAI(systemPrompt, [], undefined, 'nvidia/nemotron-3-ultra-550b-a55b');
+        console.warn("Orion AI completion error:", apiErr?.message || apiErr);
+        aiText = "⚠️ AI is temporarily unavailable. Please try again.";
       }
       
       const cleanJsonString = (raw: string): string => {
