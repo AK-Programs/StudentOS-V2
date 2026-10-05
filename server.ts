@@ -1102,6 +1102,58 @@ app.post('/api/config/apk', (req, res) => {
   });
 });
 
+// Mandatory Minimal NVIDIA Server Diagnostic Route
+app.all('/api/ai/minimal-test', async (req, res) => {
+  const rawKey =
+    process.env.NVIDIA_API_KEY ||
+    process.env.VITE_NVIDIA_API_KEY ||
+    process.env.NIM_API_KEY ||
+    process.env.NGC_API_KEY ||
+    process.env.AI_API_KEY ||
+    '';
+  const keyPresent = Boolean(rawKey.trim());
+  const requestId = 'test_' + Math.random().toString(36).substring(2, 10);
+
+  console.log(`[NVIDIA AI DEBUG] Request ID: ${requestId}`);
+  console.log(`[NVIDIA AI DEBUG] Route: /api/ai/minimal-test`);
+  console.log(`[NVIDIA AI DEBUG] NVIDIA_API_KEY present: ${keyPresent}`);
+
+  if (!keyPresent) {
+    return res.status(500).json({
+      success: false,
+      requestId,
+      error: 'NVIDIA_API_KEY is not configured on the server.',
+      keyPresent: false
+    });
+  }
+
+  try {
+    const text = await generateAICompletion({
+      prompt: 'Reply with exactly: NVIDIA TEST OK',
+      endpointName: 'MinimalNvidiaTest',
+      modelOverride: 'nvidia/nemotron-3-super-120b-a12b',
+      maxTokens: 30,
+      requestId
+    });
+    return res.json({
+      success: true,
+      requestId,
+      status: 200,
+      keyPresent: true,
+      model: 'nvidia/nemotron-3-super-120b-a12b',
+      response: text
+    });
+  } catch (err: any) {
+    console.error(`[AI P0 ERROR] Request ID: ${requestId}`, err);
+    return res.status(500).json({
+      success: false,
+      requestId,
+      keyPresent: true,
+      error: err.message || 'Minimal test failed'
+    });
+  }
+});
+
 // Server-side diagnostic test route for NVIDIA API connection
 app.get('/api/ai/diagnostic', async (req, res) => {
   const rawKey =
@@ -1112,23 +1164,27 @@ app.get('/api/ai/diagnostic', async (req, res) => {
     process.env.AI_API_KEY ||
     '';
   const keyPresent = Boolean(rawKey.trim());
+  const requestId = 'diag_' + Math.random().toString(36).substring(2, 10);
   
   try {
     const text = await generateAICompletion({
       prompt: 'Say hello in 5 words.',
       endpointName: 'DiagnosticTest',
-      maxTokens: 30
+      maxTokens: 30,
+      requestId
     });
     return res.json({
       success: true,
+      requestId,
       keyPresent,
       keyLength: rawKey.trim().length,
       modelTested: 'meta/llama-3.3-70b-instruct',
       response: text
     });
   } catch (err: any) {
-    return res.status(502).json({
+    return res.status(500).json({
       success: false,
+      requestId,
       keyPresent,
       keyLength: rawKey.trim().length,
       error: err.message || 'Diagnostic request failed'
@@ -1138,7 +1194,22 @@ app.get('/api/ai/diagnostic', async (req, res) => {
 
 // Secure API endpoint for AI Teacher and Buddy conversations
 app.post('/api/ai/chat', async (req, res) => {
-  const { prompt, history, persona, level, subject, mode, ragContext, userId, userRole, modelOverride } = req.body;
+  const requestId = 'req_' + Math.random().toString(36).substring(2, 10);
+  const { prompt, history, persona, level, subject, mode, ragContext, userId, userRole, modelOverride } = req.body || {};
+
+  const rawKey =
+    process.env.NVIDIA_API_KEY ||
+    process.env.VITE_NVIDIA_API_KEY ||
+    process.env.NIM_API_KEY ||
+    process.env.NGC_API_KEY ||
+    process.env.AI_API_KEY ||
+    '';
+  const nvidiaApiKeyPresent = Boolean(rawKey.trim());
+
+  console.log(`[NVIDIA AI DEBUG] Request ID: ${requestId}`);
+  console.log(`[NVIDIA AI DEBUG] Route: /api/ai/chat`);
+  console.log(`[NVIDIA AI DEBUG] Authenticated user: ${Boolean(userId && userId !== 'user_guest' && userId !== 'guest')}`);
+  console.log(`[NVIDIA AI DEBUG] NVIDIA_API_KEY present: ${nvidiaApiKeyPresent}`);
 
   if (!prompt) {
     return res.status(400).json({ error: 'Prompt is required' });
@@ -1202,7 +1273,6 @@ app.post('/api/ai/chat', async (req, res) => {
   }
 
   try {
-    console.log(`[SERVER AI /api/ai/chat] Request received for persona "${persona || 'default'}". Prompt length: ${prompt.length}`);
     const isJsonRequested = prompt.includes('raw JSON format') || prompt.includes('MUST be raw JSON format') || prompt.includes('operational actions');
     const text = await generateAICompletion({
       systemInstruction,
@@ -1211,9 +1281,9 @@ app.post('/api/ai/chat', async (req, res) => {
       temperature: 0.7,
       jsonMode: isJsonRequested,
       modelOverride,
-      endpointName: 'AIChat'
+      endpointName: 'AIChat',
+      requestId
     });
-    console.log(`[SERVER AI /api/ai/chat] Completion generated successfully. Output length: ${text?.length || 0}`);
     
     // Record rolling 24h usage log
     memoryAIUsage.push({
@@ -1229,6 +1299,7 @@ app.post('/api/ai/chat', async (req, res) => {
     return res.json({ 
       success: true,
       text,
+      requestId,
       usage: {
         used: updatedUsage.used,
         limit: updatedUsage.limit,
@@ -1237,10 +1308,11 @@ app.post('/api/ai/chat', async (req, res) => {
       }
     });
   } catch (apiErr: any) {
-    console.error(`[SERVER AI /api/ai/chat ERROR] Provider completion failed: ${apiErr.message || apiErr}`);
-    return res.status(502).json({
+    console.error(`[AI P0 ERROR] Request ID: ${requestId}`, apiErr?.message || apiErr);
+    return res.status(500).json({
       success: false,
-      error: 'AI is temporarily unavailable. Please try again.',
+      error: 'AI is temporarily unavailable.',
+      requestId,
       details: apiErr.message || String(apiErr)
     });
   }
