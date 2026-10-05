@@ -78,18 +78,37 @@ export const BroadcastModal: React.FC<BroadcastModalProps> = ({
         createdAt: new Date().toISOString(),
       };
 
-      const channel = supabase.channel('student-os-public');
-      await channel.send({
-        type: 'broadcast',
-        event: 'principal_live_broadcast',
-        payload: broadcastPayload,
-      });
+      try {
+        const channel = supabase.channel('student-os-public');
+        await channel.send({
+          type: 'broadcast',
+          event: 'principal_live_broadcast',
+          payload: broadcastPayload,
+        });
 
-      await channel.send({
-        type: 'broadcast',
-        event: 'new_app_notification',
-        payload: newNotif,
-      });
+        await channel.send({
+          type: 'broadcast',
+          event: 'new_app_notification',
+          payload: newNotif,
+        });
+      } catch (_) {}
+
+      try {
+        await supabase.channel('student-os-public-banner').send({
+          type: 'broadcast',
+          event: 'principal_live_broadcast',
+          payload: broadcastPayload,
+        });
+        await supabase.channel('student-os-public-notifcenter').send({
+          type: 'broadcast',
+          event: 'new_app_notification',
+          payload: newNotif,
+        });
+      } catch (_) {}
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('studentos-live-broadcast', { detail: broadcastPayload }));
+      }
 
       if (showNotification) {
         showNotification('📢 Realtime broadcast published successfully to all devices!');

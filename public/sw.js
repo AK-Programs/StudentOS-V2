@@ -2,7 +2,7 @@
 // StudentOS Service Worker — FCM Web Push & PWA Engine
 // ========================================================
 
-const SW_VERSION = 'studentos-v3.14.0';
+const SW_VERSION = 'studentos-v3.15.0';
 const CACHE_NAME = `studentos-cache-${SW_VERSION}`;
 
 // Service Worker Installation — Activate immediately
@@ -178,10 +178,10 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-// Pass-through fetch handler for PWA compliance
+// Safe navigation-only fetch handler for PWA compliance (never intercept API, Supabase, or JS module requests with plain text)
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') return;
+  if (event.request.method !== 'GET' || event.request.mode !== 'navigate') return;
   event.respondWith(
-    fetch(event.request).catch(() => caches.match(event.request).then((r) => r || new Response('Offline')))
+    fetch(event.request).catch(() => caches.match('/index.html').then((r) => r || fetch(event.request)))
   );
 });

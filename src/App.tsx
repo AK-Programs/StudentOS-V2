@@ -984,29 +984,39 @@ export default function App() {
   // Realtime Subscription for Workspace Lock (cross-device sync)
   useEffect(() => {
     if (!currentUser?.uid) return;
-    const channel = supabase.channel('public:user_profiles')
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'user_profiles', filter: `id=eq.${currentUser.uid}` },
-        (payload) => {
-          if (payload.new && payload.new.raw_data) {
-            let rd = payload.new.raw_data;
-            if (typeof rd === 'string') {
-              try { rd = JSON.parse(rd); } catch(e){}
-            }
-            if (rd.isLocked === true) {
-               setIsLocked(true);
-               setCurrentUser(prev => prev ? { ...prev, raw_data: rd } : prev);
-            } else if (rd.isLocked === false) {
-               setIsLocked(false);
-               setCurrentUser(prev => prev ? { ...prev, raw_data: rd } : prev);
+    let channel: any = null;
+    try {
+      supabase.getChannels().forEach(ch => {
+        if (ch.topic === 'realtime:public:user_profiles') {
+          supabase.removeChannel(ch);
+        }
+      });
+      channel = supabase.channel('public:user_profiles')
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'user_profiles', filter: `id=eq.${currentUser.uid}` },
+          (payload) => {
+            if (payload.new && payload.new.raw_data) {
+              let rd = payload.new.raw_data;
+              if (typeof rd === 'string') {
+                try { rd = JSON.parse(rd); } catch(e){}
+              }
+              if (rd.isLocked === true) {
+                 setIsLocked(true);
+                 setCurrentUser(prev => prev ? { ...prev, raw_data: rd } : prev);
+              } else if (rd.isLocked === false) {
+                 setIsLocked(false);
+                 setCurrentUser(prev => prev ? { ...prev, raw_data: rd } : prev);
+              }
             }
           }
-        }
-      )
-      .subscribe();
+        )
+        .subscribe();
+    } catch (err) {
+      console.warn('[Realtime] Workspace lock channel warning:', err);
+    }
     return () => {
-      supabase.removeChannel(channel);
+      if (channel) supabase.removeChannel(channel);
     };
   }, [currentUser?.uid]);
 
@@ -1724,33 +1734,39 @@ export default function App() {
   }, []);
 
   const STARTUP_MESSAGES = [
-    "Calibrating student credentials...",
-    "Loading AI Buddy modules...",
-    "Syncing with school database...",
-    "Booting StudentOS environment..."
+    "Verifying institutional identity & security clearance...",
+    "Initializing Orion Neural AI & multi-persona tutors...",
+    "Synchronizing Supabase realtime channels & push matrix...",
+    "Mounting Scholar Workspace, SM-2 Flashcards & XP Arena..."
   ];
 
-  // Simulates progress and rotating messages for Startup Screen
+  // Smooth, non-blocking progress & telemetry state machine for Startup Screen
   useEffect(() => {
     let alreadyShown = false;
     try {
       alreadyShown = sessionStorage.getItem('s_os_startup_shown') === 'true';
     } catch (_) {}
 
-    if (alreadyShown) {
+    if (alreadyShown && !firebaseLoading && !dataLoading) {
       setShowStartup(false);
       return;
     }
 
-    if (firebaseLoading || dataLoading) {
-      setLoadingProgress(0);
-      setLoadingStep(0);
-      setShowStartup(true);
-      return;
-    }
+    setShowStartup(true);
 
     const interval = setInterval(() => {
       setLoadingProgress(prev => {
+        const isStillLoadingBackend = firebaseLoading || dataLoading;
+
+        // While backend auth/data is still resolving, advance smoothly up to 78% so it never freezes at 0%
+        if (isStillLoadingBackend) {
+          const increment = prev < 35 ? 3 : prev < 60 ? 2 : prev < 78 ? 1 : 0;
+          const next = Math.min(prev + increment, 78);
+          setLoadingStep(next < 25 ? 0 : next < 50 ? 1 : next < 75 ? 2 : 3);
+          return next;
+        }
+
+        // Once backend auth/data is ready, smoothly complete to 100%
         if (prev >= 100) {
           clearInterval(interval);
           setTimeout(() => {
@@ -1758,26 +1774,16 @@ export default function App() {
             try {
               sessionStorage.setItem('s_os_startup_shown', 'true');
             } catch (_) {}
-          }, 600);
+          }, 450);
           return 100;
         }
-        
-        const stepSize = Math.floor(Math.random() * 15) + 5;
-        const nextProgress = Math.min(prev + stepSize, 100);
-        
-        if (nextProgress < 25) {
-          setLoadingStep(0);
-        } else if (nextProgress < 50) {
-          setLoadingStep(1);
-        } else if (nextProgress < 75) {
-          setLoadingStep(2);
-        } else {
-          setLoadingStep(3);
-        }
 
+        const stepSize = prev < 50 ? 6 : prev < 85 ? 5 : 4;
+        const nextProgress = Math.min(prev + stepSize, 100);
+        setLoadingStep(nextProgress < 25 ? 0 : nextProgress < 50 ? 1 : nextProgress < 75 ? 2 : 3);
         return nextProgress;
       });
-    }, 150);
+    }, 55);
 
     return () => clearInterval(interval);
   }, [firebaseLoading, dataLoading]);
@@ -1947,44 +1953,54 @@ export default function App() {
     window.addEventListener('studentos-db-update', handleDbUpdate);
     window.addEventListener('studentos-notif-state-change', handleNotifStateChange);
 
-    // Subscribe to both Postgres changes and Realtime Broadcast channel
-    const channel = supabase.channel('student-os-live-sync')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
-        refreshNotifications();
-        const row = payload?.new as any;
-        if (row && currentUser && isUserEligibleForNotification(row, currentUser)) {
-          const nId = row.id || '';
-          triggerBrowserPushNotification(row.title || '📢 StudentOS Notice', {
-            body: row.message || row.content || '',
-            tag: nId ? `studentos-notif-${nId}` : `studentos-notif-${Date.now()}`,
-            notifId: nId,
-            linkTab: row.link_tab || row.payload?.linkTab || 'notice_viewer'
-          });
+    // Subscribe to both Postgres changes and Realtime Broadcast channel safely
+    let channel: any = null;
+    try {
+      supabase.getChannels().forEach(ch => {
+        if (ch.topic === 'realtime:student-os-live-sync') {
+          supabase.removeChannel(ch);
         }
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notifications' }, () => {
-        refreshNotifications();
-      })
-      .on('broadcast', { event: 'new_app_notification' }, (payload) => {
-        console.log('[REALTIME-BROADCAST] Received broadcast notification:', payload);
-        refreshNotifications();
-        const notif = payload?.payload;
-        if (notif && currentUser && isUserEligibleForNotification(notif, currentUser)) {
-          triggerNotificationSound(notif.type || 'announcement');
-          triggerBrowserPushNotification(notif.title || '📢 StudentOS Notice', {
-            body: notif.message || '',
-            tag: notif.id ? `studentos-notif-${notif.id}` : `studentos-notif-${Date.now()}`,
-            notifId: notif.id,
-            linkTab: notif.linkTab || 'notice_viewer'
-          });
-        }
-      })
-      .subscribe();
+      });
+      channel = supabase.channel('student-os-live-sync')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
+          refreshNotifications();
+          const row = payload?.new as any;
+          if (row && currentUser && isUserEligibleForNotification(row, currentUser)) {
+            const nId = row.id || '';
+            triggerBrowserPushNotification(row.title || '📢 StudentOS Notice', {
+              body: row.message || row.content || '',
+              tag: nId ? `studentos-notif-${nId}` : `studentos-notif-${Date.now()}`,
+              notifId: nId,
+              linkTab: row.link_tab || row.payload?.linkTab || 'notice_viewer'
+            });
+          }
+        })
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notifications' }, () => {
+          refreshNotifications();
+        })
+        .on('broadcast', { event: 'new_app_notification' }, (payload) => {
+          console.log('[REALTIME-BROADCAST] Received broadcast notification:', payload);
+          refreshNotifications();
+          const notif = payload?.payload;
+          if (notif && currentUser && isUserEligibleForNotification(notif, currentUser)) {
+            triggerNotificationSound(notif.type || 'announcement');
+            triggerBrowserPushNotification(notif.title || '📢 StudentOS Notice', {
+              body: notif.message || '',
+              tag: notif.id ? `studentos-notif-${notif.id}` : `studentos-notif-${Date.now()}`,
+              notifId: notif.id,
+              linkTab: notif.linkTab || 'notice_viewer'
+            });
+          }
+        })
+        .subscribe();
+    } catch (err) {
+      console.warn('[Realtime] student-os-live-sync channel setup notice:', err);
+    }
 
     return () => {
       window.removeEventListener('studentos-db-update', handleDbUpdate);
       window.removeEventListener('studentos-notif-state-change', handleNotifStateChange);
-      supabase.removeChannel(channel);
+      if (channel) supabase.removeChannel(channel);
     };
   }, [currentUser?.uid, currentUser?.grade, currentUser?.section, effectiveRole]);
 
@@ -2128,6 +2144,15 @@ What can I clarify today?` }
   useEffect(() => {
     console.log('[Realtime] Establishing Supabase channel...');
     
+    // Clean up any pre-existing 'student-os-public' channel so adding postgres_changes never collides with an already-subscribed singleton
+    try {
+      supabase.getChannels().forEach(ch => {
+        if (ch.topic === 'realtime:student-os-public') {
+          supabase.removeChannel(ch);
+        }
+      });
+    } catch (_) {}
+
     const channel = supabase.channel('student-os-public');
 
     // Setup socketRef mock for the rest of the app to seamlessly use Supabase broadcast
@@ -2146,6 +2171,13 @@ What can I clarify today?` }
         }
       }
     };
+
+    try {
+      channel.on('broadcast', { event: 'principal_live_broadcast' }, (payload) => {
+        if (payload?.payload && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('studentos-live-broadcast', { detail: payload.payload }));
+        }
+      });
 
     channel.on('broadcast', { event: 'ws_message' }, (payload) => {
       try {
@@ -2307,11 +2339,14 @@ What can I clarify today?` }
       }
     });
 
-    channel.subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        console.log('[Realtime] Connected successfully to Supabase!');
-      }
-    });
+      channel.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('[Realtime] Connected successfully to Supabase!');
+        }
+      });
+    } catch (realtimeErr) {
+      console.warn('[Realtime] Channel listener registration warning:', realtimeErr);
+    }
 
     return () => {
       supabase.removeChannel(channel);
@@ -5414,59 +5449,226 @@ ${roleLabel}: ${userQuery}`;
         </div>
       )}
       
-      {/* Startup Screen */}
-      {showStartup && (
-        <div className="fixed inset-0 bg-slate-950 flex flex-col items-center justify-center z-[100] transition-opacity duration-700 select-none overflow-hidden">
-          {/* Futuristic ambient backlights */}
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[350px] h-[350px] bg-indigo-600/15 rounded-full blur-[90px] animate-pulse" style={{ animationDuration: '3s' }} />
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[220px] h-[220px] bg-teal-500/10 rounded-full blur-[70px] animate-pulse" style={{ animationDuration: '4s' }} />
+      {/* Startup Screen — Quantum Neural Boot Experience */}
+      {(showStartup || (!currentUser && (firebaseLoading || dataLoading))) && (
+        <div className="fixed inset-0 bg-[#030712] flex flex-col justify-between z-[100] transition-opacity duration-700 select-none overflow-hidden p-4 sm:p-8">
+          {/* Architectural Perspective Grid & Deep Cosmic Auroras */}
+          <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(99,102,241,0.06)_1px,transparent_1px),linear-gradient(to_bottom,rgba(99,102,241,0.06)_1px,transparent_1px)] bg-[size:40px_40px] pointer-events-none" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,transparent_0%,#030712_85%)] pointer-events-none" />
+          <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[520px] h-[520px] bg-indigo-600/15 rounded-full blur-[130px] pointer-events-none animate-pulse" style={{ animationDuration: '4s' }} />
+          <div className="absolute bottom-1/4 left-1/2 -translate-x-1/2 w-[420px] h-[420px] bg-cyan-500/10 rounded-full blur-[110px] pointer-events-none animate-pulse" style={{ animationDuration: '5s' }} />
 
-          <div className="max-w-md w-full px-8 text-center space-y-8 relative z-10">
-            {/* Premium Logo Layout */}
-            <div className="relative inline-flex flex-col items-center gap-3">
-              <div className="relative group">
-                <div className="absolute inset-0 bg-gradient-to-tr from-indigo-500 to-teal-400 rounded-[2rem] blur-xl opacity-60 group-hover:opacity-100 transition-opacity duration-500 animate-pulse" />
-                <div className="relative h-20 w-20 rounded-[2rem] bg-gradient-to-br from-indigo-500 to-teal-500 p-[1.5px] shadow-2xl shadow-indigo-500/20 overflow-hidden">
-                  <div className="w-full h-full bg-slate-950 rounded-[30px] flex items-center justify-center shadow-inner relative overflow-hidden">
-                    <div className="absolute inset-0 bg-gradient-to-b from-white/10 to-transparent z-10" />
-                    <img 
-                      src="https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&q=80&w=256&h=256" 
-                      alt="StudentOS Logo" 
-                      className="w-full h-full object-cover rounded-[30px] opacity-90 group-hover:scale-110 transition-transform duration-500"
-                      referrerPolicy="no-referrer"
-                    />
+          {/* Top Telemetry Bar */}
+          <div className="relative z-10 w-full max-w-4xl mx-auto flex items-center justify-between text-[10px] font-mono tracking-widest uppercase text-slate-400 border-b border-white/10 pb-3">
+            <div className="flex items-center gap-2.5">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+              </span>
+              <span className="text-slate-200 font-bold">STUDENTOS QUANTUM CORE</span>
+              <span className="hidden sm:inline text-slate-600">·</span>
+              <span className="hidden sm:inline text-indigo-400">ENCRYPTED TELEMETRY LINK</span>
+            </div>
+            <div className="flex items-center gap-4">
+              <span className="hidden sm:inline text-slate-500">BUILD v{APP_VERSION}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setFirebaseLoading(false);
+                  setDataLoading(false);
+                  setShowStartup(false);
+                  try { sessionStorage.setItem('s_os_startup_shown', 'true'); } catch (_) {}
+                }}
+                className="px-3 py-1 rounded-lg bg-white/5 hover:bg-indigo-500/20 border border-white/10 hover:border-indigo-500/40 text-slate-300 hover:text-white font-bold transition-all cursor-pointer"
+              >
+                Skip Boot →
+              </button>
+            </div>
+          </div>
+
+          {/* Centerpiece Quantum Reactor + 4-Subsystem Matrix */}
+          <div className="max-w-3xl w-full mx-auto my-auto py-4 text-center space-y-7 relative z-10">
+            {/* Orbital HUD & Emblem */}
+            <div className="flex flex-col items-center gap-4">
+              <div className="relative w-36 h-36 sm:w-40 sm:h-40 flex items-center justify-center">
+                {/* Ambient Core Glow */}
+                <div className="absolute inset-2 rounded-full bg-gradient-to-tr from-indigo-500/30 via-cyan-400/20 to-emerald-400/20 blur-2xl animate-pulse" />
+
+                {/* SVG Multi-Ring Orbital Progress Reactor */}
+                <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 160 160">
+                  {/* Outer Decorative Dashed Orbit */}
+                  <circle
+                    cx="80"
+                    cy="80"
+                    r="74"
+                    fill="none"
+                    stroke="rgba(99, 102, 241, 0.2)"
+                    strokeWidth="1"
+                    strokeDasharray="4 6"
+                  />
+                  {/* Background Track Ring */}
+                  <circle
+                    cx="80"
+                    cy="80"
+                    r="64"
+                    fill="none"
+                    stroke="rgba(255, 255, 255, 0.06)"
+                    strokeWidth="4"
+                  />
+                  {/* Dynamic Progress Ring */}
+                  <circle
+                    cx="80"
+                    cy="80"
+                    r="64"
+                    fill="none"
+                    stroke="url(#studentos-boot-grad)"
+                    strokeWidth="4"
+                    strokeLinecap="round"
+                    strokeDasharray={402}
+                    strokeDashoffset={402 - (402 * Math.min(100, Math.max(5, loadingProgress))) / 100}
+                    className="transition-all duration-150 ease-out"
+                  />
+                  <defs>
+                    <linearGradient id="studentos-boot-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#6366f1" />
+                      <stop offset="50%" stopColor="#22d3ee" />
+                      <stop offset="100%" stopColor="#34d399" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+
+                {/* Counter-rotating inner orbital ring */}
+                <div className="absolute inset-5 rounded-full border border-cyan-400/20 border-t-cyan-400/80 animate-spin" style={{ animationDuration: '6s' }} />
+
+                {/* Central Emblem Core */}
+                <div className="relative h-20 w-20 sm:h-22 sm:w-22 rounded-3xl bg-gradient-to-br from-indigo-500 via-cyan-500 to-emerald-400 p-[1.5px] shadow-2xl shadow-indigo-500/30">
+                  <div className="w-full h-full bg-slate-950 rounded-[22px] flex flex-col items-center justify-center relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-b from-white/15 to-transparent" />
+                    <span className="text-3xl sm:text-4xl relative z-10">🎓</span>
+                    <span className="text-[9px] font-mono font-black text-cyan-300 tracking-wider mt-0.5 relative z-10">
+                      {loadingProgress}%
+                    </span>
                   </div>
                 </div>
               </div>
-              <h1 className="text-4xl font-black tracking-tight text-white font-display bg-clip-text bg-gradient-to-r from-white via-slate-100 to-indigo-200">
-                StudentOS
-              </h1>
-              <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/5 border border-indigo-500/20 shadow-sm">
-                <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-ping" />
-                <span className="text-[9px] tracking-widest uppercase font-mono text-indigo-300 font-extrabold">initializing neural core</span>
-              </div>
-            </div>
 
-            {/* Glowing Progress bar container */}
-            <div className="space-y-4 pt-6 bg-slate-900/40 p-6 rounded-3xl border border-white/5 backdrop-blur-md shadow-xl">
-              <div className="flex items-center justify-center gap-2 min-h-[20px]">
-                <p className="text-xs text-slate-300 font-bold font-mono transition-all duration-300 tracking-wide">
-                  {STARTUP_MESSAGES[loadingStep] || 'Optimizing workspace parameters...'}
+              {/* Brand Title & Subtitle */}
+              <div className="space-y-1.5">
+                <div className="inline-flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.25em] text-cyan-300">
+                  <span>NEURAL ACADEMIC OPERATING SYSTEM</span>
+                </div>
+                <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-white via-indigo-100 to-cyan-200 font-display">
+                  StudentOS
+                </h1>
+                <p className="text-xs sm:text-sm text-slate-400 max-w-md mx-auto font-medium">
+                   Smartboards · Orion AI Tutors · Realtime Broadcasts · Scholar XP Arena
                 </p>
               </div>
+            </div>
 
-              {/* Progress bar */}
-              <div className="w-full bg-slate-950/90 border border-white/5 rounded-full h-2.5 overflow-hidden shadow-inner p-[2px]">
-                <div 
-                  className="bg-gradient-to-r from-indigo-500 via-violet-500 to-teal-400 h-full rounded-full transition-all duration-150 ease-out shadow-glow shadow-indigo-500/50" 
-                  style={{ width: `${loadingProgress}%` }}
-                ></div>
+            {/* 4-Stage Subsystem Diagnostic Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 text-left">
+              {[
+                {
+                  idx: 0,
+                  title: 'Identity Node',
+                  sub: 'OAuth2 & Role Matrix',
+                  metric: '256-BIT',
+                  threshold: 20,
+                  icon: '🛡️'
+                },
+                {
+                  idx: 1,
+                  title: 'Orion AI Core',
+                  sub: 'Neural Tutor Engine',
+                  metric: 'NVIDIA NIM',
+                  threshold: 45,
+                  icon: '🧠'
+                },
+                {
+                  idx: 2,
+                  title: 'Realtime Sync',
+                  sub: 'Live Push & Channels',
+                  metric: 'WSS LIVE',
+                  threshold: 70,
+                  icon: '⚡'
+                },
+                {
+                  idx: 3,
+                  title: 'Scholar Arena',
+                  sub: 'SM-2 & Gamification',
+                  metric: 'READY',
+                  threshold: 92,
+                  icon: '🏆'
+                }
+              ].map((mod) => {
+                const isComplete = loadingProgress >= mod.threshold;
+                const isActive = !isComplete && loadingStep === mod.idx;
+                return (
+                  <div
+                    key={mod.title}
+                    className={`p-3 sm:p-3.5 rounded-2xl border transition-all duration-300 backdrop-blur-md ${
+                      isComplete
+                        ? 'bg-emerald-950/25 border-emerald-500/35 shadow-lg shadow-emerald-500/5'
+                        : isActive
+                        ? 'bg-indigo-950/40 border-indigo-400/50 shadow-lg shadow-indigo-500/10'
+                        : 'bg-slate-900/40 border-white/5 opacity-60'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-base">{mod.icon}</span>
+                      <span
+                        className={`text-[9px] font-mono font-extrabold uppercase tracking-wider ${
+                          isComplete
+                            ? 'text-emerald-400'
+                            : isActive
+                            ? 'text-cyan-300 animate-pulse'
+                            : 'text-slate-500'
+                        }`}
+                      >
+                        {isComplete ? '✓ ONLINE' : isActive ? 'BOOTING...' : mod.metric}
+                      </span>
+                    </div>
+                    <p className="text-xs font-extrabold text-white truncate">{mod.title}</p>
+                    <p className="text-[10px] text-slate-400 truncate mt-0.5">{mod.sub}</p>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Master Progress Console */}
+            <div className="bg-slate-900/60 border border-white/10 rounded-3xl p-5 sm:p-6 backdrop-blur-xl shadow-2xl space-y-3.5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping shrink-0" />
+                  <p className="text-xs sm:text-sm text-slate-200 font-mono font-bold truncate">
+                    {STARTUP_MESSAGES[loadingStep] || 'Optimizing workspace parameters...'}
+                  </p>
+                </div>
+                <span className="text-sm sm:text-base font-mono font-black text-cyan-300 tabular-nums shrink-0">
+                  {loadingProgress}%
+                </span>
               </div>
-              <div className="flex justify-between items-center text-[9px] font-mono font-bold text-slate-500 tracking-widest">
-                <span>REVISION v{APP_VERSION} (A-CORE)</span>
-                <span className="text-indigo-400">{loadingProgress}%</span>
+
+              {/* Liquid Gradient Progress Bar */}
+              <div className="w-full bg-slate-950 border border-white/10 rounded-full h-3 overflow-hidden p-0.5 shadow-inner">
+                <div
+                  className="bg-gradient-to-r from-indigo-500 via-cyan-400 to-emerald-400 h-full rounded-full transition-all duration-100 ease-out relative"
+                  style={{ width: `${Math.max(4, loadingProgress)}%` }}
+                />
+              </div>
+
+              <div className="flex justify-between items-center text-[10px] font-mono text-slate-500 tracking-wider uppercase">
+                <span>STATUS: {loadingProgress >= 100 ? 'WORKSPACE READY' : 'SYNCHRONIZING MODULES'}</span>
+                <span>LATENCY: 14ms · TLS 1.3</span>
               </div>
             </div>
+          </div>
+
+          {/* Bottom Footer Bar */}
+          <div className="relative z-10 w-full max-w-4xl mx-auto flex items-center justify-between text-[10px] font-mono text-slate-500 border-t border-white/5 pt-3">
+            <span>REMIX STUDENTOS INSTITUTIONAL SUITE</span>
+            <span className="text-slate-400">ALL SYSTEMS NOMINAL</span>
           </div>
         </div>
       )}

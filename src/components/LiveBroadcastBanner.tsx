@@ -24,50 +24,46 @@ export const LiveBroadcastBanner: React.FC<LiveBroadcastBannerProps> = () => {
   const [stickyBanner, setStickyBanner] = useState<LiveBroadcastPayload | null>(null);
 
   useEffect(() => {
-    // Subscribe to realtime live broadcasts
+    const handleIncomingBroadcast = (broadcast: LiveBroadcastPayload) => {
+      if (!broadcast || !broadcast.title) return;
+
+      // Trigger live popup & sticky banner
+      setActivePopup(broadcast);
+      setStickyBanner(broadcast);
+
+      // Sound effect
+      soundService.playAnnouncementSound();
+
+      // Trigger Android Chrome / PWA system notification via Service Worker (coalesces with background push via tag)
+      triggerBrowserPushNotification(broadcast.title, {
+        body: broadcast.message,
+        tag: broadcast.id ? `studentos-notif-${broadcast.id}` : `studentos-notif-${Date.now()}`,
+        notifId: broadcast.id,
+        linkTab: 'notice_viewer'
+      });
+    };
+
+    // Subscribe to dedicated realtime live broadcast channel (never share 'student-os-public' channel instance with App.tsx postgres_changes)
     const channel = supabase.channel('student-os-public-banner')
       .on('broadcast', { event: 'principal_live_broadcast' }, (payload) => {
         if (payload && payload.payload) {
-          const broadcast = payload.payload as LiveBroadcastPayload;
-          
-          // Trigger live popup & sticky banner
-          setActivePopup(broadcast);
-          setStickyBanner(broadcast);
-
-          // Sound effect
-          soundService.playAnnouncementSound();
-
-          // Trigger Android Chrome / PWA system notification via Service Worker (coalesces with background push via tag)
-          triggerBrowserPushNotification(broadcast.title, {
-            body: broadcast.message,
-            tag: broadcast.id ? `studentos-notif-${broadcast.id}` : `studentos-notif-${Date.now()}`,
-            notifId: broadcast.id,
-            linkTab: 'notice_viewer'
-          });
+          handleIncomingBroadcast(payload.payload as LiveBroadcastPayload);
         }
       })
       .subscribe();
 
-    // Also listen on 'student-os-public' channel in case sender uses that channel name
-    const pubChannel = supabase.channel('student-os-public');
-    pubChannel.on('broadcast', { event: 'principal_live_broadcast' }, (payload) => {
-      if (payload && payload.payload) {
-        const broadcast = payload.payload as LiveBroadcastPayload;
-        setActivePopup(broadcast);
-        setStickyBanner(broadcast);
-        soundService.playAnnouncementSound();
-        triggerBrowserPushNotification(broadcast.title, {
-          body: broadcast.message,
-          tag: broadcast.id ? `studentos-notif-${broadcast.id}` : `studentos-notif-${Date.now()}`,
-          notifId: broadcast.id,
-          linkTab: 'notice_viewer'
-        });
+    // Also listen for broadcasts forwarded from App.tsx's master 'student-os-public' channel or local window dispatch
+    const handleWindowBroadcast = (e: Event) => {
+      const detail = (e as CustomEvent<LiveBroadcastPayload>).detail;
+      if (detail) {
+        handleIncomingBroadcast(detail);
       }
-    }).subscribe();
+    };
+    window.addEventListener('studentos-live-broadcast', handleWindowBroadcast);
 
     return () => {
+      window.removeEventListener('studentos-live-broadcast', handleWindowBroadcast);
       supabase.removeChannel(channel);
-      supabase.removeChannel(pubChannel);
     };
   }, []);
 
