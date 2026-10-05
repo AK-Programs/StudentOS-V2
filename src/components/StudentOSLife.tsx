@@ -333,8 +333,13 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
     leadTeacher: '', studentHead: '', meetingDays: 'Every Wednesday (3:30 PM)', location: 'Activity Hall'
   });
 
-  const [newGalleryForm, setNewGalleryForm] = useState({
-    title: '', category: 'Campus Life', coverUrl: '', photoCount: 8
+  const [newGalleryForm, setNewGalleryForm] = useState<{
+    title: string;
+    category: GalleryAlbum['category'];
+    coverUrl: string;
+    photoCount: number;
+  }>({
+    title: '', category: 'Events', coverUrl: '', photoCount: 8
   });
 
   // Save changes to LocalStorage
@@ -569,7 +574,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
     await createGalleryAlbum(alb);
     setShowAddGalleryModal(false);
     setNewGalleryForm({
-      title: '', category: 'Campus Life', coverUrl: '', photoCount: 8
+      title: '', category: 'Events', coverUrl: '', photoCount: 8
     });
   };
 
