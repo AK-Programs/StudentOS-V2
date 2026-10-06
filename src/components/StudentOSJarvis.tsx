@@ -15,8 +15,14 @@ import {
   executeOrionActionPipeline, 
   OrionAction, 
   OrionUserContext, 
-  OrionActionType 
+  OrionActionType,
+  StructuredOrionPayload
 } from '../lib/orionActionExecutor';
+import {
+  buildAuthorizedStudentOSContext,
+  detectMathInteractiveWidget,
+  InteractiveMathWidget
+} from '../lib/studentosAiEngine';
 import { StudentReport, HouseAnalytics, SectionAnalytics, TeacherCommand, JarvisHistoryItem } from '../types';
 
 interface StudentOSJarvisProps {
@@ -157,7 +163,12 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     targetValue?: string;
     payload?: any;
     promptText: string;
+    previewDetails?: Record<string, string>;
+    actionObject?: OrionAction;
   } | null>(null);
+  const [structuredOutput, setStructuredOutput] = useState<StructuredOrionPayload | null>(null);
+  const [orionMathWidget, setOrionMathWidget] = useState< ReturnType<typeof detectMathInteractiveWidget> >(null);
+  const [orionModelUsed, setOrionModelUsed] = useState<string>('');
 
   const lastEntityRef = useRef<{
     type: string;
@@ -746,16 +757,28 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
 
       let aiText = '';
       
-      // Build RAG Context from StudentOS with correct materials schema
-      const { data: materialsData } = await supabase.from('materials').select('title, category, description').limit(5);
-      const ragContext = materialsData ? materialsData.map((m: any) => `[${m.category}] ${m.title}: ${m.description ? m.description.substring(0, 100) : ''}`).join('\n') : 'No local resources found.';
+      // Build authorized, role-aware StudentOS context
+      const { contextString: ragContext } = await buildAuthorizedStudentOSContext(
+        command,
+        currentUser,
+        effectiveRole || currentUser?.role || 'student'
+      );
 
-      const systemPrompt = `You are StudentOS Orion, the advanced School Operating Assistant AI Engine.
+      const systemPrompt = `You are StudentOS Orion, the intelligent School Operating Assistant & Copilot.
+Current User Role: ${effectiveRole || currentUser?.role || 'student'} (${currentUser?.name || 'User'})
 The user typed or spoke this command: "${command}".
 
-Analyze the input and classify into ONE of these operational actions:
-- "send_broadcast" (broadcast, announce school-wide, tell everyone)
-- "notify_users" (notify all teachers, notify class 10, notify students)
+Analyze the input and classify into ONE of these operational or intelligence actions:
+- "get_homework" (check homework, pending homework, missing homework, what homework do I have, homework status)
+- "get_submissions" (who has not submitted homework, submission rate, homework submissions)
+- "get_attendance" (attendance summary, who is absent, attendance rate, my attendance)
+- "get_students" (list students, student performance, struggling students, top students)
+- "get_classes" (class overview, class summary, section analytics)
+- "get_calendar" (upcoming events, exam schedule, school calendar, competitions)
+- "get_notifications" (recent notices, announcements, broadcasts, unread alerts)
+- "generate_report" (generate school report, daily briefing, class report, attendance report, homework report)
+- "send_broadcast" (broadcast, announce school-wide, tell everyone, create announcement)
+- "notify_users" (notify all teachers, notify class 10, notify students, send reminder)
 - "create_study_plan" (create study plan, make study plan, plan study for exams, study schedule)
 - "create_calendar_event" (add to calendar, add event to calendar, add holiday, add exam date)
 - "create_note" (create note, save note to vault, take note)
@@ -763,22 +786,27 @@ Analyze the input and classify into ONE of these operational actions:
 - "create_event" (schedule annual function, schedule event, schedule assembly)
 - "create_competition" (create competition, create coding competition, create sports competition)
 - "create_meet" (schedule StudentOS Meet, schedule meeting)
-- "create_homework" (create homework, create assignment)
+- "create_homework" (create homework, create assignment, publish assignment)
 - "create_notice" (upload notice, create notice)
 - "delete_item" (delete competition, delete event, cancel meeting, delete homework)
 - "web_search" (search online, look up information)
-- "general_chat" (general conversation or question)
+- "general_chat" (general question, academic explanation, math problem, or conversation)
 
-Your response MUST be raw JSON format with NO markdown wrapping:
+Rules:
+1. Distinguish between known StudentOS data (provided in context) and general AI assistance.
+2. Never fabricate StudentOS records.
+3. Return raw JSON format with NO markdown wrapping:
 {
-  "responseText": "Summary response in friendly, clear markdown. If performing an operation, state what was executed.",
+  "responseText": "Clear, helpful markdown response. If general_chat, provide the complete educational or operational answer.",
   "action": "action_name",
-  "targetValue": "Main entity title, topic, or search query",
+  "targetValue": "Main entity title, topic, class, or search query",
   "details": {
     "title": "extracted title or topic",
     "date": "extracted date or YYYY-MM-DD",
     "time": "extracted time like 09:00 AM",
     "targetAudience": "all / Class 10 / teachers / students",
+    "targetClass": "extracted class e.g. Class 10",
+    "subject": "extracted subject e.g. Mathematics / Physics",
     "category": "Academic / Cultural / Technology / General",
     "content": "message or description content"
   }
@@ -793,10 +821,11 @@ Your response MUST be raw JSON format with NO markdown wrapping:
             persona: 'orion',
             level: 'Secondary',
             mode: 'explanatory',
+            taskType: 'orion_command',
             history: historyItems.map(item => ({ role: 'user', content: item.prompt })).flatMap(u => [u, { role: 'assistant', content: '...' }]).slice(-6),
             ragContext: ragContext,
             userId: currentUser?.uid || 'guest',
-            userRole: currentUser?.role || 'student'
+            userRole: effectiveRole || currentUser?.role || 'student'
           })
         });
 
@@ -807,6 +836,7 @@ Your response MUST be raw JSON format with NO markdown wrapping:
         const data = await response.json();
         if (data.error) throw new Error(data.error);
         aiText = data.text || '';
+        if (data.model) setOrionModelUsed(data.model);
         import('../lib/gamification').then(({ awardStudentXP }) => {
           awardStudentXP(currentUser, 'use_ai_study');
         }).catch(() => {});
@@ -854,20 +884,30 @@ Your response MUST be raw JSON format with NO markdown wrapping:
   // Command Parser & Executor (Orion 2.0 Operating Assistant)
   const mapActionNameToType = (aiAction: string, textLow: string): OrionActionType => {
     if (aiAction === 'web_search' || textLow.includes('search about') || textLow.includes('search the web') || textLow.startsWith('look up')) return 'web_search';
+    // Intelligence & Data Queries
+    if (aiAction === 'get_submissions' || (textLow.includes('submit') && textLow.includes('homework')) || textLow.includes('who has not submitted')) return 'get_submissions';
+    if (aiAction === 'get_homework' || ((textLow.includes('homework') || textLow.includes('assignment')) && (textLow.includes('what') || textLow.includes('show') || textLow.includes('check') || textLow.includes('pending') || textLow.includes('my') || textLow.includes('status') || textLow.includes('due')))) return 'get_homework';
+    if (aiAction === 'get_attendance' || (textLow.includes('attendance') && (textLow.includes('summary') || textLow.includes('show') || textLow.includes('check') || textLow.includes('rate') || textLow.includes('absent') || textLow.includes('my') || textLow.includes('report')))) return 'get_attendance';
+    if (aiAction === 'get_students' || (textLow.includes('student') && (textLow.includes('list') || textLow.includes('directory') || textLow.includes('struggling') || textLow.includes('performance') || textLow.includes('show all')))) return 'get_students';
+    if (aiAction === 'get_classes' || (textLow.includes('class') && (textLow.includes('overview') || textLow.includes('summary') || textLow.includes('compare')))) return 'get_classes';
+    if (aiAction === 'get_calendar' || ((textLow.includes('event') || textLow.includes('calendar') || textLow.includes('upcoming')) && (textLow.includes('what') || textLow.includes('show') || textLow.includes('list') || textLow.includes('check')))) return 'get_calendar';
+    if (aiAction === 'get_notifications' || ((textLow.includes('notice') || textLow.includes('announcement') || textLow.includes('notification')) && (textLow.includes('what') || textLow.includes('show') || textLow.includes('recent') || textLow.includes('unread')))) return 'get_notifications';
+    if (aiAction === 'generate_report' || textLow.includes('generate report') || textLow.includes('daily briefing') || textLow.includes('school summary') || textLow.includes('school report')) return 'generate_report';
+    // Creation & Mutation Actions
     if (aiAction === 'create_study_plan' || textLow.includes('create study plan') || textLow.includes('make a study plan') || textLow.includes('plan study') || textLow.includes('study plan for')) return 'create_study_plan';
     if (aiAction === 'create_calendar_event' || (textLow.includes('calendar') && (textLow.includes('add') || textLow.includes('schedule') || textLow.includes('event')))) return 'create_calendar_event';
     if (aiAction === 'create_note' || textLow.includes('save note') || textLow.includes('take note') || (textLow.includes('note') && textLow.includes('vault'))) return 'create_note';
-    if (aiAction === 'mark_attendance' || aiAction === 'start_attendance' || textLow.includes('attendance') && (textLow.includes('take') || textLow.includes('mark') || textLow.includes('start'))) return 'mark_attendance';
-    if (aiAction === 'send_broadcast' || textLow.includes('broadcast')) return 'create_broadcast';
-    if (aiAction === 'notify_users' || textLow.includes('notify') || textLow.includes('tell class')) return 'notify_users';
+    if (aiAction === 'mark_attendance' || aiAction === 'start_attendance' || (textLow.includes('attendance') && (textLow.includes('take') || textLow.includes('mark') || textLow.includes('start')))) return 'mark_attendance';
+    if (aiAction === 'send_broadcast' || aiAction === 'create_announcement' || textLow.includes('broadcast') || (textLow.includes('announce') && !textLow.includes('show'))) return 'create_broadcast';
+    if (aiAction === 'notify_users' || textLow.includes('notify') || textLow.includes('tell class') || textLow.includes('send reminder')) return 'notify_users';
     if (aiAction === 'create_event' || textLow.includes('schedule event') || textLow.includes('annual function') || textLow.includes('schedule assembly')) return 'create_event';
-    if (aiAction === 'create_competition' || textLow.includes('competition')) return 'create_competition';
+    if (aiAction === 'create_competition' || (textLow.includes('competition') && (textLow.includes('create') || textLow.includes('add') || textLow.includes('host')))) return 'create_competition';
     if (aiAction === 'create_meet' || (textLow.includes('schedule') && textLow.includes('meet'))) return 'create_meeting';
     if (aiAction === 'add_study_planner' || textLow.includes('study planner') || textLow.includes('study session')) return 'add_study_planner';
     if (aiAction === 'add_task' || (textLow.includes('task') && (textLow.includes('add') || textLow.includes('create') || textLow.includes('new')))) return 'add_task';
     if (aiAction === 'complete_task' || (textLow.includes('task') && (textLow.includes('mark') || textLow.includes('complete') || textLow.includes('done')))) return 'complete_task';
     if (aiAction === 'delete_task' || (textLow.includes('task') && textLow.includes('delete'))) return 'delete_task';
-    if (aiAction === 'create_homework' || textLow.includes('homework') || textLow.includes('assignment')) return 'create_homework';
+    if (aiAction === 'create_homework' || ((textLow.includes('homework') || textLow.includes('assignment')) && (textLow.includes('create') || textLow.includes('assign') || textLow.includes('add') || textLow.includes('publish')))) return 'create_homework';
     if (aiAction === 'delete_item' || textLow.startsWith('delete') || textLow.startsWith('cancel') || textLow.startsWith('remove')) return 'delete_item';
     if (aiAction === 'register_competition') return 'register_competition';
     return (aiAction as OrionActionType) || 'general_chat';
@@ -917,10 +957,11 @@ Your response MUST be raw JSON format with NO markdown wrapping:
           userId: currentUser?.uid,
           userName: currentUser?.name || 'User',
           userEmail: currentUser?.email,
-          userRole: effectiveRole || 'student'
+          userRole: effectiveRole || 'student',
+          userClass: currentUser?.className || currentUser?.grade
         };
 
-        const actionToExec: OrionAction = {
+        const actionToExec: OrionAction = pendingConfirmation.actionObject || {
           action: pendingConfirmation.action as any,
           title: pendingConfirmation.targetValue,
           targetValue: pendingConfirmation.targetValue
@@ -928,9 +969,10 @@ Your response MUST be raw JSON format with NO markdown wrapping:
 
         const execRes = await executeOrionActionPipeline([actionToExec], userCtx, textToParse, true);
         setPendingConfirmation(null);
+        if (execRes.structuredData) setStructuredOutput(execRes.structuredData);
         setJarvisFeedback(execRes.combinedSummary);
         speakFeedback(execRes.combinedSummary);
-        showNotification(`SYSTEM: Confirmed execution of ${pendingConfirmation.targetValue}`);
+        showNotification(`SYSTEM: Confirmed execution of ${pendingConfirmation.targetValue || pendingConfirmation.action}`);
         setIsProcessing(false);
         return;
       } else if (confirmNegatives.some(k => textLow.includes(k))) {
@@ -994,17 +1036,39 @@ Your response MUST be raw JSON format with NO markdown wrapping:
       userId: currentUser?.uid,
       userName: currentUser?.name || 'User',
       userEmail: currentUser?.email,
-      userRole: effectiveRole || 'student'
+      userRole: effectiveRole || 'student',
+      userClass: currentUser?.className || currentUser?.grade
     };
+
+    // Detect if the user is asking a math/geometry question inside Orion
+    const detectedWidget = detectMathInteractiveWidget(textToParse, aiVerdict.responseText || '');
+    setOrionMathWidget(detectedWidget);
+
+    // If general_chat, use the rich AI response directly rather than generic placeholder
+    if (mappedAction === 'general_chat' && aiVerdict.responseText) {
+      setStructuredOutput(null);
+      setJarvisFeedback(aiVerdict.responseText);
+      speakFeedback(aiVerdict.responseText.slice(0, 260));
+      setIsProcessing(false);
+      return;
+    }
 
     // Execute through Centralized Action Executor Pipeline
     const pipelineRes = await executeOrionActionPipeline(actionList, userCtx, textToParse, false);
+
+    if (pipelineRes.structuredData) {
+      setStructuredOutput(pipelineRes.structuredData);
+    } else {
+      setStructuredOutput(null);
+    }
 
     if (pipelineRes.pendingConfirmation) {
       setPendingConfirmation({
         action: pipelineRes.pendingConfirmation.action,
         targetValue: pipelineRes.pendingConfirmation.targetTitle,
-        promptText: pipelineRes.pendingConfirmation.promptText
+        promptText: pipelineRes.pendingConfirmation.promptText,
+        previewDetails: pipelineRes.pendingConfirmation.previewDetails,
+        actionObject: pipelineRes.pendingConfirmation.actionObject || primaryAction
       });
     }
 
@@ -1226,8 +1290,22 @@ Your response MUST be raw JSON format with NO markdown wrapping:
             <Volume2 className="w-4 h-4" />
           </div>
           <div className="space-y-1.5 flex-1 select-text">
-            <span className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest font-mono">Orion Guidance System</span>
-            <p className="text-xs text-slate-350 leading-relaxed font-sans">{jarvisFeedback}</p>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest font-mono">Orion Guidance & Intelligence System</span>
+              {orionModelUsed && (
+                <span className="text-[9px] px-2 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 font-mono">
+                  ⚡ {orionModelUsed.split('/').pop()}
+                </span>
+              )}
+            </div>
+            <div className="text-xs text-slate-200 leading-relaxed font-sans">
+              {renderOrionMarkdown(jarvisFeedback)}
+            </div>
+            {orionMathWidget && (
+              <div className="pt-2">
+                <InteractiveMathWidget widgetType={orionMathWidget} />
+              </div>
+            )}
             {isListening && (
               <div className="flex items-center gap-1 bg-red-500/10 text-red-400 border border-red-500/20 py-1 px-2.5 rounded-lg text-[10px] font-bold w-fit animate-pulse font-mono">
                 <span className="h-1.5 w-1.5 bg-red-500 rounded-full animate-ping" />
@@ -1237,30 +1315,156 @@ Your response MUST be raw JSON format with NO markdown wrapping:
           </div>
         </div>
 
-        {/* Pending Confirmation Banner */}
+        {/* Pending Confirmation & Action Preview Card */}
         {pendingConfirmation && (
-          <div className="smart-glass p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <span className="text-xl">⚠️</span>
-              <div>
-                <p className="text-xs font-bold text-amber-300 font-mono">CONFIRMATION REQUIRED</p>
-                <p className="text-xs text-slate-200 mt-0.5">{pendingConfirmation.promptText}</p>
+          <div className="smart-glass p-4 rounded-2xl bg-amber-500/10 border border-amber-500/40 space-y-3 shadow-lg">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="flex items-start gap-3">
+                <span className="text-xl mt-0.5">🛡️</span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-black text-amber-300 font-mono uppercase tracking-wider">Action Preview — Confirmation Required</p>
+                    <span className="text-[9px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-200 font-mono uppercase">{pendingConfirmation.action}</span>
+                  </div>
+                  <p className="text-xs text-slate-200 mt-1">{pendingConfirmation.promptText}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => executeVoiceCommand('yes')}
+                  className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-xl transition-all shadow-lg cursor-pointer"
+                >
+                  ✓ Confirm & Execute
+                </button>
+                <button
+                  onClick={() => executeVoiceCommand('no')}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => executeVoiceCommand('yes')}
-                className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-xl transition-all shadow-lg cursor-pointer"
-              >
-                Yes, Confirm
-              </button>
-              <button
-                onClick={() => executeVoiceCommand('no')}
-                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition-all cursor-pointer"
-              >
-                Cancel
-              </button>
+            {pendingConfirmation.previewDetails && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-amber-500/20 text-[11px]">
+                {Object.entries(pendingConfirmation.previewDetails).map(([k, v]) => (
+                  <div key={k} className="bg-slate-950/60 px-3 py-1.5 rounded-lg border border-white/5 flex flex-col">
+                    <span className="text-[9px] uppercase font-mono text-amber-400/80 font-bold">{k}</span>
+                    <span className="text-slate-200 font-medium break-words">{v}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Structured Intelligence Output Card (Metrics, Tables, Reports, Export) */}
+        {structuredOutput && (
+          <div className="smart-glass p-4 rounded-2xl bg-slate-950/80 border border-indigo-500/30 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between gap-2 flex-wrap border-b border-white/10 pb-3">
+              <div>
+                <span className="text-[9px] font-mono uppercase tracking-widest text-emerald-400 font-bold block">✓ Verified StudentOS Live Data</span>
+                <h3 className="text-sm font-black text-white">{structuredOutput.title}</h3>
+                {structuredOutput.subtitle && <p className="text-[11px] text-slate-400">{structuredOutput.subtitle}</p>}
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {structuredOutput.exportableMarkdown && (
+                  <>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(structuredOutput.exportableMarkdown || '');
+                        showNotification('✓ Copied structured report to clipboard!');
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-white/10 text-[10px] font-bold text-slate-300 transition-colors"
+                    >
+                      📋 Copy Report
+                    </button>
+                    {createVaultNote && (
+                      <button
+                        onClick={() => {
+                          createVaultNote(structuredOutput.title, structuredOutput.exportableMarkdown || '', 'Orion Report');
+                          showNotification(`✓ Saved "${structuredOutput.title}" to Notes Vault!`);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-[10px] font-bold text-indigo-300 transition-colors"
+                      >
+                        💾 Save to Vault
+                      </button>
+                    )}
+                  </>
+                )}
+                <button
+                  onClick={() => setStructuredOutput(null)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 text-xs"
+                  title="Dismiss card"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
+
+            {/* Metrics Grid */}
+            {structuredOutput.metrics && structuredOutput.metrics.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                {structuredOutput.metrics.map((m, i) => (
+                  <div
+                    key={i}
+                    className={`p-3 rounded-xl border ${
+                      m.status === 'good'
+                        ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-300'
+                        : m.status === 'warning'
+                        ? 'bg-amber-500/10 border-amber-500/25 text-amber-300'
+                        : m.status === 'danger'
+                        ? 'bg-rose-500/10 border-rose-500/25 text-rose-300'
+                        : 'bg-slate-900/80 border-white/10 text-indigo-300'
+                    }`}
+                  >
+                    <div className="text-[9px] font-mono uppercase tracking-wider opacity-80">{m.label}</div>
+                    <div className="text-base font-black text-white mt-0.5">{m.value}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Structured Table */}
+            {structuredOutput.columns && structuredOutput.rows && structuredOutput.rows.length > 0 && (
+              <div className="overflow-x-auto rounded-xl border border-white/10 bg-slate-900/50">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-white/10 bg-slate-950/80 text-[10px] font-mono uppercase text-slate-400">
+                      {structuredOutput.columns.map((col, idx) => (
+                        <th key={idx} className="py-2 px-3 font-bold">{col}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {structuredOutput.rows.map((row, rIdx) => (
+                      <tr key={rIdx} className="hover:bg-white/[0.02]">
+                        {structuredOutput.columns!.map((col, cIdx) => (
+                          <td key={cIdx} className="py-2 px-3 text-slate-200 whitespace-nowrap">
+                            {row[col] ?? '—'}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Recommended Next Actions */}
+            {structuredOutput.recommendedActions && structuredOutput.recommendedActions.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap pt-1">
+                <span className="text-[10px] font-mono uppercase text-slate-400">Suggested Actions:</span>
+                {structuredOutput.recommendedActions.map((act, i) => (
+                  <button
+                    key={i}
+                    onClick={() => handleQuickTouchAction(act.command)}
+                    className="px-2.5 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/30 text-[10px] font-bold text-indigo-300 transition-all cursor-pointer"
+                  >
+                    ⚡ {act.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -1378,21 +1582,28 @@ Your response MUST be raw JSON format with NO markdown wrapping:
 
                 {/* Ledger & School reports */}
                 <div className="bg-slate-950/60 p-3 rounded-xl border border-white/5 space-y-2">
-                  <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider block">📈 Ledger & Statistics</span>
+                  <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider block">📈 Live School Intelligence & Reports</span>
                   <div className="flex flex-col gap-1.5">
                     <button 
-                      onClick={() => handleQuickTouchAction('Show student reports')}
+                      onClick={() => handleQuickTouchAction('Generate daily school briefing report')}
                       className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-[10px] text-slate-300 text-left rounded-lg font-mono flex items-center justify-between group transition-all"
                     >
-                      <span>Show student reports</span>
-                      <span className="text-[8px] bg-amber-500/10 text-amber-500 py-0.5 px-1.5 rounded uppercase group-hover:bg-amber-500/25 font-bold">View</span>
+                      <span>Daily school briefing</span>
+                      <span className="text-[8px] bg-emerald-500/10 text-emerald-400 py-0.5 px-1.5 rounded uppercase group-hover:bg-emerald-500/25 font-bold">Report</span>
                     </button>
                     <button 
-                      onClick={() => handleQuickTouchAction('Show Aditya\'s report')}
+                      onClick={() => handleQuickTouchAction('Check pending homework status')}
                       className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-[10px] text-slate-300 text-left rounded-lg font-mono flex items-center justify-between group transition-all"
                     >
-                      <span>Show Aditya's report</span>
-                      <span className="text-[8px] bg-indigo-500/10 text-indigo-400 py-0.5 px-1.5 rounded uppercase group-hover:bg-indigo-500/20 font-bold">Card</span>
+                      <span>Pending homework status</span>
+                      <span className="text-[8px] bg-amber-500/10 text-amber-500 py-0.5 px-1.5 rounded uppercase group-hover:bg-amber-500/25 font-bold">Query</span>
+                    </button>
+                    <button 
+                      onClick={() => handleQuickTouchAction('Show attendance summary')}
+                      className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-[10px] text-slate-300 text-left rounded-lg font-mono flex items-center justify-between group transition-all"
+                    >
+                      <span>Attendance summary</span>
+                      <span className="text-[8px] bg-indigo-500/10 text-indigo-400 py-0.5 px-1.5 rounded uppercase group-hover:bg-indigo-500/20 font-bold">Live</span>
                     </button>
                   </div>
                 </div>

@@ -27,6 +27,14 @@ import { getSupabaseHomework, saveSupabaseHomework, deleteSupabaseHomework } fro
 import { getAppNotifications, saveAppNotification, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification, generateUUID, registerPushSubscription, getDeviceId, triggerBrowserPushNotification, isUserEligibleForNotification, triggerNotificationSound } from './lib/notifications';
 import { requestFCMPermission, setupFCMForegroundListener } from './lib/fcmNotifications';
 import { awardStudentXP } from './lib/gamification';
+import {
+  streamAIChatClient,
+  buildAuthorizedStudentOSContext,
+  detectMathInteractiveWidget,
+  InteractiveMathWidget,
+  saveStudyOutputToFlashcards,
+  formatMathematicalText
+} from './lib/studentosAiEngine';
 import { GamificationRewardToast, DashboardGamificationCard } from './components/StudentGamificationHub';
 import { 
   getAiBuddyChats, saveAiBuddyChat, deleteAiBuddyChat, renameAiBuddyChat,
@@ -140,10 +148,11 @@ const parseInlineMarkdown = (line: string) => {
   });
 };
 
-const renderMarkdown = (text: string) => {
-  if (!text) return null;
+const renderMarkdown = (rawText: string) => {
+  if (!rawText) return null;
+  const text = formatMathematicalText(rawText);
 
-  const parts = text.split(/(```[\s\S]*?```)/g);
+  const parts = text.split(/(```[\s\S]*?```|\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\])/g);
 
   return parts.map((part, index) => {
     if (part.startsWith('```')) {
@@ -152,6 +161,18 @@ const renderMarkdown = (text: string) => {
       const code = match ? match[2] : part.slice(3, -3);
 
       return <CodeBlock key={index} code={code} language={lang} />;
+    }
+
+    if ((part.startsWith('$$') && part.endsWith('$$')) || (part.startsWith('\\[') && part.endsWith('\\]'))) {
+      const mathFormula = part.replace(/^\$\$|\$\$$|^\\\[|\\\]$/g, '').trim();
+      return (
+        <div
+          key={index}
+          className="my-2.5 p-3 rounded-xl bg-indigo-950/50 border border-indigo-500/30 text-indigo-200 font-mono text-xs sm:text-sm overflow-x-auto text-center shadow-inner"
+        >
+          {formatMathematicalText(mathFormula)}
+        </div>
+      );
     }
 
     const lines = part.split('\n');
@@ -170,6 +191,19 @@ const renderMarkdown = (text: string) => {
           }
           if (line.startsWith('# ')) {
             return <h2 key={lIdx} className="text-lg font-black text-white mt-4 mb-2 tracking-wide">{parseInlineMarkdown(line.substring(2))}</h2>;
+          }
+
+          // Render Markdown table rows cleanly
+          if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
+            if (/^\|[\s\-:|]+\|$/.test(line.trim())) return null;
+            const cells = line.trim().slice(1, -1).split('|').map(c => c.trim());
+            return (
+              <div key={lIdx} className="grid grid-flow-col auto-cols-fr gap-2 py-1.5 px-2.5 rounded-lg bg-slate-950/60 border border-white/5 text-[11px] overflow-x-auto">
+                {cells.map((cell, cIdx) => (
+                  <span key={cIdx} className="text-slate-200 font-medium break-words">{parseInlineMarkdown(cell)}</span>
+                ))}
+              </div>
+            );
           }
 
           if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
@@ -202,7 +236,7 @@ const renderMarkdown = (text: string) => {
           }
 
           if (!line.trim()) return <div key={lIdx} className="h-1.5" />;
-          return <p key={lIdx} className="leading-relaxed mb-1 text-slate-300 text-xs sm:text-sm">{parseInlineMarkdown(line)}</p>;
+          return <p key={lIdx} className="leading-relaxed mb-1 text-slate-300 text-xs sm:text-sm break-words">{parseInlineMarkdown(line)}</p>;
         })}
       </div>
     );
@@ -925,6 +959,9 @@ export default function App() {
 
   const [attachedFiles, setAttachedFiles] = useState<{ name: string; content: string; size: number; type: string }[]>([]);
   const [speakingMsgIdx, setSpeakingMsgIdx] = useState<string | null>(null);
+  const [aiActiveModelLabel, setAiActiveModelLabel] = useState<string>('');
+  const [aiGroundedInData, setAiGroundedInData] = useState<boolean>(false);
+  const aiAbortControllerRef = useRef<AbortController | null>(null);
 
   // AI Quota & Limits State
   const [aiUsageState, setAiUsageState] = useState<AIUsageState>(() => 
@@ -4926,9 +4963,10 @@ ${pageText}
     }
   };
 
-  // Secure AI Teacher dialog queries proxying via our server endpoints
-  const handleAskAIModel = async () => {
-    if (!aiInput.trim()) return;
+  // Secure AI Teacher dialog queries proxying via our server endpoints with real-time token streaming
+  const handleAskAIModel = async (overrideQuery?: string | React.MouseEvent) => {
+    const rawQueryText = typeof overrideQuery === 'string' ? overrideQuery : aiInput;
+    if (!rawQueryText.trim() || aiLoading) return;
 
     const userRoleKey = (effectiveRole || currentUser?.role || 'student').toLowerCase();
     const userIdKey = currentUser?.uid || currentUser?.email || 'guest';
@@ -4941,7 +4979,7 @@ ${pageText}
       return;
     }
     
-    const userQuery = aiInput.trim();
+    const userQuery = rawQueryText.trim();
     const currentAttachedFiles = [...attachedFiles];
     const newUserMsg = { 
       role: 'user' as const, 
@@ -4953,7 +4991,6 @@ ${pageText}
     if (currentAttachedFiles.length > 0) {
       const fileContextString = currentAttachedFiles.map(file => {
         if (file.type.startsWith('image/')) {
-          // If it is an image, we can supply its metadata and context
           return `[Attached Diagram/Image: ${file.name} (Base64 data url size ${(file.size / 1024).toFixed(1)} KB)]
 Image Data: ${file.content}`;
         } else {
@@ -4982,112 +5019,100 @@ ${roleLabel}: ${userQuery}`;
       ? (userQuery.length > 25 ? userQuery.substring(0, 25) + '...' : userQuery)
       : currentThread.title;
 
-    // Optimistically push message and update title
+    // Optimistically push user message + streaming assistant placeholder
     setAiThreads(prev => prev.map(t => {
       if (t.id === targetThreadId) {
         return { 
           ...t, 
-          messages: updatedMessages,
+          messages: [...updatedMessages, { role: 'assistant' as const, content: '' }],
           title: newTitle,
-          attachedFiles: [] // Reset attachments on the current active thread state
+          attachedFiles: []
         };
       }
       return t;
     }));
 
-    if (currentUser?.uid) {
-       saveAiBuddyChat({ 
-         ...currentThread, 
-         id: targetThreadId,
-         userId: currentUser?.uid || "",
-         title: newTitle,
-         messages: updatedMessages,
-         attachedFiles: []
-       } as any).catch(error => {
-         console.error("Error saving AI buddy chat message:", error);
-       });
+    if (typeof overrideQuery !== 'string') {
+      setAiInput('');
     }
-    
-    setAiInput('');
-    setAttachedFiles([]); // Clear visual attachment tray
+    setAttachedFiles([]);
     setAiLoading(true);
+
+    // Prepare AbortController for user cancelation
+    if (aiAbortControllerRef.current) {
+      aiAbortControllerRef.current.abort();
+    }
+    const abortCtrl = new AbortController();
+    aiAbortControllerRef.current = abortCtrl;
 
     try {
       let answer = '';
-      try {
-        const historyPayload = (currentThread?.messages || []).map(m => ({
-          role: m.role,
-          content: m.content
+      // Fetch role-authorized StudentOS context ONLY when query asks about StudentOS data
+      const { contextString: ragContext, hasStudentOSData } = await buildAuthorizedStudentOSContext(
+        userQuery,
+        currentUser,
+        userRoleKey
+      );
+      setAiGroundedInData(hasStudentOSData);
+
+      const historyPayload = (currentThread?.messages || []).slice(-10).map(m => ({
+        role: m.role,
+        content: m.content
+      }));
+
+      const streamResult = await streamAIChatClient(
+        {
+          prompt: promptWithContext,
+          history: historyPayload,
+          persona: selectedPersona,
+          level: currentUser?.grade,
+          subject: currentUser?.specialtySubject || 'Science',
+          mode: aiMode,
+          ragContext: ragContext || undefined,
+          userId: userIdKey,
+          userRole: userRoleKey
+        },
+        {
+          signal: abortCtrl.signal,
+          onStart: (meta) => {
+            if (meta.model) setAiActiveModelLabel(meta.model);
+          },
+          onToken: (_delta, fullText) => {
+            answer = fullText;
+            setAiThreads(prev => prev.map(t => {
+              if (t.id === targetThreadId) {
+                return {
+                  ...t,
+                  messages: [...updatedMessages, { role: 'assistant' as const, content: fullText }]
+                };
+              }
+              return t;
+            }));
+          },
+          onDone: (finalMeta) => {
+            if (finalMeta.model) setAiActiveModelLabel(finalMeta.model);
+          }
+        }
+      );
+
+      answer = streamResult.text || answer || 'I encountered an issue processing your lesson topic.';
+      if (streamResult.model) setAiActiveModelLabel(streamResult.model);
+      awardStudentXP(currentUser, 'use_ai_study');
+
+      if (streamResult.usage) {
+        setAiUsageState(prev => ({
+          ...prev,
+          used: streamResult.usage.used,
+          limit: streamResult.usage.limit,
+          remaining: streamResult.usage.remaining,
+          nextAvailableInMinutes: streamResult.usage.nextAvailableInMinutes,
+          lastUpdated: Date.now()
         }));
-
-        const res = await fetch('/api/ai/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            prompt: promptWithContext,
-            history: historyPayload,
-            persona: selectedPersona,
-            level: currentUser?.grade,
-            subject: currentUser?.specialtySubject || 'Science',
-            mode: aiMode,
-            userId: userIdKey,
-            userRole: userRoleKey
-          })
-        });
-
-        if (res.status === 429) {
-          const limitData = await res.json().catch(() => ({}));
-          const limitErr: any = new Error(limitData.message || 'Daily AI message limit reached.');
-          limitErr.isLimitReached = true;
-          limitErr.limitData = limitData;
-          throw limitErr;
-        }
-
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.message || errData.error || `HTTP ${res.status}`);
-        }
-
-        const parsedRes = await res.json();
-        if (parsedRes.error === 'AI_LIMIT_REACHED') {
-          const limitErr: any = new Error(parsedRes.message || 'Daily AI message limit reached.');
-          limitErr.isLimitReached = true;
-          limitErr.limitData = parsedRes;
-          throw limitErr;
-        }
-        if (parsedRes.error) throw new Error(parsedRes.error);
-        answer = parsedRes.text || 'I encountered an issue processing your lesson topic.';
-        awardStudentXP(currentUser, 'use_ai_study');
-
-        // Update quota
-        if (parsedRes.usage) {
-          setAiUsageState(prev => ({
-            ...prev,
-            used: parsedRes.usage.used,
-            limit: parsedRes.usage.limit,
-            remaining: parsedRes.usage.remaining,
-            nextAvailableInMinutes: parsedRes.usage.nextAvailableInMinutes,
-            lastUpdated: Date.now()
-          }));
-        } else {
-          const updated = recordLocalMessage(userIdKey, userRoleKey);
-          setAiUsageState(updated);
-        }
-      } catch (apiErr: any) {
-        if (apiErr?.isLimitReached || apiErr?.message?.includes('Daily AI message limit') || apiErr?.message?.includes('AI_LIMIT_REACHED')) {
-          setAiUsageState(prev => ({
-            ...prev,
-            remaining: 0,
-            used: prev.limit,
-            nextAvailableInMinutes: apiErr?.limitData?.nextAvailableInMinutes || 60
-          }));
-          setShowQuotaModal(true);
-          throw apiErr;
-        }
-        console.error("AI Buddy server chat error:", apiErr?.message || apiErr);
-        throw apiErr;
+      } else {
+        const updated = recordLocalMessage(userIdKey, userRoleKey);
+        setAiUsageState(updated);
       }
-      
+
       setAiThreads(prev => prev.map(t => {
         if (t.id === targetThreadId) {
           return { ...t, messages: [...updatedMessages, { role: 'assistant', content: answer }] };
@@ -5100,9 +5125,7 @@ ${roleLabel}: ${userQuery}`;
            ...currentThread, 
            id: targetThreadId,
            userId: currentUser?.uid || "",
-           title: currentThread.title.startsWith('Study Session #') || currentThread.title.startsWith('Introductory Study') || currentThread.title.startsWith('Study with')
-            ? (userQuery.length > 25 ? userQuery.substring(0, 25) + '...' : userQuery)
-            : currentThread.title,
+           title: newTitle,
            messages: [...updatedMessages, { role: 'assistant', content: answer }] 
          } as any).catch(error => {
            console.error("Error saving AI buddy chat response:", error);
@@ -5113,7 +5136,20 @@ ${roleLabel}: ${userQuery}`;
         speakText(answer);
       }
     } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        showNotification('Generation stopped.');
+        return;
+      }
       const isQuotaErr = err?.isLimitReached || err?.message?.includes('Daily AI message limit') || err?.message?.includes('AI_LIMIT_REACHED');
+      if (isQuotaErr) {
+        setAiUsageState(prev => ({
+          ...prev,
+          remaining: 0,
+          used: prev.limit,
+          nextAvailableInMinutes: err?.limitData?.nextAvailableInMinutes || 60
+        }));
+        setShowQuotaModal(true);
+      }
       const errorContent = isQuotaErr
         ? `⚠️ **Daily AI Buddy Limit Reached**\n\nYou have used your daily query allocation for your tier (${aiUsageState.limit} queries/day). \n\n* **Replenishment**: Queries reset on a rolling 24-hour cycle.\n* **Instant Boost**: Click **"Upgrade Quota"** above to enter an academic study voucher (e.g. \`STUDENTOS-PRO\` or \`EXAM-PREP\`) or request an extra quota grant from your instructors.`
         : `⚠️ **AI is temporarily unavailable**\n\n${err?.message || 'Please try again in a moment.'}`;
@@ -5129,6 +5165,7 @@ ${roleLabel}: ${userQuery}`;
       }));
     } finally {
       setAiLoading(false);
+      aiAbortControllerRef.current = null;
       setTimeout(() => {
         const dialogBox = document.getElementById('ai-dialog-scroll');
         if (dialogBox) dialogBox.scrollTop = dialogBox.scrollHeight;
@@ -11628,14 +11665,42 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                       {activeThread && (activeThread.messages || []).map((m, idx) => {
                         const msgKey = `${activeThread.id}-${idx}`;
                         const isSpeaking = speakingMsgIdx === msgKey;
+                        const prevUserMsg = idx > 0 && activeThread.messages[idx - 1]?.role === 'user' ? activeThread.messages[idx - 1].content : '';
+                        const mathWidget = m.role === 'assistant' ? detectMathInteractiveWidget(prevUserMsg, m.content) : null;
+                        const isLatestAssistant = m.role === 'assistant' && idx === (activeThread.messages.length - 1);
+
                         return (
-                          <div key={idx} className={`p-3.5 rounded-2xl text-xs max-w-[85%] ${m.role === 'user' ? 'bg-indigo-600/15 border border-indigo-500/20 text-white ml-auto' : 'bg-slate-900 border border-white/5 text-slate-200 mr-auto'}`}>
-                            <span className="text-[8px] uppercase tracking-wider font-extrabold block mb-1.5 text-indigo-400">
-                              {m.role === 'user' ? `👤 ${currentUser?.role ? currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1) : 'Student'} Inquiry` : '🤖 Instructor Response'}
-                            </span>
-                            <div className="space-y-1">
-                              {renderMarkdown(m.content)}
+                          <div key={idx} className={`p-3.5 rounded-2xl text-xs max-w-[92%] sm:max-w-[85%] overflow-hidden ${m.role === 'user' ? 'bg-indigo-600/15 border border-indigo-500/20 text-white ml-auto' : 'bg-slate-900 border border-white/5 text-slate-200 mr-auto'}`}>
+                            <div className="flex items-center justify-between gap-2 flex-wrap mb-1.5">
+                              <span className="text-[8px] uppercase tracking-wider font-extrabold text-indigo-400">
+                                {m.role === 'user' ? `👤 ${currentUser?.role ? currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1) : 'Student'} Inquiry` : '🤖 AI Buddy Tutor'}
+                              </span>
+                              {m.role === 'assistant' && isLatestAssistant && (
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  {aiGroundedInData && (
+                                    <span className="text-[8px] px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-mono font-bold">
+                                      ✓ StudentOS Live Data
+                                    </span>
+                                  )}
+                                  {aiActiveModelLabel && (
+                                    <span className="text-[8px] px-1.5 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 font-mono">
+                                      ⚡ {aiActiveModelLabel.split('/').pop()}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                             </div>
+                            <div className="space-y-1 overflow-x-auto">
+                              {renderMarkdown(m.content)}
+                              {m.role === 'assistant' && isLatestAssistant && aiLoading && (
+                                <span className="inline-block w-2 h-3.5 ml-1 bg-indigo-400 animate-pulse rounded-sm align-middle" title="Generating..." />
+                              )}
+                            </div>
+
+                            {/* Interactive Math / Geometry Visualization when relevant */}
+                            {mathWidget && (
+                              <InteractiveMathWidget widgetType={mathWidget} />
+                            )}
                             
                             {/* Attached Files visual inside bubbles */}
                             {m.files && m.files.length > 0 && (
@@ -11686,29 +11751,77 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                               </div>
                             )}
 
-                            {m.role !== 'user' && (
-                              <div className="mt-3 pt-2 border-t border-white/5 flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
-                                <button
-                                  onClick={() => handleCopyToClipboard(m.content)}
-                                  className="flex items-center gap-1 hover:text-white hover:bg-white/10 bg-slate-950/40 border border-white/5 px-2.5 py-1 rounded-lg transition-colors font-medium active:scale-95"
-                                  title="Copy text content to clipboard"
-                                >
-                                  <span>📋</span> Copy
-                                </button>
-                                <button
-                                  onClick={() => handleSaveToNotes(m.content)}
-                                  className="flex items-center gap-1 hover:text-white hover:bg-white/10 bg-slate-950/40 border border-white/5 px-2.5 py-1 rounded-lg transition-colors font-medium active:scale-95"
-                                  title="Construct new archive in Personal Vault Notes"
-                                >
-                                  <span>💾</span> Save Note
-                                </button>
-                                <button
-                                  onClick={() => handleToggleSpeakMessage(m.content, msgKey)}
-                                  className={`flex items-center gap-1 border px-2.5 py-1 rounded-lg transition-colors font-medium active:scale-95 ${isSpeaking ? 'text-rose-400 border-rose-500/30 bg-rose-500/10 font-bold' : 'hover:text-white hover:bg-white/10 bg-slate-950/40 border-white/5'}`}
-                                  title={isSpeaking ? "Suspend voice generator output" : "Synthesize study reading"}
-                                >
-                                  <span>{isSpeaking ? '⏹️' : '🔊'}</span> {isSpeaking ? 'Stop' : 'Read Aloud'}
-                                </button>
+                            {m.role !== 'user' && m.content && (
+                              <div className="mt-3 pt-2 border-t border-white/5 space-y-2">
+                                <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400">
+                                  <button
+                                    onClick={() => handleCopyToClipboard(m.content)}
+                                    className="flex items-center gap-1 hover:text-white hover:bg-white/10 bg-slate-950/40 border border-white/5 px-2.5 py-1 rounded-lg transition-colors font-medium active:scale-95"
+                                    title="Copy text content to clipboard"
+                                  >
+                                    <span>📋</span> Copy
+                                  </button>
+                                  <button
+                                    onClick={() => handleSaveToNotes(m.content)}
+                                    className="flex items-center gap-1 hover:text-white hover:bg-white/10 bg-slate-950/40 border border-white/5 px-2.5 py-1 rounded-lg transition-colors font-medium active:scale-95"
+                                    title="Save to Personal Vault Notes"
+                                  >
+                                    <span>💾</span> Save Note
+                                  </button>
+                                  <button
+                                    onClick={async () => {
+                                      const res = await saveStudyOutputToFlashcards(
+                                        activeThread.title || 'AI Study Deck',
+                                        currentUser?.specialtySubject || 'General Studies',
+                                        m.content,
+                                        currentUser?.uid || 'guest'
+                                      );
+                                      showNotification(`✓ Created Flashcard Deck (${res.count} cards) in Flashcards Engine!`);
+                                    }}
+                                    className="flex items-center gap-1 hover:text-white hover:bg-indigo-500/20 bg-slate-950/40 border border-white/5 px-2.5 py-1 rounded-lg transition-colors font-medium active:scale-95"
+                                    title="Convert this explanation into interactive Flashcards"
+                                  >
+                                    <span>🗂️</span> Save Flashcards
+                                  </button>
+                                  <button
+                                    onClick={() => handleToggleSpeakMessage(m.content, msgKey)}
+                                    className={`flex items-center gap-1 border px-2.5 py-1 rounded-lg transition-colors font-medium active:scale-95 ${isSpeaking ? 'text-rose-400 border-rose-500/30 bg-rose-500/10 font-bold' : 'hover:text-white hover:bg-white/10 bg-slate-950/40 border-white/5'}`}
+                                    title={isSpeaking ? "Suspend voice generator output" : "Synthesize study reading"}
+                                  >
+                                    <span>{isSpeaking ? '⏹️' : '🔊'}</span> {isSpeaking ? 'Stop' : 'Read Aloud'}
+                                  </button>
+                                  {prevUserMsg && !aiLoading && (
+                                    <button
+                                      onClick={() => handleAskAIModel(prevUserMsg)}
+                                      className="flex items-center gap-1 hover:text-white hover:bg-amber-500/20 bg-slate-950/40 border border-white/5 px-2.5 py-1 rounded-lg transition-colors font-medium active:scale-95"
+                                      title="Regenerate or retry this response"
+                                    >
+                                      <span>🔄</span> {m.content.includes('temporarily unavailable') ? 'Retry' : 'Regenerate'}
+                                    </button>
+                                  )}
+                                </div>
+
+                                {/* 1-Click Follow-Up Pedagogical Controls on Latest Message */}
+                                {isLatestAssistant && !aiLoading && (
+                                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                                    {[
+                                      { label: '✨ Explain Simply', prompt: 'Explain the previous concept more simply for a beginner with an intuitive analogy.' },
+                                      { label: '🪜 Step-by-Step', prompt: 'Break this down into numbered step-by-step derivations and explain why each step works.' },
+                                      { label: '💡 Give Examples', prompt: 'Give 2 worked real-world and exam-style examples of this topic.' },
+                                      { label: '📝 Quiz Me (5 Qs)', prompt: 'Generate a 5-question interactive practice quiz on this topic with answers and explanations at the end.' },
+                                      { label: '🗂️ Make Flashcards', prompt: 'Create 6 structured Q: / A: flashcards covering the most important definitions and formulas from this topic.' },
+                                      { label: '📌 Quick Summary', prompt: 'Give me a crisp bulleted revision cheat-sheet of the key takeaways and formulas.' }
+                                    ].map((actionChip, cIdx) => (
+                                      <button
+                                        key={cIdx}
+                                        onClick={() => handleAskAIModel(actionChip.prompt)}
+                                        className="px-2 py-1 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 text-[10px] font-semibold text-indigo-300 transition-all cursor-pointer active:scale-95"
+                                      >
+                                        {actionChip.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -11716,9 +11829,18 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                       })}
 
                       {aiLoading && (
-                        <div className="p-3 bg-amber-500/5 text-amber-500 border border-amber-500/15 rounded-2xl text-[10px] max-w-[80%] mr-auto animate-pulse flex items-center gap-2">
-                           <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                           <span>Mentor formulating response guidelines...</span>
+                        <div className="p-3 bg-amber-500/5 text-amber-400 border border-amber-500/20 rounded-2xl text-[10px] max-w-[85%] mr-auto flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2 animate-pulse">
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
+                            <span>AI Buddy is streaming response...</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => aiAbortControllerRef.current?.abort()}
+                            className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-rose-300 font-bold text-[10px] shrink-0 cursor-pointer"
+                          >
+                            ⏹ Stop
+                          </button>
                         </div>
                       )}
                     </div>
@@ -11813,7 +11935,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                           className={`flex-1 px-4 py-3 rounded-xl bg-slate-900 border text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-white font-medium ${aiUsageState.remaining <= 0 ? 'border-red-500/30 opacity-70 cursor-not-allowed' : 'border-white/10'}`}
                         />
                         <button 
-                          onClick={aiUsageState.remaining <= 0 ? () => setShowQuotaModal(true) : handleAskAIModel}
+                          onClick={aiUsageState.remaining <= 0 ? () => setShowQuotaModal(true) : () => handleAskAIModel()}
                           disabled={aiLoading}
                           className={`px-4 sm:px-5 py-3 rounded-xl font-bold text-xs uppercase tracking-wide transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 shrink-0 ${
                             aiUsageState.remaining <= 0 

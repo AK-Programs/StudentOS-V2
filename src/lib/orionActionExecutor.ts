@@ -8,9 +8,11 @@ import { Homework, Meeting, AppNotification, Competition, SchoolEvent } from '..
 
 export type OrionActionType =
   | 'create_broadcast'
+  | 'create_notice'
   | 'update_broadcast'
   | 'delete_broadcast'
   | 'create_notification'
+  | 'create_reminder'
   | 'notify_users'
   | 'notify_class'
   | 'notify_all'
@@ -32,6 +34,17 @@ export type OrionActionType =
   | 'delete_homework'
   | 'delete_item'
   | 'start_attendance'
+  | 'get_assignments'
+  | 'get_homework'
+  | 'get_submissions'
+  | 'get_attendance'
+  | 'get_students'
+  | 'get_classes'
+  | 'get_calendar'
+  | 'get_notifications'
+  | 'generate_report'
+  | 'export_report'
+  | 'daily_operations_summary'
   | 'search_users'
   | 'search_internet'
   | 'generate_notes'
@@ -51,6 +64,60 @@ export type OrionActionType =
   | 'add_task'
   | 'complete_task'
   | 'delete_task';
+
+export interface OrionStructuredMetric {
+  label: string;
+  value: string | number;
+  tone?: 'default' | 'emerald' | 'amber' | 'rose' | 'indigo';
+}
+
+export interface OrionStructuredTableRow {
+  id: string;
+  primary: string;
+  secondary?: string;
+  badge?: string;
+  badgeTone?: 'emerald' | 'amber' | 'rose' | 'indigo' | 'slate';
+  meta?: string;
+}
+
+export interface OrionSuggestedAction {
+  label: string;
+  command: string;
+  variant?: 'primary' | 'secondary' | 'warning';
+  exportData?: { filename: string; content: string; mimeType?: string };
+}
+
+export interface OrionStructuredCard {
+  title: string;
+  subtitle?: string;
+  dateRange?: string;
+  metrics?: OrionStructuredMetric[];
+  rows?: OrionStructuredTableRow[];
+  bulletPoints?: string[];
+  suggestedActions?: OrionSuggestedAction[];
+  reportMarkdown?: string;
+}
+
+export interface StructuredOrionPayload {
+  type?: 'table' | 'metrics' | 'report' | 'list';
+  title: string;
+  subtitle?: string;
+  metrics?: { label: string; value: string | number; status?: 'good' | 'warning' | 'danger' | 'neutral' }[];
+  columns?: string[];
+  rows?: Record<string, string | number>[];
+  recommendedActions?: { label: string; command: string }[];
+  exportableMarkdown?: string;
+}
+
+export interface OrionDraftPreview {
+  action: OrionActionType;
+  badgeLabel: string;
+  title: string;
+  targetAudience: string;
+  dateOrTime?: string;
+  bodyPreview: string;
+  rawAction: OrionAction;
+}
 
 export interface OrionAction {
   action: OrionActionType;
@@ -77,7 +144,10 @@ export interface OrionUserContext {
   userId?: string;
   userName?: string;
   userEmail?: string;
-  userRole?: string; // 'super_admin' | 'admin' | 'teacher' | 'student'
+  userRole?: string; // 'super_admin' | 'admin' | 'coordinator' | 'teacher' | 'student'
+  schoolId?: string;
+  grade?: string;
+  section?: string;
 }
 
 export interface OrionExecutionResult {
@@ -87,6 +157,8 @@ export interface OrionExecutionResult {
   message: string;
   summaryText: string;
   data?: any;
+  structuredCard?: OrionStructuredCard;
+  draftPreview?: OrionDraftPreview;
   requiresConfirmation?: boolean;
   confirmationPrompt?: string;
   error?: string;
@@ -113,17 +185,21 @@ export function validateActionPermission(
 ): { allowed: boolean; reason?: string } {
   const normRole = (role || 'student').toLowerCase();
   const isAdmin = normRole === 'super_admin' || normRole === 'admin';
-  const isTeacher = normRole === 'teacher' || normRole === 'faculty' || normRole === 'head_teacher' || isAdmin;
+  const isCoordinator = normRole === 'coordinator' || isAdmin;
+  const isStaff =
+    normRole === 'teacher' ||
+    normRole === 'faculty' ||
+    normRole === 'head_teacher' ||
+    isCoordinator ||
+    isAdmin;
 
-  // Student permissions whitelist
+  // Student permissions whitelist (Orion is strictly staff/admin for school operations)
   const studentAllowedActions: OrionActionType[] = [
     'register_competition',
     'show_pending_assignments',
     'show_timetable',
-    'show_attendance',
     'show_announcements',
     'navigate_tab',
-    'search_users',
     'general_chat',
     'add_study_planner',
     'create_study_plan',
@@ -134,13 +210,28 @@ export function validateActionPermission(
     'delete_task'
   ];
 
-  if (!isTeacher) {
+  // Admin/Coordinator-only school-wide broadcast & destructive operations
+  const coordinatorOrAdminOnlyActions: OrionActionType[] = [
+    'create_broadcast',
+    'update_broadcast',
+    'delete_broadcast',
+    'notify_all'
+  ];
+
+  if (!isStaff) {
     if (studentAllowedActions.includes(action)) {
       return { allowed: true };
     }
     return {
       allowed: false,
-      reason: `🔒 Permission Denied: Student accounts are not authorized to perform administrative or creation actions (${action}). Please request assistance from a teacher or administrator.`
+      reason: `🔒 Authorization Denied: Orion staff intelligence and automation tools (${action}) require Teacher, Coordinator, or Administrator credentials.`
+    };
+  }
+
+  if (coordinatorOrAdminOnlyActions.includes(action) && !isCoordinator && !isStaff) {
+    return {
+      allowed: false,
+      reason: `🔒 Authorization Denied: School-wide broadcast action (${action}) requires Coordinator or Administrator privileges.`
     };
   }
 
@@ -148,8 +239,38 @@ export function validateActionPermission(
 }
 
 /**
- * Destructive actions requiring explicit user confirmation before executing
+ * Consequential actions that modify school records or notify groups require explicit confirmation
+ * before Orion executes them against the database.
  */
+export const CONSEQUENTIAL_ACTIONS: OrionActionType[] = [
+  'create_broadcast',
+  'create_notice',
+  'update_broadcast',
+  'delete_broadcast',
+  'create_notification',
+  'create_reminder',
+  'notify_users',
+  'notify_class',
+  'notify_all',
+  'create_event',
+  'update_event',
+  'delete_event',
+  'create_competition',
+  'update_competition',
+  'delete_competition',
+  'create_meeting',
+  'schedule_meeting',
+  'cancel_meeting',
+  'delete_meeting',
+  'create_assignment',
+  'create_homework',
+  'update_assignment',
+  'delete_assignment',
+  'delete_homework',
+  'delete_item',
+  'create_calendar_event'
+];
+
 export const DESTRUCTIVE_ACTIONS: OrionActionType[] = [
   'delete_broadcast',
   'delete_event',
@@ -163,6 +284,55 @@ export const DESTRUCTIVE_ACTIONS: OrionActionType[] = [
 
 export function isDestructiveAction(action: OrionActionType): boolean {
   return DESTRUCTIVE_ACTIONS.includes(action);
+}
+
+export function isConsequentialAction(action: OrionActionType): boolean {
+  return CONSEQUENTIAL_ACTIONS.includes(action);
+}
+
+/**
+ * Builds a structured confirmation preview for consequential Orion actions
+ */
+export function buildConsequentialActionPreview(actionObj: OrionAction): OrionDraftPreview {
+  const act = actionObj.action;
+  const targetAudience = actionObj.targetClass || actionObj.audience || 'All Authorized Recipients';
+  const title =
+    actionObj.title ||
+    extractCleanTitle(
+      actionObj.targetValue || actionObj.content || actionObj.message || '',
+      act.includes('meet')
+        ? 'meeting'
+        : act.includes('comp')
+          ? 'competition'
+          : act.includes('event')
+            ? 'event'
+            : act.includes('homework') || act.includes('assignment')
+              ? 'homework'
+              : 'broadcast'
+    );
+  const bodyPreview =
+    actionObj.content ||
+    actionObj.message ||
+    `Prepared "${title}" for ${targetAudience}.`;
+
+  let badgeLabel = 'Consequential Action';
+  if (act === 'create_broadcast' || act === 'create_notice') badgeLabel = 'Draft School Notice';
+  else if (act === 'create_homework' || act === 'create_assignment') badgeLabel = 'Draft Class Assignment';
+  else if (act === 'create_reminder' || act.startsWith('notify_')) badgeLabel = 'Draft Student Reminder';
+  else if (act.includes('meeting')) badgeLabel = 'Draft StudentOS Meet';
+  else if (act.includes('event') || act.includes('calendar')) badgeLabel = 'Draft Calendar Event';
+  else if (act.includes('competition')) badgeLabel = 'Draft Competition';
+  else if (isDestructiveAction(act)) badgeLabel = 'Permanent Deletion';
+
+  return {
+    action: act,
+    badgeLabel,
+    title,
+    targetAudience,
+    dateOrTime: actionObj.date ? `${actionObj.date}${actionObj.time ? ' · ' + actionObj.time : ''}` : actionObj.time,
+    bodyPreview,
+    rawAction: actionObj
+  };
 }
 
 /* ========================================================================
@@ -1110,6 +1280,580 @@ export async function executeMarkAttendance(
 }
 
 /* ========================================================================
+   ORION DATA INTELLIGENCE, ANALYTICS & REPORTING TOOLS (REAL SUPABASE DATA)
+   ======================================================================== */
+
+/**
+ * 17. Homework & Submissions Analysis Tool (get_homework / get_submissions / get_assignments)
+ */
+export async function executeGetHomeworkAndSubmissions(
+  actionObj: OrionAction,
+  user: OrionUserContext
+): Promise<OrionExecutionResult> {
+  const targetStr = actionObj.targetClass || actionObj.audience || actionObj.targetValue || '';
+  const hasSpecificClass = /\b(class|grade|solara|astra|elara|vega|\d{1,2}[a-z]?)\b/i.test(targetStr);
+  const parsedClass = hasSpecificClass ? parseGradeAndSection(targetStr) : null;
+  const todayIso = new Date().toISOString().split('T')[0];
+
+  try {
+    const [hwRes, usersRes] = await Promise.all([
+      supabase.from('homework').select('*').order('created_at', { ascending: false }).limit(25),
+      supabase.from('user_profiles').select('id, uid, name, role, grade, section, house').eq('role', 'student')
+    ]);
+
+    if (hwRes.error) {
+      throw new Error(hwRes.error.message);
+    }
+
+    let homeworkRows = hwRes.data || [];
+    let students = usersRes.data || [];
+
+    if (parsedClass) {
+      homeworkRows = homeworkRows.filter(
+        (h: any) =>
+          !h.class_grade ||
+          h.class_grade.toLowerCase() === parsedClass.grade.toLowerCase() ||
+          (parsedClass.section !== 'All Sections' &&
+            h.class_section &&
+            h.class_section.toLowerCase() === parsedClass.section.toLowerCase())
+      );
+      students = students.filter(
+        (s: any) =>
+          (!s.grade || s.grade.toLowerCase() === parsedClass.grade.toLowerCase()) &&
+          (parsedClass.section === 'All Sections' ||
+            !s.section ||
+            s.section.toLowerCase() === parsedClass.section.toLowerCase())
+      );
+    }
+
+    const totalStudentsCount = students.length;
+    const latestHw = homeworkRows[0];
+
+    const completedIds: string[] = latestHw && Array.isArray(latestHw.completed_list) ? latestHw.completed_list : [];
+    const submittedStudents = students.filter((s: any) => completedIds.includes(s.uid || s.id));
+    const pendingStudents = students.filter((s: any) => !completedIds.includes(s.uid || s.id));
+    const overdueHw = homeworkRows.filter((h: any) => h.due_date && h.due_date < todayIso);
+
+    const classLabel = parsedClass
+      ? `${parsedClass.grade}${parsedClass.section !== 'All Sections' ? ' ' + parsedClass.section : ''}`
+      : 'All Authorized Classes';
+
+    const rows: OrionStructuredTableRow[] = [];
+    if (latestHw && students.length > 0) {
+      for (const st of pendingStudents.slice(0, 8)) {
+        rows.push({
+          id: st.uid || st.id,
+          primary: st.name || 'Student',
+          secondary: `${st.grade || 'Grade 10'} · ${st.section || 'Solara'} (${st.house || 'Ruby'})`,
+          badge: 'Pending Submission',
+          badgeTone: 'amber',
+          meta: `Due: ${latestHw.due_date || todayIso}`
+        });
+      }
+      for (const st of submittedStudents.slice(0, 4)) {
+        rows.push({
+          id: st.uid || st.id,
+          primary: st.name || 'Student',
+          secondary: `${st.grade || 'Grade 10'} · ${st.section || 'Solara'}`,
+          badge: 'Submitted',
+          badgeTone: 'emerald',
+          meta: latestHw.title
+        });
+      }
+    } else {
+      for (const h of homeworkRows.slice(0, 8)) {
+        const doneCount = Array.isArray(h.completed_list) ? h.completed_list.length : 0;
+        const isOverdue = h.due_date && h.due_date < todayIso;
+        rows.push({
+          id: h.id,
+          primary: h.title || 'Untitled Assignment',
+          secondary: `${h.subject || 'General'} · ${h.class_grade || 'Grade 10'} ${h.class_section || ''}`,
+          badge: isOverdue ? 'Overdue' : `${doneCount} Submitted`,
+          badgeTone: isOverdue ? 'rose' : 'indigo',
+          meta: `Due: ${h.due_date || 'Unspecified'}`
+        });
+      }
+    }
+
+    const csvLines = [
+      'Student Name,Grade,Section,Assignment,Status,Due Date',
+      ...pendingStudents.map(
+        (s: any) => `"${s.name || 'Student'}","${s.grade || ''}","${s.section || ''}","${latestHw?.title || 'Current Homework'}","Pending","${latestHw?.due_date || todayIso}"`
+      ),
+      ...submittedStudents.map(
+        (s: any) => `"${s.name || 'Student'}","${s.grade || ''}","${s.section || ''}","${latestHw?.title || 'Current Homework'}","Submitted","${latestHw?.due_date || todayIso}"`
+      )
+    ].join('\n');
+
+    const card: OrionStructuredCard = {
+      title: `${classLabel} — Homework & Submission Status`,
+      subtitle: latestHw
+        ? `Tracking latest assignment: "${latestHw.title}" (${latestHw.subject || 'Academic'})`
+        : `No active homework records found in Supabase for ${classLabel}`,
+      dateRange: `As of ${todayIso}`,
+      metrics: [
+        { label: 'Active Assignments', value: homeworkRows.length, tone: 'indigo' },
+        { label: 'Submitted', value: latestHw ? submittedStudents.length : 0, tone: 'emerald' },
+        { label: 'Pending', value: latestHw ? pendingStudents.length : 0, tone: 'amber' },
+        { label: 'Overdue Tasks', value: overdueHw.length, tone: overdueHw.length > 0 ? 'rose' : 'default' }
+      ],
+      rows,
+      suggestedActions: [
+        ...(pendingStudents.length > 0
+          ? [
+              {
+                label: `Send Reminder (${pendingStudents.length} Pending)`,
+                command: `Create a notice reminding ${classLabel} to submit "${latestHw?.title || 'pending homework'}"`,
+                variant: 'primary' as const
+              }
+            ]
+          : []),
+        {
+          label: 'Open Assignment Centre',
+          command: 'Open pending assignments',
+          variant: 'secondary'
+        },
+        {
+          label: 'Export Submission Report (CSV)',
+          command: 'export_csv',
+          variant: 'secondary',
+          exportData: {
+            filename: `studentos-homework-status-${todayIso}.csv`,
+            content: csvLines,
+            mimeType: 'text/csv'
+          }
+        }
+      ]
+    };
+
+    const summaryText =
+      homeworkRows.length === 0
+        ? `Retrieved authorized homework records for **${classLabel}**: There are currently **0** homework assignments stored in Supabase.`
+        : `### 📊 ${classLabel} — Assignment & Submission Analysis\n\n` +
+          `- **Latest Assignment:** ${latestHw.title} (${latestHw.subject || 'General'})\n` +
+          `- **Submitted:** ${submittedStudents.length} of ${totalStudentsCount} students\n` +
+          `- **Pending:** ${pendingStudents.length} students\n` +
+          `- **Overdue Assignments:** ${overdueHw.length}\n\n` +
+          (pendingStudents.length > 0
+            ? `Would you like me to send a reminder notice to the **${pendingStudents.length}** students with pending submissions?`
+            : `All enrolled students in ${classLabel} have completed this assignment.`);
+
+    return {
+      success: true,
+      action: actionObj.action,
+      message: 'Retrieved homework and submission records.',
+      summaryText,
+      structuredCard: card
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      action: actionObj.action,
+      message: 'Failed to retrieve homework records from Supabase.',
+      summaryText: `⚠️ Requested StudentOS homework information could not be retrieved: ${err.message}`,
+      error: err.message
+    };
+  }
+}
+
+/**
+ * 18. Attendance Analysis Tool (get_attendance)
+ */
+export async function executeGetAttendanceAnalysis(
+  actionObj: OrionAction,
+  user: OrionUserContext
+): Promise<OrionExecutionResult> {
+  const threshold = Number(actionObj.details?.threshold) || 75;
+  const todayIso = new Date().toISOString().split('T')[0];
+
+  try {
+    const [attRes, usersRes] = await Promise.all([
+      supabase.from('attendance').select('*').order('date', { ascending: false }).limit(500),
+      supabase.from('user_profiles').select('id, uid, name, role, grade, section, house').eq('role', 'student')
+    ]);
+
+    if (attRes.error) throw new Error(attRes.error.message);
+
+    const records = attRes.data || [];
+    const students = usersRes.data || [];
+
+    const byStudent = new Map<string, { present: number; absent: number; late: number; total: number }>();
+    for (const rec of records) {
+      const uid = rec.user_id;
+      if (!uid) continue;
+      const cur = byStudent.get(uid) || { present: 0, absent: 0, late: 0, total: 0 };
+      cur.total += 1;
+      if (rec.status === 'present') cur.present += 1;
+      else if (rec.status === 'absent') cur.absent += 1;
+      else if (rec.status === 'late') cur.late += 1;
+      byStudent.set(uid, cur);
+    }
+
+    const lowAttendanceRows: OrionStructuredTableRow[] = [];
+    const allStudentStats: { name: string; grade: string; section: string; pct: number; present: number; absent: number; total: number }[] = [];
+
+    for (const st of students) {
+      const uid = st.uid || st.id;
+      const stat = byStudent.get(uid);
+      if (!stat || stat.total === 0) continue;
+      const pct = Math.round(((stat.present + stat.late * 0.5) / stat.total) * 100);
+      allStudentStats.push({
+        name: st.name || 'Student',
+        grade: st.grade || 'Grade 10',
+        section: st.section || 'Solara',
+        pct,
+        present: stat.present,
+        absent: stat.absent,
+        total: stat.total
+      });
+
+      if (pct < threshold) {
+        lowAttendanceRows.push({
+          id: uid,
+          primary: st.name || 'Student',
+          secondary: `${st.grade || 'Grade 10'} · ${st.section || 'Solara'} (${st.house || 'Ruby'})`,
+          badge: `${pct}% Attendance`,
+          badgeTone: pct < 60 ? 'rose' : 'amber',
+          meta: `${stat.present}P / ${stat.absent}A (${stat.total} days)`
+        });
+      }
+    }
+
+    const todayRecords = records.filter((r: any) => r.date === todayIso);
+    const todayAbsentCount = todayRecords.filter((r: any) => r.status === 'absent').length;
+    const avgAttendance =
+      allStudentStats.length > 0
+        ? Math.round(allStudentStats.reduce((acc, s) => acc + s.pct, 0) / allStudentStats.length)
+        : 100;
+
+    const displayRows: OrionStructuredTableRow[] =
+      lowAttendanceRows.length > 0
+        ? lowAttendanceRows.slice(0, 10)
+        : allStudentStats.slice(0, 8).map((s, idx) => ({
+            id: `att-${idx}`,
+            primary: s.name,
+            secondary: `${s.grade} · ${s.section}`,
+            badge: `${s.pct}% Attendance`,
+            badgeTone: 'emerald',
+            meta: `${s.present} Present / ${s.absent} Absent`
+          }));
+
+    const csvContent = [
+      'Student Name,Grade,Section,Attendance %,Present Days,Absent Days,Total Recorded Days',
+      ...allStudentStats.map(
+        (s) => `"${s.name}","${s.grade}","${s.section}",${s.pct},${s.present},${s.absent},${s.total}`
+      )
+    ].join('\n');
+
+    const card: OrionStructuredCard = {
+      title: `Attendance Intelligence Report (Threshold: ${threshold}%)`,
+      subtitle:
+        records.length > 0
+          ? `Analyzed ${records.length} verified attendance entries across ${allStudentStats.length} students`
+          : 'No attendance entries recorded in Supabase yet',
+      dateRange: `Through ${todayIso}`,
+      metrics: [
+        { label: 'Avg Attendance', value: `${avgAttendance}%`, tone: avgAttendance >= threshold ? 'emerald' : 'amber' },
+        { label: `Below ${threshold}%`, value: lowAttendanceRows.length, tone: lowAttendanceRows.length > 0 ? 'rose' : 'emerald' },
+        { label: 'Absent Today', value: todayAbsentCount, tone: todayAbsentCount > 0 ? 'amber' : 'default' },
+        { label: 'Records Logged', value: records.length, tone: 'indigo' }
+      ],
+      rows: displayRows,
+      suggestedActions: [
+        {
+          label: 'Open Attendance Manager',
+          command: 'Open attendance',
+          variant: 'primary'
+        },
+        ...(lowAttendanceRows.length > 0
+          ? [
+              {
+                label: 'Draft Attendance Notice',
+                command: `Create a notice reminding students about maintaining ${threshold}% minimum attendance`,
+                variant: 'secondary' as const
+              }
+            ]
+          : []),
+        {
+          label: 'Export Attendance CSV',
+          command: 'export_csv',
+          variant: 'secondary',
+          exportData: {
+            filename: `studentos-attendance-audit-${todayIso}.csv`,
+            content: csvContent,
+            mimeType: 'text/csv'
+          }
+        }
+      ]
+    };
+
+    const summaryText =
+      records.length === 0
+        ? `No attendance records have been logged in Supabase yet. You can open **Attendance Manager** to record today's roll call.`
+        : lowAttendanceRows.length > 0
+          ? `Found **${lowAttendanceRows.length}** student(s) with attendance below the **${threshold}%** threshold (School average: **${avgAttendance}%**). Review the student breakdown below or trigger an attendance reminder.`
+          : `All tracked students are currently meeting or exceeding the **${threshold}%** attendance threshold (Average: **${avgAttendance}%** across ${records.length} logged records).`;
+
+    return {
+      success: true,
+      action: 'get_attendance',
+      message: 'Attendance analysis complete.',
+      summaryText,
+      structuredCard: card
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      action: 'get_attendance',
+      message: 'Failed to retrieve attendance data.',
+      summaryText: `⚠️ Could not retrieve StudentOS attendance records: ${err.message}`,
+      error: err.message
+    };
+  }
+}
+
+/**
+ * 19. Daily School Operations Summary Tool (daily_operations_summary)
+ */
+export async function executeDailyOperationsSummary(
+  actionObj: OrionAction,
+  user: OrionUserContext
+): Promise<OrionExecutionResult> {
+  const todayIso = new Date().toISOString().split('T')[0];
+
+  try {
+    const [attRes, hwRes, evRes, meetRes, notifRes] = await Promise.all([
+      supabase.from('attendance').select('user_id, status, date').eq('date', todayIso),
+      supabase.from('homework').select('id, title, subject, class_grade, due_date, completed_list').order('created_at', { ascending: false }).limit(10),
+      supabase.from('calendar_events').select('id, title, start_date, category').gte('start_date', todayIso).order('start_date', { ascending: true }).limit(6),
+      supabase.from('meetings').select('id, title, class_name, start_time, status').order('start_time', { ascending: true }).limit(5),
+      supabase.from('notifications').select('id, title, message, created_at').order('created_at', { ascending: false }).limit(5)
+    ]);
+
+    const todayAtt = attRes.data || [];
+    const presentToday = todayAtt.filter((a: any) => a.status === 'present').length;
+    const absentToday = todayAtt.filter((a: any) => a.status === 'absent').length;
+
+    const hwList = hwRes.data || [];
+    const dueTodayOrOverdue = hwList.filter((h: any) => h.due_date && h.due_date <= todayIso);
+
+    const upcomingEvents = evRes.data || [];
+    const meetings = meetRes.data || [];
+    const recentNotifs = notifRes.data || [];
+
+    const rows: OrionStructuredTableRow[] = [];
+
+    for (const h of dueTodayOrOverdue.slice(0, 3)) {
+      rows.push({
+        id: `hw-${h.id}`,
+        primary: `Assignment Due: ${h.title}`,
+        secondary: `${h.subject || 'Academic'} · ${h.class_grade || 'Grade 10'}`,
+        badge: h.due_date < todayIso ? 'Overdue' : 'Due Today',
+        badgeTone: h.due_date < todayIso ? 'rose' : 'amber',
+        meta: h.due_date
+      });
+    }
+
+    for (const ev of upcomingEvents.slice(0, 3)) {
+      rows.push({
+        id: `ev-${ev.id}`,
+        primary: `Calendar: ${ev.title}`,
+        secondary: `Category: ${ev.category || 'Academic'}`,
+        badge: 'Upcoming',
+        badgeTone: 'indigo',
+        meta: ev.start_date
+      });
+    }
+
+    for (const m of meetings.slice(0, 2)) {
+      rows.push({
+        id: `meet-${m.id}`,
+        primary: `StudentOS Meet: ${m.title}`,
+        secondary: m.class_name || 'Virtual Classroom',
+        badge: m.status || 'Scheduled',
+        badgeTone: 'emerald',
+        meta: m.start_time ? new Date(m.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
+      });
+    }
+
+    const card: OrionStructuredCard = {
+      title: `Daily School Operations Workspace`,
+      subtitle: `Prioritized operational briefing for ${user.userName || 'Staff'} (${(user.userRole || 'staff').toUpperCase()})`,
+      dateRange: todayIso,
+      metrics: [
+        { label: 'Present Today', value: presentToday, tone: 'emerald' },
+        { label: 'Absent Today', value: absentToday, tone: absentToday > 0 ? 'rose' : 'default' },
+        { label: 'Active Homework', value: hwList.length, tone: 'indigo' },
+        { label: 'Upcoming Events', value: upcomingEvents.length + meetings.length, tone: 'amber' }
+      ],
+      rows,
+      bulletPoints: [
+        todayAtt.length > 0
+          ? `Today's roll call has ${todayAtt.length} recorded entries (${presentToday} present, ${absentToday} absent).`
+          : `Today's attendance has not been submitted yet for ${todayIso}.`,
+        dueTodayOrOverdue.length > 0
+          ? `${dueTodayOrOverdue.length} assignment(s) are due today or overdue across active classes.`
+          : `All ${hwList.length} active assignments have future deadlines.`,
+        recentNotifs.length > 0
+          ? `Latest school notice: "${recentNotifs[0].title}"`
+          : `No unread urgent alerts in the notification queue.`
+      ],
+      suggestedActions: [
+        { label: 'Check Homework Submissions', command: 'Show homework submission status', variant: 'primary' },
+        { label: 'Audit Attendance', command: 'Show students with attendance below 75%', variant: 'secondary' },
+        { label: 'Generate Weekly Report', command: 'Generate a weekly academic activity report', variant: 'secondary' }
+      ]
+    };
+
+    return {
+      success: true,
+      action: 'daily_operations_summary',
+      message: 'Compiled daily operations workspace.',
+      summaryText: `Here is your prioritized **StudentOS Operations Summary** for **${todayIso}**, combining real-time attendance, assignment deadlines, scheduled meetings, and calendar events.`,
+      structuredCard: card
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      action: 'daily_operations_summary',
+      message: 'Failed to compile operations summary.',
+      summaryText: `⚠️ Could not retrieve complete school operations data: ${err.message}`,
+      error: err.message
+    };
+  }
+}
+
+/**
+ * 20. Academic & Weekly Report Generator (generate_report / export_report)
+ */
+export async function executeGenerateAcademicReport(
+  actionObj: OrionAction,
+  user: OrionUserContext
+): Promise<OrionExecutionResult> {
+  const targetStr = actionObj.targetClass || actionObj.audience || actionObj.targetValue || '';
+  const hasSpecificClass = /\b(class|grade|solara|astra|elara|vega|\d{1,2}[a-z]?)\b/i.test(targetStr);
+  const parsedClass = hasSpecificClass ? parseGradeAndSection(targetStr) : null;
+  const endIso = new Date().toISOString().split('T')[0];
+  const startIso = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+
+  try {
+    const [usersRes, hwRes, matRes, attRes, houseRes] = await Promise.all([
+      supabase.from('user_profiles').select('id, uid, name, role, grade, section, house, points').eq('role', 'student'),
+      supabase.from('homework').select('*').order('created_at', { ascending: false }).limit(30),
+      supabase.from('materials').select('id, title, subject, category, class_grade').limit(30),
+      supabase.from('attendance').select('user_id, status, date').gte('date', startIso),
+      supabase.from('life_houses').select('id, name, points, rank').order('points', { ascending: false })
+    ]);
+
+    let students = usersRes.data || [];
+    let homeworks = hwRes.data || [];
+
+    if (parsedClass) {
+      students = students.filter(
+        (s: any) =>
+          (!s.grade || s.grade.toLowerCase() === parsedClass.grade.toLowerCase()) &&
+          (parsedClass.section === 'All Sections' ||
+            !s.section ||
+            s.section.toLowerCase() === parsedClass.section.toLowerCase())
+      );
+      homeworks = homeworks.filter(
+        (h: any) => !h.class_grade || h.class_grade.toLowerCase() === parsedClass.grade.toLowerCase()
+      );
+    }
+
+    const materials = matRes.data || [];
+    const weekAtt = attRes.data || [];
+    const houses = houseRes.data || [];
+
+    const weekPresent = weekAtt.filter((a: any) => a.status === 'present').length;
+    const weekAttRate = weekAtt.length > 0 ? Math.round((weekPresent / weekAtt.length) * 100) : 100;
+
+    let totalSubmissions = 0;
+    for (const h of homeworks) {
+      if (Array.isArray(h.completed_list)) {
+        totalSubmissions += h.completed_list.length;
+      }
+    }
+
+    const scopeTitle = parsedClass
+      ? `${parsedClass.grade}${parsedClass.section !== 'All Sections' ? ' ' + parsedClass.section : ''}`
+      : 'School-Wide';
+
+    const reportMarkdown =
+      `# StudentOS Weekly Academic & Operations Report (${scopeTitle})\n` +
+      `**Date Range:** ${startIso} to ${endIso}\n` +
+      `**Generated By:** ${user.userName || 'Authorized Staff'} (${user.userRole || 'staff'})\n\n` +
+      `## Key Metrics\n` +
+      `- **Enrolled Students in Scope:** ${students.length}\n` +
+      `- **Active Homework Assignments:** ${homeworks.length}\n` +
+      `- **Total Logged Homework Completions:** ${totalSubmissions}\n` +
+      `- **7-Day Attendance Rate:** ${weekAttRate}% (${weekAtt.length} records)\n` +
+      `- **Published Learning Materials:** ${materials.length}\n\n` +
+      `## House Standings\n` +
+      houses.map((h: any, i: number) => `${i + 1}. **${h.id}** — ${h.points} pts`).join('\n');
+
+    const rows: OrionStructuredTableRow[] = homeworks.slice(0, 6).map((h: any) => {
+      const done = Array.isArray(h.completed_list) ? h.completed_list.length : 0;
+      return {
+        id: h.id,
+        primary: h.title,
+        secondary: `${h.subject || 'General'} · ${h.class_grade || 'Grade 10'}`,
+        badge: `${done} Completed`,
+        badgeTone: done > 0 ? 'emerald' : 'amber',
+        meta: `Due: ${h.due_date || endIso}`
+      };
+    });
+
+    const card: OrionStructuredCard = {
+      title: `Weekly Academic Activity Report — ${scopeTitle}`,
+      subtitle: `Aggregated from live Supabase records (Students, Homework, Attendance, Materials)`,
+      dateRange: `${startIso} → ${endIso}`,
+      metrics: [
+        { label: 'Students', value: students.length, tone: 'indigo' },
+        { label: 'Assignments', value: homeworks.length, tone: 'emerald' },
+        { label: 'Submissions', value: totalSubmissions, tone: 'emerald' },
+        { label: '7d Attendance', value: `${weekAttRate}%`, tone: weekAttRate >= 75 ? 'emerald' : 'amber' }
+      ],
+      rows,
+      reportMarkdown,
+      suggestedActions: [
+        {
+          label: 'Download Report (.md)',
+          command: 'export_report',
+          variant: 'primary',
+          exportData: {
+            filename: `studentos-weekly-report-${endIso}.md`,
+            content: reportMarkdown,
+            mimeType: 'text/markdown'
+          }
+        },
+        {
+          label: 'Check Pending Homework',
+          command: `Show students who haven't submitted homework`,
+          variant: 'secondary'
+        }
+      ]
+    };
+
+    return {
+      success: true,
+      action: 'generate_report',
+      message: 'Generated weekly academic activity report.',
+      summaryText: `Generated the **Weekly Academic Activity Report** for **${scopeTitle}** covering **${startIso}** to **${endIso}**. You can inspect the metrics below or export the report file directly.`,
+      structuredCard: card
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      action: 'generate_report',
+      message: 'Failed to generate academic report.',
+      summaryText: `⚠️ Could not generate report from StudentOS database: ${err.message}`,
+      error: err.message
+    };
+  }
+}
+
+/* ========================================================================
    CENTRALIZED ORION ACTION DISPATCH PIPELINE
    ======================================================================== */
 
@@ -1125,17 +1869,38 @@ export async function executeOrionActionPipeline(
 ): Promise<{
   results: OrionExecutionResult[];
   combinedSummary: string;
-  pendingConfirmation?: { action: string; targetTitle: string; promptText: string };
+  structuredCards: OrionStructuredCard[];
+  structuredData?: StructuredOrionPayload;
+  pendingConfirmation?: {
+    action: string;
+    targetTitle: string;
+    promptText: string;
+    draftPreview?: OrionDraftPreview;
+    rawAction?: OrionAction;
+    previewDetails?: Record<string, string>;
+    actionObject?: OrionAction;
+  };
 }> {
   console.log(`[ORION] User command received: "${rawCommand}"`);
 
   const results: OrionExecutionResult[] = [];
-  let pendingConfirmationData: { action: string; targetTitle: string; promptText: string } | undefined = undefined;
+  const structuredCards: OrionStructuredCard[] = [];
+  let pendingConfirmationData:
+    | {
+        action: string;
+        targetTitle: string;
+        promptText: string;
+        draftPreview?: OrionDraftPreview;
+        rawAction?: OrionAction;
+        previewDetails?: Record<string, string>;
+        actionObject?: OrionAction;
+      }
+    | undefined = undefined;
 
   for (const act of actions) {
     console.log(`[ORION] Intent detected: ${act.action}`);
 
-    // Step 1: Validate User Permission
+    // Step 1: Validate User Permission on Backend/Executor Boundary
     const perm = validateActionPermission(act.action, userContext.userRole);
     if (!perm.allowed) {
       console.log(`[ORION] Action validation failed: ${perm.reason}`);
@@ -1151,16 +1916,28 @@ export async function executeOrionActionPipeline(
 
     console.log(`[ORION] Action validated for role: ${userContext.userRole || 'student'}`);
 
-    // Step 2: Destructive Action Confirmation Check
-    if (isDestructiveAction(act.action) && !isConfirmed) {
-      const targetTitle = act.title || act.targetValue || 'Item';
-      const promptText = `⚠️ Are you sure you want to delete '${targetTitle}'? This will permanently remove it from Supabase.`;
-      console.log(`[ORION] Action ${act.action} requires confirmation`);
+    // Step 2: Consequential & Destructive Action Confirmation Check
+    if (isConsequentialAction(act.action) && !isConfirmed) {
+      const draftPreview = buildConsequentialActionPreview(act);
+      const targetTitle = draftPreview.title;
+      const promptText = isDestructiveAction(act.action)
+        ? `⚠️ Confirm permanent deletion of "${targetTitle}" from StudentOS database?`
+        : `I drafted this ${draftPreview.badgeLabel.replace(/^Draft\s+/i, '')} for ${draftPreview.targetAudience}: "${targetTitle}". Please confirm to execute.`;
 
       pendingConfirmationData = {
         action: act.action,
         targetTitle,
-        promptText
+        promptText,
+        draftPreview,
+        rawAction: act,
+        actionObject: act,
+        previewDetails: {
+          'Action Type': draftPreview.badgeLabel,
+          'Title': draftPreview.title,
+          'Target / Scope': draftPreview.targetAudience,
+          ...(draftPreview.dateOrTime ? { 'Schedule': draftPreview.dateOrTime } : {}),
+          'Preview': draftPreview.bodyPreview
+        }
       };
 
       results.push({
@@ -1168,10 +1945,17 @@ export async function executeOrionActionPipeline(
         action: act.action,
         requiresConfirmation: true,
         confirmationPrompt: promptText,
-        message: `Confirmation required`,
-        summaryText: promptText
+        draftPreview,
+        message: 'Confirmation required before executing consequential action.',
+        summaryText:
+          `### 📋 ${draftPreview.badgeLabel} — Confirmation Required\n\n` +
+          `- **Title:** ${draftPreview.title}\n` +
+          `- **Target / Scope:** ${draftPreview.targetAudience}\n` +
+          (draftPreview.dateOrTime ? `- **Schedule:** ${draftPreview.dateOrTime}\n` : '') +
+          `- **Content Preview:** ${draftPreview.bodyPreview}\n\n` +
+          `*Please click **Confirm & Execute** below (or say "Yes, confirm") to publish this to StudentOS.*`
       });
-      break; // Stop pipeline until user confirms
+      break; // Wait for explicit user confirmation
     }
 
     // Step 3: Action Execution & Supabase Persistence
@@ -1180,11 +1964,13 @@ export async function executeOrionActionPipeline(
 
     switch (act.action) {
       case 'create_broadcast':
+      case 'create_notice':
       case 'update_broadcast':
         res = await executeCreateBroadcast(act, userContext);
         break;
 
       case 'create_notification':
+      case 'create_reminder':
       case 'notify_users':
       case 'notify_class':
       case 'notify_all':
@@ -1221,6 +2007,29 @@ export async function executeOrionActionPipeline(
       case 'delete_homework':
       case 'delete_broadcast':
         res = await executeDeleteItem(act, userContext, isConfirmed);
+        break;
+
+      case 'get_homework':
+      case 'get_submissions':
+      case 'get_assignments':
+        res = await executeGetHomeworkAndSubmissions(act, userContext);
+        break;
+
+      case 'get_attendance':
+        res = await executeGetAttendanceAnalysis(act, userContext);
+        break;
+
+      case 'daily_operations_summary':
+      case 'get_students':
+      case 'get_classes':
+      case 'get_calendar':
+      case 'get_notifications':
+        res = await executeDailyOperationsSummary(act, userContext);
+        break;
+
+      case 'generate_report':
+      case 'export_report':
+        res = await executeGenerateAcademicReport(act, userContext);
         break;
 
       case 'register_competition':
@@ -1272,7 +2081,6 @@ export async function executeOrionActionPipeline(
         break;
 
       default:
-        // Informational or Navigation Actions
         res = {
           success: true,
           action: act.action,
@@ -1280,6 +2088,10 @@ export async function executeOrionActionPipeline(
           summaryText: act.content || act.message || `Command processed: ${rawCommand}`
         };
         break;
+    }
+
+    if (res.structuredCard) {
+      structuredCards.push(res.structuredCard);
     }
 
     if (res.success) {
@@ -1291,12 +2103,38 @@ export async function executeOrionActionPipeline(
     results.push(res);
   }
 
-  // Combine summaries for output response
-  const combinedSummary = results.map(r => r.summaryText).join('\n\n');
+  const combinedSummary = results.map((r) => r.summaryText).join('\n\n');
+
+  let structuredData: StructuredOrionPayload | undefined = undefined;
+  if (structuredCards.length > 0) {
+    const first = structuredCards[0];
+    structuredData = {
+      title: first.title,
+      subtitle: first.subtitle || first.dateRange,
+      metrics: first.metrics?.map((m) => ({
+        label: m.label,
+        value: m.value,
+        status: m.tone === 'emerald' ? 'good' : m.tone === 'amber' ? 'warning' : m.tone === 'rose' ? 'danger' : 'neutral'
+      })),
+      columns: first.rows && first.rows.length > 0 ? ['Item', 'Details', 'Status', 'Info'] : undefined,
+      rows: first.rows?.map((r) => ({
+        'Item': r.primary,
+        'Details': r.secondary || '—',
+        'Status': r.badge || '—',
+        'Info': r.meta || '—'
+      })),
+      recommendedActions: first.suggestedActions
+        ?.filter((a) => !a.exportData)
+        .map((a) => ({ label: a.label, command: a.command })),
+      exportableMarkdown: first.reportMarkdown
+    };
+  }
 
   return {
     results,
     combinedSummary,
+    structuredCards,
+    structuredData,
     pendingConfirmation: pendingConfirmationData
   };
 }

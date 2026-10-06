@@ -1,567 +1,564 @@
--- ============================================================
--- StudentOS Supabase Database Setup
--- Run this in your Supabase SQL Editor once to set up all tables
--- and RLS policies for the demo environment.
--- ============================================================
+-- ==============================================================================
+-- 🎓 STUDENTOS UNIFIED PRODUCTION DATABASE SCHEMA & SECURITY SETUP
+-- ==============================================================================
+-- Includes: Core Profiles, Gamification, StudentOS Life, Attendance, Gradebook,
+-- Materials, Homework, Flashcards, AI Chats, Meet, Push/FCM, RLS & Realtime Sync.
+-- ==============================================================================
 
--- ==================== MATERIALS TABLE ====================
+-- 1. Enable Required Extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- ==============================================================================
+-- 2. USER PROFILES & ACADEMIC ACCOUNTS
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.user_profiles (
+    id TEXT PRIMARY KEY,
+    uid TEXT UNIQUE,
+    email TEXT,
+    name TEXT DEFAULT '',
+    role TEXT DEFAULT 'student',
+    requested_role TEXT,
+    account_status TEXT DEFAULT 'approved',
+    grade TEXT DEFAULT 'Grade 10',
+    section TEXT DEFAULT 'Solara',
+    house TEXT DEFAULT 'Ruby',
+    department TEXT,
+    subjects JSONB DEFAULT '[]'::jsonb,
+    specialty_subject TEXT DEFAULT 'Science',
+    designation TEXT,
+    photo_url TEXT,
+    banner_url TEXT,
+    bio TEXT,
+    points INTEGER DEFAULT 0,
+    badges JSONB DEFAULT '[]'::jsonb,
+    theme_color TEXT,
+    social_links JSONB DEFAULT '{}'::jsonb,
+    raw_data JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- ==============================================================================
+-- 3. ACADEMIC GAMIFICATION ENGINE (XP, Badges, Streaks, Challenges)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.student_gamification (
+    user_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    avatar TEXT,
+    grade TEXT DEFAULT 'Grade 10',
+    section TEXT DEFAULT 'Solara',
+    house TEXT DEFAULT 'Ruby',
+    school_id TEXT DEFAULT 'default_school',
+    xp INTEGER DEFAULT 0,
+    level INTEGER DEFAULT 1,
+    level_title TEXT DEFAULT 'Rookie Scholar',
+    current_streak INTEGER DEFAULT 1,
+    longest_streak INTEGER DEFAULT 1,
+    last_active_date TEXT,
+    earned_badges JSONB DEFAULT '{}'::jsonb,
+    counts JSONB DEFAULT '{
+        "totalActions": 0,
+        "homeworkCompleted": 0,
+        "flashcardsStudied": 0,
+        "quizzesCompleted": 0,
+        "highScoreQuizzes": 0,
+        "notesCreated": 0,
+        "aiStudyUses": 0,
+        "noticesRead": 0
+    }'::jsonb,
+    daily_trackers JSONB DEFAULT '{
+        "date": "",
+        "loginClaimed": false,
+        "aiUsesToday": 0,
+        "xpEarnedToday": 0
+    }'::jsonb,
+    completed_action_keys JSONB DEFAULT '[]'::jsonb,
+    recent_xp_history JSONB DEFAULT '[]'::jsonb,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.gamification_xp_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    xp_amount INTEGER NOT NULL,
+    label TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.student_badges (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    badge_id TEXT NOT NULL,
+    badge_name TEXT NOT NULL,
+    badge_icon TEXT NOT NULL,
+    category TEXT DEFAULT 'academic',
+    unlocked_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id, badge_id)
+);
+
+-- ==============================================================================
+-- 4. STUDENTOS LIFE (Houses, Competitions, Clubs, Events, Gallery, Polls, News)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.life_houses (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    color TEXT,
+    points INTEGER DEFAULT 1000,
+    rank INTEGER DEFAULT 1,
+    captain TEXT,
+    vice_captain TEXT,
+    motto TEXT,
+    house_teacher TEXT,
+    trophies INTEGER DEFAULT 0,
+    banner_url TEXT
+);
+
+CREATE TABLE IF NOT EXISTS public.life_competitions (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT,
+    category TEXT DEFAULT 'General',
+    start_date TEXT,
+    end_date TEXT,
+    location TEXT,
+    mode TEXT DEFAULT 'Offline',
+    type TEXT DEFAULT 'Individual',
+    max_team_size INTEGER DEFAULT 1,
+    eligibility TEXT DEFAULT 'All Grades',
+    prize_pool TEXT,
+    status TEXT DEFAULT 'Upcoming',
+    created_by TEXT,
+    registered_count INTEGER DEFAULT 0,
+    banner_url TEXT,
+    rules JSONB DEFAULT '[]'::jsonb,
+    winners JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.life_clubs (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    category TEXT DEFAULT 'General',
+    description TEXT,
+    icon TEXT DEFAULT '⭐',
+    lead_teacher TEXT,
+    student_head TEXT,
+    member_count INTEGER DEFAULT 1,
+    meeting_days TEXT DEFAULT 'Weekly',
+    location TEXT DEFAULT 'Activity Hall',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.life_events (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    category TEXT DEFAULT 'General',
+    date TEXT,
+    time TEXT,
+    location TEXT,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.life_achievements (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    icon TEXT DEFAULT '🏆',
+    category TEXT DEFAULT 'Academic',
+    awarded_to_uid TEXT,
+    awarded_to_name TEXT,
+    awarded_by TEXT,
+    reason TEXT,
+    awarded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.life_gallery (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    category TEXT DEFAULT 'Events',
+    cover_url TEXT,
+    photo_count INTEGER DEFAULT 1,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.life_polls (
+    id TEXT PRIMARY KEY,
+    question TEXT NOT NULL,
+    category TEXT DEFAULT 'General',
+    options JSONB NOT NULL DEFAULT '[]'::jsonb,
+    total_votes INTEGER DEFAULT 0,
+    created_by TEXT,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.life_poll_votes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    poll_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    option_id TEXT NOT NULL,
+    voted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(poll_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS public.life_news (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    category TEXT DEFAULT 'News',
+    content TEXT,
+    author TEXT,
+    image_url TEXT,
+    published_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    featured BOOLEAN DEFAULT false
+);
+
+-- ==============================================================================
+-- 5. ATTENDANCE & LEAVE MANAGEMENT
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.attendance (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'present', -- 'present', 'absent', 'late', 'excused'
+    grade TEXT,
+    section TEXT,
+    subject TEXT DEFAULT 'General / Homeroom',
+    remarks TEXT,
+    updated_by TEXT,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id, date)
+);
+
+CREATE TABLE IF NOT EXISTS public.leave_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT NOT NULL,
+    user_name TEXT,
+    user_role TEXT,
+    reason TEXT NOT NULL,
+    dates TEXT NOT NULL,
+    status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- ==============================================================================
+-- 6. CLASSROOM & STUDY TOOLS (Materials, Homework, Notes, Flashcards)
+-- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.materials (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL DEFAULT '',
-  subject TEXT NOT NULL DEFAULT '',
-  category TEXT,
-  type TEXT NOT NULL DEFAULT '',
-  url TEXT,
-  file_url TEXT,
-  attachment_url TEXT,
-  storage_path TEXT,
-  file_name TEXT,
-  file_type TEXT,
-  file_size BIGINT,
-  description TEXT DEFAULT '',
-  uploaded_by TEXT DEFAULT '',
-  uploader_uid TEXT,
-  uploader_house TEXT,
-  uploader_section TEXT,
-  created_at BIGINT DEFAULT 0,
-  created_at_date TEXT,
-  class_grade TEXT,
-  class_section TEXT,
-  due_date TEXT,
-  is_public BOOLEAN DEFAULT TRUE,
-  visibility TEXT DEFAULT 'student',
-  visible_to_grades TEXT[] DEFAULT '{}',
-  visible_to_sections TEXT[] DEFAULT '{}',
-  visible_to_houses TEXT[] DEFAULT '{}',
-  downloads INTEGER DEFAULT 0,
-  likes INTEGER DEFAULT 0,
-  liked_by TEXT[] DEFAULT '{}',
-  views INTEGER DEFAULT 1,
-  is_verified BOOLEAN DEFAULT FALSE,
-  comments JSONB DEFAULT '[]',
-  question_paper_year TEXT,
-  ai_summary TEXT,
-  ai_quiz JSONB,
-  raw_data JSONB
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL DEFAULT '',
+    subject TEXT NOT NULL DEFAULT '',
+    category TEXT,
+    type TEXT NOT NULL DEFAULT '',
+    url TEXT,
+    file_url TEXT,
+    file_name TEXT,
+    file_size BIGINT,
+    description TEXT DEFAULT '',
+    uploaded_by TEXT DEFAULT '',
+    uploader_uid TEXT,
+    uploader_house TEXT,
+    uploader_section TEXT,
+    class_grade TEXT,
+    class_section TEXT,
+    due_date TEXT,
+    is_public BOOLEAN DEFAULT true,
+    downloads INTEGER DEFAULT 0,
+    likes INTEGER DEFAULT 0,
+    views INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-ALTER TABLE public.materials ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_materials" ON public.materials;
-CREATE POLICY "allow_all_materials" ON public.materials FOR ALL USING (true) WITH CHECK (true);
+CREATE TABLE IF NOT EXISTS public.homework (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL DEFAULT '',
+    content TEXT DEFAULT '',
+    subject TEXT DEFAULT '',
+    class_grade TEXT DEFAULT 'Grade 10',
+    class_section TEXT DEFAULT 'Solara',
+    due_date TEXT,
+    given_by TEXT,
+    completed_list JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 
--- ==================== ASSIGNMENTS TABLE ====================
 CREATE TABLE IF NOT EXISTS public.assignments (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL DEFAULT '',
-  content TEXT DEFAULT '',
-  description TEXT DEFAULT '',
-  type TEXT DEFAULT 'assignment',
-  resource_type TEXT DEFAULT 'assignment',
-  target_grade TEXT DEFAULT 'All Grades',
-  class TEXT DEFAULT 'All Grades',
-  target_section TEXT DEFAULT 'All Sections',
-  section TEXT DEFAULT 'All Sections',
-  url TEXT,
-  file_url TEXT,
-  file_data TEXT,
-  storage_path TEXT,
-  gallery_urls JSONB DEFAULT '[]',
-  file_name TEXT,
-  created_at BIGINT DEFAULT 0,
-  author TEXT DEFAULT 'Teacher',
-  raw_data JSONB
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL DEFAULT '',
+    description TEXT DEFAULT '',
+    subject TEXT DEFAULT '',
+    grade TEXT DEFAULT 'Grade 10',
+    section TEXT DEFAULT 'Solara',
+    due_date TEXT,
+    teacher_id TEXT,
+    teacher_name TEXT,
+    attachments JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
-
-ALTER TABLE public.assignments ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_assignments" ON public.assignments;
-CREATE POLICY "allow_all_assignments" ON public.assignments FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== SCHOOL RESOURCES TABLE ====================
-CREATE TABLE IF NOT EXISTS public.school_resources (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL DEFAULT '',
-  content TEXT DEFAULT '',
-  description TEXT DEFAULT '',
-  type TEXT DEFAULT 'resource',
-  resource_type TEXT DEFAULT 'resource',
-  target_grade TEXT DEFAULT 'All Grades',
-  class TEXT DEFAULT 'All Grades',
-  target_section TEXT DEFAULT 'All Sections',
-  section TEXT DEFAULT 'All Sections',
-  url TEXT,
-  file_url TEXT,
-  file_data TEXT,
-  storage_path TEXT,
-  gallery_urls JSONB DEFAULT '[]',
-  file_name TEXT,
-  created_at BIGINT DEFAULT 0,
-  author TEXT DEFAULT 'Teacher',
-  raw_data JSONB
-);
-
-ALTER TABLE public.school_resources ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_school_resources" ON public.school_resources;
-CREATE POLICY "allow_all_school_resources" ON public.school_resources FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== AI BUDDY CHATS TABLE ====================
-CREATE TABLE IF NOT EXISTS public.ai_buddy_chats (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  title TEXT DEFAULT '',
-  persona_id TEXT DEFAULT 'study_buddy',
-  mode TEXT DEFAULT 'explanatory',
-  messages JSONB DEFAULT '[]',
-  attached_files JSONB DEFAULT '[]',
-  created_at BIGINT DEFAULT 0
-);
-
-ALTER TABLE public.ai_buddy_chats ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_ai_buddy_chats" ON public.ai_buddy_chats;
-CREATE POLICY "allow_all_ai_buddy_chats" ON public.ai_buddy_chats FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== MESSAGES TABLE (Global Chat) ====================
-CREATE TABLE IF NOT EXISTS public.messages (
-  id TEXT PRIMARY KEY,
-  owner_uid TEXT DEFAULT '',
-  name TEXT DEFAULT '',
-  role TEXT DEFAULT 'student',
-  house TEXT,
-  message TEXT NOT NULL DEFAULT '',
-  created_at BIGINT DEFAULT 0,
-  target_id TEXT,
-  shared_material_id TEXT
-);
-
-ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_messages" ON public.messages;
-CREATE POLICY "allow_all_messages" ON public.messages FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== CHAT ROOMS TABLE ====================
-CREATE TABLE IF NOT EXISTS public.chat_rooms (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL DEFAULT '',
-  description TEXT DEFAULT ''
-);
-
-ALTER TABLE public.chat_rooms ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_chat_rooms" ON public.chat_rooms;
-CREATE POLICY "allow_all_chat_rooms" ON public.chat_rooms FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== CHAT ROOM MESSAGES TABLE ====================
-CREATE TABLE IF NOT EXISTS public.chat_room_messages (
-  id TEXT PRIMARY KEY,
-  room_id TEXT NOT NULL DEFAULT '',
-  sender_uid TEXT DEFAULT '',
-  sender_name TEXT DEFAULT '',
-  sender_role TEXT DEFAULT 'student',
-  sender_house TEXT,
-  message TEXT NOT NULL DEFAULT '',
-  created_at BIGINT DEFAULT 0,
-  attachment_url TEXT,
-  attachment_type TEXT,
-  attachment_name TEXT
-);
-
-ALTER TABLE public.chat_room_messages ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_chat_room_messages" ON public.chat_room_messages;
-CREATE POLICY "allow_all_chat_room_messages" ON public.chat_room_messages FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== CHAT ROOM MEMBERS TABLE ====================
-CREATE TABLE IF NOT EXISTS public.chat_room_members (
-  id TEXT PRIMARY KEY,
-  room_id TEXT NOT NULL DEFAULT '',
-  user_id TEXT NOT NULL DEFAULT '',
-  joined_at BIGINT DEFAULT 0
-);
-
-ALTER TABLE public.chat_room_members ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_chat_room_members" ON public.chat_room_members;
-CREATE POLICY "allow_all_chat_room_members" ON public.chat_room_members FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== ORION CHATS TABLE ====================
-CREATE TABLE IF NOT EXISTS public.orion_chats (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  prompt TEXT DEFAULT '',
-  response TEXT DEFAULT '',
-  timestamp TEXT DEFAULT '',
-  created_at BIGINT DEFAULT 0
-);
-
-ALTER TABLE public.orion_chats ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_orion_chats" ON public.orion_chats;
-CREATE POLICY "allow_all_orion_chats" ON public.orion_chats FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== TEACHER COMMANDS TABLE ====================
-CREATE TABLE IF NOT EXISTS public.teacher_commands (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  command_text TEXT DEFAULT '',
-  recognized_at TEXT DEFAULT '',
-  parsed_action TEXT DEFAULT '',
-  status TEXT DEFAULT 'completed',
-  created_at BIGINT DEFAULT 0
-);
-
-ALTER TABLE public.teacher_commands ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_teacher_commands" ON public.teacher_commands;
-CREATE POLICY "allow_all_teacher_commands" ON public.teacher_commands FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== GLOBAL DATA TABLE ====================
-CREATE TABLE IF NOT EXISTS public.global_data (
-  id TEXT PRIMARY KEY,
-  title TEXT DEFAULT '',
-  subject TEXT DEFAULT '',
-  content TEXT DEFAULT '',
-  created_at TEXT DEFAULT ''
-);
-
-ALTER TABLE public.global_data ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_global_data" ON public.global_data;
-CREATE POLICY "allow_all_global_data" ON public.global_data FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== NOTIFICATIONS TABLE ====================
-CREATE TABLE IF NOT EXISTS public.notifications (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL DEFAULT '',
-  message TEXT DEFAULT '',
-  content TEXT DEFAULT '',
-  type TEXT DEFAULT 'announcement',
-  created_at TEXT DEFAULT '',
-  is_read BOOLEAN DEFAULT false,
-  read BOOLEAN DEFAULT false,
-  target_user_id TEXT DEFAULT 'all',
-  user_id TEXT,
-  target_class TEXT,
-  link_tab TEXT,
-  link TEXT,
-  meta JSONB
-);
-
-ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_notifications" ON public.notifications;
-CREATE POLICY "allow_all_notifications" ON public.notifications FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== AI BUDDY MESSAGES TABLE ====================
-CREATE TABLE IF NOT EXISTS public.ai_buddy_messages (
-  id SERIAL PRIMARY KEY,
-  thread_id TEXT NOT NULL,
-  role TEXT DEFAULT 'user',
-  content TEXT DEFAULT '',
-  created_at BIGINT DEFAULT 0
-);
-
-ALTER TABLE public.ai_buddy_messages ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_ai_buddy_messages" ON public.ai_buddy_messages;
-CREATE POLICY "allow_all_ai_buddy_messages" ON public.ai_buddy_messages FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== BLOGS TABLE ====================
-CREATE TABLE IF NOT EXISTS public.blogs (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL DEFAULT '',
-  content TEXT DEFAULT '',
-  author TEXT DEFAULT '',
-  author_id TEXT,
-  category TEXT DEFAULT 'General',
-  created_at TEXT DEFAULT '',
-  is_published BOOLEAN DEFAULT true,
-  likes INTEGER DEFAULT 0,
-  raw_data JSONB
-);
-
-ALTER TABLE public.blogs ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_blogs" ON public.blogs;
-CREATE POLICY "allow_all_blogs" ON public.blogs FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== LECTURE NOTES & NOTES TABLE ====================
-CREATE TABLE IF NOT EXISTS public.lecture_notes (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL DEFAULT '',
-  content TEXT DEFAULT '',
-  subject TEXT DEFAULT '',
-  user_id TEXT,
-  author TEXT,
-  updated_at TEXT DEFAULT ''
-);
-
-ALTER TABLE public.lecture_notes ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_lecture_notes" ON public.lecture_notes;
-CREATE POLICY "allow_all_lecture_notes" ON public.lecture_notes FOR ALL USING (true) WITH CHECK (true);
 
 CREATE TABLE IF NOT EXISTS public.notes (
-  id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL DEFAULT '',
-  title TEXT DEFAULT '',
-  content TEXT DEFAULT '',
-  subject TEXT DEFAULT 'General',
-  created_at TEXT DEFAULT ''
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    content TEXT DEFAULT '',
+    subject TEXT DEFAULT 'General',
+    icon TEXT DEFAULT '📝',
+    cover_bg TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_notes" ON public.notes;
-CREATE POLICY "allow_all_notes" ON public.notes FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== SPORTS ACTIVITIES TABLE ====================
-CREATE TABLE IF NOT EXISTS public.sports_activities (
-  id TEXT PRIMARY KEY,
-  data TEXT DEFAULT '{}'
+CREATE TABLE IF NOT EXISTS public.flashcard_decks (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    subject TEXT DEFAULT 'General',
+    color TEXT DEFAULT 'from-indigo-600 to-violet-800',
+    icon TEXT DEFAULT '📚',
+    tags JSONB DEFAULT '[]'::jsonb,
+    is_favorite BOOLEAN DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-ALTER TABLE public.sports_activities ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_sports_activities" ON public.sports_activities;
-CREATE POLICY "allow_all_sports_activities" ON public.sports_activities FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== SUBSTITUTE HUB TABLE ====================
-CREATE TABLE IF NOT EXISTS public.substitute_hub (
-  id TEXT PRIMARY KEY,
-  data TEXT DEFAULT '{}'
+CREATE TABLE IF NOT EXISTS public.flashcards (
+    id TEXT PRIMARY KEY,
+    deck_id TEXT NOT NULL REFERENCES public.flashcard_decks(id) ON DELETE CASCADE,
+    user_id TEXT,
+    front TEXT NOT NULL,
+    back TEXT NOT NULL,
+    hint TEXT,
+    tags JSONB DEFAULT '[]'::jsonb,
+    interval INT DEFAULT 0,
+    repetition INT DEFAULT 0,
+    ease_factor NUMERIC(4, 2) DEFAULT 2.50,
+    next_review_date TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_reviewed_date TIMESTAMP WITH TIME ZONE,
+    state TEXT DEFAULT 'new',
+    history JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-ALTER TABLE public.substitute_hub ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_substitute_hub" ON public.substitute_hub;
-CREATE POLICY "allow_all_substitute_hub" ON public.substitute_hub FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== TEACHER REMARKS TABLE ====================
-CREATE TABLE IF NOT EXISTS public.teacher_remarks (
-  id TEXT PRIMARY KEY,
-  student_id TEXT NOT NULL DEFAULT '',
-  teacher_id TEXT NOT NULL DEFAULT '',
-  remark TEXT DEFAULT '',
-  created_at TEXT DEFAULT ''
-);
-
-ALTER TABLE public.teacher_remarks ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_teacher_remarks" ON public.teacher_remarks;
-CREATE POLICY "allow_all_teacher_remarks" ON public.teacher_remarks FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== USER PROFILES TABLE ====================
-CREATE TABLE IF NOT EXISTS public.user_profiles (
-  id TEXT PRIMARY KEY,
-  uid TEXT UNIQUE,
-  name TEXT DEFAULT '',
-  email TEXT,
-  role TEXT DEFAULT 'student',
-  requested_role TEXT,
-  account_status TEXT DEFAULT 'approved',
-  grade TEXT,
-  section TEXT,
-  house TEXT,
-  department TEXT,
-  subjects TEXT[] DEFAULT '{}',
-  specialty_subject TEXT,
-  designation TEXT,
-  photo_url TEXT,
-  bio TEXT,
-  points INTEGER DEFAULT 0,
-  badges TEXT[] DEFAULT '{}',
-  raw_data JSONB,
-  created_at BIGINT DEFAULT 0,
-  updated_at BIGINT DEFAULT 0
-);
-
-ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_user_profiles" ON public.user_profiles;
-CREATE POLICY "allow_all_user_profiles" ON public.user_profiles FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== GRADEBOOK ASSESSMENTS TABLE ====================
+-- ==============================================================================
+-- 7. GRADEBOOK, REPORT CARDS & CALENDAR
+-- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.gradebook_assessments (
-  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-  title TEXT NOT NULL DEFAULT '',
-  class_grade TEXT NOT NULL DEFAULT 'Grade 10',
-  class_section TEXT NOT NULL DEFAULT 'Solara',
-  subject TEXT NOT NULL DEFAULT 'Mathematics',
-  period TEXT NOT NULL DEFAULT 'Term 1',
-  type TEXT NOT NULL DEFAULT 'Quiz',
-  max_score NUMERIC NOT NULL DEFAULT 100,
-  date TEXT NOT NULL DEFAULT '',
-  teacher_id TEXT DEFAULT '',
-  teacher_name TEXT DEFAULT '',
-  created_at TIMESTAMPTZ DEFAULT now()
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    title TEXT NOT NULL,
+    class_grade TEXT NOT NULL DEFAULT 'Grade 10',
+    class_section TEXT NOT NULL DEFAULT 'Solara',
+    subject TEXT NOT NULL DEFAULT 'Mathematics',
+    period TEXT NOT NULL DEFAULT 'Term 1',
+    type TEXT NOT NULL DEFAULT 'Quiz',
+    max_score NUMERIC NOT NULL DEFAULT 100,
+    date TEXT NOT NULL,
+    teacher_id TEXT,
+    teacher_name TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-ALTER TABLE public.gradebook_assessments ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_gradebook_assessments" ON public.gradebook_assessments;
-CREATE POLICY "allow_all_gradebook_assessments" ON public.gradebook_assessments FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== GRADEBOOK ENTRIES TABLE ====================
 CREATE TABLE IF NOT EXISTS public.gradebook_entries (
-  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-  assessment_id TEXT NOT NULL,
-  student_id TEXT NOT NULL,
-  student_name TEXT DEFAULT '',
-  subject TEXT DEFAULT '',
-  score NUMERIC DEFAULT 0,
-  max_score NUMERIC DEFAULT 100,
-  percentage NUMERIC DEFAULT 0,
-  letter_grade TEXT DEFAULT 'F',
-  comment TEXT DEFAULT '',
-  updated_at TEXT DEFAULT '',
-  updated_by TEXT DEFAULT '',
-  UNIQUE(assessment_id, student_id)
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    assessment_id TEXT NOT NULL REFERENCES public.gradebook_assessments(id) ON DELETE CASCADE,
+    student_id TEXT NOT NULL,
+    student_name TEXT,
+    score NUMERIC DEFAULT 0,
+    max_score NUMERIC DEFAULT 100,
+    percentage NUMERIC DEFAULT 0,
+    letter_grade TEXT DEFAULT 'A',
+    comment TEXT DEFAULT '',
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(assessment_id, student_id)
 );
 
-ALTER TABLE public.gradebook_entries ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_gradebook_entries" ON public.gradebook_entries;
-CREATE POLICY "allow_all_gradebook_entries" ON public.gradebook_entries FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== REPORT CARDS TABLE ====================
 CREATE TABLE IF NOT EXISTS public.report_cards (
-  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-  student_id TEXT NOT NULL,
-  student_name TEXT DEFAULT '',
-  student_email TEXT DEFAULT '',
-  roll_number TEXT DEFAULT '',
-  class_grade TEXT DEFAULT 'Grade 10',
-  class_section TEXT DEFAULT 'Solara',
-  house TEXT DEFAULT '',
-  academic_period TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'DRAFT',
-  subjects JSONB DEFAULT '[]',
-  total_marks NUMERIC DEFAULT 0,
-  max_total_marks NUMERIC DEFAULT 0,
-  overall_percentage NUMERIC DEFAULT 0,
-  overall_grade TEXT DEFAULT 'F',
-  gpa NUMERIC DEFAULT 0,
-  rank TEXT DEFAULT '',
-  attendance_summary JSONB DEFAULT '{}',
-  teacher_remarks TEXT DEFAULT '',
-  principal_remarks TEXT DEFAULT '',
-  conduct_grade TEXT DEFAULT 'Exemplary',
-  generated_at TEXT DEFAULT '',
-  published_at TEXT DEFAULT '',
-  updated_by TEXT DEFAULT '',
-  UNIQUE(student_id, academic_period)
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    student_id TEXT NOT NULL,
+    student_name TEXT NOT NULL,
+    grade TEXT NOT NULL,
+    section TEXT NOT NULL,
+    academic_year TEXT DEFAULT '2026-2027',
+    term TEXT NOT NULL,
+    subjects JSONB NOT NULL DEFAULT '[]'::jsonb,
+    overall_percentage NUMERIC DEFAULT 0,
+    overall_grade TEXT DEFAULT 'A',
+    status TEXT NOT NULL DEFAULT 'draft',
+    attendance_summary JSONB DEFAULT '{}'::jsonb,
+    teacher_remarks TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(student_id, term)
 );
 
-ALTER TABLE public.report_cards ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_report_cards" ON public.report_cards;
-CREATE POLICY "allow_all_report_cards" ON public.report_cards FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== CALENDAR EVENTS TABLE ====================
 CREATE TABLE IF NOT EXISTS public.calendar_events (
-  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-  title TEXT NOT NULL DEFAULT '',
-  description TEXT DEFAULT '',
-  start_date TEXT NOT NULL DEFAULT '',
-  end_date TEXT DEFAULT '',
-  category TEXT NOT NULL DEFAULT 'Academic',
-  target_audience TEXT NOT NULL DEFAULT 'All',
-  target_grades TEXT[] DEFAULT '{}',
-  target_sections TEXT[] DEFAULT '{}',
-  color TEXT DEFAULT '#4f46e5',
-  is_mandatory BOOLEAN DEFAULT false,
-  created_by TEXT DEFAULT '',
-  created_at BIGINT DEFAULT 0
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    title TEXT NOT NULL,
+    description TEXT,
+    start_date TEXT NOT NULL,
+    end_date TEXT,
+    category TEXT NOT NULL DEFAULT 'Academic',
+    target_audience TEXT DEFAULT 'All',
+    created_by TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-ALTER TABLE public.calendar_events ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_calendar_events" ON public.calendar_events;
-CREATE POLICY "allow_all_calendar_events" ON public.calendar_events FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== ATTENDANCE TABLE ====================
-CREATE TABLE IF NOT EXISTS public.attendance (
-  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-  user_id TEXT NOT NULL,
-  date TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'present',
-  class_grade TEXT,
-  class_section TEXT,
-  marked_by TEXT,
-  timestamp BIGINT DEFAULT 0
+-- ==============================================================================
+-- 8. AI ASSISTANTS, COMMUNICATIONS & MEET
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.ai_buddy_chats (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    title TEXT DEFAULT 'Study Session',
+    persona_id TEXT DEFAULT 'study_buddy',
+    mode TEXT DEFAULT 'explanatory',
+    messages JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-ALTER TABLE public.attendance ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_attendance" ON public.attendance;
-CREATE POLICY "allow_all_attendance" ON public.attendance FOR ALL USING (true) WITH CHECK (true);
+CREATE TABLE IF NOT EXISTS public.chat_rooms (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    type TEXT DEFAULT 'group',
+    code TEXT,
+    creator_id TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 
--- ==================== PUSH SUBSCRIPTIONS TABLE ====================
+CREATE TABLE IF NOT EXISTS public.chat_room_messages (
+    id TEXT PRIMARY KEY,
+    room_id TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    sender_name TEXT,
+    sender_role TEXT,
+    sender_house TEXT,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.notifications (
+    id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    type TEXT DEFAULT 'announcement',
+    user_id TEXT,
+    link_tab TEXT,
+    is_read BOOLEAN DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS public.push_subscriptions (
-  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-  user_id TEXT NOT NULL,
-  user_email TEXT,
-  user_role TEXT,
-  subscription JSONB NOT NULL,
-  device_info JSONB DEFAULT '{}',
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now(),
-  UNIQUE(user_id)
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    endpoint TEXT UNIQUE NOT NULL,
+    user_id TEXT,
+    device_id TEXT,
+    keys JSONB,
+    p256dh TEXT,
+    auth TEXT,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-ALTER TABLE public.push_subscriptions ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_push_subscriptions" ON public.push_subscriptions;
-CREATE POLICY "allow_all_push_subscriptions" ON public.push_subscriptions FOR ALL USING (true) WITH CHECK (true);
+CREATE TABLE IF NOT EXISTS public.meetings (
+    id VARCHAR(64) PRIMARY KEY,
+    title TEXT NOT NULL,
+    subject TEXT DEFAULT 'General',
+    class_name TEXT,
+    host_id UUID NOT NULL,
+    host_name TEXT NOT NULL,
+    host_email TEXT NOT NULL,
+    join_link TEXT NOT NULL,
+    status VARCHAR(32) DEFAULT 'upcoming',
+    start_time TIMESTAMPTZ NOT NULL,
+    end_time TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
 
--- ==================== STORAGE BUCKET ====================
--- Ensure the StudentOS bucket exists and is public
+CREATE TABLE IF NOT EXISTS public.meeting_participants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    meeting_id VARCHAR(64) REFERENCES public.meetings(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    role VARCHAR(32) DEFAULT 'participant',
+    joined_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.global_data (
+    id TEXT PRIMARY KEY,
+    title TEXT DEFAULT '',
+    subject TEXT DEFAULT '',
+    content TEXT DEFAULT '',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.system_updates (
+    id TEXT PRIMARY KEY,
+    version TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT,
+    content TEXT NOT NULL,
+    status TEXT DEFAULT 'published',
+    published_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ==============================================================================
+-- 9. SEED INITIAL HOUSES & SYSTEM DATA (Safe Idempotent Inserts)
+-- ==============================================================================
+INSERT INTO public.life_houses (id, name, color, points, rank, captain, vice_captain, motto, house_teacher, trophies, banner_url)
+VALUES
+('Ruby', 'Red Ruby Lions', 'from-red-600 to-rose-900', 1450, 1, 'Aarav Sharma', 'Ananya Gupta', 'Courage, Honor & Victory', 'Mr. Rajesh Verma', 12, 'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=800&auto=format&fit=crop&q=80'),
+('Emerald', 'Green Emerald Falcons', 'from-emerald-600 to-teal-900', 1380, 2, 'Rohan Mehta', 'Siddharth Rao', 'Wisdom, Growth & Excellence', 'Dr. Sunita Patel', 9, 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=800&auto=format&fit=crop&q=80'),
+('Sapphire', 'Blue Sapphire Dragons', 'from-blue-600 to-indigo-900', 1310, 3, 'Priya Nair', 'Kavya Singh', 'Strength, Loyalty & Truth', 'Mrs. Deepa Roy', 8, 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800&auto=format&fit=crop&q=80'),
+('Topaz', 'Yellow Topaz Phoenix', 'from-amber-500 to-yellow-800', 1240, 4, 'Vikram Joshi', 'Diya Kapoor', 'Radiance, Passion & Unity', 'Mr. Amit Saxena', 7, 'https://images.unsplash.com/photo-1508739773434-c26b3d09e071?w=800&auto=format&fit=crop&q=80')
+ON CONFLICT (id) DO NOTHING;
+
+-- Ensure StudentOS Storage Bucket is configured
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('StudentOS', 'StudentOS', true)
 ON CONFLICT (id) DO UPDATE SET public = true;
 
--- Allow all storage operations on the bucket
-DROP POLICY IF EXISTS "allow_all_uploads" ON storage.objects;
-CREATE POLICY "allow_all_uploads" ON storage.objects FOR ALL USING (bucket_id = 'StudentOS') WITH CHECK (bucket_id = 'StudentOS');
+-- ==============================================================================
+-- 10. ROW LEVEL SECURITY (RLS) POLICIES — OPEN & SECURE DEMO CONFIGURATION
+-- ==============================================================================
+DO $$ 
+DECLARE
+    tbl text;
+BEGIN
+    FOR tbl IN 
+        SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+    LOOP
+        EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', tbl);
+        EXECUTE format('DROP POLICY IF EXISTS "allow_all_ops_%I" ON public.%I;', tbl, tbl);
+        EXECUTE format('CREATE POLICY "allow_all_ops_%I" ON public.%I FOR ALL USING (true) WITH CHECK (true);', tbl, tbl);
+    END LOOP;
+END $$;
 
--- ==================== SYSTEM UPDATES TABLE ====================
-CREATE TABLE IF NOT EXISTS public.system_updates (
-  id TEXT PRIMARY KEY,
-  version TEXT NOT NULL DEFAULT '',
-  title TEXT NOT NULL DEFAULT '',
-  summary TEXT DEFAULT '',
-  category TEXT NOT NULL DEFAULT 'feature',
-  content TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'published',
-  audience_roles TEXT[] DEFAULT '{"all"}',
-  is_major_release BOOLEAN DEFAULT false,
-  action_url TEXT,
-  action_label TEXT,
-  media_urls JSONB DEFAULT '[]',
-  author_id TEXT NOT NULL DEFAULT '',
-  author_name TEXT NOT NULL DEFAULT 'Super Administrator',
-  author_role TEXT DEFAULT 'super_admin',
-  scheduled_publish_at TIMESTAMPTZ,
-  published_at TIMESTAMPTZ,
-  archived_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now(),
-  raw_data JSONB DEFAULT '{}'
-);
+-- Storage RLS
+DROP POLICY IF EXISTS "allow_all_studentos_storage" ON storage.objects;
+CREATE POLICY "allow_all_studentos_storage" ON storage.objects FOR ALL USING (bucket_id = 'StudentOS') WITH CHECK (bucket_id = 'StudentOS');
 
-CREATE INDEX IF NOT EXISTS idx_system_updates_status ON public.system_updates(status);
-CREATE INDEX IF NOT EXISTS idx_system_updates_published_at ON public.system_updates(published_at DESC);
-
-ALTER TABLE public.system_updates ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_system_updates" ON public.system_updates;
-CREATE POLICY "allow_all_system_updates" ON public.system_updates FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== SYSTEM UPDATE READS TABLE ====================
-CREATE TABLE IF NOT EXISTS public.system_update_reads (
-  id TEXT PRIMARY KEY,
-  update_id TEXT NOT NULL,
-  user_id TEXT NOT NULL,
-  read_at TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT uq_update_user_read UNIQUE (update_id, user_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_system_update_reads_user ON public.system_update_reads(user_id);
-
-ALTER TABLE public.system_update_reads ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_system_update_reads" ON public.system_update_reads;
-CREATE POLICY "allow_all_system_update_reads" ON public.system_update_reads FOR ALL USING (true) WITH CHECK (true);
-
--- ==================== SYSTEM UPDATE AUDIT LOGS ====================
-CREATE TABLE IF NOT EXISTS public.system_update_audit_logs (
-  id TEXT PRIMARY KEY,
-  update_id TEXT NOT NULL,
-  action TEXT NOT NULL,
-  actor_id TEXT NOT NULL,
-  actor_name TEXT NOT NULL,
-  actor_role TEXT NOT NULL DEFAULT 'super_admin',
-  timestamp TIMESTAMPTZ DEFAULT now(),
-  details TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_system_update_audit_logs_timestamp ON public.system_update_audit_logs(timestamp DESC);
-
-ALTER TABLE public.system_update_audit_logs ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "allow_all_system_update_audit_logs" ON public.system_update_audit_logs;
-CREATE POLICY "allow_all_system_update_audit_logs" ON public.system_update_audit_logs FOR ALL USING (true) WITH CHECK (true);
+-- ==============================================================================
+-- 11. SUPABASE REALTIME REPLICATION (Instant Sync Across Browser Windows)
+-- ==============================================================================
+ALTER PUBLICATION supabase_realtime ADD TABLE 
+    public.student_gamification,
+    public.life_competitions,
+    public.life_events,
+    public.life_clubs,
+    public.life_achievements,
+    public.life_gallery,
+    public.life_houses,
+    public.life_polls,
+    public.life_news,
+    public.attendance,
+    public.materials,
+    public.homework,
+    public.notes,
+    public.chat_room_messages,
+    public.notifications,
+    public.system_updates;
