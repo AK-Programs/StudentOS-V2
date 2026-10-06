@@ -61,8 +61,112 @@ interface Slide {
 declare const mermaid: any;
 
 export const Whiteboard2 = ({ onClose, currentUser }: any) => {
-  const [slides, setSlides] = useState<Slide[]>([{ id: 'slide_1', shapes: [], lines: [], stickies: [] }]);
+  const [slides, setSlides] = useState<Slide[]>(() => {
+    try {
+      const saved = localStorage.getItem('studentos_smartboard_slides_v3');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (_) {}
+    return [{ id: 'slide_1', shapes: [], lines: [], stickies: [] }];
+  });
   const [activeSlideIdx, setActiveSlideIdx] = useState(0);
+  const [undoStack, setUndoStack] = useState<Slide[][]>([]);
+  const [redoStack, setRedoStack] = useState<Slide[][]>([]);
+  const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved');
+  const [isPresentationMode, setIsPresentationMode] = useState(false);
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+  const [textModal, setTextModal] = useState<{
+    open: boolean;
+    mode: 'create' | 'edit';
+    x?: number;
+    y?: number;
+    shapeId?: string;
+    value: string;
+  }>({ open: false, mode: 'create', value: '' });
+
+  const cloneSlides = (src: Slide[]): Slide[] =>
+    src.map(sl => ({
+      ...sl,
+      shapes: sl.shapes.map(sh => ({ ...sh, points: sh.points ? [...sh.points] : undefined })),
+      lines: sl.lines.map(ln => ({ ...ln, points: [...ln.points] })),
+      stickies: [...(sl.stickies || [])]
+    }));
+
+  const pushHistory = () => {
+    setUndoStack(prev => [...prev.slice(-29), cloneSlides(slides)]);
+    setRedoStack([]);
+  };
+
+  const handleUndo = () => {
+    if (undoStack.length === 0) return;
+    const previous = undoStack[undoStack.length - 1];
+    setRedoStack(prev => [...prev, cloneSlides(slides)]);
+    setUndoStack(prev => prev.slice(0, -1));
+    setSlides(previous);
+    setSelectedObj(null);
+  };
+
+  const handleRedo = () => {
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setUndoStack(prev => [...prev, cloneSlides(slides)]);
+    setRedoStack(prev => prev.slice(0, -1));
+    setSlides(next);
+    setSelectedObj(null);
+  };
+
+  useEffect(() => {
+    setSaveState('saving');
+    const timer = setTimeout(() => {
+      try {
+        const serializable = slides.map(s => ({
+          ...s,
+          shapes: s.shapes.map(({ imageObj, ...rest }) => rest)
+        }));
+        localStorage.setItem('studentos_smartboard_slides_v3', JSON.stringify(serializable));
+      } catch (_) {}
+      setSaveState('saved');
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [slides]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleRedo();
+        } else {
+          handleUndo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        handleRedo();
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedObj) {
+        e.preventDefault();
+        pushHistory();
+        setSlides(prev => {
+          const updated = cloneSlides(prev);
+          const slide = updated[activeSlideIdx];
+          if (selectedObj.type === 'shape') {
+            slide.shapes = slide.shapes.filter(s => s.id !== selectedObj.id);
+          } else {
+            slide.lines = slide.lines.filter(l => l.id !== selectedObj.id);
+          }
+          return updated;
+        });
+        setSelectedObj(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [slides, undoStack, redoStack, selectedObj, activeSlideIdx]);
   
   const [tool, setTool] = useState<'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'object_eraser' | 'select' | 'shape'>('pen');
   const [shapeType, setShapeType] = useState<'rect' | 'square' | 'circle' | 'ellipse' | 'triangle' | 'line' | 'arrow' | 'pentagon' | 'polygon' | 'star' | 'ruler-15' | 'ruler-30' | 'protractor' | 'compass' | 'setsquare-45' | 'setsquare-30-60' | 'geometry' | 'text' | 'ruler' | 'setsquare'>('rect');
@@ -415,6 +519,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     if (!pos) return;
 
     if (tool === 'object_eraser') {
+      pushHistory();
       isDrawing.current = true;
       eraseAt(pos.x, pos.y);
       return;
@@ -428,6 +533,19 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       return;
     }
     
+    if (tool === 'shape' && shapeType === 'text') {
+      isDrawing.current = false;
+      setTextModal({
+        open: true,
+        mode: 'create',
+        x: pos.x,
+        y: pos.y,
+        value: ''
+      });
+      return;
+    }
+
+    pushHistory();
     isDrawing.current = true;
     
     if (tool === 'pen' || tool === 'pencil' || tool === 'marker' || tool === 'highlighter' || tool === 'eraser') {
@@ -462,34 +580,6 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
         return updated;
       });
     } else if (tool === 'shape') {
-      if (shapeType === 'text') {
-        const textVal = prompt('Enter academic text value:');
-        if (textVal) {
-          const newShape: ShapeObj = {
-            id: Date.now().toString(),
-            type: shapeType,
-            x: pos.x,
-            y: pos.y,
-            stroke: brushColor,
-            strokeWidth: brushSize,
-            fill: brushColor,
-            width: 0,
-            height: 0,
-            radius: 0,
-            points: [0, 0, 0, 0],
-            text: textVal,
-            fontSize: Math.max(16, brushSize * 4)
-          };
-          setSlides(prev => {
-            const updated = [...prev];
-            updated[activeSlideIdx].shapes.push(newShape);
-            return updated;
-          });
-        }
-        isDrawing.current = false;
-        return;
-      }
-      
       const newShape: ShapeObj = {
         id: Date.now().toString(),
         type: shapeType,
@@ -747,25 +837,28 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   };
 
   const handleClearCanvas = () => {
-    if (confirm("Are you sure you want to clear this slide's canvas?")) {
-      setSlides(prev => {
-        const updated = [...prev];
-        updated[activeSlideIdx].lines = [];
-        updated[activeSlideIdx].shapes = [];
-        return updated;
-      });
-      setSelectedObj(null);
-    }
+    pushHistory();
+    setSlides(prev => {
+      const updated = cloneSlides(prev);
+      updated[activeSlideIdx].lines = [];
+      updated[activeSlideIdx].shapes = [];
+      return updated;
+    });
+    setSelectedObj(null);
+    setConfirmClearOpen(false);
+    setAiTip('🧹 Slide canvas cleared (use Undo to restore)');
   };
 
   // Slide Manager Actions
   const handleAddSlide = () => {
+    pushHistory();
     setSlides(prev => [...prev, { id: `slide_${Date.now()}`, shapes: [], lines: [], stickies: [] }]);
     setActiveSlideIdx(slides.length);
     setSelectedObj(null);
   };
 
   const handleDuplicateSlide = () => {
+    pushHistory();
     const current = slides[activeSlideIdx];
     const duplicated: Slide = {
       id: `slide_${Date.now()}`,
@@ -784,15 +877,15 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
 
   const handleDeleteSlide = () => {
     if (slides.length <= 1) {
-      alert("You cannot delete the only remaining slide.");
+      setAiTip('⚠️ Cannot delete the only remaining slide.');
       return;
     }
-    if (confirm("Are you sure you want to delete this whiteboard slide?")) {
-      const newIdx = Math.max(0, activeSlideIdx - 1);
-      setSlides(prev => prev.filter((_, idx) => idx !== activeSlideIdx));
-      setActiveSlideIdx(newIdx);
-      setSelectedObj(null);
-    }
+    pushHistory();
+    const newIdx = Math.max(0, activeSlideIdx - 1);
+    setSlides(prev => prev.filter((_, idx) => idx !== activeSlideIdx));
+    setActiveSlideIdx(newIdx);
+    setSelectedObj(null);
+    setAiTip('🗑️ Slide removed (use Undo to restore)');
   };
 
   // Zoom viewport controls
@@ -936,18 +1029,51 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     const shape = slide?.shapes.find(s => s.id === selectedObj.id);
     if (!shape) return;
 
-    const newText = prompt('Edit label / text content:', shape.text || '');
-    if (newText !== null) {
+    setTextModal({
+      open: true,
+      mode: 'edit',
+      shapeId: shape.id,
+      value: shape.text || ''
+    });
+  };
+
+  const handleCommitTextModal = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const val = textModal.value.trim();
+    if (textModal.mode === 'create' && val) {
+      pushHistory();
+      const newShape: ShapeObj = {
+        id: Date.now().toString(),
+        type: 'text',
+        x: textModal.x ?? 180,
+        y: textModal.y ?? 160,
+        stroke: brushColor,
+        strokeWidth: brushSize,
+        fill: brushColor,
+        width: 0,
+        height: 0,
+        radius: 0,
+        points: [0, 0, 0, 0],
+        text: val,
+        fontSize: Math.max(18, brushSize * 4)
+      };
       setSlides(prev => {
-        const updated = [...prev];
-        const currentSlide = updated[activeSlideIdx];
-        const target = currentSlide.shapes.find(s => s.id === selectedObj.id);
+        const updated = cloneSlides(prev);
+        updated[activeSlideIdx].shapes.push(newShape);
+        return updated;
+      });
+    } else if (textModal.mode === 'edit' && textModal.shapeId) {
+      pushHistory();
+      setSlides(prev => {
+        const updated = cloneSlides(prev);
+        const target = updated[activeSlideIdx].shapes.find(s => s.id === textModal.shapeId);
         if (target) {
-          target.text = newText;
+          target.text = textModal.value;
         }
         return updated;
       });
     }
+    setTextModal({ open: false, mode: 'create', value: '' });
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1065,6 +1191,9 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           <div className="text-white font-black text-xs sm:text-sm tracking-widest uppercase hidden md:flex items-center gap-2">
             <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse shadow-glow shadow-emerald-500/55" />
             Class SmartBoard 3.0
+            <span className={`ml-1 px-2 py-0.5 rounded-full text-[9px] font-mono border ${saveState === 'saving' ? 'bg-amber-500/10 text-amber-300 border-amber-500/30' : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'}`}>
+              {saveState === 'saving' ? 'Saving...' : 'Saved'}
+            </span>
           </div>
         </div>
         
@@ -1108,6 +1237,14 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             title="Translucent Text Highlighter"
           >
             <PenTool className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+          </button>
+
+          <button 
+            onClick={() => { setTool('shape'); setShapeType('text'); setShapesMenuOpen(false); }} 
+            className={`p-1.5 sm:p-2 rounded-xl transition-all ${tool === 'shape' && shapeType === 'text' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+            title="Click Canvas to Add Text"
+          >
+            <Type className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
           
           {/* Shapes Dropdown Selector Menu */}
@@ -1154,113 +1291,178 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             
             {eraserMenuOpen && (
               <div className="fixed sm:absolute top-24 sm:top-full left-2 sm:left-0 mt-0 sm:mt-2 bg-slate-900 border border-white/10 rounded-2xl shadow-2xl p-2.5 flex flex-col gap-1 w-40 max-w-[calc(100vw-1rem)] z-50 animate-fadeIn max-h-64 overflow-y-auto">
-                 <button onClick={() => { setTool('eraser'); setEraserMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${tool === 'eraser' ? 'bg-red-500/20 text-red-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>Stroke Eraser</button>
-                 <button onClick={() => { setTool('object_eraser'); setEraserMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${tool === 'object_eraser' ? 'bg-red-500/20 text-red-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>Object Eraser</button>
-              </div>
-            )}
-          </div>
-        </div>
+                  <button onClick={() => { setTool('eraser'); setEraserMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${tool === 'eraser' ? 'bg-red-500/20 text-red-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>Stroke Eraser</button>
+                  <button onClick={() => { setTool('object_eraser'); setEraserMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${tool === 'object_eraser' ? 'bg-red-500/20 text-red-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>Object Eraser</button>
+               </div>
+             )}
+           </div>
 
-        {/* Global Action Handlers */}
-        <div className="flex flex-wrap items-center gap-1 sm:gap-2">
-          
-          <div className="relative">
-            <button 
-              onClick={() => setAiPromptOpen(!aiPromptOpen)}
-              className="p-1.5 sm:p-2 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold"
-              title="AI Whiteboard (Coming Soon)"
-            >
-              <span>🚀</span>
-              <span className="hidden sm:inline">AI Whiteboard</span>
-            </button>
-            {aiPromptOpen && (
-              <div className="fixed sm:absolute top-20 sm:top-full mt-0 sm:mt-2 inset-x-3 sm:inset-x-auto sm:right-0 sm:w-80 bg-slate-900 border border-indigo-500/30 rounded-2xl p-4 sm:p-5 shadow-2xl z-50 space-y-3 backdrop-blur-xl animate-fadeIn">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xl">🚀</span>
-                    <h4 className="text-sm font-extrabold text-white tracking-tight">AI Whiteboard</h4>
-                  </div>
-                  <button onClick={() => setAiPromptOpen(false)} className="text-slate-400 hover:text-white p-1 rounded-lg">✕</button>
-                </div>
-                
-                <div className="inline-block px-2.5 py-1 bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded-lg text-[10px] font-black uppercase tracking-wider">
-                  Coming Soon
-                </div>
+           <div className="h-4 w-px bg-white/10 mx-0.5" />
 
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  AI-powered SVG diagrams, Mermaid diagrams, intelligent flowcharts, concept maps, visual learning, and advanced whiteboard AI will arrive in a future StudentOS update.
-                </p>
+           <button
+             onClick={handleUndo}
+             disabled={undoStack.length === 0}
+             className="p-1.5 sm:p-2 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-all"
+             title="Undo (Ctrl+Z)"
+           >
+             <Undo2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+           </button>
+           <button
+             onClick={handleRedo}
+             disabled={redoStack.length === 0}
+             className="p-1.5 sm:p-2 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-all"
+             title="Redo (Ctrl+Y)"
+           >
+             <Redo2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+           </button>
+         </div>
 
-                <div className="pt-2 border-t border-white/10 flex justify-end">
-                  <button 
-                    onClick={() => setAiPromptOpen(false)} 
-                    className="px-4 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold transition-all shadow-md"
-                  >
-                    Got it
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-          {/* Sticky Notes & Media Tools */}
-          <button 
-            onClick={() => handleInsertStickyNote('#fef08a')}
-            className="p-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/20 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold"
-            title="Insert Sticky Note"
-          >
-            <StickyNote className="w-4 h-4" />
-            <span className="hidden lg:inline text-[10px] uppercase font-black">Sticky</span>
-          </button>
+         {/* Global Action Handlers */}
+         <div className="flex flex-wrap items-center gap-1 sm:gap-2">
+           
+           <div className="relative">
+             <button 
+               onClick={() => setAiPromptOpen(!aiPromptOpen)}
+               className={`p-1.5 sm:p-2 border rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold ${isGeneratingDiagram ? 'bg-indigo-600 text-white border-indigo-400 animate-pulse' : 'bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border-indigo-500/20'}`}
+               title="AI Whiteboard & Shape Recognition"
+             >
+               <Sparkles className="w-3.5 h-3.5" />
+               <span className="hidden sm:inline">{isGeneratingDiagram ? 'Generating...' : 'AI Board'}</span>
+             </button>
+             {aiPromptOpen && (
+               <div className="fixed sm:absolute top-20 sm:top-full mt-0 sm:mt-2 inset-x-3 sm:inset-x-auto sm:right-0 sm:w-80 bg-slate-900 border border-indigo-500/30 rounded-2xl p-4 shadow-2xl z-50 space-y-3 backdrop-blur-xl animate-fadeIn">
+                 <div className="flex items-center justify-between">
+                   <div className="flex items-center gap-2">
+                     <Sparkles className="w-4 h-4 text-indigo-400" />
+                     <h4 className="text-sm font-extrabold text-white tracking-tight">AI Classroom Assistant</h4>
+                   </div>
+                   <button onClick={() => setAiPromptOpen(false)} className="text-slate-400 hover:text-white p-1 rounded-lg">✕</button>
+                 </div>
 
-          <button 
-            onClick={() => fileInputRef.current?.click()}
-            className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold"
-            title="Upload Image File"
-          >
-            <ImageIcon className="w-4 h-4 text-indigo-400" />
-            <span className="hidden lg:inline text-[10px] uppercase font-black">Image</span>
-          </button>
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            onChange={handleImageUpload} 
-            accept="image/*" 
-            className="hidden" 
-          />
+                 <label className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-white/10 cursor-pointer">
+                   <div>
+                     <div className="text-xs font-bold text-white">Auto Shape Recognition</div>
+                     <div className="text-[10px] text-slate-400">Convert rough circles, squares & lines</div>
+                   </div>
+                   <input
+                     type="checkbox"
+                     checked={aiShapeAssistant}
+                     onChange={(e) => setAiShapeAssistant(e.target.checked)}
+                     className="w-4 h-4 accent-indigo-500 rounded cursor-pointer"
+                   />
+                 </label>
 
-          <div className="h-5 w-px bg-white/10 mx-0.5" />
+                 <form onSubmit={handleGenerateDiagram} className="space-y-2.5 pt-1 border-t border-white/10">
+                   <div className="text-[10px] font-black uppercase tracking-wider text-indigo-300">Generate Diagram on Board</div>
+                   <div className="flex gap-1">
+                     {(['auto', 'svg', 'mermaid', 'diagram'] as const).map(mode => (
+                       <button
+                         key={mode}
+                         type="button"
+                         onClick={() => setAiToolType(mode)}
+                         className={`flex-1 py-1 rounded-lg text-[10px] font-bold uppercase border transition-all ${aiToolType === mode ? 'bg-indigo-600 text-white border-indigo-400' : 'bg-slate-950 text-slate-400 border-white/10'}`}
+                       >
+                         {mode}
+                       </button>
+                     ))}
+                   </div>
+                   <input
+                     type="text"
+                     value={aiPromptQuery}
+                     onChange={(e) => setAiPromptQuery(e.target.value)}
+                     placeholder="e.g., Mitosis stages, Ohm's Law circuit..."
+                     className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white focus:outline-none focus:border-indigo-500"
+                   />
+                   <div className="flex justify-end gap-2">
+                     <button
+                       type="submit"
+                       disabled={!aiPromptQuery.trim() || isGeneratingDiagram}
+                       className="px-4 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-xl font-bold transition-all shadow-md"
+                     >
+                       Insert Diagram
+                     </button>
+                   </div>
+                 </form>
+               </div>
+             )}
+           </div>
+           {/* Sticky Notes & Media Tools */}
+           <button 
+             onClick={() => { pushHistory(); handleInsertStickyNote('#fef08a'); }}
+             className="p-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/20 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold"
+             title="Insert Sticky Note"
+           >
+             <StickyNote className="w-4 h-4" />
+             <span className="hidden lg:inline text-[10px] uppercase font-black">Sticky</span>
+           </button>
 
-          {/* Export PNG / PDF */}
-          <button 
-            onClick={handleExportPNG}
-            className="p-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-xl transition-all flex items-center gap-1 text-xs font-bold"
-            title="Export Board as PNG Image"
-          >
-            <Download className="w-4 h-4" />
-            <span className="hidden xl:inline text-[10px] uppercase font-black">PNG</span>
-          </button>
+           <button 
+             onClick={() => fileInputRef.current?.click()}
+             className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold"
+             title="Upload Image File"
+           >
+             <ImageIcon className="w-4 h-4 text-indigo-400" />
+             <span className="hidden lg:inline text-[10px] uppercase font-black">Image</span>
+           </button>
+           <input 
+             type="file" 
+             ref={fileInputRef} 
+             onChange={handleImageUpload} 
+             accept="image/*" 
+             className="hidden" 
+           />
 
-          <button 
-            onClick={handleExportPDF}
-            className="p-2 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/20 rounded-xl transition-all flex items-center gap-1 text-xs font-bold"
-            title="Print / Save Board as PDF Document"
-          >
-            <FileText className="w-4 h-4" />
-            <span className="hidden xl:inline text-[10px] uppercase font-black">PDF</span>
-          </button>
+           <button
+             onClick={() => setIsPresentationMode(prev => !prev)}
+             className={`p-2 rounded-xl border transition-all text-xs font-bold flex items-center gap-1 ${isPresentationMode ? 'bg-indigo-600 text-white border-indigo-400' : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-white/10'}`}
+             title={isPresentationMode ? 'Exit Presentation View' : 'Presentation Mode (Hide Secondary HUD)'}
+           >
+             <Maximize2 className="w-4 h-4" />
+           </button>
 
-          <button 
-            onClick={handleClearCanvas}
-            className="p-2 bg-slate-800 hover:bg-red-950 hover:text-red-300 text-slate-400 hover:border-red-500/35 rounded-xl transition-all border border-white/5"
-            title="Reset Board Elements"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
+           <div className="h-5 w-px bg-white/10 mx-0.5" />
 
-      {/* 2. SECONDARY CONTROLS HUD (ZOOM + SLIDES + ACTIVE OBJECT CONFIG) */}
-      <div className="bg-slate-900/90 border-b border-white/5 py-1.5 sm:py-2 px-2 sm:px-4 flex flex-wrap items-center justify-between gap-1.5 sm:gap-3 shrink-0 z-10 backdrop-blur-md">
+           {/* Export PNG / PDF */}
+           <button 
+             onClick={handleExportPNG}
+             className="p-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-xl transition-all flex items-center gap-1 text-xs font-bold"
+             title="Export Board as PNG Image"
+           >
+             <Download className="w-4 h-4" />
+             <span className="hidden xl:inline text-[10px] uppercase font-black">PNG</span>
+           </button>
+
+           {confirmClearOpen ? (
+             <div className="flex items-center gap-1 bg-rose-950/90 border border-rose-500/40 px-2 py-1 rounded-xl">
+               <span className="text-[10px] font-bold text-rose-200">Clear slide?</span>
+               <button
+                 onClick={handleClearCanvas}
+                 className="px-2 py-0.5 bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-black rounded-lg"
+               >
+                 Yes
+               </button>
+               <button
+                 onClick={() => setConfirmClearOpen(false)}
+                 className="px-1.5 py-0.5 bg-slate-800 text-slate-300 text-[10px] font-bold rounded-lg"
+               >
+                 No
+               </button>
+             </div>
+           ) : (
+             <button 
+               onClick={() => setConfirmClearOpen(true)}
+               className="p-2 bg-slate-800 hover:bg-red-950 hover:text-red-300 text-slate-400 hover:border-red-500/35 rounded-xl transition-all border border-white/5"
+               title="Clear Slide Elements"
+             >
+               <Trash2 className="w-4 h-4" />
+             </button>
+           )}
+         </div>
+       </div>
+
+       {/* 2. SECONDARY CONTROLS HUD (ZOOM + SLIDES + ACTIVE OBJECT CONFIG) */}
+       {!isPresentationMode && (
+       <div className="bg-slate-900/90 border-b border-white/5 py-1.5 sm:py-2 px-2 sm:px-4 flex flex-wrap items-center justify-between gap-1.5 sm:gap-3 shrink-0 z-10 backdrop-blur-md">
         
         {/* Dynamic Multi-Slide Manager */}
         <div className="flex flex-wrap items-center gap-1 sm:gap-2 bg-slate-950 px-2 sm:px-3 py-1 sm:py-1.5 rounded-2xl border border-white/5 shadow-md">
@@ -1461,14 +1663,21 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           /* General Stroke Thickness Controls */
           <div className="flex flex-wrap items-center gap-2 sm:gap-4">
             <div className="flex items-center gap-1.5 bg-slate-950 border border-white/5 p-1 rounded-full">
-              {[ '#ffffff', '#ef4444', '#3b82f6', '#10b981', '#eab308' ].map(c => (
+              {[ '#ffffff', '#ef4444', '#3b82f6', '#10b981', '#eab308', '#a855f7', '#f97316', '#ec4899' ].map(c => (
                 <button 
                   key={c} 
                   onClick={() => setBrushColor(c)} 
-                  className={`w-5 h-5 rounded-full border-2 transition-all ${brushColor === c ? 'border-white scale-110 shadow-md' : 'border-transparent hover:scale-105'}`} 
+                  className={`w-4 h-4 sm:w-5 sm:h-5 rounded-full border-2 transition-all ${brushColor === c ? 'border-white scale-110 shadow-md' : 'border-transparent hover:scale-105'}`} 
                   style={{ backgroundColor: c }} 
                 />
               ))}
+              <input
+                type="color"
+                value={brushColor.slice(0, 7)}
+                onChange={(e) => setBrushColor(e.target.value)}
+                className="w-5 h-5 rounded-full bg-transparent border-0 cursor-pointer"
+                title="Custom Ink Color"
+              />
             </div>
             
             <div className="flex items-center gap-2 bg-slate-950 border border-white/5 px-2.5 py-1 rounded-xl">
@@ -1479,20 +1688,22 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                 max="24" 
                 value={brushSize} 
                 onChange={(e) => setBrushSize(parseInt(e.target.value))} 
-                className="w-20 accent-indigo-500 cursor-pointer" 
+                className="w-16 sm:w-20 accent-indigo-500 cursor-pointer" 
                 title="Brush Thickness"
               />
-              <span className="text-[10px] font-mono text-slate-400 w-4 text-center">{brushSize}px</span>
+              <span className="text-[10px] font-mono text-slate-400 w-6 text-center">{brushSize}px</span>
             </div>
           </div>
         )}
       </div>
+      )}
       
       {/* 3. DYNAMIC CANVAS DRAWING CONTAINER STAGE */}
       <div 
         ref={containerRef}
-        className="flex-1 relative overflow-hidden select-none" 
+        className="flex-1 relative overflow-hidden select-none touch-none" 
         style={{ 
+          touchAction: 'none',
           cursor: tool === 'select' ? 'default' : (tool === 'eraser' || tool === 'object_eraser') ? 'cell' : 'crosshair',
           backgroundColor,
           backgroundImage: 
@@ -1906,9 +2117,63 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
 
         {/* AI Shape Predictive Toast Notification */}
         {aiTip && (
-          <div className="absolute top-4 right-4 bg-slate-900/95 border border-indigo-500/30 text-indigo-200 px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 text-xs font-medium animate-bounce z-50 backdrop-blur-md">
+          <div className="absolute top-4 right-4 bg-slate-900/95 border border-indigo-500/30 text-indigo-200 px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 text-xs font-medium z-50 backdrop-blur-md">
             <span className="text-indigo-400">✨</span>
             <span>{aiTip}</span>
+          </div>
+        )}
+
+        {/* Subtle Empty State Hint */}
+        {currentSlide.lines.length === 0 && currentSlide.shapes.length === 0 && (
+          <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full bg-slate-900/80 border border-white/10 text-[11px] text-slate-400 backdrop-blur-md flex items-center gap-2">
+            <span>✏️ Ready to draw on Slide {activeSlideIdx + 1}</span>
+            <span className="hidden sm:inline text-slate-500">• Pen, Shapes, Text, Sticky Notes & AI Diagrams</span>
+          </div>
+        )}
+
+        {/* Inline Non-Blocking Text / Label Modal */}
+        {textModal.open && (
+          <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <form
+              onSubmit={handleCommitTextModal}
+              className="w-full max-w-sm bg-slate-900 border border-indigo-500/40 rounded-2xl p-4 shadow-2xl space-y-3"
+            >
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-black uppercase tracking-wider text-indigo-300">
+                  {textModal.mode === 'create' ? 'Insert Canvas Text' : 'Edit Shape Label / Text'}
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => setTextModal({ open: false, mode: 'create', value: '' })}
+                  className="text-slate-400 hover:text-white text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+              <input
+                type="text"
+                autoFocus
+                value={textModal.value}
+                onChange={(e) => setTextModal(prev => ({ ...prev, value: e.target.value }))}
+                placeholder="Type text or formula..."
+                className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/15 text-sm text-white focus:outline-none focus:border-indigo-500"
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTextModal({ open: false, mode: 'create', value: '' })}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold"
+                >
+                  Apply
+                </button>
+              </div>
+            </form>
           </div>
         )}
       </div>

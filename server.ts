@@ -2211,6 +2211,22 @@ async function startServer() {
             });
             break;
           }
+
+          case 'realtime:relay': {
+            // Relay signaling & collaboration events (calls, meet, whiteboard, lecture notes) to all other connected peers
+            wss.clients.forEach((client) => {
+              if (client !== ws && client.readyState === WSWebSocket.OPEN) {
+                client.send(JSON.stringify({
+                  type: 'realtime:relay',
+                  channel: payload.channel,
+                  event: payload.event,
+                  data: payload.data,
+                  envelopeId: payload.envelopeId
+                }));
+              }
+            });
+            break;
+          }
         }
       } catch (err) {
         console.error('[WS Server] Failed to process incoming message:', err);

@@ -72,6 +72,7 @@ import {
 import { MeetWhiteboard } from './meet/MeetWhiteboard';
 import { RemoteVideoTile } from './meet/RemoteVideoTile';
 import { supabase } from '../lib/supabase';
+import { sendRealtimeEvent, subscribeRealtimeEvents } from '../lib/wsHelper';
 
 interface StudentOSMeetProps {
   currentUser: UserProfile | null;
@@ -179,6 +180,19 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
   // UI Utilities
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
+  const [meetNotice, setMeetNotice] = useState<string | null>(null);
+  const [aiSessionSummary, setAiSessionSummary] = useState<string>('');
+  const [isGeneratingAiSummary, setIsGeneratingAiSummary] = useState(false);
+
+  const showMeetNotice = (msg: string) => {
+    setMeetNotice(msg);
+    setTimeout(() => {
+      setMeetNotice(prev => (prev === msg ? null : prev));
+    }, 4500);
+  };
+
+  const fallbackUserIdRef = useRef<string>(`user_${Math.random().toString(36).substring(2, 8)}`);
+  const myStableUserId = currentUser?.uid || fallbackUserIdRef.current;
 
   const isCurrentHost = Boolean(
     activeMeeting && (
@@ -195,6 +209,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
   const localStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const pendingIceMapRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const remoteStreamsRef = useRef<Map<string, MediaStream>>(new Map());
   const [remoteStreamsState, setRemoteStreamsState] = useState<Record<string, MediaStream>>({});
 
@@ -220,37 +235,36 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
   // Global Realtime Subscription for Meeting Sync, Deletions, and End Events
   useEffect(() => {
-    const globalMeetingsChannel = supabase.channel('studentos_meetings_global');
-    globalMeetingsChannel
-      .on('broadcast', { event: 'meeting_sync' }, () => {
+    const unsubscribeGlobal = subscribeRealtimeEvents('studentos_meetings_global', {
+      meeting_sync: () => {
         loadAllMeetingsData();
-      })
-      .on('broadcast', { event: 'meeting_deleted' }, ({ payload }) => {
+      },
+      meeting_deleted: (payload: any) => {
         if (payload && payload.meetingId) {
           setMeetings(prev => prev.filter(m => m.id !== payload.meetingId && m.id.toLowerCase() !== payload.meetingId.toLowerCase()));
           if (activeMeeting?.id === payload.meetingId || activeMeeting?.id.toLowerCase() === payload.meetingId.toLowerCase()) {
-            alert('This meeting has been deleted by the host.');
+            showMeetNotice('This meeting has been deleted by the host.');
             handleLeaveMeeting();
           }
         } else {
           loadAllMeetingsData();
         }
-      })
-      .on('broadcast', { event: 'meeting_ended' }, ({ payload }) => {
+      },
+      meeting_ended: (payload: any) => {
         if (payload && payload.meetingId) {
           setMeetings(prev => prev.map(m => (m.id === payload.meetingId || m.id.toLowerCase() === payload.meetingId.toLowerCase()) ? { ...m, status: 'ended' } : m));
           if (activeMeeting?.id === payload.meetingId || activeMeeting?.id.toLowerCase() === payload.meetingId.toLowerCase()) {
-            alert('This meeting has been ended by the host.');
+            showMeetNotice('This meeting has been ended by the host.');
             handleLeaveMeeting();
           }
         } else {
           loadAllMeetingsData();
         }
-      })
-      .subscribe();
+      }
+    });
 
     return () => {
-      supabase.removeChannel(globalMeetingsChannel);
+      unsubscribeGlobal();
     };
   }, [activeMeeting?.id]);
 
@@ -380,50 +394,112 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
     }
   };
 
+  // Waiting Room Subscription so waiting users receive 'admit' or 'reject' signals reliably
+  useEffect(() => {
+    if (!activeMeeting || activeView !== 'room' || !isInWaitingRoom) return;
+    const myUserId = myStableUserId;
+    const channelName = `studentos_meet_${activeMeeting.id}`;
+
+    const unsubscribeWaiting = subscribeRealtimeEvents(channelName, {
+      admit: (payload: any) => {
+        if (payload && (payload.targetUserId === myUserId || payload.admitAll)) {
+          setIsInWaitingRoom(false);
+          showMeetNotice('You have been admitted to the class!');
+        }
+      },
+      reject: (payload: any) => {
+        if (payload && payload.targetUserId === myUserId) {
+          showMeetNotice('Your request to join the meeting was declined by the host.');
+          handleLeaveMeeting();
+        }
+      },
+      host_control: (payload: any) => {
+        if (payload && (payload.action === 'end_meeting' || payload.action === 'delete_meeting')) {
+          showMeetNotice('The host has ended the meeting.');
+          handleLeaveMeeting();
+        }
+      }
+    });
+
+    return () => {
+      unsubscribeWaiting();
+    };
+  }, [activeMeeting?.id, activeView, isInWaitingRoom, myStableUserId]);
+
   // WebRTC Signaling Engine
   useEffect(() => {
     if (!activeMeeting || activeView !== 'room' || isInWaitingRoom) return;
 
-    const myUserId = currentUser?.uid || `user_${Date.now()}`;
+    const myUserId = myStableUserId;
     const channelName = `studentos_meet_${activeMeeting.id}`;
-    const channel = supabase.channel(channelName);
+    let isDisposed = false;
+
+    const flushPeerCandidates = async (peerId: string, pc: RTCPeerConnection) => {
+      if (!pc.remoteDescription) return;
+      const queue = pendingIceMapRef.current.get(peerId);
+      if (!queue || queue.length === 0) return;
+      while (queue.length > 0) {
+        const cand = queue.shift();
+        if (cand) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(cand));
+          } catch (e) {
+            console.warn('[StudentOS Meet] Buffered ICE candidate warning:', e);
+          }
+        }
+      }
+    };
 
     // Create a new RTCPeerConnection for a peer
     const createPeerConnection = (targetUserId: string) => {
       if (peerConnectionsRef.current.has(targetUserId)) {
-        return peerConnectionsRef.current.get(targetUserId)!;
+        const existing = peerConnectionsRef.current.get(targetUserId)!;
+        if (existing.connectionState !== 'closed' && existing.connectionState !== 'failed') {
+          return existing;
+        }
+        try { existing.close(); } catch (_) {}
+        peerConnectionsRef.current.delete(targetUserId);
       }
 
       const pc = new RTCPeerConnection(ICE_SERVERS);
       peerConnectionsRef.current.set(targetUserId, pc);
 
       // Add local tracks
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => {
-          pc.addTrack(track, localStreamRef.current!);
+      const activeStream = screenStreamRef.current || localStreamRef.current;
+      if (activeStream) {
+        activeStream.getTracks().forEach(track => {
+          pc.addTrack(track, activeStream);
         });
       }
 
       // On receiving remote track
       pc.ontrack = (event) => {
+        if (isDisposed) return;
         if (event.streams && event.streams[0]) {
           remoteStreamsRef.current.set(targetUserId, event.streams[0]);
-          syncRemoteStreamsState();
+        } else if (event.track) {
+          const existingStream = remoteStreamsRef.current.get(targetUserId) || new MediaStream();
+          if (!existingStream.getTracks().some(t => t.id === event.track.id)) {
+            existingStream.addTrack(event.track);
+          }
+          remoteStreamsRef.current.set(targetUserId, new MediaStream(existingStream.getTracks()));
         }
+        syncRemoteStreamsState();
       };
 
       // ICE candidates
       pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          channel.send({
-            type: 'broadcast',
-            event: 'webrtc_candidate',
-            payload: { targetUserId, fromUserId: myUserId, candidate: event.candidate }
+        if (event.candidate && !isDisposed) {
+          sendRealtimeEvent(channelName, 'webrtc_candidate', {
+            targetUserId,
+            fromUserId: myUserId,
+            candidate: event.candidate.toJSON ? event.candidate.toJSON() : event.candidate
           });
         }
       };
 
       pc.onconnectionstatechange = () => {
+        if (isDisposed) return;
         if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
           remoteStreamsRef.current.delete(targetUserId);
           syncRemoteStreamsState();
@@ -433,12 +509,13 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
       return pc;
     };
 
-    channel
-      .on('broadcast', { event: 'peer_join' }, async ({ payload }) => {
+    const unsubscribeRoom = subscribeRealtimeEvents(channelName, {
+      peer_join: async (payload: any) => {
         if (payload && payload.userId && payload.userId !== myUserId) {
-          // Add peer to participants list if not present
           setParticipants(prev => {
-            if (prev.some(p => p.userId === payload.userId)) return prev;
+            if (prev.some(p => p.userId === payload.userId)) {
+              return prev.map(p => p.userId === payload.userId ? { ...p, ...payload, status: 'admitted' } : p);
+            }
             return [...prev, {
               id: `p_${payload.userId}`,
               meetingId: activeMeeting.id,
@@ -461,40 +538,39 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
           });
 
           // Respond back with our own presence details so newly joined peer syncs instantly
-          channel.send({
-            type: 'broadcast',
-            event: 'peer_sync',
-            payload: {
-              userId: myUserId,
-              name: currentUser?.name || 'Participant',
-              email: currentUser?.email || '',
-              role: (currentUser?.uid === activeMeeting.hostId || (activeMeeting.hostEmail && currentUser?.email === activeMeeting.hostEmail)) ? 'host' : 'participant',
-              userRole: (currentUser?.role as any) || 'student',
-              isCameraOn,
-              isMicOn,
-              isHandRaised,
-              isScreenSharing,
-              screenSharingUserId: isScreenSharing ? myUserId : screenSharingUserId,
-              spotlightUserId
-            }
+          sendRealtimeEvent(channelName, 'peer_sync', {
+            userId: myUserId,
+            name: currentUser?.name || 'Participant',
+            email: currentUser?.email || '',
+            role: isCurrentHost ? 'host' : 'participant',
+            userRole: (currentUser?.role as any) || 'student',
+            isCameraOn,
+            isMicOn,
+            isHandRaised,
+            isScreenSharing,
+            screenSharingUserId: isScreenSharing ? myUserId : screenSharingUserId,
+            spotlightUserId
           });
 
           // Existing peer creates WebRTC offer for newly joined peer
           const pc = createPeerConnection(payload.userId);
           try {
-            const offer = await pc.createOffer();
+            const offer = await pc.createOffer({
+              offerToReceiveAudio: true,
+              offerToReceiveVideo: true
+            });
             await pc.setLocalDescription(offer);
-            channel.send({
-              type: 'broadcast',
-              event: 'webrtc_offer',
-              payload: { targetUserId: payload.userId, fromUserId: myUserId, offer }
+            sendRealtimeEvent(channelName, 'webrtc_offer', {
+              targetUserId: payload.userId,
+              fromUserId: myUserId,
+              offer: { type: offer.type, sdp: offer.sdp }
             });
           } catch (e) {
             console.warn('Error creating WebRTC offer:', e);
           }
         }
-      })
-      .on('broadcast', { event: 'peer_sync' }, ({ payload }) => {
+      },
+      peer_sync: (payload: any) => {
         if (payload && payload.userId && payload.userId !== myUserId) {
           setParticipants(prev => {
             if (prev.some(p => p.userId === payload.userId)) {
@@ -528,81 +604,87 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
             setSpotlightUserId(payload.spotlightUserId);
           }
         }
-      })
-      .on('broadcast', { event: 'spotlight_user' }, ({ payload }) => {
+      },
+      spotlight_user: (payload: any) => {
         if (payload) {
           setSpotlightUserId(payload.userId || null);
         }
-      })
-      .on('broadcast', { event: 'webrtc_offer' }, async ({ payload }) => {
-        if (payload && payload.targetUserId === myUserId) {
+      },
+      webrtc_offer: async (payload: any) => {
+        if (payload && payload.targetUserId === myUserId && payload.fromUserId !== myUserId) {
           const pc = createPeerConnection(payload.fromUserId);
           try {
             await pc.setRemoteDescription(new RTCSessionDescription(payload.offer));
+            await flushPeerCandidates(payload.fromUserId, pc);
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
-            channel.send({
-              type: 'broadcast',
-              event: 'webrtc_answer',
-              payload: { targetUserId: payload.fromUserId, fromUserId: myUserId, answer }
+            sendRealtimeEvent(channelName, 'webrtc_answer', {
+              targetUserId: payload.fromUserId,
+              fromUserId: myUserId,
+              answer: { type: answer.type, sdp: answer.sdp }
             });
           } catch (e) {
             console.warn('Error creating WebRTC answer:', e);
           }
         }
-      })
-      .on('broadcast', { event: 'webrtc_answer' }, async ({ payload }) => {
-        if (payload && payload.targetUserId === myUserId) {
+      },
+      webrtc_answer: async (payload: any) => {
+        if (payload && payload.targetUserId === myUserId && payload.fromUserId !== myUserId) {
           const pc = peerConnectionsRef.current.get(payload.fromUserId);
-          if (pc) {
+          if (pc && pc.signalingState === 'have-local-offer') {
             try {
               await pc.setRemoteDescription(new RTCSessionDescription(payload.answer));
+              await flushPeerCandidates(payload.fromUserId, pc);
             } catch (e) {
               console.warn('Error setting remote answer:', e);
             }
           }
         }
-      })
-      .on('broadcast', { event: 'webrtc_candidate' }, async ({ payload }) => {
-        if (payload && payload.targetUserId === myUserId) {
+      },
+      webrtc_candidate: async (payload: any) => {
+        if (payload && payload.targetUserId === myUserId && payload.fromUserId !== myUserId && payload.candidate) {
           const pc = peerConnectionsRef.current.get(payload.fromUserId);
-          if (pc) {
+          if (pc && pc.remoteDescription && pc.remoteDescription.type) {
             try {
               await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
             } catch (e) {
               console.warn('Error adding ICE candidate:', e);
             }
+          } else {
+            const list = pendingIceMapRef.current.get(payload.fromUserId) || [];
+            list.push(payload.candidate);
+            pendingIceMapRef.current.set(payload.fromUserId, list);
           }
         }
-      })
-      .on('broadcast', { event: 'peer_state_update' }, ({ payload }) => {
+      },
+      peer_state_update: (payload: any) => {
         if (payload && payload.userId) {
           setParticipants(prev => prev.map(p => p.userId === payload.userId ? { ...p, ...payload.state } : p));
         }
-      })
-      .on('broadcast', { event: 'join_request' }, ({ payload }) => {
+      },
+      join_request: (payload: any) => {
         if (payload && payload.participant) {
-          const isHost = currentUser?.uid === activeMeeting.hostId || ['teacher', 'admin', 'super_admin'].includes(effectiveRole);
-          if (isHost) {
+          if (isCurrentHost || ['teacher', 'admin', 'super_admin'].includes(effectiveRole)) {
             setWaitingParticipants(prev => {
               if (prev.some(w => w.userId === payload.participant.userId)) return prev;
               return [...prev, payload.participant];
             });
+            showMeetNotice(`${payload.participant.name} is waiting to join.`);
           }
         }
-      })
-      .on('broadcast', { event: 'admit' }, ({ payload }) => {
+      },
+      admit: (payload: any) => {
         if (payload && payload.targetUserId === myUserId) {
           setIsInWaitingRoom(false);
         }
-      })
-      .on('broadcast', { event: 'reject' }, ({ payload }) => {
+      },
+      reject: (payload: any) => {
         if (payload && payload.targetUserId === myUserId) {
-          alert('Your request to join the meeting was declined by the host.');
+          showMeetNotice('Your request to join the meeting was declined by the host.');
           handleLeaveMeeting();
         }
-      })
-      .on('broadcast', { event: 'chat' }, ({ payload }) => {
+      },
+      chat: (payload: any) => {
         if (payload && payload.message) {
           setChatMessages(prev => {
             if (prev.some(m => m.id === payload.message.id)) return prev;
@@ -618,111 +700,105 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
         } else if (payload && payload.action === 'edit') {
           setChatMessages(prev => prev.map(m => m.id === payload.messageId ? { ...m, content: payload.newContent } : m));
         }
-      })
-      .on('broadcast', { event: 'peer_screenshare_start' }, ({ payload }) => {
+      },
+      peer_screenshare_start: (payload: any) => {
         if (payload && payload.userId) {
           setScreenSharingUserId(payload.userId);
         }
-      })
-      .on('broadcast', { event: 'peer_screenshare_stop' }, ({ payload }) => {
+      },
+      peer_screenshare_stop: (payload: any) => {
         if (payload && payload.userId) {
           setScreenSharingUserId(prev => prev === payload.userId ? null : prev);
         }
-      })
-      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+      },
+      typing: (payload: any) => {
         if (payload && payload.userName && payload.userId !== myUserId) {
           setTypingUsers(prev => prev.includes(payload.userName) ? prev : [...prev, payload.userName]);
           setTimeout(() => {
             setTypingUsers(prev => prev.filter(u => u !== payload.userName));
           }, 3000);
         }
-      })
-      .on('broadcast', { event: 'live_caption' }, ({ payload }) => {
+      },
+      live_caption: (payload: any) => {
         if (payload && payload.speaker && payload.text) {
           setLiveCaptionText(`${payload.speaker}: ${payload.text}`);
           setCaptionTranscript(prev => [...prev, { speaker: payload.speaker, text: payload.text, time: payload.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
         }
-      })
-      .on('broadcast', { event: 'host_control' }, ({ payload }) => {
+      },
+      host_control: (payload: any) => {
         if (payload) {
-          if (payload.action === 'mute_all' && currentUser?.uid !== activeMeeting.hostId) {
+          if (payload.action === 'mute_all' && !isCurrentHost) {
             setIsMicOn(false);
+            showMeetNotice('Host muted all microphones.');
           } else if (payload.action === 'mute_user' && payload.targetUserId === myUserId) {
             setIsMicOn(false);
-          } else if (payload.action === 'disable_camera_all' && currentUser?.uid !== activeMeeting.hostId) {
+            showMeetNotice('Host muted your microphone.');
+          } else if (payload.action === 'disable_camera_all' && !isCurrentHost) {
             setIsCameraOn(false);
+            showMeetNotice('Host disabled participant cameras.');
           } else if (payload.action === 'disable_camera_user' && payload.targetUserId === myUserId) {
             setIsCameraOn(false);
+            showMeetNotice('Host disabled your camera.');
           } else if (payload.action === 'remove_user' && payload.targetUserId === myUserId) {
-            alert('You have been removed from the meeting by the host.');
+            showMeetNotice('You have been removed from the meeting by the host.');
             handleLeaveMeeting();
           } else if (payload.action === 'end_meeting' || payload.action === 'delete_meeting') {
+            showMeetNotice('The host has ended the meeting.');
             handleLeaveMeeting();
-            alert('The host has ended or deleted the meeting.');
           }
         }
-      })
-      .on('broadcast', { event: 'peer_leave' }, ({ payload }) => {
+      },
+      peer_leave: (payload: any) => {
         if (payload && payload.userId) {
           const pc = peerConnectionsRef.current.get(payload.userId);
           if (pc) {
-            pc.close();
+            try { pc.close(); } catch (_) {}
             peerConnectionsRef.current.delete(payload.userId);
           }
+          pendingIceMapRef.current.delete(payload.userId);
           remoteStreamsRef.current.delete(payload.userId);
           syncRemoteStreamsState();
           setParticipants(prev => prev.filter(p => p.userId !== payload.userId));
         }
-      })
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          // Announce presence to all peers in the channel
-          channel.send({
-            type: 'broadcast',
-            event: 'peer_join',
-            payload: {
-              userId: myUserId,
-              name: currentUser?.name || 'Participant',
-              email: currentUser?.email || '',
-              role: (currentUser?.uid === activeMeeting.hostId) ? 'host' : 'participant',
-              userRole: (currentUser?.role as any) || 'student',
-              isCameraOn,
-              isMicOn,
-              isHandRaised,
-              isScreenSharing
-            }
-          });
-        }
-      });
+      }
+    });
+
+    // Announce presence to all peers in the channel
+    sendRealtimeEvent(channelName, 'peer_join', {
+      userId: myUserId,
+      name: currentUser?.name || 'Participant',
+      email: currentUser?.email || '',
+      role: isCurrentHost ? 'host' : 'participant',
+      userRole: (currentUser?.role as any) || 'student',
+      isCameraOn,
+      isMicOn,
+      isHandRaised,
+      isScreenSharing
+    });
 
     return () => {
-      // Broadcast leave on cleanup
-      channel.send({
-        type: 'broadcast',
-        event: 'peer_leave',
-        payload: { userId: myUserId }
+      isDisposed = true;
+      sendRealtimeEvent(channelName, 'peer_leave', { userId: myUserId });
+      unsubscribeRoom();
+      peerConnectionsRef.current.forEach(pc => {
+        try { pc.close(); } catch (_) {}
       });
-      supabase.removeChannel(channel);
-      peerConnectionsRef.current.forEach(pc => pc.close());
       peerConnectionsRef.current.clear();
+      pendingIceMapRef.current.clear();
       remoteStreamsRef.current.clear();
       syncRemoteStreamsState();
     };
-  }, [activeMeeting, activeView, isInWaitingRoom, currentUser]);
+  }, [activeMeeting?.id, activeView, isInWaitingRoom, myStableUserId]);
 
   // Broadcast state changes (camera, mic, hand raise, screen share) to peers
   useEffect(() => {
     if (activeMeeting && activeView === 'room' && !isInWaitingRoom) {
-      supabase.channel(`studentos_meet_${activeMeeting.id}`).send({
-        type: 'broadcast',
-        event: 'peer_state_update',
-        payload: {
-          userId: currentUser?.uid || 'user',
-          state: { isCameraOn, isMicOn, isHandRaised, isScreenSharing }
-        }
+      sendRealtimeEvent(`studentos_meet_${activeMeeting.id}`, 'peer_state_update', {
+        userId: myStableUserId,
+        state: { isCameraOn, isMicOn, isHandRaised, isScreenSharing }
       });
     }
-  }, [isCameraOn, isMicOn, isHandRaised, isScreenSharing, activeMeeting, activeView, isInWaitingRoom, currentUser]);
+  }, [isCameraOn, isMicOn, isHandRaised, isScreenSharing, activeMeeting?.id, activeView, isInWaitingRoom, myStableUserId]);
 
   // Recording Timer
   useEffect(() => {
@@ -786,11 +862,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
           // Broadcast caption to peers in meeting
           if (activeMeeting) {
-            supabase.channel(`studentos_meet_${activeMeeting.id}`).send({
-              type: 'broadcast',
-              event: 'live_caption',
-              payload: { speaker, text, time }
-            });
+            sendRealtimeEvent(`studentos_meet_${activeMeeting.id}`, 'live_caption', { speaker, text, time });
           }
         }
       };
@@ -841,14 +913,15 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
     };
 
     await createOrUpdateMeeting(newMeeting);
+    sendRealtimeEvent('studentos_meetings_global', 'meeting_sync', { meetingId: meetingId });
     setShowCreateModal(false);
     loadAllMeetingsData();
 
     if (newType === 'instant') {
       handleJoinMeeting(newMeeting);
     } else {
-      alert(`Meeting scheduled successfully!\nMeeting ID: ${meetingId}\nPassword: ${newPassword}\nLink copied to clipboard!`);
-      navigator.clipboard.writeText(newMeeting.joinLink);
+      navigator.clipboard.writeText(newMeeting.joinLink).catch(() => {});
+      showMeetNotice(`Meeting ${meetingId} scheduled! Join link copied to clipboard.`);
     }
   };
 
@@ -866,12 +939,12 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
     
     const isHost = currentUser?.uid === meeting.hostId || (meeting.hostEmail && currentUser?.email === meeting.hostEmail) || ['teacher', 'admin', 'super_admin'].includes(effectiveRole);
     const isBeforeStartTime = meeting.startTime ? new Date().getTime() < new Date(meeting.startTime).getTime() : false;
-    const requiresWaitingRoom = !isHost && (isBeforeStartTime || Boolean(meeting.password) || meeting.status === 'upcoming');
+    const requiresWaitingRoom = !isHost && meeting.type !== 'instant' && (isBeforeStartTime || Boolean(meeting.password) || meeting.status === 'upcoming');
 
     const myParticipant: MeetingParticipant = {
-      id: `p_${currentUser?.uid || Date.now()}`,
+      id: `p_${myStableUserId}`,
       meetingId: meeting.id,
-      userId: currentUser?.uid || `user_${Date.now()}`,
+      userId: myStableUserId,
       name: currentUser?.name || 'Student Participant',
       email: currentUser?.email || 'student@school.edu',
       role: isHost ? 'host' : 'participant',
@@ -893,12 +966,8 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
       setWaitingParticipants([myParticipant]);
       setParticipants([]);
 
-      // Send join request broadcast to host
-      supabase.channel(`studentos_meet_${meeting.id}`).send({
-        type: 'broadcast',
-        event: 'join_request',
-        payload: { participant: myParticipant }
-      });
+      // Send join request broadcast to host via RealtimeBus
+      sendRealtimeEvent(`studentos_meet_${meeting.id}`, 'join_request', { participant: myParticipant });
     } else {
       setIsInWaitingRoom(false);
       setParticipants([myParticipant]);
@@ -912,18 +981,58 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
     setActiveView('room');
   };
 
-  const handleJoinViaCode = () => {
-    const inputVal = joinPasswordInput.trim();
+  const handleJoinViaCode = async () => {
+    let inputVal = joinPasswordInput.trim();
     if (!inputVal) return;
-    const found = meetings.find(m => m.id.toLowerCase() === inputVal.toLowerCase() || m.id.replace(/-/g, '').toLowerCase() === inputVal.replace(/-/g, '').toLowerCase());
+
+    // Support pasting full join URL (e.g., https://.../?meet=MEET-123-456)
+    if (inputVal.includes('meet=')) {
+      try {
+        const urlObj = new URL(inputVal.startsWith('http') ? inputVal : `https://dummy.local/${inputVal}`);
+        const extracted = urlObj.searchParams.get('meet') || urlObj.searchParams.get('meetingId');
+        if (extracted) inputVal = extracted.trim();
+      } catch (_) {
+        const match = inputVal.match(/[?&]meet=([^&#]+)/i);
+        if (match && match[1]) inputVal = decodeURIComponent(match[1]).trim();
+      }
+    }
+
+    let found = meetings.find(m => m.id.toLowerCase() === inputVal.toLowerCase() || m.id.replace(/-/g, '').toLowerCase() === inputVal.replace(/-/g, '').toLowerCase());
+    if (!found) {
+      const freshList = await fetchAllMeetings();
+      setMeetings(freshList);
+      found = freshList.find(m => m.id.toLowerCase() === inputVal.toLowerCase() || m.id.replace(/-/g, '').toLowerCase() === inputVal.replace(/-/g, '').toLowerCase());
+    }
+
     if (found) {
       if (found.status === 'ended') {
         setJoinError('This meeting has already ended.');
         return;
       }
       handleJoinMeeting(found);
+    } else if (/^(MEET|INSTANT)-[A-Z0-9-]+$/i.test(inputVal)) {
+      // Allow joining an active ad-hoc room code created by another peer even if DB table sync is pending
+      const normalizedId = inputVal.toUpperCase();
+      const dynamicMeeting: Meeting = {
+        id: normalizedId,
+        title: `Live Classroom (${normalizedId})`,
+        subject: 'Interactive Session',
+        type: 'instant',
+        startTime: new Date().toISOString(),
+        endTime: new Date(Date.now() + 3600000).toISOString(),
+        password: '',
+        hostId: 'host',
+        hostName: 'Classroom Host',
+        hostEmail: 'faculty@school.edu',
+        hostRole: 'teacher',
+        joinLink: `${window.location.origin}?meet=${normalizedId}`,
+        status: 'live',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      handleJoinMeeting(dynamicMeeting);
     } else {
-      setJoinError('Meeting not found. Please check the Meeting ID.');
+      setJoinError('Meeting not found. Please check the Meeting ID or Link.');
     }
   };
 
@@ -937,7 +1046,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
     // Update self status to admitted
     setParticipants(prev => {
-      const myUid = currentUser?.uid || 'user';
+      const myUid = myStableUserId;
       if (prev.some(p => p.userId === myUid)) return prev;
       return [...prev, {
         id: `p_${myUid}`,
@@ -998,11 +1107,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
         screenStreamRef.current = null;
       }
       if (activeMeeting) {
-        supabase.channel(`studentos_meet_${activeMeeting.id}`).send({
-          type: 'broadcast',
-          event: 'peer_screenshare_stop',
-          payload: { userId: currentUser?.uid || 'user' }
-        });
+        sendRealtimeEvent(`studentos_meet_${activeMeeting.id}`, 'peer_screenshare_stop', { userId: myStableUserId });
       }
       // Revert video track on WebRTC peer connections
       if (localStreamRef.current && localStreamRef.current.getVideoTracks().length > 0) {
@@ -1017,16 +1122,12 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
         const displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
         screenStreamRef.current = displayStream;
         setIsScreenSharing(true);
-        const myUid = currentUser?.uid || 'user';
+        const myUid = myStableUserId;
         setScreenSharingUserId(myUid);
         const screenTrack = displayStream.getVideoTracks()[0];
 
         if (activeMeeting) {
-          supabase.channel(`studentos_meet_${activeMeeting.id}`).send({
-            type: 'broadcast',
-            event: 'peer_screenshare_start',
-            payload: { userId: myUid }
-          });
+          sendRealtimeEvent(`studentos_meet_${activeMeeting.id}`, 'peer_screenshare_start', { userId: myUid });
         }
 
         // Replace video track across WebRTC peer connections
@@ -1040,11 +1141,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
           setScreenSharingUserId(null);
           screenStreamRef.current = null;
           if (activeMeeting) {
-            supabase.channel(`studentos_meet_${activeMeeting.id}`).send({
-              type: 'broadcast',
-              event: 'peer_screenshare_stop',
-              payload: { userId: myUid }
-            });
+            sendRealtimeEvent(`studentos_meet_${activeMeeting.id}`, 'peer_screenshare_stop', { userId: myUid });
           }
           if (localStreamRef.current && localStreamRef.current.getVideoTracks().length > 0) {
             const camTrack = localStreamRef.current.getVideoTracks()[0];
@@ -1064,92 +1161,56 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
   const handleToggleHandRaise = () => {
     const nextVal = !isHandRaised;
     setIsHandRaised(nextVal);
-    setParticipants(prev => prev.map(p => p.userId === currentUser?.uid ? { ...p, isHandRaised: nextVal } : p));
+    setParticipants(prev => prev.map(p => p.userId === myStableUserId ? { ...p, isHandRaised: nextVal } : p));
   };
 
   // Host Controls
   const handleHostMuteAll = () => {
     if (!activeMeeting || !isCurrentHost) return;
-    supabase.channel(`studentos_meet_${activeMeeting.id}`).send({
-      type: 'broadcast',
-      event: 'host_control',
-      payload: { action: 'mute_all' }
-    });
-    alert('Muted microphones for all participants.');
+    sendRealtimeEvent(`studentos_meet_${activeMeeting.id}`, 'host_control', { action: 'mute_all' });
+    showMeetNotice('Muted microphones for all participants.');
   };
 
   const handleHostDisableCameraAll = () => {
     if (!activeMeeting || !isCurrentHost) return;
-    supabase.channel(`studentos_meet_${activeMeeting.id}`).send({
-      type: 'broadcast',
-      event: 'host_control',
-      payload: { action: 'disable_camera_all' }
-    });
-    alert('Disabled cameras for all participants.');
+    sendRealtimeEvent(`studentos_meet_${activeMeeting.id}`, 'host_control', { action: 'disable_camera_all' });
+    showMeetNotice('Disabled cameras for all participants.');
   };
 
   const handleHostMuteUser = (targetUserId: string) => {
     if (!activeMeeting || !isCurrentHost) return;
-    supabase.channel(`studentos_meet_${activeMeeting.id}`).send({
-      type: 'broadcast',
-      event: 'host_control',
-      payload: { action: 'mute_user', targetUserId }
-    });
+    sendRealtimeEvent(`studentos_meet_${activeMeeting.id}`, 'host_control', { action: 'mute_user', targetUserId });
     setParticipants(prev => prev.map(p => p.userId === targetUserId ? { ...p, isMicOn: false } : p));
   };
 
   const handleHostDisableUserCamera = (targetUserId: string) => {
     if (!activeMeeting || !isCurrentHost) return;
-    supabase.channel(`studentos_meet_${activeMeeting.id}`).send({
-      type: 'broadcast',
-      event: 'host_control',
-      payload: { action: 'disable_camera_user', targetUserId }
-    });
+    sendRealtimeEvent(`studentos_meet_${activeMeeting.id}`, 'host_control', { action: 'disable_camera_user', targetUserId });
     setParticipants(prev => prev.map(p => p.userId === targetUserId ? { ...p, isCameraOn: false } : p));
   };
 
   const handleHostRemoveUser = (targetUserId: string) => {
     if (!activeMeeting || !isCurrentHost) return;
-    if (confirm('Remove this participant from the meeting?')) {
-      supabase.channel(`studentos_meet_${activeMeeting.id}`).send({
-        type: 'broadcast',
-        event: 'host_control',
-        payload: { action: 'remove_user', targetUserId }
-      });
-      setParticipants(prev => prev.filter(p => p.userId !== targetUserId));
-    }
+    sendRealtimeEvent(`studentos_meet_${activeMeeting.id}`, 'host_control', { action: 'remove_user', targetUserId });
+    setParticipants(prev => prev.filter(p => p.userId !== targetUserId));
+    showMeetNotice('Participant removed from meeting.');
   };
 
   const handleHostSpotlightUser = (targetUserId: string) => {
     if (!activeMeeting || !isCurrentHost) return;
     const nextVal = spotlightUserId === targetUserId ? null : targetUserId;
     setSpotlightUserId(nextVal);
-    supabase.channel(`studentos_meet_${activeMeeting.id}`).send({
-      type: 'broadcast',
-      event: 'spotlight_user',
-      payload: { userId: nextVal }
-    });
+    sendRealtimeEvent(`studentos_meet_${activeMeeting.id}`, 'spotlight_user', { userId: nextVal });
   };
 
   const handleHostEndMeeting = async () => {
     if (!activeMeeting || !isCurrentHost) return;
-    if (confirm('Are you sure you want to end this meeting for all participants?')) {
-      const targetId = activeMeeting.id;
-      await endMeetingInStore(targetId);
-      try {
-        supabase.channel(`studentos_meet_${targetId}`).send({
-          type: 'broadcast',
-          event: 'host_control',
-          payload: { action: 'end_meeting' }
-        });
-        supabase.channel('studentos_meetings_global').send({
-          type: 'broadcast',
-          event: 'meeting_ended',
-          payload: { meetingId: targetId }
-        });
-      } catch (_) {}
-      handleLeaveMeeting();
-    }
+    const targetId = activeMeeting.id;
+    await endMeetingInStore(targetId);
+    sendRealtimeEvent(`studentos_meet_${targetId}`, 'host_control', { action: 'end_meeting' });
+    sendRealtimeEvent('studentos_meetings_global', 'meeting_ended', { meetingId: targetId });
+    handleLeaveMeeting();
+    showMeetNotice('Meeting ended for all participants.');
   };
 
   const handleHostDeleteMeeting = async (meetingId: string) => {
@@ -1157,28 +1218,17 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
     if (!m) return;
     const canDelete = currentUser?.uid === m.hostId || (m.hostEmail && currentUser?.email === m.hostEmail) || currentUser?.uid === 'host' || m.hostId === 'host' || (m.hostId.startsWith('host-') && ['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole));
     if (!canDelete) {
-      alert('Only the Host can delete this meeting.');
+      showMeetNotice('Only the Host can delete this meeting.');
       return;
     }
-    if (confirm('Are you sure you want to permanently delete this meeting?')) {
-      await deleteMeeting(meetingId);
-      try {
-        supabase.channel(`studentos_meet_${meetingId}`).send({
-          type: 'broadcast',
-          event: 'host_control',
-          payload: { action: 'delete_meeting' }
-        });
-        supabase.channel('studentos_meetings_global').send({
-          type: 'broadcast',
-          event: 'meeting_deleted',
-          payload: { meetingId }
-        });
-      } catch (_) {}
-      if (activeMeeting?.id === meetingId) {
-        handleLeaveMeeting();
-      }
-      loadAllMeetingsData();
+    await deleteMeeting(meetingId);
+    sendRealtimeEvent(`studentos_meet_${meetingId}`, 'host_control', { action: 'delete_meeting' });
+    sendRealtimeEvent('studentos_meetings_global', 'meeting_deleted', { meetingId });
+    if (activeMeeting?.id === meetingId) {
+      handleLeaveMeeting();
     }
+    loadAllMeetingsData();
+    showMeetNotice('Meeting deleted.');
   };
 
   const handleAdmitWaitingUser = (targetUserId: string) => {
@@ -1187,11 +1237,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
       setWaitingParticipants(prev => prev.filter(w => w.userId !== targetUserId));
       setParticipants(prev => [...prev, { ...userToAdmit, status: 'admitted' }]);
       if (activeMeeting) {
-        supabase.channel(`studentos_meet_${activeMeeting.id}`).send({
-          type: 'broadcast',
-          event: 'admit',
-          payload: { targetUserId }
-        });
+        sendRealtimeEvent(`studentos_meet_${activeMeeting.id}`, 'admit', { targetUserId });
       }
     }
   };
@@ -1199,11 +1245,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
   const handleRejectWaitingUser = (targetUserId: string) => {
     setWaitingParticipants(prev => prev.filter(w => w.userId !== targetUserId));
     if (activeMeeting) {
-      supabase.channel(`studentos_meet_${activeMeeting.id}`).send({
-        type: 'broadcast',
-        event: 'reject',
-        payload: { targetUserId }
-      });
+      sendRealtimeEvent(`studentos_meet_${activeMeeting.id}`, 'reject', { targetUserId });
     }
   };
 
@@ -1237,7 +1279,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
     const newMsg: MeetingChatMessage = {
       id: 'msg_' + Date.now(),
       meetingId: activeMeeting.id,
-      senderId: currentUser?.uid || 'user-uid',
+      senderId: myStableUserId,
       senderName: currentUser?.name || 'Participant',
       senderRole: (currentUser?.role as any) || 'student',
       content: chatInput.trim(),
@@ -1250,11 +1292,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
     setChatInput('');
     setChatAttachment(null);
 
-    supabase.channel(`studentos_meet_${activeMeeting.id}`).send({
-      type: 'broadcast',
-      event: 'chat',
-      payload: { message: newMsg }
-    });
+    sendRealtimeEvent(`studentos_meet_${activeMeeting.id}`, 'chat', { message: newMsg });
   };
 
   // Chat Delete
@@ -1262,11 +1300,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
     if (!activeMeeting) return;
     await deleteMeetingChatMessage(activeMeeting.id, msgId);
     setChatMessages(prev => prev.filter(m => m.id !== msgId));
-    supabase.channel(`studentos_meet_${activeMeeting.id}`).send({
-      type: 'broadcast',
-      event: 'chat',
-      payload: { action: 'delete', messageId: msgId }
-    });
+    sendRealtimeEvent(`studentos_meet_${activeMeeting.id}`, 'chat', { action: 'delete', messageId: msgId });
   };
 
   // Chat Edit
@@ -1274,11 +1308,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
     if (!activeMeeting || !editingContent.trim()) return;
     await updateMeetingChatMessage(activeMeeting.id, msgId, editingContent.trim());
     setChatMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: editingContent.trim() } : m));
-    supabase.channel(`studentos_meet_${activeMeeting.id}`).send({
-      type: 'broadcast',
-      event: 'chat',
-      payload: { action: 'edit', messageId: msgId, newContent: editingContent.trim() }
-    });
+    sendRealtimeEvent(`studentos_meet_${activeMeeting.id}`, 'chat', { action: 'edit', messageId: msgId, newContent: editingContent.trim() });
     setEditingMessageId(null);
     setEditingContent('');
   };
@@ -1306,7 +1336,44 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
     await saveMeetingRecording(newRec);
     setRecordings(getLocalRecordings());
-    alert('Meeting recording saved in StudentOS Archive!');
+    showMeetNotice('Meeting recording saved in StudentOS Archive!');
+  };
+
+  const handleGenerateAiMeetingSummary = async () => {
+    if (!activeMeeting || isGeneratingAiSummary) return;
+    setIsGeneratingAiSummary(true);
+    try {
+      const chatLog = chatMessages.map(m => `${m.senderName}: ${m.content}`).join('\n');
+      const speechLog = captionTranscript.map(t => `[${t.time}] ${t.speaker}: ${t.text}`).join('\n');
+      const rawContext = [
+        `Class Title: ${activeMeeting.title}`,
+        `Subject: ${activeMeeting.subject || 'General'}`,
+        `Class/Batch: ${activeMeeting.className || 'General'}`,
+        `Description: ${activeMeeting.description || 'Interactive session'}`,
+        chatLog ? `\nMeeting Chat Log:\n${chatLog}` : '',
+        speechLog ? `\nLive Speech Transcript:\n${speechLog}` : ''
+      ].filter(Boolean).join('\n');
+
+      const res = await fetch('/api/ai/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rawText: rawContext,
+          mode: 'summary',
+          subject: activeMeeting.subject || 'General'
+        })
+      });
+      const data = await res.json();
+      if (data && data.text) {
+        setAiSessionSummary(data.text);
+      } else {
+        setAiSessionSummary('Unable to generate summary right now. Please try again.');
+      }
+    } catch (err) {
+      setAiSessionSummary('Network error while generating session summary.');
+    } finally {
+      setIsGeneratingAiSummary(false);
+    }
   };
 
   // Export Attendance CSV
@@ -1345,7 +1412,16 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
   };
 
   return (
-    <div className="w-full min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
+    <div className="w-full min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white relative">
+      {meetNotice && (
+        <div className="fixed top-4 right-4 z-[9999] max-w-sm bg-slate-900/95 border border-indigo-500/40 text-white px-4 py-3 rounded-2xl shadow-2xl backdrop-blur-xl flex items-center gap-3 animate-fadeIn">
+          <Info className="w-4 h-4 text-indigo-400 shrink-0" />
+          <span className="text-xs font-bold flex-1">{meetNotice}</span>
+          <button onClick={() => setMeetNotice(null)} className="text-slate-400 hover:text-white">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
       
       {/* GLOBAL TOP MEET HEADER (When in Lobby / Calendar) */}
       {activeView !== 'room' && (
@@ -1438,24 +1514,28 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
                 <p className="text-xs text-slate-300">Launch a virtual lecture room immediately with automated attendance & whiteboard.</p>
               </div>
               <button
-                onClick={() => {
+                onClick={async () => {
+                  const instantId = `MEET-${Math.floor(100 + Math.random() * 900)}-${Math.floor(100 + Math.random() * 900)}`;
                   const m: Meeting = {
-                    id: `MEET-${Math.floor(100 + Math.random() * 900)}-${Math.floor(100 + Math.random() * 900)}`,
+                    id: instantId,
                     title: `${currentUser?.name || 'Faculty'}'s Instant Classroom`,
                     subject: 'Interactive Session',
                     type: 'instant',
                     startTime: new Date().toISOString(),
                     endTime: new Date(Date.now() + 3600000).toISOString(),
-                    password: '123',
-                    hostId: currentUser?.uid || 'host',
+                    password: '',
+                    hostId: myStableUserId,
                     hostName: currentUser?.name || 'Teacher',
                     hostEmail: currentUser?.email || 'teacher@school.edu',
                     hostRole: (currentUser?.role as any) || 'teacher',
-                    joinLink: `${window.location.origin}?meet=instant`,
+                    joinLink: `${window.location.origin}?meet=${instantId}`,
                     status: 'live',
                     createdAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString()
                   };
+                  await createOrUpdateMeeting(m);
+                  sendRealtimeEvent('studentos_meetings_global', 'meeting_sync', { meetingId: instantId });
+                  loadAllMeetingsData();
                   handleJoinMeeting(m);
                 }}
                 className="mt-6 w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 z-10"
@@ -1788,7 +1868,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
           {/* ACTIVE ROOM TOP CONTROL BAR */}
           {(() => {
-            const selfUserUid = currentUser?.uid || 'self_uid';
+            const selfUserUid = myStableUserId;
 
             const mySelfParticipant: MeetingParticipant = {
               id: `p_self_${selfUserUid}`,
@@ -2108,6 +2188,14 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
                   >
                     <Sparkles className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
+
+                  <button
+                    onClick={() => setActiveSidePanel(activeSidePanel === 'ai' ? null : 'ai')}
+                    className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${activeSidePanel === 'ai' ? 'bg-violet-600 text-white shadow-lg' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
+                    title="AI Lecture Copilot & Summary"
+                  >
+                    <Bot className="w-4 h-4 sm:w-5 sm:h-5" />
+                  </button>
                 </div>
 
                 <div className="flex items-center gap-1.5 sm:gap-2">
@@ -2410,7 +2498,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
                           onClick={() => {
                             const txt = captionTranscript.map(t => `[${t.time}] ${t.speaker}: ${t.text}`).join('\n');
                             navigator.clipboard.writeText(txt);
-                            alert('Transcript copied to clipboard!');
+                            showMeetNotice('Transcript copied to clipboard!');
                           }}
                           className="p-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg"
                           title="Copy Transcript"
@@ -2551,12 +2639,37 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
                       <h4 className="text-xs font-black uppercase text-violet-300 font-mono flex items-center gap-1.5">
                         <Sparkles className="w-4 h-4" /> AI Lecture Copilot
                       </h4>
-                      <p className="text-xs text-slate-300">Live AI assistant summarizing lecture concepts and resolving student doubts in real-time.</p>
+                      <p className="text-xs text-slate-300">Live NVIDIA AI assistant summarizing lecture concepts, chat discussions, and speech transcripts in real-time.</p>
                     </div>
 
-                    <button className="w-full py-3 bg-violet-600 hover:bg-violet-500 text-white font-extrabold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-2">
-                      <Sparkles className="w-4 h-4" /> Generate Instant Session Summary
+                    <button
+                      onClick={handleGenerateAiMeetingSummary}
+                      disabled={isGeneratingAiSummary}
+                      className="w-full py-3 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow transition-all flex items-center justify-center gap-2"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      {isGeneratingAiSummary ? 'Synthesizing Class Notes...' : 'Generate Instant Session Summary'}
                     </button>
+
+                    {aiSessionSummary && (
+                      <div className="p-3.5 bg-slate-950 border border-white/10 rounded-2xl space-y-2.5">
+                        <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                          <span className="text-[10px] font-mono uppercase font-bold text-indigo-400">AI Session Summary</span>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(aiSessionSummary);
+                              showMeetNotice('AI Summary copied to clipboard!');
+                            }}
+                            className="text-[10px] font-bold text-emerald-400 hover:underline flex items-center gap-1"
+                          >
+                            <Copy className="w-3 h-3" /> Copy
+                          </button>
+                        </div>
+                        <div className="text-xs text-slate-200 whitespace-pre-wrap leading-relaxed font-sans max-h-80 overflow-y-auto pr-1">
+                          {aiSessionSummary}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 

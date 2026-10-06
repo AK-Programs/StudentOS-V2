@@ -35,23 +35,29 @@ export const RemoteVideoTile: React.FC<RemoteVideoTileProps> = ({
 
   useEffect(() => {
     if (videoRef.current) {
-      if (stream && stream.getVideoTracks().length > 0 && stream.getVideoTracks()[0].enabled) {
-        videoRef.current.srcObject = stream;
+      if (stream) {
+        if (videoRef.current.srcObject !== stream) {
+          videoRef.current.srcObject = stream;
+        }
         videoRef.current.play().catch(err => {
-          console.warn('[StudentOS Meet] Remote video play error:', err);
+          console.warn('[StudentOS Meet] Remote media play error:', err);
         });
       } else {
         videoRef.current.srcObject = null;
       }
     }
-  }, [stream, participant.isCameraOn, isScreenSharing]);
+  }, [stream, participant.isCameraOn, participant.isMicOn, isScreenSharing]);
 
-  const hasVideoTrack = stream && stream.getVideoTracks().some(t => t.enabled && t.readyState === 'live');
+  const hasVideoTrack = Boolean(
+    stream &&
+    (participant.isCameraOn || isScreenSharing) &&
+    stream.getVideoTracks().some(t => t.enabled && t.readyState === 'live')
+  );
 
   return (
     <div
       onDoubleClick={onPin}
-      className={`relative aspect-video bg-slate-900 rounded-3xl border transition-all overflow-hidden shadow-2xl flex items-center justify-center group ${
+      className={`relative aspect-video bg-slate-900 rounded-2xl sm:rounded-3xl border transition-all overflow-hidden shadow-2xl flex items-center justify-center group ${
         isSpeaking ? 'border-emerald-500 shadow-emerald-500/30 ring-2 ring-emerald-500/50' :
         isPinned ? 'border-amber-500/80 shadow-amber-500/20 ring-2 ring-amber-500/40' :
         isScreenSharing ? 'border-teal-500/80 shadow-teal-500/20' : 'border-white/10 hover:border-indigo-500/50'
@@ -61,11 +67,11 @@ export const RemoteVideoTile: React.FC<RemoteVideoTileProps> = ({
         ref={videoRef}
         autoPlay
         playsInline
-        className={`w-full h-full object-cover ${(!participant.isCameraOn || !hasVideoTrack) ? 'hidden' : 'block'}`}
+        className={`w-full h-full object-cover transition-opacity duration-200 ${!hasVideoTrack ? 'opacity-0 pointer-events-none absolute inset-0' : 'opacity-100 block'}`}
       />
 
-      {(!participant.isCameraOn || !hasVideoTrack) && (
-        <div className={`w-20 h-20 rounded-full bg-gradient-to-tr from-indigo-600 via-violet-600 to-sky-500 text-white flex items-center justify-center text-2xl font-black shadow-lg ${isSpeaking ? 'ring-4 ring-emerald-400 animate-pulse' : ''}`}>
+      {!hasVideoTrack && (
+        <div className={`w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gradient-to-tr from-indigo-600 via-violet-600 to-sky-500 text-white flex items-center justify-center text-xl sm:text-2xl font-black shadow-lg ${isSpeaking ? 'ring-4 ring-emerald-400 animate-pulse' : ''}`}>
           {participant.name ? participant.name.charAt(0).toUpperCase() : <User className="w-8 h-8" />}
         </div>
       )}

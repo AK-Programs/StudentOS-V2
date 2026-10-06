@@ -15,6 +15,7 @@ import {
 } from '../lib/supabaseChat';
 import { saveAppNotification } from '../lib/notifications';
 import { supabase } from '../lib/supabase';
+import { sendRealtimeEvent, subscribeRealtimeEvents } from '../lib/wsHelper';
 import { presenceService, UserPresence } from '../lib/presenceService';
 import { soundService } from '../lib/soundService';
 import { PublicProfileModal } from './PublicProfileModal';
@@ -38,12 +39,13 @@ interface ActiveCall {
   callId: string;
   targetUser: UserProfile;
   type: 'audio' | 'video';
-  mode: 'outgoing' | 'incoming' | 'connected';
+  mode: 'outgoing' | 'incoming' | 'connecting' | 'connected';
   startTime?: number;
   isMuted: boolean;
   isVideoOff: boolean;
   isScreenSharing: boolean;
   isCaller?: boolean;
+  connectionStatus?: string;
 }
 
 export const ChatSystem: React.FC<ChatSystemProps> = ({
@@ -172,9 +174,11 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
 
   const callTimerRef = useRef<any>(null);
+  const callTimeoutRef = useRef<any>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const pendingIceCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
   const localMediaStreamRef = useRef<MediaStream | null>(null);
-  const activeCallRef = useRef<any>(null);
+  const activeCallRef = useRef<ActiveCall | null>(null);
 
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -253,10 +257,16 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
       clearInterval(callTimerRef.current);
       callTimerRef.current = null;
     }
+    if (callTimeoutRef.current) {
+      clearTimeout(callTimeoutRef.current);
+      callTimeoutRef.current = null;
+    }
+    pendingIceCandidatesRef.current = [];
     if (peerConnectionRef.current) {
       try {
         peerConnectionRef.current.ontrack = null;
         peerConnectionRef.current.onicecandidate = null;
+        peerConnectionRef.current.onconnectionstatechange = null;
         peerConnectionRef.current.close();
       } catch (_) {}
       peerConnectionRef.current = null;
@@ -267,6 +277,15 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
       } catch (_) {}
       localMediaStreamRef.current = null;
     }
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = null;
+    }
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null;
+    }
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = null;
+    }
     setRemoteStream(null);
     stopRingtoneSound();
     setActiveCall(null);
@@ -276,14 +295,36 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
   useEffect(() => {
     if (!activeCall) {
       stopRingtoneSound();
+      if (callTimeoutRef.current) {
+        clearTimeout(callTimeoutRef.current);
+        callTimeoutRef.current = null;
+      }
       return;
     }
     if (activeCall.mode === 'incoming') {
       startRingtoneSound('incoming');
     } else if (activeCall.mode === 'outgoing') {
       startRingtoneSound('outgoing');
+      // 35s unanswered call timeout
+      if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+      callTimeoutRef.current = setTimeout(() => {
+        if (activeCallRef.current && activeCallRef.current.mode === 'outgoing') {
+          const cid = activeCallRef.current.callId;
+          const tUid = activeCallRef.current.targetUser?.uid;
+          sendRealtimeEvent(`room_channel_${activeChatTargetId}`, 'call_ended', { callId: cid, reason: 'timeout' });
+          if (tUid) {
+            sendRealtimeEvent(`user_calls_${tUid}`, 'call_ended', { callId: cid, reason: 'timeout' });
+          }
+          cleanupCall();
+          showNotification('No answer. Call timed out.');
+        }
+      }, 35000);
     } else {
       stopRingtoneSound();
+      if (callTimeoutRef.current) {
+        clearTimeout(callTimeoutRef.current);
+        callTimeoutRef.current = null;
+      }
     }
     return () => {
       stopRingtoneSound();
@@ -318,45 +359,51 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
 
   // WebRTC Signal Exchange Channel Effect
   useEffect(() => {
-    if (!activeCall || activeCall.mode !== 'connected') return;
+    if (!activeCall || (activeCall.mode !== 'connecting' && activeCall.mode !== 'connected')) return;
 
-    const channelId = `call_signal_${activeCall.callId}`;
-    const signalChannel = supabase.channel(channelId);
+    const callId = activeCall.callId;
+    const channelId = `call_signal_${callId}`;
+    let isDisposed = false;
 
-    signalChannel
-      .on('broadcast', { event: 'webrtc_signal' }, async (payload) => {
-        const data = payload.payload;
-        if (!data || data.senderUid === currentUser?.uid) return;
-
-        const pc = peerConnectionRef.current;
-        if (!pc) return;
-
-        try {
-          if (data.offer && !activeCall.isCaller) {
-            await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            signalChannel.send({
-              type: 'broadcast',
-              event: 'webrtc_signal',
-              payload: { answer, senderUid: currentUser?.uid }
-            });
-          } else if (data.answer && activeCall.isCaller) {
-            await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-          } else if (data.candidate) {
-            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+    const flushPendingCandidates = async (pc: RTCPeerConnection) => {
+      if (!pc.remoteDescription) return;
+      while (pendingIceCandidatesRef.current.length > 0) {
+        const cand = pendingIceCandidatesRef.current.shift();
+        if (cand) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(cand));
+          } catch (err) {
+            console.warn('[Call WebRTC] Buffered ICE candidate warning:', err);
           }
-        } catch (e) {
-          console.warn('WebRTC signal processing note:', e);
         }
-      })
-      .subscribe();
+      }
+    };
+
+    const sendOfferIfCaller = async () => {
+      const pc = peerConnectionRef.current;
+      if (!pc || !activeCallRef.current?.isCaller) return;
+      try {
+        const offer = await pc.createOffer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: activeCallRef.current.type === 'video'
+        });
+        await pc.setLocalDescription(offer);
+        sendRealtimeEvent(channelId, 'webrtc_signal', {
+          offer: { type: offer.type, sdp: offer.sdp },
+          senderUid: currentUser?.uid,
+          callId
+        });
+      } catch (e) {
+        console.warn('[Call WebRTC] Create offer warning:', e);
+      }
+    };
 
     const initiateWebRTC = async () => {
       if (peerConnectionRef.current) {
         try { peerConnectionRef.current.close(); } catch (_) {}
         peerConnectionRef.current = null;
       }
+      pendingIceCandidatesRef.current = [];
 
       const pc = new RTCPeerConnection({
         iceServers: [
@@ -374,6 +421,7 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
       }
 
       pc.ontrack = (event) => {
+        if (isDisposed) return;
         if (event.streams && event.streams[0]) {
           setRemoteStream(event.streams[0]);
         } else {
@@ -385,52 +433,169 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
             return new MediaStream(s.getTracks());
           });
         }
+        setActiveCall(prev => prev && prev.mode !== 'connected'
+          ? { ...prev, mode: 'connected', startTime: prev.startTime || Date.now(), connectionStatus: 'Connected' }
+          : prev
+        );
       };
 
-      pc.onicecandidate = (evt) => {
-        if (evt.candidate) {
-          try {
-            signalChannel.send({
-              type: 'broadcast',
-              event: 'webrtc_signal',
-              payload: { candidate: evt.candidate, senderUid: currentUser?.uid }
-            });
-          } catch (_) {}
+      pc.onconnectionstatechange = () => {
+        if (isDisposed) return;
+        const st = pc.connectionState;
+        if (st === 'connected') {
+          setActiveCall(prev => prev ? {
+            ...prev,
+            mode: 'connected',
+            startTime: prev.startTime || Date.now(),
+            connectionStatus: 'Connected'
+          } : null);
+        } else if (st === 'failed' || st === 'disconnected') {
+          setActiveCall(prev => prev ? { ...prev, connectionStatus: 'Reconnecting...' } : null);
         }
       };
 
-      // Only the CALLER creates the initial offer
-      if (activeCall.isCaller) {
-        try {
-          const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: activeCall.type === 'video' });
-          await pc.setLocalDescription(offer);
-          signalChannel.send({
-            type: 'broadcast',
-            event: 'webrtc_signal',
-            payload: { offer, senderUid: currentUser?.uid }
+      pc.onicecandidate = (evt) => {
+        if (evt.candidate && !isDisposed) {
+          sendRealtimeEvent(channelId, 'webrtc_signal', {
+            candidate: evt.candidate.toJSON ? evt.candidate.toJSON() : evt.candidate,
+            senderUid: currentUser?.uid,
+            callId
           });
-        } catch (_) {}
+        }
+      };
+
+      if (activeCall.isCaller) {
+        await sendOfferIfCaller();
+      } else {
+        // Notify caller that callee's WebRTC peer connection is initialized and ready for offer
+        sendRealtimeEvent(channelId, 'webrtc_signal', {
+          ready: true,
+          senderUid: currentUser?.uid,
+          callId
+        });
       }
     };
+
+    const unsubscribeSignal = subscribeRealtimeEvents(channelId, {
+      webrtc_signal: async (data: any) => {
+        if (!data || data.senderUid === currentUser?.uid || isDisposed) return;
+        const pc = peerConnectionRef.current;
+        if (!pc) return;
+
+        try {
+          if (data.ready && activeCallRef.current?.isCaller) {
+            await sendOfferIfCaller();
+          } else if (data.offer && !activeCallRef.current?.isCaller) {
+            await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+            await flushPendingCandidates(pc);
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            sendRealtimeEvent(channelId, 'webrtc_signal', {
+              answer: { type: answer.type, sdp: answer.sdp },
+              senderUid: currentUser?.uid,
+              callId
+            });
+            setActiveCall(prev => prev ? {
+              ...prev,
+              mode: 'connected',
+              startTime: prev.startTime || Date.now(),
+              connectionStatus: 'Connected'
+            } : null);
+          } else if (data.answer && activeCallRef.current?.isCaller) {
+            if (pc.signalingState === 'have-local-offer') {
+              await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+              await flushPendingCandidates(pc);
+            }
+            setActiveCall(prev => prev ? {
+              ...prev,
+              mode: 'connected',
+              startTime: prev.startTime || Date.now(),
+              connectionStatus: 'Connected'
+            } : null);
+          } else if (data.candidate) {
+            if (pc.remoteDescription && pc.remoteDescription.type) {
+              await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+            } else {
+              pendingIceCandidatesRef.current.push(data.candidate);
+            }
+          }
+        } catch (e) {
+          console.warn('[Call WebRTC] Signal processing note:', e);
+        }
+      }
+    });
 
     initiateWebRTC();
 
     return () => {
-      supabase.removeChannel(signalChannel);
+      isDisposed = true;
+      unsubscribeSignal();
     };
-  }, [activeCall?.callId, activeCall?.mode]);
+  }, [activeCall?.callId, activeCall?.mode === 'connecting' || activeCall?.mode === 'connected']);
 
-  // Global Call Realtime Listener for Direct Calls
+  // Helper to handle incoming call events consistently from any channel
+  const handleIncomingCallSignal = useRef((eventType: string, data: any) => {
+    if (!data || !currentUser?.uid) return;
+    if (eventType === 'call_invite') {
+      if (data.targetUid === currentUser.uid && data.callerUid !== currentUser.uid) {
+        // If already in a different active call, send busy rejection
+        if (activeCallRef.current && activeCallRef.current.callId !== data.callId) {
+          sendRealtimeEvent(`user_calls_${data.callerUid}`, 'call_rejected', {
+            callId: data.callId,
+            reason: 'busy'
+          });
+          return;
+        }
+        const caller = data.callerProfile || resolveUser(data.callerUid);
+        setActiveCall({
+          callId: data.callId,
+          targetUser: caller,
+          type: data.callType || 'audio',
+          mode: 'incoming',
+          isMuted: false,
+          isVideoOff: false,
+          isScreenSharing: false,
+          isCaller: false,
+          connectionStatus: 'Incoming Call...'
+        });
+      }
+    } else if (eventType === 'call_accepted') {
+      if (activeCallRef.current && data.callId === activeCallRef.current.callId) {
+        stopRingtoneSound();
+        setActiveCall(prev => prev ? {
+          ...prev,
+          mode: 'connected',
+          startTime: prev.startTime || Date.now(),
+          connectionStatus: 'Connected'
+        } : null);
+        showNotification('Call connected!');
+      }
+    } else if (eventType === 'call_rejected') {
+      if (activeCallRef.current && data.callId === activeCallRef.current.callId) {
+        cleanupCall();
+        showNotification(data.reason === 'busy' ? 'User is busy on another call.' : 'Call declined.');
+      }
+    } else if (eventType === 'call_ended') {
+      if (activeCallRef.current && data.callId === activeCallRef.current.callId) {
+        cleanupCall();
+        showNotification('Call ended.');
+      }
+    }
+  });
+
   useEffect(() => {
-    if (!currentUser?.uid) return;
-
-    const userCallsChannel = supabase.channel(`user_calls_${currentUser.uid}`);
-
-    userCallsChannel
-      .on('broadcast', { event: 'call_invite' }, (payload) => {
-        const data = payload.payload;
-        if (data && data.targetUid === currentUser.uid) {
-          const caller = resolveUser(data.callerUid);
+    handleIncomingCallSignal.current = (eventType: string, data: any) => {
+      if (!data || !currentUser?.uid) return;
+      if (eventType === 'call_invite') {
+        if (data.targetUid === currentUser.uid && data.callerUid !== currentUser.uid) {
+          if (activeCallRef.current && activeCallRef.current.callId !== data.callId) {
+            sendRealtimeEvent(`user_calls_${data.callerUid}`, 'call_rejected', {
+              callId: data.callId,
+              reason: 'busy'
+            });
+            return;
+          }
+          const caller = data.callerProfile || resolveUser(data.callerUid);
           setActiveCall({
             callId: data.callId,
             targetUser: caller,
@@ -439,33 +604,46 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
             isMuted: false,
             isVideoOff: false,
             isScreenSharing: false,
-            isCaller: false
+            isCaller: false,
+            connectionStatus: 'Incoming Call...'
           });
         }
-      })
-      .on('broadcast', { event: 'call_accepted' }, (payload) => {
-        if (activeCallRef.current && payload.payload?.callId === activeCallRef.current.callId) {
+      } else if (eventType === 'call_accepted') {
+        if (activeCallRef.current && data.callId === activeCallRef.current.callId) {
           stopRingtoneSound();
-          setActiveCall(prev => prev ? { ...prev, mode: 'connected', startTime: Date.now() } : null);
+          setActiveCall(prev => prev ? {
+            ...prev,
+            mode: 'connected',
+            startTime: prev.startTime || Date.now(),
+            connectionStatus: 'Connected'
+          } : null);
           showNotification('Call connected!');
         }
-      })
-      .on('broadcast', { event: 'call_rejected' }, (payload) => {
-        if (activeCallRef.current && payload.payload?.callId === activeCallRef.current.callId) {
+      } else if (eventType === 'call_rejected') {
+        if (activeCallRef.current && data.callId === activeCallRef.current.callId) {
           cleanupCall();
-          showNotification('Call declined.');
+          showNotification(data.reason === 'busy' ? 'User is busy on another call.' : 'Call declined.');
         }
-      })
-      .on('broadcast', { event: 'call_ended' }, (payload) => {
-        if (activeCallRef.current && payload.payload?.callId === activeCallRef.current.callId) {
+      } else if (eventType === 'call_ended') {
+        if (activeCallRef.current && data.callId === activeCallRef.current.callId) {
           cleanupCall();
           showNotification('Call ended.');
         }
-      })
-      .subscribe();
+      }
+    };
+  });
 
+  // Global Call Realtime Listener for Direct Calls
+  useEffect(() => {
+    if (!currentUser?.uid) return;
+    const unsubscribeUserCalls = subscribeRealtimeEvents(`user_calls_${currentUser.uid}`, {
+      call_invite: (data) => handleIncomingCallSignal.current('call_invite', data),
+      call_accepted: (data) => handleIncomingCallSignal.current('call_accepted', data),
+      call_rejected: (data) => handleIncomingCallSignal.current('call_rejected', data),
+      call_ended: (data) => handleIncomingCallSignal.current('call_ended', data),
+    });
     return () => {
-      supabase.removeChannel(userCallsChannel);
+      unsubscribeUserCalls();
     };
   }, [currentUser?.uid]);
 
@@ -474,12 +652,10 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
     if (!activeChatTargetId) return;
 
     const channelName = `room_channel_${activeChatTargetId}`;
-    const roomChannel = supabase.channel(channelName);
-
-    roomChannel
-      .on('broadcast', { event: 'new_chat_message' }, (payload) => {
-        if (payload.payload) {
-          const newMsg = payload.payload as ChatMessage;
+    const unsubscribeRoom = subscribeRealtimeEvents(channelName, {
+      new_chat_message: (payload) => {
+        if (payload) {
+          const newMsg = payload as ChatMessage;
           setChats(prev => {
             const idx = prev.findIndex(m => m.id === newMsg.id);
             if (idx >= 0) {
@@ -490,52 +666,15 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
             return [...prev, newMsg];
           });
         }
-      })
-      .on('broadcast', { event: 'call_invite' }, (payload) => {
-        const data = payload.payload;
-        if (data && data.targetUid === currentUser?.uid) {
-          const caller = resolveUser(data.callerUid);
-          setActiveCall({
-            callId: data.callId,
-            targetUser: caller,
-            type: data.callType || 'audio',
-            mode: 'incoming',
-            isMuted: false,
-            isVideoOff: false,
-            isScreenSharing: false
-          });
-        }
-      })
-      .on('broadcast', { event: 'call_accepted' }, (payload) => {
-        if (activeCallRef.current && payload.payload?.callId === activeCallRef.current.callId) {
-          setActiveCall(prev => prev ? { ...prev, mode: 'connected', startTime: Date.now() } : null);
-          showNotification('Call connected!');
-        }
-      })
-      .on('broadcast', { event: 'call_rejected' }, (payload) => {
-        if (activeCallRef.current && payload.payload?.callId === activeCallRef.current.callId) {
-          if (localMediaStreamRef.current) {
-            localMediaStreamRef.current.getTracks().forEach(t => t.stop());
-            localMediaStreamRef.current = null;
-          }
-          setActiveCall(null);
-          showNotification('Call declined.');
-        }
-      })
-      .on('broadcast', { event: 'call_ended' }, (payload) => {
-        if (activeCallRef.current && payload.payload?.callId === activeCallRef.current.callId) {
-          if (localMediaStreamRef.current) {
-            localMediaStreamRef.current.getTracks().forEach(t => t.stop());
-            localMediaStreamRef.current = null;
-          }
-          setActiveCall(null);
-          showNotification('Call ended.');
-        }
-      })
-      .subscribe();
+      },
+      call_invite: (data) => handleIncomingCallSignal.current('call_invite', data),
+      call_accepted: (data) => handleIncomingCallSignal.current('call_accepted', data),
+      call_rejected: (data) => handleIncomingCallSignal.current('call_rejected', data),
+      call_ended: (data) => handleIncomingCallSignal.current('call_ended', data),
+    });
 
     return () => {
-      supabase.removeChannel(roomChannel);
+      unsubscribeRoom();
     };
   }, [activeChatTargetId, currentUser?.uid, setChats]);
 
@@ -770,18 +909,23 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
   // Start Call (Voice or Video)
   const handleStartCall = async (targetUser: UserProfile, type: 'audio' | 'video') => {
     if (!currentUser) return;
-    cleanupCall(); // Rebuild lifecycle: ensure previous peer connections/tracks are destroyed
+    if (!targetUser?.uid || targetUser.uid === currentUser.uid) {
+      showNotification('Cannot place a call to yourself.');
+      return;
+    }
+    cleanupCall(); // Ensure previous peer connections/tracks are destroyed
 
     const callId = `call-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        video: type === 'video' ? { width: 1280, height: 720 } : false
+        video: type === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false
       });
       localMediaStreamRef.current = stream;
     } catch (e) {
       console.warn('Microphone/Camera access note during call start', e);
+      showNotification('Note: Camera/Mic permission denied or unavailable. Proceeding in listen-only mode.');
     }
 
     setActiveCall({
@@ -792,27 +936,26 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
       isMuted: false,
       isVideoOff: false,
       isScreenSharing: false,
-      isCaller: true
+      isCaller: true,
+      connectionStatus: 'Calling...'
     });
 
-    try {
-      const payload = {
-        callId,
-        callerUid: currentUser.uid,
-        targetUid: targetUser.uid,
-        callType: type
-      };
-      supabase.channel(`room_channel_${activeChatTargetId}`).send({
-        type: 'broadcast',
-        event: 'call_invite',
-        payload
-      });
-      supabase.channel(`user_calls_${targetUser.uid}`).send({
-        type: 'broadcast',
-        event: 'call_invite',
-        payload
-      });
-    } catch (_) {}
+    const payload = {
+      callId,
+      callerUid: currentUser.uid,
+      callerProfile: {
+        uid: currentUser.uid,
+        name: currentUser.name,
+        role: currentUser.role,
+        email: currentUser.email,
+        avatar: currentUser.avatar
+      },
+      targetUid: targetUser.uid,
+      callType: type
+    };
+
+    sendRealtimeEvent(`room_channel_${activeChatTargetId}`, 'call_invite', payload);
+    sendRealtimeEvent(`user_calls_${targetUser.uid}`, 'call_invite', payload);
 
     showNotification(`Calling ${targetUser.name}...`);
   };
@@ -820,21 +963,11 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
   // End Call
   const handleEndCall = () => {
     if (activeCall) {
-      try {
-        const payload = { callId: activeCall.callId };
-        supabase.channel(`room_channel_${activeChatTargetId}`).send({
-          type: 'broadcast',
-          event: 'call_ended',
-          payload
-        });
-        if (activeCall.targetUser?.uid) {
-          supabase.channel(`user_calls_${activeCall.targetUser.uid}`).send({
-            type: 'broadcast',
-            event: 'call_ended',
-            payload
-          });
-        }
-      } catch (_) {}
+      const payload = { callId: activeCall.callId, senderUid: currentUser?.uid };
+      sendRealtimeEvent(`room_channel_${activeChatTargetId}`, 'call_ended', payload);
+      if (activeCall.targetUser?.uid) {
+        sendRealtimeEvent(`user_calls_${activeCall.targetUser.uid}`, 'call_ended', payload);
+      }
     }
     cleanupCall();
     showNotification('Call ended.');
@@ -1760,101 +1893,6 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
         />
       )}
 
-      {/* VOICE & VIDEO CALL OVERLAY MODAL */}
-      {activeCall && (
-        <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fadeIn">
-          <div className="bg-slate-900 border border-white/10 rounded-3xl max-w-lg w-full p-6 shadow-2xl relative flex flex-col items-center space-y-6">
-            
-            {/* Header */}
-            <div className="text-center space-y-1">
-              <span className="text-[10px] uppercase font-black tracking-widest text-indigo-400 bg-indigo-500/10 px-3 py-1 rounded-full border border-indigo-500/20">
-                {activeCall.type === 'video' ? '📹 Video Call' : '📞 Voice Call'} • {activeCall.mode.toUpperCase()}
-              </span>
-              <h3 className="text-xl font-black text-white mt-2">{activeCall.targetUser.name}</h3>
-              <p className="text-xs text-emerald-400 font-mono font-bold">
-                {activeCall.mode === 'connected' ? `Connected (${Math.floor(callDuration / 60)}:${(callDuration % 60).toString().padStart(2, '0')})` : 'Ringing...'}
-              </p>
-            </div>
-
-            {/* Video or Avatar Display */}
-            <div className="w-full h-56 bg-slate-950 rounded-2xl border border-white/10 flex items-center justify-center relative overflow-hidden">
-              {activeCall.type === 'video' ? (
-                <div className="w-full h-full flex items-center justify-center bg-indigo-950/40">
-                  <Video className="w-16 h-16 text-indigo-400/40 animate-pulse" />
-                  <span className="absolute bottom-3 left-3 text-[10px] text-slate-400 bg-slate-900/80 px-2 py-1 rounded-md">
-                    Camera Stream Active
-                  </span>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center space-y-3">
-                  <div className="w-24 h-24 rounded-full bg-indigo-600/30 border-4 border-indigo-500/50 flex items-center justify-center animate-pulse">
-                    <span className="text-3xl font-black text-white">{activeCall.targetUser.name.charAt(0)}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Incoming Call Answer/Reject Buttons */}
-            {activeCall.mode === 'incoming' ? (
-              <div className="flex gap-4 w-full">
-                <button
-                  onClick={() => {
-                    setActiveCall(prev => prev ? { ...prev, mode: 'connected', startTime: Date.now() } : null);
-                    try {
-                      supabase.channel(`room_channel_${activeChatTargetId}`).send({
-                        type: 'broadcast',
-                        event: 'call_accepted',
-                        payload: { callId: activeCall.callId }
-                      });
-                    } catch (_) {}
-                  }}
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-2xl text-xs uppercase flex items-center justify-center gap-2 shadow-lg"
-                >
-                  <Phone className="w-4 h-4" />
-                  Accept Call
-                </button>
-                <button
-                  onClick={handleEndCall}
-                  className="flex-1 bg-rose-600 hover:bg-rose-500 text-white font-bold py-3 rounded-2xl text-xs uppercase flex items-center justify-center gap-2 shadow-lg"
-                >
-                  <PhoneOff className="w-4 h-4" />
-                  Decline
-                </button>
-              </div>
-            ) : (
-              /* Active Controls */
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={() => setActiveCall(prev => prev ? { ...prev, isMuted: !prev.isMuted } : null)}
-                  className={`p-3.5 rounded-2xl border transition-all ${activeCall.isMuted ? 'bg-rose-600 text-white border-rose-500' : 'bg-slate-800 text-slate-300 border-white/10'}`}
-                  title={activeCall.isMuted ? "Unmute" : "Mute"}
-                >
-                  {activeCall.isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-                </button>
-
-                {activeCall.type === 'video' && (
-                  <button
-                    onClick={() => setActiveCall(prev => prev ? { ...prev, isVideoOff: !prev.isVideoOff } : null)}
-                    className={`p-3.5 rounded-2xl border transition-all ${activeCall.isVideoOff ? 'bg-rose-600 text-white border-rose-500' : 'bg-slate-800 text-slate-300 border-white/10'}`}
-                    title={activeCall.isVideoOff ? "Turn Camera On" : "Turn Camera Off"}
-                  >
-                    {activeCall.isVideoOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
-                  </button>
-                )}
-
-                <button
-                  onClick={handleEndCall}
-                  className="p-3.5 bg-rose-600 hover:bg-rose-500 text-white rounded-2xl shadow-xl transition-all"
-                  title="End Call"
-                >
-                  <PhoneOff className="w-5 h-5" />
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* START NEW DIRECT MESSAGE MODAL */}
       {showNewDmModal && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn">
@@ -2308,42 +2346,43 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
     </div>
   </div>
 
-  {/* ACTIVE VOICE & VIDEO CALL MODAL OVERLAY */}
+      {/* ACTIVE VOICE & VIDEO CALL MODAL OVERLAY */}
       {activeCall && (
-        <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-2xl flex items-center justify-center p-4 z-50 animate-fadeIn">
-          <div className="bg-slate-900 border border-white/10 rounded-3xl max-w-md w-full p-6 shadow-2xl relative space-y-6 text-center">
+        <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-2xl flex items-center justify-center p-3 sm:p-4 z-[9998] animate-fadeIn">
+          <div className="bg-slate-900 border border-white/10 rounded-3xl max-w-lg w-full p-4 sm:p-6 shadow-2xl relative space-y-5 text-center">
             
             {/* User Avatar & Call Status */}
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               <div className="relative inline-block">
                 {activeCall.targetUser.avatar || activeCall.targetUser.photoURL ? (
                   <img
                     src={activeCall.targetUser.avatar || activeCall.targetUser.photoURL}
                     alt=""
-                    className="w-24 h-24 rounded-full object-cover mx-auto ring-4 ring-indigo-500/40 shadow-2xl"
+                    className="w-20 h-20 sm:w-24 sm:h-24 rounded-full object-cover mx-auto ring-4 ring-indigo-500/40 shadow-2xl"
                   />
                 ) : (
-                  <div className="w-24 h-24 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-600 text-white font-black text-3xl flex items-center justify-center mx-auto shadow-2xl border-2 border-white/20">
+                  <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gradient-to-tr from-indigo-600 to-violet-600 text-white font-black text-2xl sm:text-3xl flex items-center justify-center mx-auto shadow-2xl border-2 border-white/20">
                     {activeCall.targetUser.name.charAt(0).toUpperCase()}
                   </div>
                 )}
 
-                {activeCall.mode === 'incoming' && (
-                  <span className="absolute -top-1 -right-1 w-6 h-6 bg-emerald-500 rounded-full animate-ping" />
+                {(activeCall.mode === 'incoming' || activeCall.mode === 'outgoing') && (
+                  <span className="absolute -top-1 -right-1 w-5 h-5 bg-emerald-500 rounded-full animate-ping" />
                 )}
               </div>
 
               <div>
-                <h3 className="text-lg font-black text-white">{activeCall.targetUser.name}</h3>
+                <h3 className="text-base sm:text-lg font-black text-white truncate px-2">{activeCall.targetUser.name}</h3>
                 <p className="text-xs text-indigo-400 font-mono font-bold flex items-center justify-center gap-1 mt-1">
                   {activeCall.type === 'video' ? <Video className="w-3.5 h-3.5" /> : <Phone className="w-3.5 h-3.5" />}
                   {activeCall.type === 'video' ? 'Direct Video Call' : 'Direct Voice Call'}
                 </p>
                 
                 {/* Mode status text / duration */}
-                <p className="text-xs text-slate-400 font-mono mt-2">
-                  {activeCall.mode === 'incoming' && 'Incoming Call...'}
-                  {activeCall.mode === 'outgoing' && 'Ringing...'}
+                <p className="text-xs text-slate-400 font-mono mt-1.5">
+                  {activeCall.mode === 'incoming' && 'Incoming Call — Ringing...'}
+                  {activeCall.mode === 'outgoing' && 'Ringing... Waiting for answer'}
+                  {activeCall.mode === 'connecting' && 'Connecting secure peer stream...'}
                   {activeCall.mode === 'connected' && (
                     <span className="text-emerald-400 font-black">
                       Connected • {Math.floor(callDuration / 60).toString().padStart(2, '0')}:{(callDuration % 60).toString().padStart(2, '0')}
@@ -2353,33 +2392,45 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
               </div>
             </div>
 
-            {/* Video preview area when video call connected */}
-            {activeCall.type === 'video' && activeCall.mode === 'connected' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 aspect-video bg-slate-950 rounded-2xl overflow-hidden relative border border-white/10 p-2">
+            {/* Video preview area when video call is active */}
+            {activeCall.type === 'video' && (activeCall.mode === 'connected' || activeCall.mode === 'connecting' || activeCall.mode === 'outgoing') && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 aspect-video bg-slate-950 rounded-2xl overflow-hidden relative border border-white/10 p-2">
                 {/* Remote Video Stream */}
-                <div className="relative w-full h-full bg-slate-900 rounded-xl overflow-hidden flex items-center justify-center">
+                <div className="relative w-full h-full bg-slate-900 rounded-xl overflow-hidden flex items-center justify-center min-h-[120px]">
                   <video
                     ref={remoteVideoRef}
                     autoPlay
                     playsInline
-                    className="w-full h-full object-cover"
+                    className={`w-full h-full object-cover ${remoteStream ? 'opacity-100' : 'opacity-0'}`}
                   />
-                  <span className="absolute bottom-2 left-2 px-2.5 py-1 bg-black/70 backdrop-blur-md rounded-lg text-[10px] font-mono text-white font-bold">
-                    {activeCall.targetUser.name}'s Video
+                  {!remoteStream && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 text-[11px] gap-1">
+                      <Video className="w-6 h-6 animate-pulse text-indigo-400/50" />
+                      <span>{activeCall.mode === 'outgoing' ? 'Waiting for answer...' : 'Syncing video...'}</span>
+                    </div>
+                  )}
+                  <span className="absolute bottom-2 left-2 px-2 py-0.5 bg-black/70 backdrop-blur-md rounded-lg text-[10px] font-mono text-white font-bold truncate max-w-[85%]">
+                    {activeCall.targetUser.name}
                   </span>
                 </div>
 
                 {/* Local Video Stream */}
-                <div className="relative w-full h-full bg-slate-900 rounded-xl overflow-hidden flex items-center justify-center">
+                <div className="relative w-full h-full bg-slate-900 rounded-xl overflow-hidden flex items-center justify-center min-h-[120px]">
                   <video
                     ref={localVideoRef}
                     autoPlay
                     playsInline
                     muted
-                    className="w-full h-full object-cover"
+                    className={`w-full h-full object-cover ${activeCall.isVideoOff ? 'opacity-0' : 'opacity-100'}`}
                   />
-                  <span className="absolute bottom-2 left-2 px-2.5 py-1 bg-black/70 backdrop-blur-md rounded-lg text-[10px] font-mono text-white font-bold">
-                    You
+                  {activeCall.isVideoOff && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 text-[11px] gap-1">
+                      <VideoOff className="w-6 h-6 text-rose-400/60" />
+                      <span>Camera Off</span>
+                    </div>
+                  )}
+                  <span className="absolute bottom-2 left-2 px-2 py-0.5 bg-black/70 backdrop-blur-md rounded-lg text-[10px] font-mono text-white font-bold">
+                    You {activeCall.isMuted ? '(Muted)' : ''}
                   </span>
                 </div>
               </div>
@@ -2389,31 +2440,21 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
             <audio ref={remoteAudioRef} autoPlay playsInline />
 
             {/* Controls based on Call Mode */}
-            <div className="pt-2">
+            <div className="pt-1">
               {activeCall.mode === 'incoming' ? (
                 <div className="flex items-center justify-center gap-6">
                   {/* Reject Call */}
                   <button
                     onClick={() => {
-                      try {
-                        const payload = { callId: activeCall.callId };
-                        supabase.channel(`room_channel_${activeChatTargetId}`).send({
-                          type: 'broadcast',
-                          event: 'call_rejected',
-                          payload
-                        });
-                        if (activeCall.targetUser?.uid) {
-                          supabase.channel(`user_calls_${activeCall.targetUser.uid}`).send({
-                            type: 'broadcast',
-                            event: 'call_rejected',
-                            payload
-                          });
-                        }
-                      } catch (_) {}
+                      const payload = { callId: activeCall.callId, reason: 'declined' };
+                      sendRealtimeEvent(`room_channel_${activeChatTargetId}`, 'call_rejected', payload);
+                      if (activeCall.targetUser?.uid) {
+                        sendRealtimeEvent(`user_calls_${activeCall.targetUser.uid}`, 'call_rejected', payload);
+                      }
                       cleanupCall();
                       showNotification('Call declined.');
                     }}
-                    className="w-14 h-14 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center shadow-lg shadow-rose-600/40 transition-all hover:scale-110"
+                    className="w-14 h-14 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center shadow-lg shadow-rose-600/40 transition-all hover:scale-105"
                     title="Decline Call"
                   >
                     <PhoneOff className="w-6 h-6" />
@@ -2426,80 +2467,72 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                       try {
                         const stream = await navigator.mediaDevices.getUserMedia({
                           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-                          video: activeCall.type === 'video' ? { width: 1280, height: 720 } : false
+                          video: activeCall.type === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false
                         });
                         localMediaStreamRef.current = stream;
                       } catch (e) {
                         console.warn('Media access warning during call accept', e);
                       }
 
-                      try {
-                        const payload = { callId: activeCall.callId };
-                        supabase.channel(`room_channel_${activeChatTargetId}`).send({
-                          type: 'broadcast',
-                          event: 'call_accepted',
-                          payload
-                        });
-                        if (activeCall.targetUser?.uid) {
-                          supabase.channel(`user_calls_${activeCall.targetUser.uid}`).send({
-                            type: 'broadcast',
-                            event: 'call_accepted',
-                            payload
-                          });
-                        }
-                      } catch (_) {}
+                      const payload = { callId: activeCall.callId, responderUid: currentUser?.uid };
+                      sendRealtimeEvent(`room_channel_${activeChatTargetId}`, 'call_accepted', payload);
+                      if (activeCall.targetUser?.uid) {
+                        sendRealtimeEvent(`user_calls_${activeCall.targetUser.uid}`, 'call_accepted', payload);
+                      }
 
-                      setActiveCall(prev => prev ? { ...prev, mode: 'connected', startTime: Date.now(), isCaller: false } : null);
+                      setActiveCall(prev => prev ? {
+                        ...prev,
+                        mode: 'connected',
+                        startTime: Date.now(),
+                        isCaller: false,
+                        connectionStatus: 'Connected'
+                      } : null);
                       showNotification('Call connected!');
                     }}
-                    className="w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-600/40 transition-all hover:scale-110 animate-bounce"
+                    className="w-14 h-14 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-600/40 transition-all hover:scale-105"
                     title="Accept Call"
                   >
                     <Phone className="w-6 h-6" />
                   </button>
                 </div>
               ) : (
-                <div className="flex items-center justify-center gap-3">
-                  {activeCall.mode === 'connected' && (
-                    <>
-                      {/* Mic Toggle */}
-                      <button
-                        onClick={() => {
-                          const next = !activeCall.isMuted;
-                          if (localMediaStreamRef.current) {
-                            localMediaStreamRef.current.getAudioTracks().forEach(t => t.enabled = !next);
-                          }
-                          setActiveCall(prev => prev ? { ...prev, isMuted: next } : null);
-                        }}
-                        className={`p-3.5 rounded-2xl transition-all ${activeCall.isMuted ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
-                        title="Toggle Mic"
-                      >
-                        {activeCall.isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-                      </button>
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  {/* Mic Toggle */}
+                  <button
+                    onClick={() => {
+                      const next = !activeCall.isMuted;
+                      if (localMediaStreamRef.current) {
+                        localMediaStreamRef.current.getAudioTracks().forEach(t => { t.enabled = !next; });
+                      }
+                      setActiveCall(prev => prev ? { ...prev, isMuted: next } : null);
+                    }}
+                    className={`p-3.5 rounded-2xl transition-all ${activeCall.isMuted ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
+                    title={activeCall.isMuted ? 'Unmute Mic' : 'Mute Mic'}
+                  >
+                    {activeCall.isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                  </button>
 
-                      {/* Video Toggle */}
-                      {activeCall.type === 'video' && (
-                        <button
-                          onClick={() => {
-                            const next = !activeCall.isVideoOff;
-                            if (localMediaStreamRef.current) {
-                              localMediaStreamRef.current.getVideoTracks().forEach(t => t.enabled = !next);
-                            }
-                            setActiveCall(prev => prev ? { ...prev, isVideoOff: next } : null);
-                          }}
-                          className={`p-3.5 rounded-2xl transition-all ${activeCall.isVideoOff ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
-                          title="Toggle Video"
-                        >
-                          {activeCall.isVideoOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
-                        </button>
-                      )}
-                    </>
+                  {/* Video Toggle */}
+                  {activeCall.type === 'video' && (
+                    <button
+                      onClick={() => {
+                        const next = !activeCall.isVideoOff;
+                        if (localMediaStreamRef.current) {
+                          localMediaStreamRef.current.getVideoTracks().forEach(t => { t.enabled = !next; });
+                        }
+                        setActiveCall(prev => prev ? { ...prev, isVideoOff: next } : null);
+                      }}
+                      className={`p-3.5 rounded-2xl transition-all ${activeCall.isVideoOff ? 'bg-rose-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
+                      title={activeCall.isVideoOff ? 'Turn Camera On' : 'Turn Camera Off'}
+                    >
+                      {activeCall.isVideoOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
+                    </button>
                   )}
 
                   {/* End / Cancel Call */}
                   <button
                     onClick={handleEndCall}
-                    className="px-6 py-3.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-2xl shadow-lg shadow-rose-600/30 flex items-center gap-2 text-xs uppercase transition-all"
+                    className="px-5 py-3.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-2xl shadow-lg shadow-rose-600/30 flex items-center gap-2 text-xs uppercase transition-all"
                   >
                     <PhoneOff className="w-4 h-4" />
                     {activeCall.mode === 'outgoing' ? 'Cancel Call' : 'End Call'}
