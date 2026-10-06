@@ -1224,6 +1224,22 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
         {/* ================= TAB 5: CLUBS ================= */}
         {activeTab === 'clubs' && (
           <div className="space-y-6 animate-fadeIn">
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl">
+              <div>
+                <h3 className="text-base font-extrabold text-white">Student Interest & Activity Clubs</h3>
+                <p className="text-xs text-slate-400">Join student-led initiatives, tech groups, and extracurricular societies</p>
+              </div>
+
+              {isStaffRole && (
+                <button
+                  onClick={() => setShowAddClubModal(true)}
+                  className="uiverse-btn-primary px-4 py-2 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" /> Create New Club
+                </button>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {clubs.map(club => {
                 const isJoined = joinedClubIds.includes(club.id);
@@ -1388,6 +1404,22 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
         {/* ================= TAB 8: GALLERY ================= */}
         {activeTab === 'gallery' && (
           <div className="space-y-6 animate-fadeIn">
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl">
+              <div>
+                <h3 className="text-base font-extrabold text-white">Campus Moments & Photo Gallery</h3>
+                <p className="text-xs text-slate-400">Captured memories from festivals, sports meets, science fairs, and campus life</p>
+              </div>
+
+              {isStaffRole && (
+                <button
+                  onClick={() => setShowAddGalleryModal(true)}
+                  className="uiverse-btn-primary px-4 py-2 text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" /> Add Photo Album
+                </button>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {gallery.map(album => (
                 <div
@@ -1739,6 +1771,254 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
                 <button type="submit" className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-md">Publish Poll</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 5. Create Club Modal */}
+      {showAddClubModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 max-w-md w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl">
+            <h3 className="text-lg font-black text-white">Create Student Club</h3>
+            <form onSubmit={handleCreateClub} className="space-y-3 text-xs">
+              <div>
+                <label className="text-slate-400 font-bold block mb-1">Club Name</label>
+                <input
+                  type="text"
+                  required
+                  value={newClubForm.name}
+                  onChange={e => setNewClubForm({ ...newClubForm, name: e.target.value })}
+                  placeholder="e.g. AI & Machine Learning Society"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1">Category</label>
+                  <select
+                    value={newClubForm.category}
+                    onChange={e => setNewClubForm({ ...newClubForm, category: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white outline-none"
+                  >
+                    {['Technology', 'STEM', 'Science', 'Arts', 'Humanities', 'Sports', 'Leadership', 'General'].map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1">Club Emoji / Icon</label>
+                  <input
+                    type="text"
+                    value={newClubForm.icon}
+                    onChange={e => setNewClubForm({ ...newClubForm, icon: e.target.value })}
+                    placeholder="💻, 🤖, 🎨, 🎵, 📚"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white outline-none text-center"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-slate-400 font-bold block mb-1">Description & Mission</label>
+                <textarea
+                  rows={2}
+                  value={newClubForm.description}
+                  onChange={e => setNewClubForm({ ...newClubForm, description: e.target.value })}
+                  placeholder="What does the club do? (Activities, workshops, competitions)"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1">Lead Faculty Advisor</label>
+                  <input
+                    type="text"
+                    value={newClubForm.leadTeacher}
+                    onChange={e => setNewClubForm({ ...newClubForm, leadTeacher: e.target.value })}
+                    placeholder="e.g. Mr. Rajesh Verma"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1">Student Head / President</label>
+                  <input
+                    type="text"
+                    value={newClubForm.studentHead}
+                    onChange={e => setNewClubForm({ ...newClubForm, studentHead: e.target.value })}
+                    placeholder="e.g. Aarav Sharma"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1">Meeting Schedule</label>
+                  <input
+                    type="text"
+                    value={newClubForm.meetingDays}
+                    onChange={e => setNewClubForm({ ...newClubForm, meetingDays: e.target.value })}
+                    placeholder="Every Wednesday (3:30 PM)"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1">Location / Venue</label>
+                  <input
+                    type="text"
+                    value={newClubForm.location}
+                    onChange={e => setNewClubForm({ ...newClubForm, location: e.target.value })}
+                    placeholder="Computer Lab 2 / Hub"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-white/10">
+                <button type="button" onClick={() => setShowAddClubModal(false)} className="px-4 py-2 text-slate-400 hover:text-white font-bold">Cancel</button>
+                <button type="submit" className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-md">Create Club</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 6. Add Gallery Album Modal */}
+      {showAddGalleryModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 max-w-md w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl">
+            <h3 className="text-lg font-black text-white">Add Photo Album</h3>
+            <form onSubmit={handleCreateGalleryAlbum} className="space-y-3 text-xs">
+              <div>
+                <label className="text-slate-400 font-bold block mb-1">Album Title</label>
+                <input
+                  type="text"
+                  required
+                  value={newGalleryForm.title}
+                  onChange={e => setNewGalleryForm({ ...newGalleryForm, title: e.target.value })}
+                  placeholder="e.g. Science Exhibition & Robotics Finals 2026"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1">Category</label>
+                  <select
+                    value={newGalleryForm.category}
+                    onChange={e => setNewGalleryForm({ ...newGalleryForm, category: e.target.value as any })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white outline-none"
+                  >
+                    {['Annual Day', 'Sports', 'Trips', 'Competitions', 'Events', 'Campus Life'].map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1">Photo Count</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={newGalleryForm.photoCount}
+                    onChange={e => setNewGalleryForm({ ...newGalleryForm, photoCount: Number(e.target.value) || 8 })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-slate-400 font-bold block mb-1">Cover Image URL</label>
+                <input
+                  type="url"
+                  value={newGalleryForm.coverUrl}
+                  onChange={e => setNewGalleryForm({ ...newGalleryForm, coverUrl: e.target.value })}
+                  placeholder="https://images.unsplash.com/..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white outline-none"
+                />
+                <div className="flex gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewGalleryForm({ ...newGalleryForm, coverUrl: 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?w=800&auto=format&fit=crop&q=80' })}
+                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300"
+                  >
+                    Campus Preset
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewGalleryForm({ ...newGalleryForm, coverUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=800&auto=format&fit=crop&q=80' })}
+                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300"
+                  >
+                    Concert Preset
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewGalleryForm({ ...newGalleryForm, coverUrl: 'https://images.unsplash.com/photo-1461896836934-ffe607ba8211?w=800&auto=format&fit=crop&q=80' })}
+                    className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300"
+                  >
+                    Sports Preset
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-white/10">
+                <button type="button" onClick={() => setShowAddGalleryModal(false)} className="px-4 py-2 text-slate-400 hover:text-white font-bold">Cancel</button>
+                <button type="submit" className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-md">Add Album</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 7. View Selected Gallery Album Modal */}
+      {selectedAlbum && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="px-2.5 py-0.5 bg-indigo-500/20 text-indigo-400 text-[10px] font-black uppercase rounded-lg border border-indigo-500/30">
+                  {selectedAlbum.category}
+                </span>
+                <h3 className="text-lg font-black text-white mt-1">{selectedAlbum.title}</h3>
+                <span className="text-[11px] text-slate-400 font-mono">Uploaded {selectedAlbum.createdAt} • {selectedAlbum.photoCount} High-Resolution Photos</span>
+              </div>
+              <button
+                onClick={() => setSelectedAlbum(null)}
+                className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="rounded-2xl overflow-hidden border border-white/10 max-h-72">
+              <img src={selectedAlbum.coverUrl} alt={selectedAlbum.title} className="w-full h-full object-cover" />
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2">
+              {[1, 2, 3, 4].map(idx => (
+                <div key={idx} className="h-24 rounded-xl overflow-hidden bg-slate-950 border border-white/5 relative group">
+                  <img
+                    src={`${selectedAlbum.coverUrl}&auto=format&fit=crop&q=80&sig=${idx}`}
+                    alt={`Photo ${idx}`}
+                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-white/10">
+              <button
+                onClick={() => setSelectedAlbum(null)}
+                className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs"
+              >
+                Close Gallery
+              </button>
+            </div>
           </div>
         </div>
       )}

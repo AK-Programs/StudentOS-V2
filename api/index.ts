@@ -259,7 +259,8 @@ export default async function handler(req: any, res: any) {
   try {
     if (!cachedServerApp) {
       // Dynamic import to avoid top-level load crash on Vercel
-      const serverModule = await import(/* @vite-ignore */ '../dist/server.cjs');
+      const serverPath = '../dist/server.cjs';
+      const serverModule: any = await import(/* @vite-ignore */ serverPath);
       cachedServerApp = serverModule.app || serverModule.default || serverModule;
     }
     if (typeof cachedServerApp === 'function') {
