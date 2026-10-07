@@ -5,6 +5,12 @@ import {
   Group as GroupComp, Text as TextComp, Ellipse as EllipseComp, Star as StarComp, 
   Transformer as TransformerComp, Image as KonvaImageComp 
 } from 'react-konva';
+import { 
+  Download, Eraser, MousePointer2, Pen, PenTool, Square, Circle as CircleIcon, 
+  Triangle, Minus, ChevronDown, Trash2, Sliders, Settings2, Plus, Copy,
+  ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, ArrowUp, ArrowDown, Type, Sparkles,
+  Undo2, Redo2, Image as ImageIcon, StickyNote, FileText
+} from 'lucide-react';
 
 const Stage = StageComp as any;
 const Layer = LayerComp as any;
@@ -19,12 +25,6 @@ const Ellipse = EllipseComp as any;
 const Star = StarComp as any;
 const Transformer = TransformerComp as any;
 const KonvaImage = KonvaImageComp as any;
-import { 
-  Download, Eraser, MousePointer2, Pen, PenTool, Square, Circle as CircleIcon, 
-  Triangle, Minus, ChevronDown, Trash2, Sliders, Settings2, Plus, Copy,
-  ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, ArrowUp, ArrowDown, Type, Sparkles,
-  Undo2, Redo2, Image as ImageIcon, StickyNote, FileText
-} from 'lucide-react';
 
 interface ShapeObj {
   id: string;
@@ -61,6 +61,7 @@ interface Slide {
 declare const mermaid: any;
 
 export const Whiteboard2 = ({ onClose, currentUser }: any) => {
+  // 1. All Component State & Refs Declared First
   const [slides, setSlides] = useState<Slide[]>(() => {
     try {
       const saved = localStorage.getItem('studentos_smartboard_slides_v3');
@@ -79,6 +80,31 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved');
   const [isPresentationMode, setIsPresentationMode] = useState(false);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+  const [selectedObj, setSelectedObj] = useState<{ id: string; type: 'shape' | 'line' } | null>(null);
+  
+  const [tool, setTool] = useState<'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'object_eraser' | 'select' | 'shape'>('pen');
+  const [shapeType, setShapeType] = useState<'rect' | 'square' | 'circle' | 'ellipse' | 'triangle' | 'line' | 'arrow' | 'pentagon' | 'polygon' | 'star' | 'ruler-15' | 'ruler-30' | 'protractor' | 'compass' | 'setsquare-45' | 'setsquare-30-60' | 'geometry' | 'text' | 'ruler' | 'setsquare'>('rect');
+  const [brushColor, setBrushColor] = useState('#ffffff');
+  const [brushSize, setBrushSize] = useState(4);
+  
+  const [backgroundColor, setBackgroundColor] = useState<string>('#0f172a');
+  const [backgroundPattern, setBackgroundPattern] = useState<'plain' | 'grid' | 'dot' | 'graph' | 'ruled'>('plain');
+  const [snapToGrid, setSnapToGrid] = useState<boolean>(false);
+  const [gridOpacity, setGridOpacity] = useState<number>(0.05);
+  const [aiShapeAssistant, setAiShapeAssistant] = useState<boolean>(false);
+  const [shapesMenuOpen, setShapesMenuOpen] = useState(false);
+  const [eraserMenuOpen, setEraserMenuOpen] = useState(false);
+  
+  const [eraserHoverPos, setEraserHoverPos] = useState<{ x: number; y: number } | null>(null);
+  const [aiTip, setAiTip] = useState<string | null>(null);
+  const [stageScale, setStageScale] = useState(1);
+  const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
+  const [aiPromptOpen, setAiPromptOpen] = useState(false);
+  const [aiPromptQuery, setAiPromptQuery] = useState('');
+  const [isGeneratingDiagram, setIsGeneratingDiagram] = useState(false);
+  const [aiToolType, setAiToolType] = useState<'auto' | 'mermaid' | 'svg' | 'diagram' | 'mindmap' | 'assistant'>('auto');
+  const [canvasSize, setCanvasSize] = useState({ width: window.innerWidth, height: window.innerHeight - 120 });
+  
   const [textModal, setTextModal] = useState<{
     open: boolean;
     mode: 'create' | 'edit';
@@ -88,6 +114,12 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     value: string;
   }>({ open: false, mode: 'create', value: '' });
 
+  const stageRef = useRef<any>(null);
+  const trRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isDrawing = useRef(false);
+
+  // 2. Helper Functions
   const cloneSlides = (src: Slide[]): Slide[] =>
     src.map(sl => ({
       ...sl,
@@ -167,30 +199,6 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [slides, undoStack, redoStack, selectedObj, activeSlideIdx]);
-  
-  const [tool, setTool] = useState<'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'object_eraser' | 'select' | 'shape'>('pen');
-  const [shapeType, setShapeType] = useState<'rect' | 'square' | 'circle' | 'ellipse' | 'triangle' | 'line' | 'arrow' | 'pentagon' | 'polygon' | 'star' | 'ruler-15' | 'ruler-30' | 'protractor' | 'compass' | 'setsquare-45' | 'setsquare-30-60' | 'geometry' | 'text' | 'ruler' | 'setsquare'>('rect');
-  
-  const [brushColor, setBrushColor] = useState('#ffffff');
-  const [brushSize, setBrushSize] = useState(4);
-  
-  // Settings without LocalStorage persistence
-  const [backgroundColor, setBackgroundColor] = useState<string>('#0f172a');
-  const [backgroundPattern, setBackgroundPattern] = useState<'plain' | 'grid' | 'dot' | 'graph' | 'ruled'>('plain');
-  const [snapToGrid, setSnapToGrid] = useState<boolean>(false);
-  const [gridOpacity, setGridOpacity] = useState<number>(0.05);
-
-  const [aiShapeAssistant, setAiShapeAssistant] = useState<boolean>(false);
-
-  const [shapesMenuOpen, setShapesMenuOpen] = useState(false);
-  const [eraserMenuOpen, setEraserMenuOpen] = useState(false);
-  
-  // Advanced Select & Object controls
-  const [selectedObj, setSelectedObj] = useState<{ id: string; type: 'shape' | 'line' } | null>(null);
-
-  // Hover position for the transparent eraser brush outline
-  const [eraserHoverPos, setEraserHoverPos] = useState<{ x: number; y: number } | null>(null);
-  const [aiTip, setAiTip] = useState<string | null>(null);
 
   useEffect(() => {
     if (aiTip) {
@@ -198,13 +206,6 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       return () => clearTimeout(timer);
     }
   }, [aiTip]);
-
-  // Zoom and Pan Controls
-  const [stageScale, setStageScale] = useState(1);
-  const [aiPromptOpen, setAiPromptOpen] = useState(false);
-  const [aiPromptQuery, setAiPromptQuery] = useState('');
-  const [isGeneratingDiagram, setIsGeneratingDiagram] = useState(false);
-  const [aiToolType, setAiToolType] = useState<'auto' | 'mermaid' | 'svg' | 'diagram' | 'mindmap' | 'assistant'>('auto');
 
   const handleGenerateDiagram = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -397,14 +398,6 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       setAiPromptQuery('');
     }
   };
-
-  const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
-
-  const stageRef = useRef<any>(null);
-  const trRef = useRef<any>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const isDrawing = useRef(false);
-  const [canvasSize, setCanvasSize] = useState({ width: window.innerWidth, height: window.innerHeight - 120 });
 
   useEffect(() => {
     if (selectedObj) {
