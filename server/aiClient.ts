@@ -3,18 +3,19 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * Central AI Provider Service for StudentOS
- * Powered EXCLUSIVELY by APInex (https://api.apinex.bond/v1).
+ * Powered EXCLUSIVELY by Free APInex Models (https://api.apinex.bond/v1).
+ * Zero NVIDIA or Gemini dependencies.
  *
- * Approved APInex Models:
- * - gpt-6-luna (Normal and short conversational AI Buddy chat)
- * - deepseek-v4-pro (Hard math, proof, STEM, or long reasoning)
- * - glm-5.3-flash (JSON, flashcards, diagrams, 3D, and agent tools)
+ * Approved Free APInex Models:
+ * - free/gpt-6-luna (Normal and short conversational AI Buddy chat)
+ * - free/deepseek-v4-pro-0813 (Hard math, proof, STEM, or long reasoning)
+ * - free/glm-5.3-flash (JSON, flashcards, diagrams, 3D, and agent tools)
  */
 
 import dotenv from 'dotenv';
 dotenv.config();
 
-export type ApinexModel = 'gpt-6-luna' | 'deepseek-v4-pro' | 'glm-5.3-flash';
+export type ApinexModel = 'free/gpt-6-luna' | 'free/deepseek-v4-pro-0813' | 'free/glm-5.3-flash';
 export type TaskComplexityTier = 'fast' | 'general' | 'complex' | 'tool';
 
 export interface ModelRoutingContext {
@@ -67,38 +68,38 @@ export function getApinexApiKey(): string {
 }
 
 /**
- * Validates whether a model string is a supported APInex model ID.
- * Ignores non-APInex overrides (e.g. nvidia/nemotron-...).
+ * Validates whether a model string is one of the three supported free APInex model IDs.
  */
 export function isApinexModel(modelName?: string): boolean {
   if (!modelName || typeof modelName !== 'string') return false;
   const clean = modelName.trim().toLowerCase();
-  const validApinexModels = [
-    'gpt-6-luna',
-    'deepseek-v4-pro',
-    'glm-5.3-flash',
+  const validFreeModels = [
     'free/gpt-6-luna',
+    'free/deepseek-v4-pro-0813',
     'free/glm-5.3-flash'
   ];
-  return validApinexModels.includes(clean) || clean.startsWith('free/');
+  return validFreeModels.includes(clean);
 }
 
 /**
- * Resolves the appropriate APInex model to use.
- * Only accepts modelOverride if it is one of: gpt-6-luna, deepseek-v4-pro, glm-5.3-flash.
+ * Resolves the appropriate free APInex model to use.
+ * Ignores modelOverride unless it is one of the three free model IDs:
+ * - free/gpt-6-luna
+ * - free/deepseek-v4-pro-0813
+ * - free/glm-5.3-flash
  */
-export function resolveApinexModel(modelOverride?: string, fallbackModel: ApinexModel = 'gpt-6-luna'): string {
+export function resolveApinexModel(modelOverride?: string, fallbackModel: ApinexModel = 'free/gpt-6-luna'): string {
   if (modelOverride && isApinexModel(modelOverride)) {
-    return modelOverride.trim();
+    return modelOverride.trim().toLowerCase();
   }
   return fallbackModel;
 }
 
 /**
- * Task-based APInex Model Routing.
- * - Normal and short AI Buddy chat: gpt-6-luna
- * - Hard math, proof, or long reasoning: deepseek-v4-pro
- * - JSON, flashcards, or diagrams: glm-5.3-flash
+ * Task-based Free APInex Model Routing.
+ * - Normal and short AI Buddy chat: free/gpt-6-luna
+ * - Hard math, proof, or long reasoning: free/deepseek-v4-pro-0813
+ * - JSON, flashcards, or diagrams: free/glm-5.3-flash
  */
 export function classifyTaskComplexity(
   prompt: string,
@@ -109,7 +110,7 @@ export function classifyTaskComplexity(
   const endpoint = (ctx?.endpointName || '').toLowerCase();
   const taskType = ctx?.taskType;
 
-  // Tool / JSON / Diagram / Flashcard / 3D task -> glm-5.3-flash
+  // Tool / JSON / Diagram / Flashcard / 3D task -> free/glm-5.3-flash
   if (
     taskType === 'tool' ||
     endpoint.includes('json') ||
@@ -120,10 +121,10 @@ export function classifyTaskComplexity(
     lower.includes('json') ||
     lower.includes('structured output')
   ) {
-    return { apinexModel: 'glm-5.3-flash', tier: 'tool' };
+    return { apinexModel: 'free/glm-5.3-flash', tier: 'tool' };
   }
 
-  // Complex reasoning / STEM proof / Calculus -> deepseek-v4-pro
+  // Complex reasoning / STEM proof / Calculus -> free/deepseek-v4-pro-0813
   const complexPatterns = [
     /\b(prove|proof|derive|derivation|theorem|calculus|integral|differential|eigenvalue|matrix|trigonometric identity|quadratic formula proof|quantum|thermodynamics|stoichiometry|electrochemistry|organic synthesis)\b/i,
     /\b(multi-step|comprehensive analysis|school-wide analytics|deep analysis|detailed academic report|correlate|regression|comparative analysis|root cause)\b/i,
@@ -136,21 +137,21 @@ export function classifyTaskComplexity(
     cleanPrompt.length > 2500;
 
   if (isComplex) {
-    return { apinexModel: 'deepseek-v4-pro', tier: 'complex' };
+    return { apinexModel: 'free/deepseek-v4-pro-0813', tier: 'complex' };
   }
 
-  // Fast / Short / Normal Chat -> gpt-6-luna
+  // Fast / Short / Normal Chat -> free/gpt-6-luna
   const isFast =
     taskType === 'fast' ||
     cleanPrompt.split(/\s+/).length <= 15 ||
     /^(hi|hello|hey|good morning|thanks|thank you|ok|okay|who are you|help)\b/i.test(lower);
 
   if (isFast) {
-    return { apinexModel: 'gpt-6-luna', tier: 'fast' };
+    return { apinexModel: 'free/gpt-6-luna', tier: 'fast' };
   }
 
-  // Default general chat -> gpt-6-luna
-  return { apinexModel: 'gpt-6-luna', tier: 'general' };
+  // Default general chat -> free/gpt-6-luna
+  return { apinexModel: 'free/gpt-6-luna', tier: 'general' };
 }
 
 function buildMessagesArray(
@@ -197,7 +198,7 @@ function buildMessagesArray(
 
 /**
  * Universal Central AI Completion Engine.
- * Powered EXCLUSIVELY by APInex (https://api.apinex.bond/v1).
+ * Powered EXCLUSIVELY by free APInex models (https://api.apinex.bond/v1/chat/completions).
  */
 export async function generateAICompletion(
   param1: string | AICompletionOptions,
@@ -255,7 +256,7 @@ export async function generateAICompletionWithTelemetry(
     contextLength
   });
 
-  // Ignore modelOverride unless it is gpt-6-luna, deepseek-v4-pro, or glm-5.3-flash
+  // Ignore modelOverride unless it is free/gpt-6-luna, free/deepseek-v4-pro-0813, or free/glm-5.3-flash
   const effectiveApinexModel = resolveApinexModel(modelOverride, apinexModel);
   const messages = buildMessagesArray(systemInstruction, prompt, history);
   const effectiveMaxTokens = maxTokens || (tier === 'fast' ? 900 : tier === 'complex' ? 3200 : 2048);
@@ -334,7 +335,7 @@ export async function generateAICompletionWithTelemetry(
 
 /**
  * Server-Side Streaming Completion Engine.
- * Powered EXCLUSIVELY by APInex (https://api.apinex.bond/v1).
+ * Powered EXCLUSIVELY by free APInex models (https://api.apinex.bond/v1/chat/completions).
  */
 export async function streamAICompletion(
   options: AICompletionOptions,
@@ -374,7 +375,7 @@ export async function streamAICompletion(
     contextLength
   });
 
-  // Ignore modelOverride unless it is gpt-6-luna, deepseek-v4-pro, or glm-5.3-flash
+  // Ignore modelOverride unless it is free/gpt-6-luna, free/deepseek-v4-pro-0813, or free/glm-5.3-flash
   const effectiveApinexModel = resolveApinexModel(modelOverride, apinexModel);
   const messages = buildMessagesArray(systemInstruction, prompt, history);
   const effectiveMaxTokens = maxTokens || (tier === 'fast' ? 950 : 2048);

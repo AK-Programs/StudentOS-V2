@@ -1189,36 +1189,30 @@ app.all(['/api/debug/nvidia', '/api/debug/nvidia/'], async (req, res) => {
   }
 });
 
-// Mandatory Minimal NVIDIA Server Diagnostic Route
+// Minimal Server Diagnostic Route for APInex AI
 app.all('/api/ai/minimal-test', async (req, res) => {
-  const rawKey =
-    process.env.NVIDIA_API_KEY ||
-    process.env.VITE_NVIDIA_API_KEY ||
-    process.env.NIM_API_KEY ||
-    process.env.NGC_API_KEY ||
-    process.env.AI_API_KEY ||
-    '';
-  const keyPresent = Boolean(rawKey.trim());
+  const key = getApinexApiKey();
+  const keyPresent = Boolean(key);
   const requestId = 'test_' + Math.random().toString(36).substring(2, 10);
 
-  console.log(`[NVIDIA AI DEBUG] Request ID: ${requestId}`);
-  console.log(`[NVIDIA AI DEBUG] Route: /api/ai/minimal-test`);
-  console.log(`[NVIDIA AI DEBUG] NVIDIA_API_KEY present: ${keyPresent}`);
+  console.log(`[APINEX AI DEBUG] Request ID: ${requestId}`);
+  console.log(`[APINEX AI DEBUG] Route: /api/ai/minimal-test`);
+  console.log(`[APINEX AI DEBUG] APINEX_API_KEY present: ${keyPresent}`);
 
   if (!keyPresent) {
     return res.status(500).json({
       success: false,
       requestId,
-      error: 'NVIDIA_API_KEY is not configured on the server.',
+      error: 'APINEX_API_KEY is not configured on the server.',
       keyPresent: false
     });
   }
 
   try {
-    const text = await generateAICompletion({
-      prompt: 'Reply with exactly: NVIDIA TEST OK',
-      endpointName: 'MinimalNvidiaTest',
-      modelOverride: 'nvidia/nemotron-3-super-120b-a12b',
+    const { text, telemetry } = await generateAICompletionWithTelemetry({
+      prompt: 'Reply with exactly: APINEX TEST OK',
+      endpointName: 'MinimalApinexTest',
+      modelOverride: 'free/gpt-6-luna',
       maxTokens: 30,
       requestId
     });
@@ -1227,11 +1221,12 @@ app.all('/api/ai/minimal-test', async (req, res) => {
       requestId,
       status: 200,
       keyPresent: true,
-      model: 'nvidia/nemotron-3-super-120b-a12b',
+      modelUsed: telemetry.modelUsed,
+      providerUsed: telemetry.providerUsed,
       response: text
     });
   } catch (err: any) {
-    console.error(`[AI P0 ERROR] Request ID: ${requestId}`, err);
+    console.error(`[AI ERROR] Request ID: ${requestId}`, err);
     return res.status(500).json({
       success: false,
       requestId,
@@ -1243,18 +1238,12 @@ app.all('/api/ai/minimal-test', async (req, res) => {
 
 // Server-side diagnostic test route for NVIDIA API connection
 app.get('/api/ai/diagnostic', async (req, res) => {
-  const rawKey =
-    process.env.NVIDIA_API_KEY ||
-    process.env.VITE_NVIDIA_API_KEY ||
-    process.env.NIM_API_KEY ||
-    process.env.NGC_API_KEY ||
-    process.env.AI_API_KEY ||
-    '';
-  const keyPresent = Boolean(rawKey.trim());
+  const apinexKey = getApinexApiKey();
+  const keyPresent = Boolean(apinexKey);
   const requestId = 'diag_' + Math.random().toString(36).substring(2, 10);
   
   try {
-    const text = await generateAICompletion({
+    const { text, telemetry } = await generateAICompletionWithTelemetry({
       prompt: 'Say hello in 5 words.',
       endpointName: 'DiagnosticTest',
       maxTokens: 30,
@@ -1264,8 +1253,9 @@ app.get('/api/ai/diagnostic', async (req, res) => {
       success: true,
       requestId,
       keyPresent,
-      keyLength: rawKey.trim().length,
-      modelTested: 'meta/llama-3.3-70b-instruct',
+      keyLength: apinexKey.length,
+      providerUsed: telemetry.providerUsed,
+      modelUsed: telemetry.modelUsed,
       response: text
     });
   } catch (err: any) {
@@ -1273,7 +1263,7 @@ app.get('/api/ai/diagnostic', async (req, res) => {
       success: false,
       requestId,
       keyPresent,
-      keyLength: rawKey.trim().length,
+      keyLength: apinexKey.length,
       error: err.message || 'Diagnostic request failed'
     });
   }
@@ -1398,19 +1388,13 @@ app.post(['/api/ai/chat', '/api/ai/chat/stream'], async (req, res) => {
 
   const isStreamingRequest = Boolean(stream || req.path.endsWith('/stream'));
 
-  const rawKey =
-    process.env.NVIDIA_API_KEY ||
-    process.env.VITE_NVIDIA_API_KEY ||
-    process.env.NIM_API_KEY ||
-    process.env.NGC_API_KEY ||
-    process.env.AI_API_KEY ||
-    '';
-  const nvidiaApiKeyPresent = Boolean(rawKey.trim());
+  const apinexKey = getApinexApiKey();
+  const keyPresent = Boolean(apinexKey);
 
-  console.log(`[NVIDIA AI DEBUG] Request ID: ${requestId} | Stream: ${isStreamingRequest}`);
-  console.log(`[NVIDIA AI DEBUG] Route: ${req.path}`);
-  console.log(`[NVIDIA AI DEBUG] Authenticated user: ${Boolean(userId && userId !== 'user_guest' && userId !== 'guest')}`);
-  console.log(`[NVIDIA AI DEBUG] NVIDIA_API_KEY present: ${nvidiaApiKeyPresent}`);
+  console.log(`[AI DEBUG] Request ID: ${requestId} | Stream: ${isStreamingRequest}`);
+  console.log(`[AI DEBUG] Route: ${req.path}`);
+  console.log(`[AI DEBUG] Authenticated user: ${Boolean(userId && userId !== 'user_guest' && userId !== 'guest')}`);
+  console.log(`[AI DEBUG] APINEX_API_KEY present: ${keyPresent}`);
 
   if (!prompt) {
     return res.status(400).json({ error: 'Prompt is required' });
@@ -1433,7 +1417,7 @@ app.post(['/api/ai/chat', '/api/ai/chat/stream'], async (req, res) => {
   }
 
   // Construct context based on chatbot Persona
-  let systemInstruction = 'You are a supportive, encouraging study assistant powered by NVIDIA AI.';
+  let systemInstruction = 'You are a supportive, encouraging study assistant powered by StudentOS AI.';
   
   if (persona === 'elara') {
     systemInstruction = `You are Professor Elara, a kind, highly analytical Mathematics and Science teacher. 
@@ -1825,7 +1809,7 @@ app.post('/api/ai/search', async (req, res) => {
     try {
       summaryText = await generateAICompletion({
         systemInstruction:
-          'You are a StudentOS Research Summarizer powered by NVIDIA AI. Synthesize a 3-4 sentence factual academic summary strictly grounded in the provided web sources. Cite the sources clearly and never fabricate facts.',
+          'You are a StudentOS Research Summarizer powered by StudentOS AI. Synthesize a 3-4 sentence factual academic summary strictly grounded in the provided web sources. Cite the sources clearly and never fabricate facts.',
         prompt: `Query: "${query}"\n\nVerified Web Sources:\n${summaryContext}`,
         endpointName: 'WebSearchSummary',
         taskType: 'fast',
