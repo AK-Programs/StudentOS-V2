@@ -62,6 +62,8 @@ import { SportsActivitiesPortal } from './components/SportsActivitiesPortal';
 import { SubstituteHub } from './components/SubstituteHub';
 import { ChatSystem } from './components/ChatSystem';
 import { StudentOSMeet } from './components/StudentOSMeet';
+import { GlobalSchoolCallModal } from './components/meet/GlobalSchoolCallModal';
+import { setupGlobalCallReceiver, acceptSchoolCall, declineSchoolCall } from './lib/callService';
 import { NotificationCenter } from './components/NotificationCenter';
 import { BroadcastModal } from './components/BroadcastModal';
 import { LiveBroadcastBanner } from './components/LiveBroadcastBanner';
@@ -363,6 +365,54 @@ export default function App() {
       window.removeEventListener('studentos-navigate-tab', handleNavigateEvent);
     };
   }, []);
+
+  // Setup Global School Call Receiver
+  useEffect(() => {
+    if (!currentUser?.uid) return;
+    const cleanup = setupGlobalCallReceiver(currentUser);
+    return () => {
+      cleanup();
+    };
+  }, [currentUser?.uid]);
+
+  // Handle call actions from service worker or URL parameters (e.g. Push notification Accept/Decline clicks)
+  useEffect(() => {
+    const handleSWMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'INCOMING_CALL_ACTION') {
+        const { action } = event.data;
+        if (action === 'accept') {
+          acceptSchoolCall();
+        } else if (action === 'decline') {
+          declineSchoolCall();
+        }
+      }
+    };
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', handleSWMessage);
+    }
+
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const callAction = urlParams.get('callAction');
+      if (callAction === 'accept') {
+        acceptSchoolCall();
+      } else if (callAction === 'decline') {
+        declineSchoolCall();
+      }
+      if (urlParams.has('callAction') || urlParams.has('callId')) {
+        urlParams.delete('callAction');
+        urlParams.delete('callId');
+        const newUrl = window.location.pathname + (urlParams.toString() ? `?${urlParams.toString()}` : '');
+        window.history.replaceState(null, '', newUrl);
+      }
+    } catch (_) {}
+
+    return () => {
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', handleSWMessage);
+      }
+    };
+  }, [currentUser?.uid]);
 
   const DEV_MODE = false; // Production release
   const [simulatedRole, setSimulatedRole] = useState<UserRole | null>(null);
@@ -12431,6 +12481,14 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
 
       {/* Global Gamification XP & Level-Up Reward Toast */}
       <GamificationRewardToast />
+
+      {/* Global School Calling System & WebRTC Overlay */}
+      <GlobalSchoolCallModal
+        currentUser={currentUser}
+        effectiveRole={effectiveRole}
+        allUsers={students}
+        onNavigateTab={handleTabSelect}
+      />
 
     </div>
   );

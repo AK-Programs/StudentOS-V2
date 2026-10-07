@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   BookOpen, Users, Save, Sparkles, Clock, Check, Eye, Edit3, Plus,
-  Trash2, Search, Download, Brain, Wand2, ListChecks, FileText, Columns
+  Trash2, Search, Download, Brain, Wand2, ListChecks, FileText, Columns, Phone
 } from 'lucide-react';
 import { UserProfile } from '../types';
 import { supabase } from '../lib/supabase';
 import { sendRealtimeEvent, subscribeRealtimeEvents } from '../lib/wsHelper';
 import { saveStudyOutputToFlashcards, formatMathematicalText } from '../lib/studentosAiEngine';
+import { startSchoolCall } from '../lib/callService';
 
 interface CollaborativeLectureNotesProps {
   currentUser: UserProfile | null;

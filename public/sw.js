@@ -87,34 +87,44 @@ self.addEventListener('push', (event) => {
   }
 
   // Deterministic tag so foreground & background pushes for the same notice coalesce into ONE notification
+  const isCallNotification = payloadData.type === 'call' || payloadData.type === 'incoming_call';
+  const callId = payloadData.data?.callId || payloadData.notifId || '';
   const deterministicTag =
     payloadData.tag ||
-    (payloadData.notifId ? `studentos-notif-${payloadData.notifId}` : `studentos-notif-${Date.now()}`);
+    (isCallNotification ? `studentos-call-${callId || Date.now()}` : (payloadData.notifId ? `studentos-notif-${payloadData.notifId}` : `studentos-notif-${Date.now()}`));
 
   const targetUrl = payloadData.url && payloadData.url !== '/'
     ? payloadData.url
-    : `/?tab=${encodeURIComponent(payloadData.linkTab || 'notice_viewer')}${payloadData.notifId ? `&notifId=${encodeURIComponent(payloadData.notifId)}` : ''}`;
+    : (isCallNotification
+        ? `/?tab=peer_chat&callId=${encodeURIComponent(callId)}`
+        : `/?tab=${encodeURIComponent(payloadData.linkTab || 'notice_viewer')}${payloadData.notifId ? `&notifId=${encodeURIComponent(payloadData.notifId)}` : ''}`);
 
   const notificationOptions = {
-    body: payloadData.body || 'Tap to view in StudentOS.',
+    body: payloadData.body || (isCallNotification ? '📞 Incoming StudentOS Call... Tap to answer.' : 'Tap to view in StudentOS.'),
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
     tag: deterministicTag,
     renotify: true,
-    requireInteraction: false,
-    vibrate: [200, 100, 200],
+    requireInteraction: isCallNotification,
+    vibrate: isCallNotification ? [500, 250, 500, 250, 500, 250, 500] : [200, 100, 200],
     timestamp: Date.now(),
     data: {
-      linkTab: payloadData.linkTab || 'notice_viewer',
+      linkTab: payloadData.linkTab || (isCallNotification ? 'peer_chat' : 'notice_viewer'),
       notifId: payloadData.notifId || '',
       type: payloadData.type || 'announcement',
+      callId: callId,
       schoolId: payloadData.schoolId || 'default_school',
       url: targetUrl
     },
-    actions: [
-      { action: 'open', title: 'View Notice' },
-      { action: 'dismiss', title: 'Dismiss' }
-    ]
+    actions: isCallNotification
+      ? [
+          { action: 'accept', title: '📞 Accept' },
+          { action: 'decline', title: '❌ Decline' }
+        ]
+      : [
+          { action: 'open', title: 'View Notice' },
+          { action: 'dismiss', title: 'Dismiss' }
+        ]
   };
 
   event.waitUntil(
@@ -122,16 +132,18 @@ self.addEventListener('push', (event) => {
       console.log('[SW FCM] Chrome/Android notification displayed successfully:', {
         title: payloadData.title,
         tag: deterministicTag,
+        isCall: isCallNotification,
         linkTab: payloadData.linkTab
       });
       return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
         clients.forEach((client) => {
           client.postMessage({
-            type: 'FCM_SW_NOTIFICATION_DISPLAYED',
+            type: isCallNotification ? 'FCM_SW_INCOMING_CALL' : 'FCM_SW_NOTIFICATION_DISPLAYED',
             title: payloadData.title,
             body: payloadData.body,
             linkTab: payloadData.linkTab,
             notifId: payloadData.notifId,
+            callId: callId,
             tag: deterministicTag
           });
         });
@@ -149,11 +161,32 @@ self.addEventListener('notificationclick', (event) => {
   if (event.action === 'dismiss') return;
 
   const data = event.notification.data || {};
-  const targetTab = data.linkTab || 'notice_viewer';
+  const isCall = data.type === 'call' || data.type === 'incoming_call' || Boolean(data.callId);
+  const targetTab = data.linkTab || (isCall ? 'peer_chat' : 'notice_viewer');
   const notifId = data.notifId || '';
+  const callId = data.callId || notifId || '';
+  const action = event.action || 'open';
+
+  if (isCall && action === 'decline') {
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+        clientList.forEach((client) => {
+          client.postMessage({
+            type: 'STUDENTOS_CALL_ACTION',
+            action: 'decline',
+            callId: callId
+          });
+        });
+      })
+    );
+    return;
+  }
+
   const targetUrl = data.url && data.url !== '/'
-    ? data.url
-    : `/?tab=${encodeURIComponent(targetTab)}${notifId ? `&notifId=${encodeURIComponent(notifId)}` : ''}`;
+    ? (isCall && action === 'accept' ? `${data.url}&autoAccept=1` : data.url)
+    : (isCall
+        ? `/?tab=peer_chat&callId=${encodeURIComponent(callId)}${action === 'accept' ? '&autoAccept=1' : ''}`
+        : `/?tab=${encodeURIComponent(targetTab)}${notifId ? `&notifId=${encodeURIComponent(notifId)}` : ''}`);
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
@@ -162,10 +195,12 @@ self.addEventListener('notificationclick', (event) => {
           return client.focus().then((focusedClient) => {
             const activeClient = focusedClient || client;
             activeClient.postMessage({
-              type: 'STUDENTOS_NAVIGATE_TAB',
+              type: isCall ? 'STUDENTOS_INCOMING_CALL' : 'STUDENTOS_NAVIGATE_TAB',
               tab: targetTab,
               linkTab: targetTab,
               notifId: notifId,
+              callId: callId,
+              action: action,
               url: targetUrl
             });
           });

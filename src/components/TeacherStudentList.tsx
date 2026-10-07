@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { UserProfile } from '../types';
 import { fetchAllSupabaseUsers } from '../lib/supabaseUsers';
 import { supabase } from '../lib/supabase';
-import { MessageSquare, Send } from 'lucide-react';
+import { MessageSquare, Send, Phone, Video, Users } from 'lucide-react';
+import { startSchoolCall } from '../lib/callService';
 
 export default function TeacherStudentList({ currentUser }: { currentUser: UserProfile }) {
   const [students, setStudents] = useState<UserProfile[]>([]);
@@ -118,8 +119,60 @@ export default function TeacherStudentList({ currentUser }: { currentUser: UserP
       </div>
 
       {selectedGrade && (
-        <div className="animate-fadeIn p-6 bg-slate-900 border border-white/10 rounded-3xl">
-          <h4 className="text-lg font-bold text-white mb-4">Roster: {selectedGrade}</h4>
+        <div className="animate-fadeIn p-6 bg-slate-900 border border-white/10 rounded-3xl space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+            <div>
+              <h4 className="text-lg font-bold text-white">Roster: {selectedGrade}</h4>
+              <p className="text-xs text-slate-400">Manage students, progress reviews, and contextual class communications.</p>
+            </div>
+            {students.filter(s => s.grade === selectedGrade).length > 0 && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const classStudents = students.filter(s => s.grade === selectedGrade);
+                    startSchoolCall({
+                      currentUser,
+                      effectiveRole: currentUser.role,
+                      type: 'video',
+                      contextType: 'class_call',
+                      contextTitle: `${selectedGrade} Virtual Class Session`,
+                      contextSubtitle: `Live class hosted by ${currentUser.name || 'Faculty'}`,
+                      contextId: selectedGrade,
+                      targetParticipants: classStudents
+                    });
+                  }}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md transition-all active:scale-95"
+                  title="Launch Virtual Classroom Session for all students in this grade"
+                >
+                  <Video className="w-3.5 h-3.5" />
+                  <span>Class Video</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const classStudents = students.filter(s => s.grade === selectedGrade);
+                    startSchoolCall({
+                      currentUser,
+                      effectiveRole: currentUser.role,
+                      type: 'audio',
+                      contextType: 'class_call',
+                      contextTitle: `${selectedGrade} Audio Assembly`,
+                      contextSubtitle: `Voice broadcast & discussion with ${currentUser.name || 'Faculty'}`,
+                      contextId: selectedGrade,
+                      targetParticipants: classStudents
+                    });
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10 font-bold text-xs transition-all active:scale-95"
+                  title="Start Class Voice Discussion"
+                >
+                  <Phone className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Class Audio</span>
+                </button>
+              </div>
+            )}
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm whitespace-nowrap">
               <thead className="text-[10px] uppercase tracking-wider text-slate-400 bg-white/5">
@@ -127,7 +180,7 @@ export default function TeacherStudentList({ currentUser }: { currentUser: UserP
                   <th className="px-4 py-3 rounded-tl-xl">Student Name</th>
                   <th className="px-4 py-3">Section</th>
                   <th className="px-4 py-3">Latest Remarks</th>
-                  <th className="px-4 py-3 rounded-tr-xl">Action</th>
+                  <th className="px-4 py-3 rounded-tr-xl text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5 text-slate-300">
@@ -139,15 +192,68 @@ export default function TeacherStudentList({ currentUser }: { currentUser: UserP
                    students.filter(s => s.grade === selectedGrade).map(s => (
                      <React.Fragment key={s.email}>
                      <tr className="hover:bg-white/5">
-                       <td className="px-4 py-3 font-semibold text-white">{s.name}</td>
+                       <td className="px-4 py-3 font-semibold text-white">
+                         <div className="flex items-center gap-2">
+                           <div className="w-7 h-7 rounded-lg bg-indigo-500/20 text-indigo-300 flex items-center justify-center font-bold text-xs border border-indigo-500/30">
+                             {s.name ? s.name.charAt(0).toUpperCase() : 'S'}
+                           </div>
+                           <div>
+                             <p className="font-semibold text-white leading-tight">{s.name}</p>
+                             <p className="text-[10px] text-slate-500 font-mono">{s.email}</p>
+                           </div>
+                         </div>
+                       </td>
                        <td className="px-4 py-3 text-xs">{s.section || 'Unassigned'}</td>
                        <td className="px-4 py-3 text-xs text-slate-400 max-w-[200px] truncate">
                          {remarks[s.uid!] || 'No remarks yet.'}
                        </td>
-                       <td className="px-4 py-3">
-                         <button onClick={() => setActiveStudent(activeStudent === s.uid ? null : s.uid!)} className="px-3 py-1.5 bg-indigo-500/20 text-indigo-400 rounded-lg text-xs font-bold hover:bg-indigo-500/40">
-                           <MessageSquare className="w-3 h-3 inline mr-1" /> Add Remark
-                         </button>
+                       <td className="px-4 py-3 text-right">
+                         <div className="flex items-center justify-end gap-1.5">
+                           <button 
+                             type="button"
+                             onClick={() => {
+                               startSchoolCall({
+                                 currentUser,
+                                 effectiveRole: currentUser.role,
+                                 type: 'video',
+                                 contextType: 'student_call',
+                                 contextTitle: `Academic Check-in: ${s.name}`,
+                                 contextSubtitle: `${s.grade || selectedGrade} • ${s.section || 'Section'} • Progress & Remarks Review`,
+                                 contextId: s.uid,
+                                 targetParticipants: [s]
+                               });
+                             }} 
+                             className="p-1.5 bg-indigo-500/15 hover:bg-indigo-500/30 text-indigo-400 rounded-lg text-xs transition-all"
+                             title={`Video Call ${s.name}`}
+                           >
+                             <Video className="w-3.5 h-3.5" />
+                           </button>
+                           <button 
+                             type="button"
+                             onClick={() => {
+                               startSchoolCall({
+                                 currentUser,
+                                 effectiveRole: currentUser.role,
+                                 type: 'audio',
+                                 contextType: 'student_call',
+                                 contextTitle: `Voice Consultation: ${s.name}`,
+                                 contextSubtitle: `${s.grade || selectedGrade} • Progress Review`,
+                                 contextId: s.uid,
+                                 targetParticipants: [s]
+                               });
+                             }} 
+                             className="p-1.5 bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-400 rounded-lg text-xs transition-all"
+                             title={`Voice Call ${s.name}`}
+                           >
+                             <Phone className="w-3.5 h-3.5" />
+                           </button>
+                           <button 
+                             onClick={() => setActiveStudent(activeStudent === s.uid ? null : s.uid!)} 
+                             className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-xs font-bold transition-all ml-1"
+                           >
+                             <MessageSquare className="w-3 h-3 inline mr-1" /> Remark
+                           </button>
+                         </div>
                        </td>
                      </tr>
                      {activeStudent === s.uid && (
