@@ -29,6 +29,7 @@
     "react-is": "^18.3.1",
     "react-konva": "^18.2.10",
     "recharts": "^2.15.0",
+    "three": "^0.186.1",
     "vite": "^6.2.3",
     "web-push": "^3.6.7",
     "ws": "^8.18.0"
@@ -38,6 +39,7 @@
     "@types/node": "^22.14.0",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "@types/three": "^0.186.0",
     "@types/web-push": "^3.6.4",
     "@types/ws": "^8.5.10",
     "autoprefixer": "^10.4.21",

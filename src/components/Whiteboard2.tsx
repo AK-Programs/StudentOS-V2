@@ -9,8 +9,10 @@ import {
   Download, Eraser, MousePointer2, Pen, PenTool, Square, Circle as CircleIcon, 
   Triangle, Minus, ChevronDown, Trash2, Sliders, Settings2, Plus, Copy,
   ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, ArrowUp, ArrowDown, Type, Sparkles,
-  Undo2, Redo2, Image as ImageIcon, StickyNote, FileText, Box, Layers, Hand, RotateCcw, Eye, Tag, HelpCircle
+  Undo2, Redo2, Image as ImageIcon, StickyNote, FileText, Box, Layers, Hand, RotateCcw, Eye, Tag, HelpCircle,
+  Play, Rotate3d
 } from 'lucide-react';
+import { InteractiveThreeDViewer, Educational3DScene } from './InteractiveThreeDViewer';
 
 const Stage = StageComp as any;
 const Layer = LayerComp as any;
@@ -29,23 +31,36 @@ const KonvaImage = KonvaImageComp as any;
 export interface Part3D {
   id: string;
   label: string;
-  primitive: 'box' | 'sphere' | 'cylinder' | 'pyramid' | 'prism' | 'torus' | 'cone' | 'plane';
+  shape?: 'box' | 'sphere' | 'cylinder' | 'pyramid' | 'prism' | 'triangular_prism' | 'torus' | 'ring' | 'cone' | 'plane';
+  primitive?: 'box' | 'sphere' | 'cylinder' | 'pyramid' | 'prism' | 'torus' | 'cone' | 'plane';
   position: [number, number, number];
   dimensions: [number, number, number];
   rotation?: [number, number, number];
   color: string;
   opacity?: number;
   description?: string;
+  wireframe?: boolean;
 }
 
 export interface Scene3DData {
   id: string;
   title: string;
-  category: string;
-  description: string;
-  educationalNotes: string[];
+  category?: string;
+  subject?: string;
+  subtitle?: string;
+  description?: string;
+  summary?: string;
+  educationalNotes?: string[];
+  formulas?: string[];
   parts: Part3D[];
-  connections?: { from: [number, number, number]; to: [number, number, number]; color: string; label?: string }[];
+  connections?: Array<{
+    fromId?: string;
+    toId?: string;
+    from?: [number, number, number];
+    to?: [number, number, number];
+    color?: string;
+    label?: string;
+  }>;
 }
 
 interface ShapeObj {
@@ -109,10 +124,10 @@ function sanitizeSvgClient(rawSvg: string): string {
   if (!match) return '';
   s = match[0];
   s = s
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, '')
-    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
-    .replace(/<object[\s\S]*?<\/object>/gi, '')
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .replace(/<foreignObject[\s\S]*?>[\s\S]*?<\/foreignObject>/gi, '')
+    .replace(/<iframe[\s\S]*?>[\s\S]*?<\/iframe>/gi, '')
+    .replace(/<object[\s\S]*?>[\s\S]*?<\/object>/gi, '')
     .replace(/<embed[\s\S]*?>/gi, '')
     .replace(/\son[a-z]+\s*=\s*["'][^"']*["']/gi, '')
     .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, '')
@@ -124,29 +139,36 @@ function sanitizeSvgClient(rawSvg: string): string {
 }
 
 /**
- * Renders a structured 3D educational scene to a crisp SVG string using 3D rotation matrices and depth sorting
+ * Renders a structured 3D educational scene to a crisp SVG string using 3D rotation matrices and depth sorting.
+ * Strictly checks every property with full defensive null guards to prevent any undefined runtime crashes.
  */
 function renderScene3DToSvg(
-  scene: Scene3DData,
+  scene?: Scene3DData | null,
   rotXDeg: number = 22,
   rotYDeg: number = -32,
   zoom: number = 1,
   explode: number = 0,
   showLabels: boolean = true
 ): string {
+  if (!scene || typeof scene !== 'object') {
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 480" width="680" height="480"><rect width="680" height="480" fill="#090d16" rx="18"/><text x="340" y="240" fill="#94a3b8" font-family="sans-serif" font-size="16" text-anchor="middle">3D Educational Model</text></svg>';
+  }
+
   const W = 680;
   const H = 480;
   const cx = W / 2;
   const cy = H / 2 + 12;
-  const scale = 68 * zoom;
+  const scale = 68 * Math.max(0.4, Math.min(3, zoom || 1));
 
-  const radX = (rotXDeg * Math.PI) / 180;
-  const radY = (rotYDeg * Math.PI) / 180;
+  const radX = ((rotXDeg || 22) * Math.PI) / 180;
+  const radY = ((rotYDeg || -32) * Math.PI) / 180;
   const cosX = Math.cos(radX), sinX = Math.sin(radX);
   const cosY = Math.cos(radY), sinY = Math.sin(radY);
 
   const project = (pt: [number, number, number]): { x: number; y: number; z: number } => {
-    const [px, py, pz] = pt;
+    const px = Array.isArray(pt) && typeof pt[0] === 'number' ? pt[0] : 0;
+    const py = Array.isArray(pt) && typeof pt[1] === 'number' ? pt[1] : 0;
+    const pz = Array.isArray(pt) && typeof pt[2] === 'number' ? pt[2] : 0;
     // Rotate around Y
     const x1 = px * cosY + pz * sinY;
     const z1 = -px * sinY + pz * cosY;
@@ -162,7 +184,7 @@ function renderScene3DToSvg(
     };
   };
 
-  const escapeXml = (str: string) =>
+  const escapeXml = (str: any) =>
     String(str || '')
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
@@ -184,19 +206,47 @@ function renderScene3DToSvg(
     });
   }
 
+  // Build part lookup map for safe coordinate resolution
+  const safeParts = Array.isArray(scene.parts) ? scene.parts : [];
+  const partMap = new Map<string, Part3D>();
+  safeParts.forEach((p, idx) => {
+    if (p) partMap.set(p.id || `part_${idx}`, p);
+  });
+
   // Connections / bonds / rays
-  if (scene.connections) {
+  if (Array.isArray(scene.connections)) {
     for (const conn of scene.connections) {
+      if (!conn) continue;
+      let fCoord: [number, number, number] | null = null;
+      let tCoord: [number, number, number] | null = null;
+
+      if (Array.isArray(conn.from) && conn.from.length >= 3) {
+        fCoord = conn.from;
+      } else if (conn.fromId && partMap.has(conn.fromId)) {
+        const fp = partMap.get(conn.fromId)!;
+        fCoord = Array.isArray(fp.position) ? fp.position : [0, 0, 0];
+      }
+
+      if (Array.isArray(conn.to) && conn.to.length >= 3) {
+        tCoord = conn.to;
+      } else if (conn.toId && partMap.has(conn.toId)) {
+        const tp = partMap.get(conn.toId)!;
+        tCoord = Array.isArray(tp.position) ? tp.position : [0, 0, 0];
+      }
+
+      if (!fCoord || !tCoord) continue;
+
       const f: [number, number, number] = [
-        conn.from[0] * (1 + explode * 0.45),
-        conn.from[1] * (1 + explode * 0.45),
-        conn.from[2] * (1 + explode * 0.45)
+        (fCoord[0] || 0) * (1 + (explode || 0) * 0.45),
+        (fCoord[1] || 0) * (1 + (explode || 0) * 0.45),
+        (fCoord[2] || 0) * (1 + (explode || 0) * 0.45)
       ];
       const t: [number, number, number] = [
-        conn.to[0] * (1 + explode * 0.45),
-        conn.to[1] * (1 + explode * 0.45),
-        conn.to[2] * (1 + explode * 0.45)
+        (tCoord[0] || 0) * (1 + (explode || 0) * 0.45),
+        (tCoord[1] || 0) * (1 + (explode || 0) * 0.45),
+        (tCoord[2] || 0) * (1 + (explode || 0) * 0.45)
       ];
+
       const p1 = project(f);
       const p2 = project(t);
       const avgZ = (p1.z + p2.z) / 2 - 0.1;
@@ -213,33 +263,37 @@ function renderScene3DToSvg(
   }
 
   // Render each 3D part
-  for (const part of scene.parts || []) {
+  for (const part of safeParts) {
+    if (!part) continue;
+    const partPos = Array.isArray(part.position) ? part.position : [0, 0, 0];
     const pos: [number, number, number] = [
-      part.position[0] * (1 + explode * 0.55),
-      part.position[1] * (1 + explode * 0.55),
-      part.position[2] * (1 + explode * 0.55)
+      (partPos[0] || 0) * (1 + (explode || 0) * 0.55),
+      (partPos[1] || 0) * (1 + (explode || 0) * 0.55),
+      (partPos[2] || 0) * (1 + (explode || 0) * 0.55)
     ];
-    const [dx, dy, dz] = part.dimensions || [1, 1, 1];
+    const dims = Array.isArray(part.dimensions) ? part.dimensions : [1, 1, 1];
+    const dx = dims[0] || 1, dy = dims[1] || 1, dz = dims[2] || 1;
     const center = project(pos);
     const col = part.color || '#6366f1';
-    const op = part.opacity ?? 0.85;
+    const op = typeof part.opacity === 'number' ? part.opacity : 0.85;
+    const shapeType = part.shape || part.primitive || 'box';
 
     let shapeMarkup = '';
 
-    if (part.primitive === 'sphere') {
+    if (shapeType === 'sphere') {
       const r = Math.max(10, dx * scale * 0.62);
       shapeMarkup = `
         <circle cx="${center.x}" cy="${center.y}" r="${r.toFixed(1)}" fill="${col}" fill-opacity="${op}" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.65" />
         <ellipse cx="${center.x}" cy="${center.y}" rx="${r.toFixed(1)}" ry="${(r * 0.36).toFixed(1)}" fill="none" stroke="#ffffff" stroke-width="1" stroke-dasharray="4,3" stroke-opacity="0.55" />
         <circle cx="${(center.x - r * 0.3).toFixed(1)}" cy="${(center.y - r * 0.3).toFixed(1)}" r="${(r * 0.22).toFixed(1)}" fill="#ffffff" fill-opacity="0.35" />
       `;
-    } else if (part.primitive === 'torus') {
+    } else if (shapeType === 'torus' || shapeType === 'ring') {
       const rx = Math.max(16, dx * scale * 0.5);
       const ry = Math.max(7, rx * Math.abs(sinX) + 6);
       shapeMarkup = `
         <ellipse cx="${center.x}" cy="${center.y}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" fill="none" stroke="${col}" stroke-width="2" stroke-opacity="${op}" stroke-dasharray="6,4" />
       `;
-    } else if (part.primitive === 'pyramid' || part.primitive === 'cone') {
+    } else if (shapeType === 'pyramid' || shapeType === 'cone') {
       const hw = dx * 0.5, hh = dy * 0.5, hd = dz * 0.5;
       const apex = project([pos[0], pos[1] + hh, pos[2]]);
       const b1 = project([pos[0] - hw, pos[1] - hh, pos[2] - hd]);
@@ -253,7 +307,7 @@ function renderScene3DToSvg(
         <polygon points="${apex.x},${apex.y} ${b3.x},${b3.y} ${b4.x},${b4.y}" fill="${col}" fill-opacity="${op}" stroke="#ffffff" stroke-width="1.5" />
         <polygon points="${apex.x},${apex.y} ${b4.x},${b4.y} ${b1.x},${b1.y}" fill="${col}" fill-opacity="${op * 0.65}" stroke="#ffffff" stroke-width="1.5" />
       `;
-    } else if (part.primitive === 'prism') {
+    } else if (shapeType === 'prism' || shapeType === 'triangular_prism') {
       const hw = dx * 0.5, hh = dy * 0.5, hd = dz * 0.5;
       const f1 = project([pos[0], pos[1] + hh, pos[2] + hd]);
       const f2 = project([pos[0] - hw, pos[1] - hh, pos[2] + hd]);
@@ -267,7 +321,7 @@ function renderScene3DToSvg(
         <polygon points="${f1.x},${f1.y} ${f2.x},${f2.y} ${b2.x},${b2.y} ${b1.x},${b1.y}" fill="${col}" fill-opacity="${op * 0.6}" stroke="#ffffff" stroke-width="1.5" />
         <polygon points="${f1.x},${f1.y} ${f2.x},${f2.y} ${f3.x},${f3.y}" fill="${col}" fill-opacity="${op * 0.9}" stroke="#ffffff" stroke-width="1.8" />
       `;
-    } else if (part.primitive === 'cylinder') {
+    } else if (shapeType === 'cylinder') {
       const rx = Math.max(12, dx * scale * 0.5);
       const ry = Math.max(6, rx * 0.32);
       const topC = project([pos[0], pos[1] + dy * 0.5, pos[2]]);
@@ -299,11 +353,11 @@ function renderScene3DToSvg(
         { idx: [4, 5, 6, 7], mult: 0.88 }, // front
       ].map(f => ({
         ...f,
-        z: f.idx.reduce((acc, i) => acc + v[i].z, 0) / 4
+        z: f.idx.reduce((acc, i) => acc + (v[i]?.z || 0), 0) / 4
       })).sort((a, b) => a.z - b.z);
 
       shapeMarkup = faces.map(f => {
-        const pts = f.idx.map(i => `${v[i].x},${v[i].y}`).join(' ');
+        const pts = f.idx.map(i => `${v[i]?.x || 0},${v[i]?.y || 0}`).join(' ');
         return `<polygon points="${pts}" fill="${col}" fill-opacity="${(op * f.mult).toFixed(2)}" stroke="#ffffff" stroke-width="1.3" stroke-opacity="0.75" />`;
       }).join('\n');
     }
@@ -323,7 +377,8 @@ function renderScene3DToSvg(
 
   elements.sort((a, b) => a.z - b.z);
 
-  const notesFooter = (scene.educationalNotes || []).slice(0, 2).map((n, i) =>
+  const notesList = Array.isArray(scene.educationalNotes) ? scene.educationalNotes : Array.isArray(scene.formulas) ? scene.formulas : [];
+  const notesFooter = notesList.slice(0, 2).map((n, i) =>
     `<text x="24" y="${438 + i * 18}" fill="#94a3b8" font-family="sans-serif" font-size="11">• ${escapeXml(n)}</text>`
   ).join('\n');
 
@@ -331,7 +386,7 @@ function renderScene3DToSvg(
     <rect width="${W}" height="${H}" rx="18" fill="#090d16" stroke="#334155" stroke-width="2" />
     <rect x="16" y="14" width="${W - 32}" height="42" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1" />
     <text x="30" y="34" fill="#f8fafc" font-family="sans-serif" font-size="15" font-weight="bold">🧊 ${escapeXml(scene.title || '3D Educational Model')}</text>
-    <text x="30" y="49" fill="#38bdf8" font-family="monospace" font-size="10">${escapeXml(scene.description || '')}</text>
+    <text x="30" y="49" fill="#38bdf8" font-family="monospace" font-size="10">${escapeXml(scene.description || scene.subtitle || '')}</text>
     <text x="${W - 28}" y="38" fill="#818cf8" font-family="monospace" font-size="10" text-anchor="end">Pitch ${Math.round(rotXDeg)}° · Yaw ${Math.round(rotYDeg)}°</text>
     ${elements.map(e => e.svg).join('\n')}
     ${notesFooter}
@@ -375,6 +430,10 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     y2: number;
   }>({ visible: false, x1: 0, y1: 0, x2: 0, y2: 0 });
   const isMarqueeSelecting = useRef(false);
+
+  // Interactive Three.js 3D WebGL Scene Studio Modal
+  const [interactive3DScene, setInteractive3DScene] = useState<Educational3DScene | null>(null);
+  const [active3DShapeId, setActive3DShapeId] = useState<string | null>(null);
 
   // Contextual AI Visual / Educational Insight Panel state
   const [aiInsightCard, setAiInsightCard] = useState<{
@@ -654,18 +713,30 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
 
   // Selected Object → 3D Infographic / Visual / Explain / Quiz / Label workflow
   const handleSelectedObjectAIAction = async (action: 'to_3d' | 'to_svg' | 'explain' | 'label_parts' | 'quiz') => {
-    const contextDesc = getSelectedObjectsDescription();
-    if (!contextDesc) {
-      setAiTip('⚠️ Select one or more objects on the Whiteboard first.');
+    const slide = slides[activeSlideIdx];
+    if (!slide || !Array.isArray(selectedIds) || selectedIds.length === 0) {
+      setAiTip('⚠️ Please select at least one object on the Whiteboard first.');
       return;
     }
+
+    const contextDesc = getSelectedObjectsDescription();
+    if (!contextDesc || !contextDesc.trim()) {
+      setAiTip('⚠️ Please select at least one valid object on the Whiteboard.');
+      return;
+    }
+
     setIsRunningSelectionAI(true);
     try {
-      const slide = slides[activeSlideIdx];
-      const primaryShape = slide?.shapes.find(s => s.id === selectedIds[0]?.id);
-      const anchorX = primaryShape ? Math.min(canvasSize.width - 620, Math.max(60, primaryShape.x + 60)) : 160;
-      const anchorY = primaryShape ? Math.min(canvasSize.height - 440, Math.max(60, primaryShape.y + 40)) : 110;
-      const cleanTopic = primaryShape?.text || primaryShape?.scene3D?.title || contextDesc;
+      const selectedShapes = (slide.shapes || []).filter(s => s && selectedIds.some(sel => sel.id === s.id));
+      const selectedLines = (slide.lines || []).filter(l => l && selectedIds.some(sel => sel.id === l.id));
+
+      const firstShapeWithText = selectedShapes.find(s => s.text && s.text.trim());
+      const first3DShape = selectedShapes.find(s => s.type === 'model_3d' && s.scene3D);
+      const cleanTopic = firstShapeWithText?.text?.trim() || first3DShape?.scene3D?.title?.trim() || contextDesc || 'Educational Topic';
+
+      const primaryObj = selectedShapes[0] || (selectedLines[0] ? { x: selectedLines[0].points?.[0] || 160, y: selectedLines[0].points?.[1] || 110 } : null);
+      const anchorX = primaryObj ? Math.min(Math.max(60, canvasSize.width - 620), Math.max(60, (primaryObj.x || 160) + 60)) : 160;
+      const anchorY = primaryObj ? Math.min(Math.max(60, canvasSize.height - 440), Math.max(60, (primaryObj.y || 110) + 40)) : 110;
 
       if (action === 'to_3d') {
         setAiTip(`🧊 Converting "${cleanTopic}" into an interactive 3D educational model...`);
@@ -674,12 +745,13 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query: cleanTopic, sourceContext: contextDesc })
         });
+        if (!res.ok) throw new Error('3D generation service unavailable');
         const data = await res.json();
-        if (data?.scene) {
+        if (data?.scene && Array.isArray(data.scene.parts) && data.scene.parts.length > 0) {
           insert3DModelOnBoard(data.scene, anchorX, anchorY);
-          setAiTip(`🧊 3D Educational Model created for "${data.scene.title}"! Use 3D controls to rotate or explode.`);
+          setAiTip(`🧊 3D Educational Model created for "${data.scene.title}"! Click "Orbit 3D Studio" to explore.`);
         } else {
-          setAiTip('⚠️ Could not generate 3D model for this selection.');
+          setAiTip('⚠️ Could not generate a 3D model for this selection.');
         }
       } else if (action === 'to_svg') {
         setAiTip(`🎨 Generating classroom SVG visual for "${cleanTopic}"...`);
@@ -688,6 +760,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query: cleanTopic })
         });
+        if (!res.ok) throw new Error('SVG generation service unavailable');
         const data = await res.json();
         const safeSvg = sanitizeSvgClient(data?.svg || '');
         if (safeSvg) {
@@ -716,9 +789,11 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             setSelectedIds([{ id: svgShape.id, type: 'shape' }]);
           };
           setAiTip(`🎨 Clean educational SVG visual added for "${cleanTopic}"`);
+        } else {
+          setAiTip('⚠️ Could not generate a clean SVG diagram.');
         }
       } else {
-        const promptMap = {
+        const promptMap: Record<string, string> = {
           explain: `Explain this selected classroom whiteboard concept clearly for students in 4 concise bullet points with key formulas or mechanisms: ${contextDesc}`,
           label_parts: `Identify and list the 5 most important anatomical/structural labels and their functions for: ${contextDesc}`,
           quiz: `Create 3 quick classroom check-for-understanding questions (with short answers) based on this whiteboard visual: ${contextDesc}`
@@ -741,15 +816,14 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             content: data.text
           });
         } else {
-          // Fallback to /api/ai/notes summarize
           setAiInsightCard({
             title: `Classroom Insight: ${cleanTopic}`,
             mode: action,
-            content: promptMap[action]
+            content: promptMap[action] || `Analysis for ${cleanTopic}`
           });
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Selection AI action error:', err);
       setAiTip('❌ Could not complete AI visual action right now.');
     } finally {
@@ -2412,6 +2486,25 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
 
             {/* Selected Object → 3D Infographic & Classroom Visual Actions */}
             <div className="flex items-center gap-1.5 border-l border-indigo-500/30 pl-3">
+              {selectedObj.type === 'shape' && (() => {
+                const targetSh = currentSlide.shapes.find(s => s.id === selectedObj.id);
+                if (targetSh?.type === 'model_3d' && targetSh.scene3D) {
+                  return (
+                    <button
+                      onClick={() => {
+                        setInteractive3DScene(targetSh.scene3D as any);
+                        setActive3DShapeId(targetSh.id);
+                      }}
+                      className="p-1 px-3 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-[10px] font-black uppercase rounded-lg shadow-lg transition-all flex items-center gap-1.5 cursor-pointer animate-pulse"
+                      title="Open Interactive Three.js WebGL 3D Studio (Orbit, Explode, Inspect)"
+                    >
+                      <Rotate3d className="w-3.5 h-3.5 text-cyan-300" /> Orbit 3D Studio
+                    </button>
+                  );
+                }
+                return null;
+              })()}
+
               <button
                 onClick={() => handleSelectedObjectAIAction('to_3d')}
                 disabled={isRunningSelectionAI}
@@ -3141,6 +3234,55 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* Real Interactive Three.js WebGL 3D Studio Modal */}
+        {interactive3DScene && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/85 backdrop-blur-md animate-fadeIn"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setInteractive3DScene(null);
+                setActive3DShapeId(null);
+              }
+            }}
+          >
+            <div
+              className="w-full max-w-4xl bg-slate-900 border border-indigo-500/50 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh] animate-scaleUp"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <InteractiveThreeDViewer
+                scene={interactive3DScene}
+                height="560px"
+                interactive={true}
+                autoSpinDefault={false}
+                onClose={() => {
+                  setInteractive3DScene(null);
+                  setActive3DShapeId(null);
+                }}
+                onSnapshot={(dataUrl) => {
+                  if (!active3DShapeId) return;
+                  const img = new Image();
+                  img.src = dataUrl;
+                  img.onload = () => {
+                    pushHistory();
+                    setSlides(prev => {
+                      const updated = cloneSlides(prev);
+                      const target = updated[activeSlideIdx]?.shapes.find(s => s.id === active3DShapeId);
+                      if (target) {
+                        target.imageObj = img;
+                        target.svgRaw = undefined;
+                      }
+                      return updated;
+                    });
+                    setAiTip('📸 Updated 3D Whiteboard model preview snapshot!');
+                    setInteractive3DScene(null);
+                    setActive3DShapeId(null);
+                  };
+                }}
+              />
             </div>
           </div>
         )}

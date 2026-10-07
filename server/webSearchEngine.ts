@@ -230,38 +230,67 @@ export function extractPrivacySafeSearchQuery(prompt: string): string {
 }
 
 /**
- * Provider 1: Tavily Search API (if TAVILY_API_KEY is configured in server environment)
+ * Provider 1: Tavily Search API (High-precision web search layer for StudentOS)
  */
 async function searchViaTavily(query: string, apiKey: string, signal: AbortSignal): Promise<WebSearchSource[]> {
-  const resp = await fetch('https://api.tavily.com/search', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      api_key: apiKey,
-      query,
-      search_depth: 'basic',
-      max_results: 6
-    }),
-    signal
-  });
+  try {
+    const cleanApiKey = apiKey.trim().replace(/^["']|["']$/g, '');
+    if (!cleanApiKey) return [];
 
-  if (!resp.ok) return [];
-  const data = await resp.json();
-  if (!Array.isArray(data.results)) return [];
-
-  return data.results
-    .filter((r: any) => r && r.url && r.title)
-    .map((r: any) => {
-      const auth = classifyDomainAuthority(r.url);
-      return {
-        title: sanitizeWebSnippet(r.title, 120),
-        url: String(r.url),
-        domain: auth.domain,
-        snippet: sanitizeWebSnippet(r.content || r.snippet || '', 400),
-        sourceType: auth.sourceType,
-        publishedDate: r.published_date || undefined
-      };
+    const resp = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: cleanApiKey,
+        query,
+        search_depth: 'advanced',
+        include_answer: true,
+        max_results: 6,
+        include_raw_content: false
+      }),
+      signal
     });
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      console.warn(`[Tavily Search Notice] HTTP ${resp.status}:`, errText.slice(0, 160));
+      return [];
+    }
+
+    const data = await resp.json();
+    const sources: WebSearchSource[] = [];
+
+    if (Array.isArray(data?.results)) {
+      for (const r of data.results) {
+        if (!r || !r.url || !r.title) continue;
+        const auth = classifyDomainAuthority(r.url);
+        sources.push({
+          title: sanitizeWebSnippet(r.title, 130),
+          url: String(r.url),
+          domain: auth.domain,
+          snippet: sanitizeWebSnippet(r.content || r.snippet || '', 420),
+          sourceType: auth.sourceType,
+          publishedDate: r.published_date || undefined
+        });
+      }
+    }
+
+    if (data?.answer && typeof data.answer === 'string' && data.answer.length > 20 && sources.length > 0) {
+      // Ingest synthesized direct answer snippet into primary source context
+      sources[0].snippet = `${sanitizeWebSnippet(data.answer, 240)} — ${sources[0].snippet}`;
+    }
+
+    if (sources.length > 0) {
+      console.log(`[Tavily Web Search] Successfully retrieved ${sources.length} sources for query: "${query}"`);
+    }
+
+    return sources;
+  } catch (err: any) {
+    if (err?.name !== 'AbortError') {
+      console.warn('[Tavily Search Error]:', err?.message || err);
+    }
+    return [];
+  }
 }
 
 /**

@@ -632,7 +632,120 @@ export async function generateEducational3DScene(
     };
   }
 
-  // 4. MOLECULE / ATOM 3D MODEL
+  // 4. BIOLOGY: DNA DOUBLE HELIX 3D MODEL
+  if (/\b(dna|double\s*helix|nucleotide|genetic|base\s*pair|chromosome)\b/i.test(q)) {
+    return {
+      id,
+      title: '3D DNA Double Helix & Base Pairs',
+      subtitle: 'Antiparallel Sugar-Phosphate Backbones + Complementary A-T, G-C Hydrogen Bonds',
+      subject: 'Biology / Molecular Genetics',
+      sceneType: 'science_model',
+      summary: 'Right-handed B-DNA double helix with complementary base pairs (Adenine-Thymine, Guanine-Cytosine) spanning 0.34 nm per base-pair rise.',
+      formulas: ['Chargaff’s Rule: [A] = [T] and [G] = [C]', 'Helix Pitch = 3.4 nm (10 base pairs per turn)', 'Diameter = 2.0 nm'],
+      parts: [
+        { id: 'bp_1_left', shape: 'sphere', label: 'Adenine (A)', description: 'Purine nitrogenous base', position: [-45, -70, 20], dimensions: [22, 22, 22], color: '#38bdf8', opacity: 0.95 },
+        { id: 'bp_1_right', shape: 'sphere', label: 'Thymine (T)', description: 'Pyrimidine base (2 H-bonds)', position: [45, -70, -20], dimensions: [20, 20, 20], color: '#f59e0b', opacity: 0.95 },
+        { id: 'bp_2_left', shape: 'sphere', label: 'Guanine (G)', description: 'Purine base (3 H-bonds)', position: [-25, -20, -45], dimensions: [22, 22, 22], color: '#10b981', opacity: 0.95 },
+        { id: 'bp_2_right', shape: 'sphere', label: 'Cytosine (C)', description: 'Pyrimidine base', position: [25, -20, 45], dimensions: [20, 20, 20], color: '#f43f5e', opacity: 0.95 },
+        { id: 'bp_3_left', shape: 'sphere', label: 'Adenine (A)', description: 'Upper turn base', position: [35, 30, -35], dimensions: [22, 22, 22], color: '#38bdf8', opacity: 0.95 },
+        { id: 'bp_3_right', shape: 'sphere', label: 'Thymine (T)', description: 'Complementary pair', position: [-35, 30, 35], dimensions: [20, 20, 20], color: '#f59e0b', opacity: 0.95 },
+        { id: 'bp_4_left', shape: 'sphere', label: 'Guanine (G)', description: 'Top rung', position: [50, 80, 15], dimensions: [22, 22, 22], color: '#10b981', opacity: 0.95 },
+        { id: 'bp_4_right', shape: 'sphere', label: 'Cytosine (C)', description: 'Top complementary', position: [-50, 80, -15], dimensions: [20, 20, 20], color: '#f43f5e', opacity: 0.95 }
+      ],
+      connections: [
+        { fromId: 'bp_1_left', toId: 'bp_1_right', label: '2 H-Bonds (A=T)', color: '#cbd5e1' },
+        { fromId: 'bp_2_left', toId: 'bp_2_right', label: '3 H-Bonds (G≡C)', color: '#cbd5e1' },
+        { fromId: 'bp_3_left', toId: 'bp_3_right', label: '2 H-Bonds (A=T)', color: '#cbd5e1' },
+        { fromId: 'bp_4_left', toId: 'bp_4_right', label: '3 H-Bonds (G≡C)', color: '#cbd5e1' },
+        { fromId: 'bp_1_left', toId: 'bp_2_left', label: 'Phosphodiester Backbone', color: '#6366f1' },
+        { fromId: 'bp_2_left', toId: 'bp_3_left', label: 'Phosphodiester Backbone', color: '#6366f1' },
+        { fromId: 'bp_3_left', toId: 'bp_4_left', label: 'Phosphodiester Backbone', color: '#6366f1' },
+        { fromId: 'bp_1_right', toId: 'bp_2_right', label: 'Antiparallel Backbone', color: '#8b5cf6' },
+        { fromId: 'bp_2_right', toId: 'bp_3_right', label: 'Antiparallel Backbone', color: '#8b5cf6' },
+        { fromId: 'bp_3_right', toId: 'bp_4_right', label: 'Antiparallel Backbone', color: '#8b5cf6' }
+      ],
+      canConvert: true
+    };
+  }
+
+  // 5. BIOLOGY: HEART & BLOOD FLOW 3D MODEL
+  if (/\b(heart|cardiac|circulatory|ventricle|atrium|aorta)\b/i.test(q)) {
+    return {
+      id,
+      title: '3D Human Heart Anatomical Chamber Model',
+      subtitle: '4 Muscular Chambers + Aorta Arch + Pulmonary Circulation',
+      subject: 'Biology / Human Anatomy',
+      sceneType: 'science_model',
+      summary: '3D spatial representation of the human heart showing right and left atria and ventricles, the muscular septum, and systemic outflow through the aorta.',
+      formulas: ['Cardiac Output (CO) = Heart Rate (HR) × Stroke Volume (SV)', 'Blood Pressure: Systolic / Diastolic'],
+      parts: [
+        { id: 'right_atrium', shape: 'sphere', label: 'Right Atrium (Deox)', description: 'Receives deoxygenated blood from vena cava', position: [-45, 30, 0], dimensions: [42, 42, 42], color: '#0284c7', opacity: 0.9 },
+        { id: 'right_ventricle', shape: 'cylinder', label: 'Right Ventricle', description: 'Pumps blood to pulmonary artery', position: [-35, -40, 10], dimensions: [38, 55, 38], color: '#0369a1', opacity: 0.9 },
+        { id: 'left_atrium', shape: 'sphere', label: 'Left Atrium (Oxy)', description: 'Receives oxygenated blood from pulmonary veins', position: [45, 35, 0], dimensions: [40, 40, 40], color: '#e11d48', opacity: 0.9 },
+        { id: 'left_ventricle', shape: 'cylinder', label: 'Left Ventricle (Thick Wall)', description: 'Pumps oxygenated blood to systemic circulation', position: [35, -45, -10], dimensions: [44, 65, 44], color: '#be123c', opacity: 0.95 },
+        { id: 'aorta_arch', shape: 'torus', label: 'Aortic Arch', description: 'Main systemic distribution artery', position: [0, 70, 0], dimensions: [50, 12, 50], rotation: [20, 0, 0], color: '#fb7185', opacity: 0.95 }
+      ],
+      connections: [
+        { fromId: 'right_atrium', toId: 'right_ventricle', label: 'Tricuspid Valve ↓', color: '#38bdf8' },
+        { fromId: 'left_atrium', toId: 'left_ventricle', label: 'Bicuspid (Mitral) Valve ↓', color: '#f43f5e' },
+        { fromId: 'left_ventricle', toId: 'aorta_arch', label: 'Aortic Valve Outflow ↑', color: '#fb7185' }
+      ],
+      canConvert: true
+    };
+  }
+
+  // 6. PHYSICS: SOLAR SYSTEM & PLANETARY ORBIT 3D
+  if (/\b(solar\s*system|planet|planets|orbit|sun|earth|mars|jupiter|saturn|gravity)\b/i.test(q)) {
+    return {
+      id,
+      title: '3D Solar System & Planetary Orbits',
+      subtitle: 'Central Star (Sun) + Inner Terrestrial & Outer Gas Giant Orbits',
+      subject: 'Physics & Astronomy',
+      sceneType: 'science_model',
+      summary: '3D gravitational system showing the Sun at the focus and orbital planes with scaled planetary bodies.',
+      formulas: ['Kepler’s 3rd Law: T² ∝ a³', 'Newtonian Gravity: F = G(m₁m₂)/r²', 'Orbital Velocity: v = √(GM/r)'],
+      parts: [
+        { id: 'sun', shape: 'sphere', label: 'Sun (1.989 × 10³⁰ kg)', description: 'G-type main-sequence star', position: [0, 0, 0], dimensions: [62, 62, 62], color: '#facc15', opacity: 0.98 },
+        { id: 'orbit_earth', shape: 'ring', label: 'Earth Orbit (1 AU)', description: 'Elliptical orbital trajectory', position: [0, 0, 0], dimensions: [120, 3, 120], color: '#38bdf8', opacity: 0.7 },
+        { id: 'earth', shape: 'sphere', label: 'Earth', description: 'Habitable planet with liquid water', position: [85, 0, 0], dimensions: [20, 20, 20], color: '#0284c7', opacity: 0.95 },
+        { id: 'orbit_mars', shape: 'ring', label: 'Mars Orbit (1.52 AU)', description: 'Outer terrestrial orbit', position: [0, 0, 0], dimensions: [170, 3, 170], color: '#f97316', opacity: 0.65 },
+        { id: 'mars', shape: 'sphere', label: 'Mars', description: 'Red planet (Iron oxide surface)', position: [-120, 0, 0], dimensions: [16, 16, 16], color: '#ea580c', opacity: 0.95 },
+        { id: 'orbit_jupiter', shape: 'ring', label: 'Jupiter Orbit (5.2 AU)', description: 'Gas giant orbit', position: [0, 0, 0], dimensions: [230, 4, 230], color: '#eab308', opacity: 0.6 },
+        { id: 'jupiter', shape: 'sphere', label: 'Jupiter', description: 'Largest planet in solar system', position: [0, 0, 160], dimensions: [36, 36, 36], color: '#d97706', opacity: 0.95 }
+      ],
+      connections: [
+        { fromId: 'sun', toId: 'earth', label: 'Gravitational Pull', color: '#facc15' },
+        { fromId: 'sun', toId: 'mars', label: 'Gravitational Pull', color: '#facc15' }
+      ],
+      canConvert: true
+    };
+  }
+
+  // 7. PHYSICS: INCLINED PLANE & FORCE VECTORS 3D
+  if (/\b(inclined\s*plane|force|vector|friction|gravity\s*vector|free\s*body|ramp|mechanics)\b/i.test(q)) {
+    return {
+      id,
+      title: '3D Inclined Plane & Force Vector Decomposition',
+      subtitle: 'Normal Force (N), Gravity (mg), Parallel (mg sin θ) & Perpendicular (mg cos θ) Components',
+      subject: 'Physics / Classical Mechanics',
+      sceneType: 'science_model',
+      summary: '3D mechanical model decomposing gravitational force on a block resting on a ramp at angle θ.',
+      formulas: ['F_parallel = mg sin(θ)', 'Normal Force (N) = mg cos(θ)', 'Friction (f) = μN = μmg cos(θ)', 'Acceleration (a) = g(sin θ - μ cos θ)'],
+      parts: [
+        { id: 'wedge_ramp', shape: 'triangular_prism', label: 'Inclined Wedge (Angle θ = 30°)', description: 'Rigid inclined surface', position: [0, -30, 0], dimensions: [160, 90, 100], color: '#475569', opacity: 0.85 },
+        { id: 'block_mass', shape: 'box', label: 'Mass Block (m)', description: 'Object subject to gravitational decomposition', position: [15, 10, 0], dimensions: [42, 32, 42], rotation: [0, 0, -28], color: '#f59e0b', opacity: 0.95 },
+        { id: 'vector_normal', shape: 'cone', label: 'Normal Force Vector (N)', description: 'Perpendicular reaction force', position: [30, 48, 0], dimensions: [14, 40, 14], rotation: [0, 0, -28], color: '#38bdf8', opacity: 0.95 },
+        { id: 'vector_gravity', shape: 'cone', label: 'Gravity Force (mg ↓)', description: 'Downward weight vector', position: [15, -35, 0], dimensions: [14, 48, 14], rotation: [0, 0, 180], color: '#f43f5e', opacity: 0.95 }
+      ],
+      connections: [
+        { fromId: 'block_mass', toId: 'vector_normal', label: 'N = mg cos θ', color: '#38bdf8' },
+        { fromId: 'block_mass', toId: 'vector_gravity', label: 'W = mg', color: '#f43f5e' }
+      ],
+      canConvert: true
+    };
+  }
+
+  // 8. MOLECULE / ATOM 3D MODEL
   if (/\b(atom|bohr|molecule|water\s*molecule|h2o|co2|methane|ch4|chemical\s*bond|electron|proton)\b/i.test(q)) {
     const isWater = /\b(h2o|water\s*molecule)\b/i.test(q);
     if (isWater) {
