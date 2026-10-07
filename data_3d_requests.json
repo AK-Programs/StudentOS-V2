@@ -1,0 +1,49 @@
+[
+  {
+    "topic": "Plant Stem Meristematic Tissue",
+    "subject": "Botany",
+    "description": "Detailed 3D apical meristem dome with protoderm and ground meristem",
+    "purpose": "Classroom 3D demonstration",
+    "grade": "Grade 9",
+    "urgency": "urgent",
+    "requesterName": "Professor Elara",
+    "requesterRole": "Teacher",
+    "schoolId": "school_01",
+    "schoolName": "StudentOS Academy",
+    "id": "req3d_c0ofid08",
+    "status": "In Progress",
+    "createdDate": "2026-10-07T15:44:56.462Z",
+    "notes": "Assigning 3D scene modeling team"
+  },
+  {
+    "id": "req_sample_1",
+    "topic": "Meristematic Tissue 3D Model",
+    "subject": "Botany / Plant Anatomy",
+    "description": "Detailed 3D cellular breakdown of apical meristem dome, procambium strand, and protoderm with dividing nuclei.",
+    "purpose": "Grade 9 Biology Mitosis & Plant Growth Lesson",
+    "grade": "Grade 9",
+    "urgency": "urgent",
+    "requesterName": "Sarah Jenkins",
+    "requesterRole": "Teacher",
+    "schoolId": "school_delhi_01",
+    "schoolName": "Delhi Public School",
+    "status": "Ready",
+    "createdDate": "2026-10-05T15:44:56.461Z",
+    "notes": "Verified 3D model added to verified library."
+  },
+  {
+    "id": "req_sample_2",
+    "topic": "Nephron Ultrastructure 3D Model",
+    "subject": "Human Physiology",
+    "description": "Renal corpuscle, Bowman capsule, glomerulus capillaries, proximal/distal convoluted tubules.",
+    "purpose": "Excretory system deep dive lecture",
+    "grade": "Grade 11",
+    "urgency": "normal",
+    "requesterName": "Dr. Rajesh Sharma",
+    "requesterRole": "Teacher",
+    "schoolId": "school_mumbai_04",
+    "schoolName": "St. Xavier High School",
+    "status": "Under Review",
+    "createdDate": "2026-10-07T10:44:56.461Z"
+  }
+]

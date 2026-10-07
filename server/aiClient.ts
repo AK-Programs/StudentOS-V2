@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * Central AI Provider Service for StudentOS
- * APInex (Primary) -> NVIDIA (Fallback ONLY)
+ * APInex (Primary) -> NVIDIA (Fallback ONLY for genuine 5xx / outages)
  * ZERO Gemini / OpenRouter dependencies.
  *
  * APInex Configuration:
@@ -133,7 +133,7 @@ export function classifyTaskComplexity(
     };
   }
 
-  // Fast / simple
+  // Fast / simple (e.g., "Hi", "Hello", short questions)
   const isFast =
     taskType === 'fast' ||
     cleanPrompt.split(/\s+/).length <= 15 ||
@@ -263,10 +263,15 @@ export async function generateAICompletionWithTelemetry(
   const messages = buildMessagesArray(systemInstruction, prompt, history);
   const effectiveMaxTokens = maxTokens || (tier === 'fast' ? 900 : tier === 'complex' ? 3200 : 2048);
 
-  let fallbackTriggered = false;
+  console.log(`[AI_REQUEST] provider=apinex model=${effectiveApinexModel} requestId=${requestId}`);
 
-  // 1. PRIMARY: APInex
-  if (apinexKey) {
+  if (!apinexKey) {
+    console.error(`[APINEX CONFIG ERROR] APINEX_API_KEY environment variable is missing on server. requestId=${requestId}`);
+    if (!nvidiaKey) {
+      throw new Error('[APINEX CONFIG ERROR] APINEX_API_KEY is not configured on the server. Please add APINEX_API_KEY to your server environment.');
+    }
+    console.log(`[AI_FALLBACK] from=apinex to=nvidia reason="APINEX_API_KEY missing" requestId=${requestId}`);
+  } else {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 22000);
@@ -307,26 +312,35 @@ export async function generateAICompletionWithTelemetry(
             fallbackTriggered: false,
             streamed: false
           };
-          console.log(`[APINEX AI SUCCESS] Request=${requestId} Model=${effectiveApinexModel} TotalMs=${telemetry.totalGenerationTimeMs}`);
+          console.log(`[AI_RESPONSE] provider=apinex model=${effectiveApinexModel} status=200 requestId=${requestId} durationMs=${telemetry.totalGenerationTimeMs}`);
           return { text, telemetry };
         }
       } else {
         const errBody = await resp.text().catch(() => '');
-        console.warn(`[APINEX AI WARN] HTTP ${resp.status}: ${errBody.slice(0, 160)}. Triggering NVIDIA fallback.`);
-        fallbackTriggered = true;
+        console.error(`[APINEX HTTP ERROR] status=${resp.status} requestId=${requestId} body=${errBody.slice(0, 200)}`);
+        
+        // Check if error is Auth/Config/40x - DO NOT FALLBACK FOR CONFIG/AUTH ISSUES
+        if (resp.status === 401 || resp.status === 403) {
+          throw new Error(`[APINEX AUTH ERROR] HTTP ${resp.status}: Invalid or unauthorized APINEX_API_KEY.`);
+        } else if (resp.status === 400 || resp.status === 404) {
+          throw new Error(`[APINEX REQUEST ERROR] HTTP ${resp.status}: ${errBody.slice(0, 150)}`);
+        }
+
+        // Only fallback for genuine 5xx / 429
+        console.log(`[AI_FALLBACK] from=apinex to=nvidia reason="APInex HTTP ${resp.status}" requestId=${requestId}`);
       }
     } catch (apinexErr: any) {
-      console.warn(`[APINEX AI NOTICE] Provider error: ${apinexErr?.message || apinexErr}. Triggering NVIDIA fallback.`);
-      fallbackTriggered = true;
+      if (apinexErr?.message?.includes('APINEX AUTH ERROR') || apinexErr?.message?.includes('APINEX REQUEST ERROR')) {
+        throw apinexErr;
+      }
+      console.warn(`[AI_FALLBACK] from=apinex to=nvidia reason="${apinexErr?.message || apinexErr}" requestId=${requestId}`);
     }
-  } else {
-    console.warn(`[AI SERVICE NOTICE] APINEX_API_KEY is missing. Using NVIDIA fallback.`);
-    fallbackTriggered = true;
   }
 
-  // 2. FALLBACK ONLY: NVIDIA API
+  // 2. FALLBACK ONLY: NVIDIA API (For genuine 5xx / outages)
   if (nvidiaKey) {
     try {
+      console.log(`[AI_REQUEST] provider=nvidia model=${nvidiaModel} requestId=${requestId}`);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 28000);
 
@@ -366,16 +380,16 @@ export async function generateAICompletionWithTelemetry(
             fallbackTriggered: true,
             streamed: false
           };
-          console.log(`[NVIDIA FALLBACK SUCCESS] Request=${requestId} Model=${nvidiaModel} TotalMs=${telemetry.totalGenerationTimeMs}`);
+          console.log(`[AI_RESPONSE] provider=nvidia model=${nvidiaModel} status=200 requestId=${requestId} durationMs=${telemetry.totalGenerationTimeMs}`);
           return { text, telemetry };
         }
       }
     } catch (nvidiaErr: any) {
-      console.error(`[NVIDIA FALLBACK ERROR] Request=${requestId}:`, nvidiaErr?.message || nvidiaErr);
+      console.error(`[NVIDIA FALLBACK ERROR] requestId=${requestId}:`, nvidiaErr?.message || nvidiaErr);
     }
   }
 
-  throw new Error('All AI providers (APInex & NVIDIA fallback) are currently unavailable. Please try again.');
+  throw new Error('APInex AI is currently unavailable or improperly configured. Please check your APINEX_API_KEY environment variable.');
 }
 
 /**
@@ -425,8 +439,15 @@ export async function streamAICompletion(
   const messages = buildMessagesArray(systemInstruction, prompt, history);
   const effectiveMaxTokens = maxTokens || (tier === 'fast' ? 950 : 2048);
 
-  // 1. PRIMARY: APInex Streaming
-  if (apinexKey) {
+  console.log(`[AI_REQUEST] provider=apinex model=${effectiveApinexModel} stream=true requestId=${requestId}`);
+
+  if (!apinexKey) {
+    console.error(`[APINEX CONFIG ERROR] APINEX_API_KEY environment variable is missing on server. requestId=${requestId}`);
+    if (!nvidiaKey) {
+      throw new Error('[APINEX CONFIG ERROR] APINEX_API_KEY is not configured on the server.');
+    }
+    console.log(`[AI_FALLBACK] from=apinex to=nvidia reason="APINEX_API_KEY missing" requestId=${requestId}`);
+  } else {
     try {
       const response = await fetch('https://api.apinex.bond/v1/chat/completions', {
         method: 'POST',
@@ -445,7 +466,18 @@ export async function streamAICompletion(
         signal: abortSignal
       });
 
-      if (response.ok && response.body) {
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        console.error(`[APINEX STREAM HTTP ERROR] status=${response.status} requestId=${requestId} body=${errText.slice(0, 180)}`);
+        
+        if (response.status === 401 || response.status === 403) {
+          throw new Error(`[APINEX AUTH ERROR] HTTP ${response.status}: Invalid or unauthorized APINEX_API_KEY.`);
+        } else if (response.status === 400 || response.status === 404) {
+          throw new Error(`[APINEX REQUEST ERROR] HTTP ${response.status}: ${errText.slice(0, 150)}`);
+        }
+
+        console.log(`[AI_FALLBACK] from=apinex to=nvidia reason="APInex Stream HTTP ${response.status}" requestId=${requestId}`);
+      } else if (response.body) {
         callbacks.onMeta?.({ requestId, provider: 'apinex', model: effectiveApinexModel, tier });
 
         const reader = response.body.getReader();
@@ -501,19 +533,24 @@ export async function streamAICompletion(
             fallbackTriggered: false,
             streamed: true
           };
+          console.log(`[AI_RESPONSE] provider=apinex model=${effectiveApinexModel} status=200 stream=true requestId=${requestId} durationMs=${telemetry.totalGenerationTimeMs}`);
           callbacks.onComplete?.(fullText, telemetry);
           return { text: fullText, telemetry };
         }
       }
     } catch (apinexErr: any) {
       if (abortSignal?.aborted) throw apinexErr;
-      console.warn(`[APINEX STREAM NOTICE] APInex stream notice: ${apinexErr?.message || apinexErr}. Falling back to NVIDIA stream.`);
+      if (apinexErr?.message?.includes('APINEX AUTH ERROR') || apinexErr?.message?.includes('APINEX REQUEST ERROR')) {
+        throw apinexErr;
+      }
+      console.warn(`[AI_FALLBACK] from=apinex to=nvidia reason="${apinexErr?.message || apinexErr}" requestId=${requestId}`);
     }
   }
 
   // 2. FALLBACK ONLY: NVIDIA Streaming
   if (nvidiaKey) {
     try {
+      console.log(`[AI_REQUEST] provider=nvidia model=${nvidiaModel} stream=true requestId=${requestId}`);
       const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -587,6 +624,7 @@ export async function streamAICompletion(
             fallbackTriggered: true,
             streamed: true
           };
+          console.log(`[AI_RESPONSE] provider=nvidia model=${nvidiaModel} status=200 stream=true requestId=${requestId} durationMs=${telemetry.totalGenerationTimeMs}`);
           callbacks.onComplete?.(fullText, telemetry);
           return { text: fullText, telemetry };
         }
@@ -597,5 +635,5 @@ export async function streamAICompletion(
     }
   }
 
-  throw new Error('All AI streaming services are currently unavailable.');
+  throw new Error('APInex AI is currently unavailable or improperly configured. Please check your APINEX_API_KEY environment variable.');
 }

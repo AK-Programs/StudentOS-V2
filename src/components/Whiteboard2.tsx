@@ -13,6 +13,7 @@ import {
   Play, Rotate3d
 } from 'lucide-react';
 import { InteractiveThreeDViewer, Educational3DScene } from './InteractiveThreeDViewer';
+import { ThreeDLibraryAndRequestModal } from './ThreeDLibraryAndRequestModal';
 
 const Stage = StageComp as any;
 const Layer = LayerComp as any;
@@ -503,6 +504,11 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   const [isGeneratingDiagram, setIsGeneratingDiagram] = useState(false);
   const [aiToolType, setAiToolType] = useState<'auto' | 'svg' | '3d' | 'mermaid' | 'diagram' | 'mindmap' | 'assistant'>('auto');
 
+  // Verified 3D Library & Request Hub State
+  const [threeDHubOpen, setThreeDHubOpen] = useState(false);
+  const [threeDHubUnavailableAlert, setThreeDHubUnavailableAlert] = useState(false);
+  const [threeDQueryTopic, setThreeDQueryTopic] = useState('');
+
   // 3D Model Request & Urgent Notification Modal State
   const [modelRequestOpen, setModelRequestOpen] = useState(false);
   const [modelRequestTopic, setModelRequestTopic] = useState('');
@@ -947,11 +953,13 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           body: JSON.stringify({ query: aiPromptQuery })
         });
         const data = await response.json();
-        if (data?.scene) {
+        if (data?.scene && data.scene.parts && data.scene.parts.length > 0) {
           insert3DModelOnBoard(data.scene, 120, 90);
           setAiTip(`🧊 Interactive 3D model generated for "${data.scene.title}"`);
         } else {
-          throw new Error('No 3D scene returned');
+          setThreeDQueryTopic(aiPromptQuery);
+          setThreeDHubUnavailableAlert(true);
+          setThreeDHubOpen(true);
         }
       } else if (effectiveTool === 'mermaid') {
         const response = await fetch('/api/ai/mermaid', {
@@ -3369,6 +3377,56 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             </div>
           </div>
         )}
+        {/* Verified 3D Model Library & Request Hub Modal */}
+        <ThreeDLibraryAndRequestModal
+          isOpen={threeDHubOpen}
+          onClose={() => {
+            setThreeDHubOpen(false);
+            setThreeDHubUnavailableAlert(false);
+          }}
+          onSelectVerifiedModel={(scene) => {
+            insert3DModelOnBoard(scene, 120, 90);
+            setAiTip(`🧊 Verified 3D model loaded: "${scene.title}"`);
+          }}
+          onFallbackTo2DSvg={async (query) => {
+            setAiTip(`🎨 Generating 2D SVG diagram for "${query}"...`);
+            try {
+              const res = await fetch('/api/ai/svg-diagram', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query })
+              });
+              const data = await res.json();
+              if (data?.svg) {
+                const img = new Image();
+                img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(data.svg);
+                img.onload = () => {
+                  pushHistory();
+                  setSlides(prev => {
+                    const updated = cloneSlides(prev);
+                    updated[activeSlideIdx].shapes.push({
+                      id: `svg_${Date.now()}`,
+                      type: 'svg_node',
+                      x: 140,
+                      y: 100,
+                      width: 500,
+                      height: 360,
+                      imageObj: img,
+                      svgRaw: data.svg
+                    });
+                    return updated;
+                  });
+                  setAiTip(`🎨 2D SVG diagram created for "${data.title || query}"!`);
+                };
+              }
+            } catch {
+              setAiTip('⚠️ Could not generate 2D SVG diagram.');
+            }
+          }}
+          currentUser={currentUser as any}
+          initialTopicQuery={threeDQueryTopic}
+          isUnavailableAlert={threeDHubUnavailableAlert}
+        />
       </div>
     </div>
   );

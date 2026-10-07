@@ -6,8 +6,9 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { generateAICompletion, generateAICompletionWithTelemetry, streamAICompletion, classifyTaskComplexity } from './server/aiClient';
+import { generateAICompletion, generateAICompletionWithTelemetry, streamAICompletion, classifyTaskComplexity, getApinexApiKey } from './server/aiClient';
 import { generateApinexTTS, transcribeApinexSTT } from './server/voiceService';
+import { getVerified3DModelsCatalog, getAllThreeDRequests, createThreeDRequest, updateThreeDRequestStatus } from './server/threeDModelService';
 import dotenv from 'dotenv';
 import { WebSocketServer, WebSocket as WSWebSocket } from 'ws';
 import { generateMermaidDiagram, generateSvgDiagram, generateCanvasElements } from './server/diagramEngine';
@@ -1276,6 +1277,102 @@ app.get('/api/ai/diagnostic', async (req, res) => {
       error: err.message || 'Diagnostic request failed'
     });
   }
+});
+
+// APInex Server-Side Health & Test Diagnostic Route
+app.get('/api/ai/debug-apinex', async (req, res) => {
+  const key = getApinexApiKey();
+  const configured = Boolean(key);
+  console.log(`[APINEX DIAGNOSTIC ROUTE] APINEX_API_KEY configured = ${configured}`);
+
+  if (!configured) {
+    return res.status(200).json({
+      success: false,
+      provider: 'apinex',
+      model: 'gpt-6-luna',
+      apinexKeyConfigured: false,
+      message: 'APINEX_API_KEY environment variable is not configured on the server process.'
+    });
+  }
+
+  try {
+    const text = await generateAICompletion({
+      systemInstruction: 'You are an APInex diagnostic agent.',
+      prompt: 'Hi',
+      endpointName: 'ApinexDiagnostic',
+      taskType: 'fast',
+      maxTokens: 30
+    });
+
+    return res.json({
+      success: true,
+      provider: 'apinex',
+      model: 'gpt-6-luna',
+      apinexKeyConfigured: true,
+      httpStatus: 200,
+      response: text
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      provider: 'apinex',
+      model: 'gpt-6-luna',
+      apinexKeyConfigured: true,
+      error: err.message || 'APInex diagnostic test failed'
+    });
+  }
+});
+
+// Verified Ready-Made 3D Models Catalog Endpoint
+app.get('/api/3d-models/verified', async (req, res) => {
+  try {
+    const catalog = await getVerified3DModelsCatalog();
+    return res.json({ success: true, count: catalog.length, catalog });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: 'Could not fetch verified 3D models.' });
+  }
+});
+
+// 3D Model Request Management Endpoints
+app.get('/api/3d-models/requests', (req, res) => {
+  const requests = getAllThreeDRequests();
+  return res.json({ success: true, count: requests.length, requests });
+});
+
+app.post(['/api/3d-models/requests', '/api/3d-model-requests'], (req, res) => {
+  const { topic, subject, description, purpose, grade, urgency, requesterName, requesterRole, schoolId, schoolName } = req.body || {};
+  if (!topic) {
+    return res.status(400).json({ success: false, error: 'Model topic is required.' });
+  }
+
+  const created = createThreeDRequest({
+    topic: String(topic),
+    subject: String(subject || 'STEM Academics'),
+    description: String(description || ''),
+    purpose: String(purpose || 'Classroom Instruction'),
+    grade: String(grade || 'General'),
+    urgency: urgency === 'urgent' ? 'urgent' : 'normal',
+    requesterName: String(requesterName || 'Authenticated User'),
+    requesterRole: String(requesterRole || 'Student'),
+    schoolId: String(schoolId || 'school_default'),
+    schoolName: String(schoolName || 'StudentOS Academy')
+  });
+
+  return res.json({
+    success: true,
+    message: '3D model request submitted successfully and logged for Super Admin review.',
+    request: created
+  });
+});
+
+app.patch('/api/3d-models/requests/:id', (req, res) => {
+  const { id } = req.params;
+  const { status, notes, completedModelData } = req.body || {};
+  const updated = updateThreeDRequestStatus(id, { status, notes, completedModelData });
+  if (!updated) {
+    return res.status(404).json({ success: false, error: 'Request not found' });
+  }
+  return res.json({ success: true, request: updated });
 });
 
 // Secure API endpoint for AI Teacher and Buddy conversations (Supports both JSON and real-time SSE Streaming)
