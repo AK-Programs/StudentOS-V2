@@ -2,13 +2,14 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * 
- * NVIDIA API Central AI Service for StudentOS
- * Exclusively uses official NVIDIA API (https://integrate.api.nvidia.com/v1/chat/completions)
+ * Unified AI Service for StudentOS
+ * Powered by Google GenAI (Gemini 3.8 Flash) & NVIDIA API
  * Approved Models:
- * 1. openai/gpt-oss-20b (Fast Tasks: greetings, simple explanations, short summaries, basic lookups)
- * 2. nvidia/nemotron-3-super-120b-a12b (General Tasks: normal student/teacher questions, lesson explanations, study planning, normal reports)
- * 3. nvidia/nemotron-3-ultra-550b-a55b (Complex Tasks: complex reasoning, difficult math/derivations, multi-step analysis, complex Orion workflows)
+ * 1. Google Gemini (gemini-3.8-flash) via @google/genai
+ * 2. NVIDIA AI (openai/gpt-oss-20b, nvidia/nemotron-3-super-120b-a12b, nvidia/nemotron-3-ultra-550b-a55b)
  */
+
+import { GoogleGenAI } from '@google/genai';
 
 export type NvidiaModel =
   | 'nvidia/nemotron-3-super-120b-a12b'
@@ -36,7 +37,7 @@ export interface ModelRoutingContext {
 
 export interface AIPerformanceTelemetry {
   requestId: string;
-  modelUsed: NvidiaModel;
+  modelUsed: string;
   complexityTier: TaskComplexityTier;
   requestStart: number;
   firstTokenLatencyMs: number | null;
@@ -75,6 +76,15 @@ export function getNvidiaApiKey(): string {
   return rawKey.trim().replace(/^["']|["']$/g, '');
 }
 
+export function getGeminiApiKey(): string {
+  const rawKey =
+    process.env.GEMINI_API_KEY ||
+    process.env.VITE_GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY ||
+    '';
+  return rawKey.trim().replace(/^["']|["']$/g, '');
+}
+
 /**
  * Classifies a request into 'fast', 'general', or 'complex' based on
  * user role, prompt complexity, mathematical depth, context volume, and latency needs.
@@ -97,7 +107,6 @@ export function classifyTaskComplexity(
   const wordCount = cleanPrompt.split(/\s+/).filter(Boolean).length;
   const contextSize = (ctx?.contextLength || 0) + cleanPrompt.length;
 
-  // 1. Explicit Fast / Lightweight endpoints & tasks
   if (
     taskType === 'fast' ||
     endpoint.includes('minimal') ||
@@ -109,8 +118,6 @@ export function classifyTaskComplexity(
     return { model: 'openai/gpt-oss-20b', tier: 'fast' };
   }
 
-  // 2. Complex Tasks -> nvidia/nemotron-3-ultra-550b-a55b
-  // Difficult math, derivations, proofs, multi-step school analytics, large reports, complex Orion reasoning
   const complexPatterns = [
     /\b(prove|proof|derive|derivation|theorem|calculus|integral|differential|eigenvalue|matrix|trigonometric identity|quadratic formula proof|quantum|thermodynamics|stochiometry|electrochemistry|organic synthesis)\b/i,
     /\b(multi-step|comprehensive analysis|school-wide analytics|deep analysis|detailed academic report|correlate|regression|comparative analysis|root cause)\b/i,
@@ -126,8 +133,6 @@ export function classifyTaskComplexity(
     return { model: 'nvidia/nemotron-3-ultra-550b-a55b', tier: 'complex' };
   }
 
-  // 3. Fast Tasks -> openai/gpt-oss-20b
-  // Greetings, short definitions, quick lookups, basic rewrites, simple homework checks, short conversational turns
   const isGreetingOrChitchat =
     wordCount <= 12 &&
     /^(hi|hello|hey|good morning|good afternoon|good evening|thanks|thank you|ok|okay|who are you|what can you do|help|yo|sup)\b/i.test(lower);
@@ -153,15 +158,9 @@ export function classifyTaskComplexity(
     return { model: 'openai/gpt-oss-20b', tier: 'fast' };
   }
 
-  // 4. General Tasks -> nvidia/nemotron-3-super-120b-a12b
-  // Normal student/teacher questions, lesson explanations (e.g. "Explain lines and angles"), study planning, normal reports
   return { model: 'nvidia/nemotron-3-super-120b-a12b', tier: 'general' };
 }
 
-/**
- * Dynamic task-based NVIDIA model selector.
- * Exclusively uses the 3 approved NVIDIA models.
- */
 export function selectNvidiaModel(
   prompt: string,
   options?: ModelRoutingContext
@@ -169,9 +168,6 @@ export function selectNvidiaModel(
   return classifyTaskComplexity(prompt, options).model;
 }
 
-/**
- * Returns ordered fallback sequence of approved NVIDIA models starting with the routed primary model.
- */
 export function getModelFallbackOrder(primary: NvidiaModel): NvidiaModel[] {
   if (primary === 'openai/gpt-oss-20b') {
     return ['openai/gpt-oss-20b', 'nvidia/nemotron-3-super-120b-a12b', 'nvidia/nemotron-3-ultra-550b-a55b'];
@@ -201,7 +197,6 @@ function buildMessagesArray(
     messages.push({ role: 'system', content: systemInstruction });
   }
 
-  // Keep recent relevant history to avoid bloated prompt latency
   const recentHistory = history.slice(-10);
   for (const msg of recentHistory) {
     if (msg && msg.content) {
@@ -226,8 +221,8 @@ function buildMessagesArray(
 }
 
 /**
- * Universal NVIDIA AI Completion Engine (Non-Streaming).
- * Shared across AI Buddy, Orion, Study Center, Flashcard Generator, Summarizer, and Canvas Engine.
+ * Universal AI Completion Engine.
+ * Supports Google Gemini (gemini-3.8-flash) & NVIDIA AI.
  */
 export async function generateAICompletion(
   param1: string | AICompletionOptions,
@@ -256,14 +251,14 @@ export async function generateAICompletionWithTelemetry(
   }
 
   const {
-    systemInstruction = 'You are a supportive, high-clarity academic tutor powered by NVIDIA AI.',
+    systemInstruction = 'You are a supportive, high-clarity academic tutor for StudentOS.',
     prompt,
     history = [],
     temperature = 0.65,
     jsonMode = false,
     modelOverride,
     maxTokens,
-    endpointName = 'NVIDIA AI',
+    endpointName = 'StudentOS AI',
     taskType = 'general',
     requestId = 'req_' + Math.random().toString(36).substring(2, 10),
     userRole,
@@ -272,9 +267,63 @@ export async function generateAICompletionWithTelemetry(
     contextLength
   } = options;
 
-  const nvidiaApiKey = getNvidiaApiKey();
   const requestStart = Date.now();
+  const geminiKey = getGeminiApiKey();
+  const nvidiaApiKey = getNvidiaApiKey();
 
+  // Try Google GenAI SDK (Gemini 3.8 Flash) first if configured
+  if (geminiKey || process.env.GEMINI_API_KEY) {
+    try {
+      const ai = new GoogleGenAI();
+      const effectiveModel = 'gemini-3.8-flash';
+      
+      let contents: any[] = [];
+      const recentHistory = history.slice(-8);
+      for (const msg of recentHistory) {
+        if (msg && msg.content) {
+          contents.push({
+            role: msg.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: String(msg.content) }]
+          });
+        }
+      }
+      contents.push({
+        role: 'user',
+        parts: [{ text: prompt }]
+      });
+
+      const response = await ai.models.generateContent({
+        model: effectiveModel,
+        contents,
+        config: {
+          systemInstruction,
+          temperature,
+          maxOutputTokens: maxTokens || (jsonMode ? 2500 : 2048),
+          responseMimeType: jsonMode ? 'application/json' : undefined
+        }
+      });
+
+      const text = (response.text || '').trim();
+      if (text) {
+        const telemetry: AIPerformanceTelemetry = {
+          requestId,
+          modelUsed: effectiveModel,
+          complexityTier: 'general',
+          requestStart,
+          firstTokenLatencyMs: Date.now() - requestStart,
+          totalGenerationTimeMs: Date.now() - requestStart,
+          retries: 0,
+          streamed: false
+        };
+        console.log(`[GEMINI AI TELEMETRY] Request=${requestId} Model=${effectiveModel} TotalMs=${telemetry.totalGenerationTimeMs}`);
+        return { text, telemetry };
+      }
+    } catch (geminiErr: any) {
+      console.warn(`[GEMINI AI NOTICE] Request ${requestId} Gemini attempt notice:`, geminiErr?.message || geminiErr);
+    }
+  }
+
+  // Fallback or Direct to NVIDIA API
   const { model: primaryModel, tier } = classifyTaskComplexity(prompt, {
     endpointName,
     taskType,
@@ -285,96 +334,93 @@ export async function generateAICompletionWithTelemetry(
     contextLength
   });
 
-  if (!nvidiaApiKey) {
-    console.error(`[AI P0 ERROR] Request ID: ${requestId} - NVIDIA_API_KEY environment variable is not configured.`);
-    throw new Error('NVIDIA_API_KEY is not configured on the server.');
+  if (!nvidiaApiKey && !geminiKey) {
+    console.error(`[AI ERROR] Neither GEMINI_API_KEY nor NVIDIA_API_KEY is configured.`);
+    throw new Error('AI API credentials are not configured on the server.');
   }
 
-  const effectiveMaxTokens = maxTokens || (tier === 'fast' ? 900 : tier === 'general' ? 2048 : 3200);
-  const messages = buildMessagesArray(systemInstruction, prompt, history);
-  const candidateModels = getModelFallbackOrder(primaryModel);
+  if (nvidiaApiKey) {
+    const effectiveMaxTokens = maxTokens || (tier === 'fast' ? 900 : tier === 'general' ? 2048 : 3200);
+    const messages = buildMessagesArray(systemInstruction, prompt, history);
+    const candidateModels = getModelFallbackOrder(primaryModel);
 
-  let lastErr: any = null;
-  let retries = 0;
+    let lastErr: any = null;
+    let retries = 0;
 
-  for (const candidateModel of candidateModels) {
-    const attemptStart = Date.now();
-    try {
-      const controller = new AbortController();
-      const timeoutMs = candidateModel === 'openai/gpt-oss-20b' ? 18000 : 38000;
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+    for (const candidateModel of candidateModels) {
+      const attemptStart = Date.now();
+      try {
+        const controller = new AbortController();
+        const timeoutMs = candidateModel === 'openai/gpt-oss-20b' ? 18000 : 38000;
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-      const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${nvidiaApiKey}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          model: candidateModel,
-          messages,
-          temperature,
-          max_tokens: effectiveMaxTokens,
-          ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
-        }),
-        signal: controller.signal
-      });
+        const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${nvidiaApiKey}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            model: candidateModel,
+            messages,
+            temperature,
+            max_tokens: effectiveMaxTokens,
+            ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
+          }),
+          signal: controller.signal
+        });
 
-      clearTimeout(timer);
-      const durationMs = Date.now() - attemptStart;
+        clearTimeout(timer);
+        const durationMs = Date.now() - attemptStart;
 
-      if (response.ok) {
-        const data = await response.json();
-        const choiceMsg = data.choices?.[0]?.message;
-        const text = (choiceMsg?.content || choiceMsg?.reasoning_content || choiceMsg?.reasoning || '').trim();
-        if (text) {
-          const telemetry: AIPerformanceTelemetry = {
-            requestId,
-            modelUsed: candidateModel,
-            complexityTier: tier,
-            requestStart,
-            firstTokenLatencyMs: durationMs,
-            totalGenerationTimeMs: Date.now() - requestStart,
-            retries,
-            streamed: false
-          };
-          console.log(`[NVIDIA AI TELEMETRY] Request=${requestId} Tier=${tier} Model=${candidateModel} TotalMs=${telemetry.totalGenerationTimeMs} Retries=${retries}`);
-          return { text, telemetry };
+        if (response.ok) {
+          const data = await response.json();
+          const choiceMsg = data.choices?.[0]?.message;
+          const text = (choiceMsg?.content || choiceMsg?.reasoning_content || choiceMsg?.reasoning || '').trim();
+          if (text) {
+            const telemetry: AIPerformanceTelemetry = {
+              requestId,
+              modelUsed: candidateModel,
+              complexityTier: tier,
+              requestStart,
+              firstTokenLatencyMs: durationMs,
+              totalGenerationTimeMs: Date.now() - requestStart,
+              retries,
+              streamed: false
+            };
+            console.log(`[NVIDIA AI TELEMETRY] Request=${requestId} Tier=${tier} Model=${candidateModel} TotalMs=${telemetry.totalGenerationTimeMs} Retries=${retries}`);
+            return { text, telemetry };
+          }
+        } else {
+          const errText = await response.text();
+          lastErr = new Error(`NVIDIA API HTTP ${response.status}: ${errText || 'Request failed'}`);
+          retries++;
         }
-        throw new Error(`Empty response content returned by model "${candidateModel}".`);
-      } else {
-        const errText = await response.text();
-        console.warn(`[NVIDIA AI WARN] Model ${candidateModel} HTTP ${response.status}: ${errText.slice(0, 200)}`);
-        lastErr = new Error(`NVIDIA API HTTP ${response.status}: ${errText || 'Request failed'}`);
+      } catch (apiErr: any) {
+        lastErr = apiErr;
         retries++;
       }
-    } catch (apiErr: any) {
-      console.warn(`[NVIDIA AI WARN] Request ID: ${requestId} - Model ${candidateModel} attempt failed:`, apiErr?.message || apiErr);
-      lastErr = apiErr;
-      retries++;
     }
   }
 
-  console.error(`[AI P0 ERROR] Request ID: ${requestId} - All approved NVIDIA models failed:`, lastErr?.message || lastErr);
-  throw lastErr || new Error('AI service is temporarily unavailable.');
+  throw new Error('AI completion service is currently unavailable.');
 }
 
 /**
- * Real Server-Side Streaming Completion Engine for NVIDIA API.
- * Streams tokens immediately as SSE chunks arrive from https://integrate.api.nvidia.com/v1/chat/completions.
+ * Server-Side Streaming Completion Engine.
  */
 export async function streamAICompletion(
   options: AICompletionOptions,
   callbacks: {
-    onMeta?: (meta: { requestId: string; model: NvidiaModel; tier: TaskComplexityTier }) => void;
+    onMeta?: (meta: { requestId: string; model: string; tier: TaskComplexityTier }) => void;
     onToken: (token: string, firstTokenLatencyMs: number) => void;
     onComplete?: (fullText: string, telemetry: AIPerformanceTelemetry) => void;
   },
   abortSignal?: AbortSignal
 ): Promise<{ text: string; telemetry: AIPerformanceTelemetry }> {
   const {
-    systemInstruction = 'You are a supportive, high-clarity academic tutor powered by NVIDIA AI.',
+    systemInstruction = 'You are a supportive, high-clarity academic tutor for StudentOS.',
     prompt,
     history = [],
     temperature = 0.65,
@@ -389,9 +435,78 @@ export async function streamAICompletion(
     contextLength
   } = options;
 
-  const nvidiaApiKey = getNvidiaApiKey();
   const requestStart = Date.now();
+  const geminiKey = getGeminiApiKey();
+  const nvidiaApiKey = getNvidiaApiKey();
 
+  // Try Google GenAI Stream if available
+  if (geminiKey || process.env.GEMINI_API_KEY) {
+    try {
+      const ai = new GoogleGenAI();
+      const effectiveModel = 'gemini-3.8-flash';
+      callbacks.onMeta?.({ requestId, model: effectiveModel, tier: 'general' });
+
+      let contents: any[] = [];
+      const recentHistory = history.slice(-8);
+      for (const msg of recentHistory) {
+        if (msg && msg.content) {
+          contents.push({
+            role: msg.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: String(msg.content) }]
+          });
+        }
+      }
+      contents.push({
+        role: 'user',
+        parts: [{ text: prompt }]
+      });
+
+      const responseStream = await ai.models.generateContentStream({
+        model: effectiveModel,
+        contents,
+        config: {
+          systemInstruction,
+          temperature,
+          maxOutputTokens: maxTokens || 2048
+        }
+      });
+
+      let fullText = '';
+      let firstTokenLatencyMs: number | null = null;
+
+      for await (const chunk of responseStream) {
+        if (abortSignal?.aborted) break;
+        const token = chunk.text || '';
+        if (token) {
+          if (firstTokenLatencyMs === null) {
+            firstTokenLatencyMs = Date.now() - requestStart;
+          }
+          fullText += token;
+          callbacks.onToken(token, firstTokenLatencyMs);
+        }
+      }
+
+      if (fullText.trim().length > 0) {
+        const telemetry: AIPerformanceTelemetry = {
+          requestId,
+          modelUsed: effectiveModel,
+          complexityTier: 'general',
+          requestStart,
+          firstTokenLatencyMs: firstTokenLatencyMs ?? (Date.now() - requestStart),
+          totalGenerationTimeMs: Date.now() - requestStart,
+          retries: 0,
+          streamed: true
+        };
+        callbacks.onComplete?.(fullText, telemetry);
+        return { text: fullText, telemetry };
+      }
+    } catch (streamErr: any) {
+      if (abortSignal?.aborted) throw streamErr;
+      console.warn(`[GEMINI STREAM NOTICE] Falling back to NVIDIA stream:`, streamErr?.message || streamErr);
+    }
+  }
+
+  // Fallback to NVIDIA Stream
   const { model: primaryModel, tier } = classifyTaskComplexity(prompt, {
     endpointName,
     taskType,
@@ -403,20 +518,15 @@ export async function streamAICompletion(
   });
 
   if (!nvidiaApiKey) {
-    throw new Error('NVIDIA_API_KEY is not configured on the server.');
+    throw new Error('No AI streaming provider is configured.');
   }
 
   const effectiveMaxTokens = maxTokens || (tier === 'fast' ? 950 : tier === 'general' ? 2048 : 3200);
   const messages = buildMessagesArray(systemInstruction, prompt, history);
   const candidateModels = getModelFallbackOrder(primaryModel);
 
-  let lastErr: any = null;
-  let retries = 0;
-
   for (const candidateModel of candidateModels) {
-    if (abortSignal?.aborted) {
-      throw new Error('Request cancelled by user.');
-    }
+    if (abortSignal?.aborted) throw new Error('Request cancelled by user.');
 
     try {
       const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
@@ -436,13 +546,7 @@ export async function streamAICompletion(
         signal: abortSignal
       });
 
-      if (!response.ok || !response.body) {
-        const errText = await response.text().catch(() => '');
-        console.warn(`[NVIDIA STREAM WARN] Model ${candidateModel} HTTP ${response.status}: ${errText.slice(0, 200)}`);
-        lastErr = new Error(`NVIDIA API HTTP ${response.status}`);
-        retries++;
-        continue;
-      }
+      if (!response.ok || !response.body) continue;
 
       callbacks.onMeta?.({ requestId, model: candidateModel, tier });
 
@@ -474,7 +578,6 @@ export async function streamAICompletion(
           try {
             const parsed = JSON.parse(payload);
             const delta = parsed.choices?.[0]?.delta;
-            // Forward content tokens immediately (only user-facing content, or reasoning if content is empty on final)
             const token = delta?.content || '';
             if (token) {
               if (firstTokenLatencyMs === null) {
@@ -483,9 +586,7 @@ export async function streamAICompletion(
               fullText += token;
               callbacks.onToken(token, firstTokenLatencyMs);
             }
-          } catch {
-            // Ignore partial JSON line
-          }
+          } catch {}
         }
       }
 
@@ -497,30 +598,19 @@ export async function streamAICompletion(
           requestStart,
           firstTokenLatencyMs: firstTokenLatencyMs ?? (Date.now() - requestStart),
           totalGenerationTimeMs: Date.now() - requestStart,
-          retries,
+          retries: 0,
           streamed: true
         };
-        console.log(
-          `[NVIDIA STREAM TELEMETRY] Request=${requestId} Tier=${tier} Model=${candidateModel} FirstTokenMs=${telemetry.firstTokenLatencyMs} TotalMs=${telemetry.totalGenerationTimeMs}`
-        );
         callbacks.onComplete?.(fullText, telemetry);
         return { text: fullText, telemetry };
       }
-
-      // If stream yielded 0 content tokens (e.g., reasoning-only chunking), try next model
-      retries++;
-      lastErr = new Error(`Model ${candidateModel} returned empty stream.`);
     } catch (err: any) {
-      if (abortSignal?.aborted || err?.name === 'AbortError') {
-        throw err;
-      }
-      console.warn(`[NVIDIA STREAM WARN] Model ${candidateModel} error:`, err?.message || err);
-      lastErr = err;
-      retries++;
+      if (abortSignal?.aborted || err?.name === 'AbortError') throw err;
     }
   }
 
-  throw lastErr || new Error('AI streaming service is temporarily unavailable.');
+  throw new Error('AI streaming service is temporarily unavailable.');
 }
+
 
 

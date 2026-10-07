@@ -2314,6 +2314,8 @@ async function startServer() {
 
 
 if (!process.env.VERCEL && process.env.NODE_ENV !== 'test') {
-  startServer();
+  startServer().catch((err) => {
+    console.error('[Server Startup Error]:', err);
+  });
 }
 

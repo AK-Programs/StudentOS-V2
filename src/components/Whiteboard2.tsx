@@ -157,8 +157,17 @@ function renderScene3DToSvg(
   const W = 680;
   const H = 480;
   const cx = W / 2;
-  const cy = H / 2 + 12;
-  const scale = 68 * Math.max(0.4, Math.min(3, zoom || 1));
+  const cy = H / 2 + 10;
+
+  const safeParts = Array.isArray(scene.parts) ? scene.parts : [];
+  const coords = safeParts.flatMap((p: any) => [
+    Math.abs(p?.position?.[0] || 0) + (p?.dimensions?.[0] || 0) * 0.5,
+    Math.abs(p?.position?.[1] || 0) + (p?.dimensions?.[1] || 0) * 0.5,
+    Math.abs(p?.position?.[2] || 0) + (p?.dimensions?.[2] || 0) * 0.5,
+  ]);
+  const maxExtent = Math.max(1, ...coords);
+  const baseScale = maxExtent > 12 ? 145 / maxExtent : 68;
+  const scale = baseScale * Math.max(0.4, Math.min(3, zoom || 1));
 
   const radX = ((rotXDeg || 22) * Math.PI) / 180;
   const radY = ((rotYDeg || -32) * Math.PI) / 180;
@@ -176,7 +185,7 @@ function renderScene3DToSvg(
     // Rotate around X
     const y2 = y1 * cosX - z1 * sinX;
     const z2 = y1 * sinX + z1 * cosX;
-    const perspective = 6.5 / Math.max(2.5, 6.5 - z2 * 0.35);
+    const perspective = 6.5 / Math.max(2.5, 6.5 - z2 * 0.0035);
     return {
       x: Number((cx + x1 * scale * perspective).toFixed(1)),
       y: Number((cy - y2 * scale * perspective).toFixed(1)),
@@ -194,26 +203,27 @@ function renderScene3DToSvg(
   const elements: { z: number; svg: string }[] = [];
 
   // Reference 3D floor grid
-  for (let g = -2; g <= 2; g++) {
-    const p1 = project([g, -1.65, -2]);
-    const p2 = project([g, -1.65, 2]);
-    const p3 = project([-2, -1.65, g]);
-    const p4 = project([2, -1.65, g]);
+  const gridRange = maxExtent > 12 ? 120 : 2;
+  const gridStep = gridRange / 2;
+  for (let g = -gridRange; g <= gridRange; g += gridStep) {
+    const p1 = project([g, -gridRange * 0.75, -gridRange]);
+    const p2 = project([g, -gridRange * 0.75, gridRange]);
+    const p3 = project([-gridRange, -gridRange * 0.75, g]);
+    const p4 = project([gridRange, -gridRange * 0.75, g]);
     elements.push({
-      z: -10,
+      z: -999,
       svg: `<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="#1e293b" stroke-width="1" stroke-dasharray="3,3" />
             <line x1="${p3.x}" y1="${p3.y}" x2="${p4.x}" y2="${p4.y}" stroke="#1e293b" stroke-width="1" stroke-dasharray="3,3" />`
     });
   }
 
-  // Build part lookup map for safe coordinate resolution
-  const safeParts = Array.isArray(scene.parts) ? scene.parts : [];
-  const partMap = new Map<string, Part3D>();
-  safeParts.forEach((p, idx) => {
+  // Build part lookup map
+  const partMap = new Map<string, any>();
+  safeParts.forEach((p: any, idx: number) => {
     if (p) partMap.set(p.id || `part_${idx}`, p);
   });
 
-  // Connections / bonds / rays
+  // Connections / bonds / flow vectors
   if (Array.isArray(scene.connections)) {
     for (const conn of scene.connections) {
       if (!conn) continue;
@@ -237,14 +247,14 @@ function renderScene3DToSvg(
       if (!fCoord || !tCoord) continue;
 
       const f: [number, number, number] = [
-        (fCoord[0] || 0) * (1 + (explode || 0) * 0.45),
-        (fCoord[1] || 0) * (1 + (explode || 0) * 0.45),
-        (fCoord[2] || 0) * (1 + (explode || 0) * 0.45)
+        (fCoord[0] || 0) * (1 + (explode || 0) * 0.4),
+        (fCoord[1] || 0) * (1 + (explode || 0) * 0.4),
+        (fCoord[2] || 0) * (1 + (explode || 0) * 0.4)
       ];
       const t: [number, number, number] = [
-        (tCoord[0] || 0) * (1 + (explode || 0) * 0.45),
-        (tCoord[1] || 0) * (1 + (explode || 0) * 0.45),
-        (tCoord[2] || 0) * (1 + (explode || 0) * 0.45)
+        (tCoord[0] || 0) * (1 + (explode || 0) * 0.4),
+        (tCoord[1] || 0) * (1 + (explode || 0) * 0.4),
+        (tCoord[2] || 0) * (1 + (explode || 0) * 0.4)
       ];
 
       const p1 = project(f);
@@ -255,7 +265,7 @@ function renderScene3DToSvg(
       elements.push({
         z: avgZ,
         svg: `<g>
-          <line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="${conn.color || '#94a3b8'}" stroke-width="3.5" stroke-linecap="round" />
+          <line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="${conn.color || '#38bdf8'}" stroke-width="3" stroke-linecap="round" />
           ${showLabels && conn.label ? `<text x="${mx}" y="${my}" fill="${conn.color || '#e2e8f0'}" font-family="sans-serif" font-size="11" font-weight="bold" text-anchor="middle">${escapeXml(conn.label)}</text>` : ''}
         </g>`
       });
@@ -267,31 +277,69 @@ function renderScene3DToSvg(
     if (!part) continue;
     const partPos = Array.isArray(part.position) ? part.position : [0, 0, 0];
     const pos: [number, number, number] = [
-      (partPos[0] || 0) * (1 + (explode || 0) * 0.55),
-      (partPos[1] || 0) * (1 + (explode || 0) * 0.55),
-      (partPos[2] || 0) * (1 + (explode || 0) * 0.55)
+      (partPos[0] || 0) * (1 + (explode || 0) * 0.5),
+      (partPos[1] || 0) * (1 + (explode || 0) * 0.5),
+      (partPos[2] || 0) * (1 + (explode || 0) * 0.5)
     ];
-    const dims = Array.isArray(part.dimensions) ? part.dimensions : [1, 1, 1];
-    const dx = dims[0] || 1, dy = dims[1] || 1, dz = dims[2] || 1;
+    const dims = Array.isArray(part.dimensions) ? part.dimensions : [30, 30, 30];
+    const dx = dims[0] || 30, dy = dims[1] || 30, dz = dims[2] || 30;
     const center = project(pos);
     const col = part.color || '#6366f1';
-    const op = typeof part.opacity === 'number' ? part.opacity : 0.85;
+    const op = typeof part.opacity === 'number' ? part.opacity : 0.88;
     const shapeType = part.shape || part.primitive || 'box';
 
     let shapeMarkup = '';
 
     if (shapeType === 'sphere') {
-      const r = Math.max(10, dx * scale * 0.62);
+      const r = Math.max(8, (dx * 0.5) * scale * 0.88);
       shapeMarkup = `
-        <circle cx="${center.x}" cy="${center.y}" r="${r.toFixed(1)}" fill="${col}" fill-opacity="${op}" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.65" />
+        <circle cx="${center.x}" cy="${center.y}" r="${r.toFixed(1)}" fill="${col}" fill-opacity="${op}" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.75" />
         <ellipse cx="${center.x}" cy="${center.y}" rx="${r.toFixed(1)}" ry="${(r * 0.36).toFixed(1)}" fill="none" stroke="#ffffff" stroke-width="1" stroke-dasharray="4,3" stroke-opacity="0.55" />
-        <circle cx="${(center.x - r * 0.3).toFixed(1)}" cy="${(center.y - r * 0.3).toFixed(1)}" r="${(r * 0.22).toFixed(1)}" fill="#ffffff" fill-opacity="0.35" />
+        <circle cx="${(center.x - r * 0.3).toFixed(1)}" cy="${(center.y - r * 0.3).toFixed(1)}" r="${(r * 0.22).toFixed(1)}" fill="#ffffff" fill-opacity="0.4" />
       `;
     } else if (shapeType === 'torus' || shapeType === 'ring') {
-      const rx = Math.max(16, dx * scale * 0.5);
-      const ry = Math.max(7, rx * Math.abs(sinX) + 6);
+      const rx = Math.max(14, (dx * 0.5) * scale * 0.88);
+      const ry = Math.max(6, rx * 0.35);
       shapeMarkup = `
-        <ellipse cx="${center.x}" cy="${center.y}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" fill="none" stroke="${col}" stroke-width="2" stroke-opacity="${op}" stroke-dasharray="6,4" />
+        <ellipse cx="${center.x}" cy="${center.y}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" fill="none" stroke="${col}" stroke-width="2.5" stroke-opacity="${op}" stroke-dasharray="6,4" />
+      `;
+    } else if (shapeType === 'hexagonal_prism') {
+      const hw = dx * 0.5, hh = dy * 0.5;
+      const topPts: { x: number; y: number }[] = [];
+      const botPts: { x: number; y: number }[] = [];
+      for (let a = 0; a < 6; a++) {
+        const rad = (a * 60 * Math.PI) / 180;
+        topPts.push(project([pos[0] + Math.cos(rad) * hw, pos[1] + hh, pos[2] + Math.sin(rad) * hw]));
+        botPts.push(project([pos[0] + Math.cos(rad) * hw, pos[1] - hh, pos[2] + Math.sin(rad) * hw]));
+      }
+      const topStr = topPts.map(p => `${p.x},${p.y}`).join(' ');
+      const botStr = botPts.map(p => `${p.x},${p.y}`).join(' ');
+      shapeMarkup = `
+        <polygon points="${botStr}" fill="${col}" fill-opacity="${op * 0.6}" stroke="#ffffff" stroke-width="1.2" />
+        ${topPts.map((p, i) => {
+          const next = (i + 1) % 6;
+          return `<polygon points="${p.x},${p.y} ${topPts[next].x},${topPts[next].y} ${botPts[next].x},${botPts[next].y} ${botPts[i].x},${botPts[i].y}" fill="${col}" fill-opacity="${op * (0.7 + (i % 3) * 0.1)}" stroke="#ffffff" stroke-width="1.2" />`;
+        }).join('')}
+        <polygon points="${topStr}" fill="${col}" fill-opacity="${op * 0.95}" stroke="#ffffff" stroke-width="1.6" />
+      `;
+    } else if (shapeType === 'capsule') {
+      const r = Math.max(8, (dx * 0.4) * scale * 0.88);
+      const topC = project([pos[0], pos[1] + dy * 0.35, pos[2]]);
+      const botC = project([pos[0], pos[1] - dy * 0.35, pos[2]]);
+      shapeMarkup = `
+        <rect x="${(topC.x - r).toFixed(1)}" y="${topC.y}" width="${(r * 2).toFixed(1)}" height="${Math.max(1, botC.y - topC.y)}" rx="${r.toFixed(1)}" fill="${col}" fill-opacity="${op}" stroke="#ffffff" stroke-width="1.4" />
+        <circle cx="${topC.x}" cy="${topC.y}" r="${r.toFixed(1)}" fill="${col}" fill-opacity="${op * 0.9}" stroke="#ffffff" stroke-width="1.2" />
+        <circle cx="${botC.x}" cy="${botC.y}" r="${r.toFixed(1)}" fill="${col}" fill-opacity="${op * 0.7}" stroke="#ffffff" stroke-width="1.2" />
+      `;
+    } else if (shapeType === 'cylinder') {
+      const rx = Math.max(10, (dx * 0.5) * scale * 0.85);
+      const ry = Math.max(5, rx * 0.32);
+      const topC = project([pos[0], pos[1] + dy * 0.5, pos[2]]);
+      const botC = project([pos[0], pos[1] - dy * 0.5, pos[2]]);
+      shapeMarkup = `
+        <ellipse cx="${botC.x}" cy="${botC.y}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" fill="${col}" fill-opacity="${op * 0.65}" stroke="#e2e8f0" stroke-width="1.4" />
+        <path d="M ${(topC.x - rx).toFixed(1)} ${topC.y} L ${(botC.x - rx).toFixed(1)} ${botC.y} A ${rx.toFixed(1)} ${ry.toFixed(1)} 0 0 0 ${(botC.x + rx).toFixed(1)} ${botC.y} L ${(topC.x + rx).toFixed(1)} ${topC.y} Z" fill="${col}" fill-opacity="${op * 0.8}" stroke="#ffffff" stroke-width="1.4" />
+        <ellipse cx="${topC.x}" cy="${topC.y}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" fill="${col}" fill-opacity="${op}" stroke="#ffffff" stroke-width="1.6" />
       `;
     } else if (shapeType === 'pyramid' || shapeType === 'cone') {
       const hw = dx * 0.5, hh = dy * 0.5, hd = dz * 0.5;
@@ -321,18 +369,8 @@ function renderScene3DToSvg(
         <polygon points="${f1.x},${f1.y} ${f2.x},${f2.y} ${b2.x},${b2.y} ${b1.x},${b1.y}" fill="${col}" fill-opacity="${op * 0.6}" stroke="#ffffff" stroke-width="1.5" />
         <polygon points="${f1.x},${f1.y} ${f2.x},${f2.y} ${f3.x},${f3.y}" fill="${col}" fill-opacity="${op * 0.9}" stroke="#ffffff" stroke-width="1.8" />
       `;
-    } else if (shapeType === 'cylinder') {
-      const rx = Math.max(12, dx * scale * 0.5);
-      const ry = Math.max(6, rx * 0.32);
-      const topC = project([pos[0], pos[1] + dy * 0.5, pos[2]]);
-      const botC = project([pos[0], pos[1] - dy * 0.5, pos[2]]);
-      shapeMarkup = `
-        <ellipse cx="${botC.x}" cy="${botC.y}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" fill="${col}" fill-opacity="${op * 0.65}" stroke="#e2e8f0" stroke-width="1.4" />
-        <path d="M ${(topC.x - rx).toFixed(1)} ${topC.y} L ${(botC.x - rx).toFixed(1)} ${botC.y} A ${rx.toFixed(1)} ${ry.toFixed(1)} 0 0 0 ${(botC.x + rx).toFixed(1)} ${botC.y} L ${(topC.x + rx).toFixed(1)} ${topC.y} Z" fill="${col}" fill-opacity="${op * 0.8}" stroke="#ffffff" stroke-width="1.4" />
-        <ellipse cx="${topC.x}" cy="${topC.y}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" fill="${col}" fill-opacity="${op}" stroke="#ffffff" stroke-width="1.6" />
-      `;
     } else {
-      // 3D Box / Cuboid / Plane
+      // 3D Box / Cuboid / Polyhedron
       const hw = dx * 0.5, hh = dy * 0.5, hd = dz * 0.5;
       const v = [
         project([pos[0] - hw, pos[1] - hh, pos[2] - hd]),
