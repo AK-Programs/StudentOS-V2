@@ -631,7 +631,7 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
         }
       }
     };
-  });
+  }, [currentUser?.uid, showNotification]);
 
   // Global Call Realtime Listener for Direct Calls
   useEffect(() => {
