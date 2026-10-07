@@ -12,7 +12,7 @@ import {
   ZoomOut, Eye, Settings, MessageSquare, BarChart2, User, Calendar, 
   Flame, Upload, FileText, CheckCircle, Download, ChevronLeft, 
   PenTool, Eraser, Share2, LogOut, AlertTriangle, Activity, RefreshCw,
-  Heart, Bookmark, X, Bell, Zap, Gift, Smartphone, Paperclip, History, Brain
+  Heart, Bookmark, X, Bell, Zap, Gift, Smartphone, Paperclip, History, Brain, Globe
 } from 'lucide-react';
 import { 
   UserRole, HouseType, SectionType, UserProfile, HouseStats, 

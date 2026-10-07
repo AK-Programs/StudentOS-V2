@@ -2978,12 +2978,12 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             )}
 
             {/* Rectangular Marquee Selection Box */}
-            {marquee && marquee.active && (
+            {marqueeRect && marqueeRect.visible && (
               <Rect
-                x={Math.min(marquee.startX, marquee.currentX)}
-                y={Math.min(marquee.startY, marquee.currentY)}
-                width={Math.abs(marquee.currentX - marquee.startX)}
-                height={Math.abs(marquee.currentY - marquee.startY)}
+                x={Math.min(marqueeRect.x1, marqueeRect.x2)}
+                y={Math.min(marqueeRect.y1, marqueeRect.y2)}
+                width={Math.abs(marqueeRect.x2 - marqueeRect.x1)}
+                height={Math.abs(marqueeRect.y2 - marqueeRect.y1)}
                 fill={selectionMode === 'intersect' ? 'rgba(99, 102, 241, 0.14)' : 'rgba(16, 185, 129, 0.14)'}
                 stroke={selectionMode === 'intersect' ? '#6366f1' : '#10b981'}
                 strokeWidth={1.5 / stageScale}
@@ -3022,22 +3022,22 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
         )}
 
         {/* Contextual Selected Object AI Insight Card (Explain / Quiz / Notes) */}
-        {selectedAiInsight && (
+        {aiInsightCard && (
           <div className="absolute bottom-14 right-4 w-80 sm:w-96 max-h-[55vh] overflow-y-auto bg-slate-900/95 border border-indigo-500/40 rounded-2xl p-4 shadow-2xl z-50 backdrop-blur-md animate-fadeIn">
             <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-2.5">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-indigo-400" />
-                <h4 className="text-xs font-black uppercase tracking-wider text-indigo-300">{selectedAiInsight.title}</h4>
+                <h4 className="text-xs font-black uppercase tracking-wider text-indigo-300">{aiInsightCard.title}</h4>
               </div>
               <button
-                onClick={() => setSelectedAiInsight(null)}
+                onClick={() => setAiInsightCard(null)}
                 className="text-slate-400 hover:text-white text-xs px-1.5 py-0.5 rounded bg-white/5"
               >
                 ✕
               </button>
             </div>
             <div className="text-xs text-slate-200 whitespace-pre-wrap leading-relaxed font-sans">
-              {selectedAiInsight.content}
+              {aiInsightCard.content}
             </div>
           </div>
         )}
