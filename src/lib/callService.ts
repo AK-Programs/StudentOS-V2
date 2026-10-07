@@ -264,8 +264,9 @@ export async function startSchoolCall(params: {
 /**
  * Accept an Incoming Call
  */
-export async function acceptSchoolCall(callId: string, currentUser: UserProfile): Promise<boolean> {
-  if (!currentCallSession || currentCallSession.callId !== callId) {
+export async function acceptSchoolCall(callId?: string, currentUser?: UserProfile | null): Promise<boolean> {
+  const targetId = callId || currentCallSession?.callId;
+  if (!currentCallSession || (targetId && currentCallSession.callId !== targetId)) {
     console.warn('[CallService] Cannot accept call: session mismatch or missing.');
     return false;
   }
@@ -326,7 +327,8 @@ export async function acceptSchoolCall(callId: string, currentUser: UserProfile)
 /**
  * Decline / Reject an Incoming Call
  */
-export async function declineSchoolCall(callId: string, reason: string = 'declined', currentUser?: UserProfile | null) {
+export async function declineSchoolCall(callId?: string, reason: string = 'declined', currentUser?: UserProfile | null) {
+  const targetId = callId || currentCallSession?.callId;
   soundService.stopRingtone();
   if (callTimeoutTimer) {
     clearTimeout(callTimeoutTimer);

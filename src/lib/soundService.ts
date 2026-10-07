@@ -303,6 +303,40 @@ class SoundService {
     } catch (_) {}
   }
 
+  private ringtoneInterval: any = null;
+
+  public playRingtone(type: 'incoming' | 'outgoing' = 'incoming') {
+    this.stopRingtone();
+    const ctx = this.getContext();
+    if (!ctx) return;
+
+    const playPulse = () => {
+      try {
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = type === 'incoming' ? 'sine' : 'triangle';
+        osc.frequency.setValueAtTime(type === 'incoming' ? 880 : 440, now);
+        gain.gain.setValueAtTime(0.08, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.4);
+      } catch (_) {}
+    };
+
+    playPulse();
+    this.ringtoneInterval = setInterval(playPulse, 1200);
+  }
+
+  public stopRingtone() {
+    if (this.ringtoneInterval) {
+      clearInterval(this.ringtoneInterval);
+      this.ringtoneInterval = null;
+    }
+  }
+
   /**
    * Uplifting arpeggio when completing a flashcard deck or rating mastery
    */

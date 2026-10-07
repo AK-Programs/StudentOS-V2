@@ -446,12 +446,13 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
     }
   };
 
-  const handleSaveToFlashcards = () => {
+  const handleSaveToFlashcards = async () => {
     if (!content.trim()) {
       showToast('⚠️ Add lecture content first to generate flashcards.');
       return;
     }
-    const count = saveStudyOutputToFlashcards(`${title}\n${content}`, currentSubject);
+    const result = await saveStudyOutputToFlashcards(title || 'Lecture Note', currentSubject || 'General', content, currentUser?.uid);
+    const count = typeof result === 'number' ? result : (result?.count || 0);
     if (count > 0) {
       showToast(`🃏 Saved ${count} flashcards to Study Center (${currentSubject})!`);
     } else {

@@ -145,9 +145,11 @@ export interface OrionUserContext {
   userName?: string;
   userEmail?: string;
   userRole?: string; // 'super_admin' | 'admin' | 'coordinator' | 'teacher' | 'student'
+  role?: string;
   schoolId?: string;
   grade?: string;
   section?: string;
+  userClass?: string;
 }
 
 export interface OrionExecutionResult {
@@ -2095,7 +2097,7 @@ export async function executeOrionActionPipeline(
             const sourceMarkdownList = sources
               .map((s: any, idx: number) => `${idx + 1}. **[${s.title}](${s.uri})** — *${s.published_source || 'Web Source'}*\n   ${s.description || ''}`)
               .join('\n');
-            const summaryBody = `🌐 **Orion External Research & Intelligence Report**\n\n### 📌 Executive Synthesis (External Web Sources)\n${searchData.summary || ''}\n\n### 🏫 Internal StudentOS Context Separation\n- **Internal StudentOS Records**: Role-scoped to **${userContext.role.toUpperCase()}** (${userContext.grade || 'All Grades'}${userContext.section ? ` • ${userContext.section}` : ''}). No unauthorized internal records were exposed to external search.\n- **External Web Attribution**: Retrieved ${sources.length} verified public sources.\n\n### 📚 Cited External Sources\n${sourceMarkdownList}`;
+            const summaryBody = `🌐 **Orion External Research & Intelligence Report**\n\n### 📌 Executive Synthesis (External Web Sources)\n${searchData.summary || ''}\n\n### 🏫 Internal StudentOS Context Separation\n- **Internal StudentOS Records**: Role-scoped to **${(userContext.role || userContext.userRole || 'student').toUpperCase()}** (${userContext.grade || 'All Grades'}${userContext.section ? ` • ${userContext.section}` : ''}). No unauthorized internal records were exposed to external search.\n- **External Web Attribution**: Retrieved ${sources.length} verified public sources.\n\n### 📚 Cited External Sources\n${sourceMarkdownList}`;
             res = {
               success: true,
               action: 'web_search',

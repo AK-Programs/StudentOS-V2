@@ -333,7 +333,7 @@ export async function streamStudentOSAI(
     modelOverride?: string;
     taskType?: string;
     dataRetrievalLatencyMs?: number;
-    webSearchMode?: 'auto' | 'always' | 'off';
+    webSearchMode?: 'auto' | 'always' | 'force' | 'off';
   },
   callbacks: {
     onStatus?: (status: {
@@ -1083,7 +1083,7 @@ export async function streamAIChatClient(
     ragContext?: string;
     userId?: string;
     userRole?: string;
-    webSearchMode?: 'auto' | 'always' | 'off';
+    webSearchMode?: 'auto' | 'always' | 'force' | 'off';
   },
   options: {
     signal?: AbortSignal;

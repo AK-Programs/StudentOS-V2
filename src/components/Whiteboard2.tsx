@@ -32,7 +32,7 @@ const KonvaImage = KonvaImageComp as any;
 export interface Part3D {
   id: string;
   label: string;
-  shape?: 'box' | 'sphere' | 'cylinder' | 'pyramid' | 'prism' | 'triangular_prism' | 'torus' | 'ring' | 'cone' | 'plane';
+  shape?: 'box' | 'sphere' | 'cylinder' | 'pyramid' | 'prism' | 'triangular_prism' | 'hexagonal_prism' | 'capsule' | 'torus' | 'ring' | 'cone' | 'plane' | 'dodecahedron' | 'icosahedron' | 'tube' | 'helix';
   primitive?: 'box' | 'sphere' | 'cylinder' | 'pyramid' | 'prism' | 'torus' | 'cone' | 'plane';
   position: [number, number, number];
   dimensions: [number, number, number];
@@ -696,7 +696,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   }, [aiTip]);
 
   // Helper to insert a 3D Educational Object onto the Whiteboard
-  const insert3DModelOnBoard = useCallback((scene: Scene3DData, xPos: number = 140, yPos: number = 95) => {
+  const insert3DModelOnBoard = useCallback((scene: Scene3DData | Educational3DScene, xPos: number = 140, yPos: number = 95) => {
     const rotX = 22;
     const rotY = -32;
     const zoom3D = 1;
@@ -3411,6 +3411,8 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                       y: 100,
                       width: 500,
                       height: 360,
+                      stroke: '#38bdf8',
+                      strokeWidth: 2,
                       imageObj: img,
                       svgRaw: data.svg
                     });

@@ -3,24 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * Central AI Provider Service for StudentOS
- * APInex (Primary) -> NVIDIA (Fallback ONLY for genuine 5xx / 429 / outages)
- * ZERO Gemini / OpenRouter dependencies.
+ * Powered EXCLUSIVELY by APInex (https://api.apinex.bond/v1).
  *
- * APInex Configuration:
- * Base URL: https://api.apinex.bond/v1
- * Chat Endpoint: POST https://api.apinex.bond/v1/chat/completions
- * Primary Models:
- * - gpt-6-luna (Fast / general conversational tasks)
- * - deepseek-v4-pro (Complex reasoning / planning / STEM)
- * - glm-5.3-flash (Fast tool / agent / structured JSON output)
+ * Approved APInex Models:
+ * - gpt-6-luna (Normal and short conversational AI Buddy chat)
+ * - deepseek-v4-pro (Hard math, proof, STEM, or long reasoning)
+ * - glm-5.3-flash (JSON, flashcards, diagrams, 3D, and agent tools)
  */
 
 import dotenv from 'dotenv';
 dotenv.config();
 
 export type ApinexModel = 'gpt-6-luna' | 'deepseek-v4-pro' | 'glm-5.3-flash';
-export type NvidiaModel = 'nvidia/nemotron-3-super-120b-a12b' | 'nvidia/nemotron-3-ultra-550b-a55b' | 'openai/gpt-oss-20b';
-
 export type TaskComplexityTier = 'fast' | 'general' | 'complex' | 'tool';
 
 export interface ModelRoutingContext {
@@ -36,7 +30,7 @@ export interface ModelRoutingContext {
 
 export interface AIPerformanceTelemetry {
   requestId: string;
-  providerUsed: 'apinex' | 'nvidia';
+  providerUsed: 'apinex';
   modelUsed: string;
   complexityTier: TaskComplexityTier;
   requestStart: number;
@@ -72,20 +66,9 @@ export function getApinexApiKey(): string {
   return rawKey.trim().replace(/^["']|["']$/g, '');
 }
 
-export function getNvidiaApiKey(): string {
-  const rawKey =
-    process.env.NVIDIA_API_KEY ||
-    process.env.VITE_NVIDIA_API_KEY ||
-    process.env.NIM_API_KEY ||
-    process.env.NGC_API_KEY ||
-    process.env.AI_API_KEY ||
-    '';
-  return rawKey.trim().replace(/^["']|["']$/g, '');
-}
-
 /**
  * Validates whether a model string is a supported APInex model ID.
- * Prevents NVIDIA model overrides (e.g. nvidia/nemotron-...) from being sent to APInex.
+ * Ignores non-APInex overrides (e.g. nvidia/nemotron-...).
  */
 export function isApinexModel(modelName?: string): boolean {
   if (!modelName || typeof modelName !== 'string') return false;
@@ -102,7 +85,7 @@ export function isApinexModel(modelName?: string): boolean {
 
 /**
  * Resolves the appropriate APInex model to use.
- * Ignores modelOverride if it contains an NVIDIA/OpenAI model ID.
+ * Only accepts modelOverride if it is one of: gpt-6-luna, deepseek-v4-pro, glm-5.3-flash.
  */
 export function resolveApinexModel(modelOverride?: string, fallbackModel: ApinexModel = 'gpt-6-luna'): string {
   if (modelOverride && isApinexModel(modelOverride)) {
@@ -112,18 +95,21 @@ export function resolveApinexModel(modelOverride?: string, fallbackModel: Apinex
 }
 
 /**
- * Task-based model routing for APInex and NVIDIA.
+ * Task-based APInex Model Routing.
+ * - Normal and short AI Buddy chat: gpt-6-luna
+ * - Hard math, proof, or long reasoning: deepseek-v4-pro
+ * - JSON, flashcards, or diagrams: glm-5.3-flash
  */
 export function classifyTaskComplexity(
   prompt: string,
   ctx?: ModelRoutingContext
-): { apinexModel: ApinexModel; nvidiaModel: NvidiaModel; tier: TaskComplexityTier } {
+): { apinexModel: ApinexModel; tier: TaskComplexityTier } {
   const cleanPrompt = (prompt || '').trim();
   const lower = cleanPrompt.toLowerCase();
   const endpoint = (ctx?.endpointName || '').toLowerCase();
   const taskType = ctx?.taskType;
 
-  // Explicit tool/agent/JSON task
+  // Tool / JSON / Diagram / Flashcard / 3D task -> glm-5.3-flash
   if (
     taskType === 'tool' ||
     endpoint.includes('json') ||
@@ -134,14 +120,10 @@ export function classifyTaskComplexity(
     lower.includes('json') ||
     lower.includes('structured output')
   ) {
-    return {
-      apinexModel: 'glm-5.3-flash',
-      nvidiaModel: 'openai/gpt-oss-20b',
-      tier: 'tool'
-    };
+    return { apinexModel: 'glm-5.3-flash', tier: 'tool' };
   }
 
-  // Complex reasoning
+  // Complex reasoning / STEM proof / Calculus -> deepseek-v4-pro
   const complexPatterns = [
     /\b(prove|proof|derive|derivation|theorem|calculus|integral|differential|eigenvalue|matrix|trigonometric identity|quadratic formula proof|quantum|thermodynamics|stoichiometry|electrochemistry|organic synthesis)\b/i,
     /\b(multi-step|comprehensive analysis|school-wide analytics|deep analysis|detailed academic report|correlate|regression|comparative analysis|root cause)\b/i,
@@ -154,33 +136,21 @@ export function classifyTaskComplexity(
     cleanPrompt.length > 2500;
 
   if (isComplex) {
-    return {
-      apinexModel: 'deepseek-v4-pro',
-      nvidiaModel: 'nvidia/nemotron-3-ultra-550b-a55b',
-      tier: 'complex'
-    };
+    return { apinexModel: 'deepseek-v4-pro', tier: 'complex' };
   }
 
-  // Fast / simple (e.g., "Hi", "Hello", short questions)
+  // Fast / Short / Normal Chat -> gpt-6-luna
   const isFast =
     taskType === 'fast' ||
     cleanPrompt.split(/\s+/).length <= 15 ||
     /^(hi|hello|hey|good morning|thanks|thank you|ok|okay|who are you|help)\b/i.test(lower);
 
   if (isFast) {
-    return {
-      apinexModel: 'gpt-6-luna',
-      nvidiaModel: 'openai/gpt-oss-20b',
-      tier: 'fast'
-    };
+    return { apinexModel: 'gpt-6-luna', tier: 'fast' };
   }
 
-  // Default general
-  return {
-    apinexModel: 'gpt-6-luna',
-    nvidiaModel: 'nvidia/nemotron-3-super-120b-a12b',
-    tier: 'general'
-  };
+  // Default general chat -> gpt-6-luna
+  return { apinexModel: 'gpt-6-luna', tier: 'general' };
 }
 
 function buildMessagesArray(
@@ -227,8 +197,7 @@ function buildMessagesArray(
 
 /**
  * Universal Central AI Completion Engine.
- * Primary: APInex (https://api.apinex.bond/v1)
- * Fallback: NVIDIA API
+ * Powered EXCLUSIVELY by APInex (https://api.apinex.bond/v1).
  */
 export async function generateAICompletion(
   param1: string | AICompletionOptions,
@@ -275,9 +244,8 @@ export async function generateAICompletionWithTelemetry(
 
   const requestStart = Date.now();
   const apinexKey = getApinexApiKey();
-  const nvidiaKey = getNvidiaApiKey();
 
-  const { apinexModel, nvidiaModel, tier } = classifyTaskComplexity(prompt, {
+  const { apinexModel, tier } = classifyTaskComplexity(prompt, {
     endpointName,
     taskType,
     modelOverride,
@@ -287,7 +255,7 @@ export async function generateAICompletionWithTelemetry(
     contextLength
   });
 
-  // CRITICAL FIX 1: Ignore modelOverride if it's an NVIDIA model ID, use proper APInex model ID
+  // Ignore modelOverride unless it is gpt-6-luna, deepseek-v4-pro, or glm-5.3-flash
   const effectiveApinexModel = resolveApinexModel(modelOverride, apinexModel);
   const messages = buildMessagesArray(systemInstruction, prompt, history);
   const effectiveMaxTokens = maxTokens || (tier === 'fast' ? 900 : tier === 'complex' ? 3200 : 2048);
@@ -296,153 +264,82 @@ export async function generateAICompletionWithTelemetry(
 
   if (!apinexKey) {
     console.error(`[APINEX CONFIG ERROR] APINEX_API_KEY environment variable is missing on server. requestId=${requestId}`);
-    if (!nvidiaKey) {
-      throw new Error('[APINEX CONFIG ERROR] APINEX_API_KEY is not configured on the server. Please add APINEX_API_KEY to your server environment.');
-    }
-    console.log(`[AI_FALLBACK] from=apinex to=nvidia reason="APINEX_API_KEY missing" requestId=${requestId}`);
-  } else {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 22000);
+    throw new Error('[APINEX CONFIG ERROR] APINEX_API_KEY environment variable is not configured on the server.');
+  }
 
-      const resp = await fetch('https://api.apinex.bond/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apinexKey}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          model: effectiveApinexModel,
-          messages,
-          temperature,
-          max_tokens: effectiveMaxTokens,
-          ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
-        }),
-        signal: controller.signal
-      });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25000);
 
-      clearTimeout(timer);
+  try {
+    const resp = await fetch('https://api.apinex.bond/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apinexKey}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        model: effectiveApinexModel,
+        messages,
+        temperature,
+        max_tokens: effectiveMaxTokens,
+        ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
+      }),
+      signal: controller.signal
+    });
 
-      if (resp.ok) {
-        const data = await resp.json();
-        const choiceMsg = data.choices?.[0]?.message;
-        
-        // CRITICAL FIX 2: Check content, reasoning, AND reasoning_content for APInex models
-        const text = (
-          choiceMsg?.content ||
-          choiceMsg?.reasoning ||
-          choiceMsg?.reasoning_content ||
-          ''
-        ).trim();
+    clearTimeout(timer);
 
-        if (text) {
-          const telemetry: AIPerformanceTelemetry = {
-            requestId,
-            providerUsed: 'apinex',
-            modelUsed: effectiveApinexModel,
-            complexityTier: tier,
-            requestStart,
-            firstTokenLatencyMs: Date.now() - requestStart,
-            totalGenerationTimeMs: Date.now() - requestStart,
-            retries: 0,
-            fallbackTriggered: false,
-            streamed: false
-          };
-          console.log(`[AI_RESPONSE] provider=apinex model=${effectiveApinexModel} status=200 requestId=${requestId} durationMs=${telemetry.totalGenerationTimeMs}`);
-          return { text, telemetry };
-        } else {
-          console.warn(`[APINEX WARN] APInex returned HTTP 200 but choice message content/reasoning was empty. requestId=${requestId}`);
-        }
+    if (resp.ok) {
+      const data = await resp.json();
+      const choiceMsg = data.choices?.[0]?.message;
+
+      // Read first non-empty reply field: content, reasoning_content, or reasoning
+      const text = (
+        choiceMsg?.content ||
+        choiceMsg?.reasoning_content ||
+        choiceMsg?.reasoning ||
+        ''
+      ).trim();
+
+      if (text) {
+        const telemetry: AIPerformanceTelemetry = {
+          requestId,
+          providerUsed: 'apinex',
+          modelUsed: effectiveApinexModel,
+          complexityTier: tier,
+          requestStart,
+          firstTokenLatencyMs: Date.now() - requestStart,
+          totalGenerationTimeMs: Date.now() - requestStart,
+          retries: 0,
+          fallbackTriggered: false,
+          streamed: false
+        };
+        console.log(`[AI_RESPONSE] provider=apinex model=${effectiveApinexModel} status=200 requestId=${requestId} durationMs=${telemetry.totalGenerationTimeMs}`);
+        return { text, telemetry };
       } else {
-        const errBody = await resp.text().catch(() => '');
-        console.error(`[APINEX HTTP ERROR] status=${resp.status} requestId=${requestId} body=${errBody.slice(0, 200)}`);
-        
-        // CRITICAL FIX 3: DO NOT Fallback on 400, 401, 403, 404
-        if (resp.status === 400 || resp.status === 401 || resp.status === 403 || resp.status === 404) {
-          throw new Error(`[APINEX ${resp.status} ERROR] HTTP ${resp.status}: ${errBody.slice(0, 160) || 'APInex API Error'}`);
-        }
-
-        // Only fallback for genuine 5xx / 429
-        console.log(`[AI_FALLBACK] from=apinex to=nvidia reason="APInex HTTP ${resp.status}" requestId=${requestId}`);
+        throw new Error('[APINEX RESPONSE ERROR] APInex returned HTTP 200 but response content/reasoning fields were empty.');
       }
-    } catch (apinexErr: any) {
-      if (apinexErr?.message?.includes('APINEX')) {
-        throw apinexErr;
-      }
-      console.warn(`[AI_FALLBACK] from=apinex to=nvidia reason="${apinexErr?.message || apinexErr}" requestId=${requestId}`);
+    } else {
+      const errBody = await resp.text().catch(() => '');
+      console.error(`[APINEX HTTP ERROR] status=${resp.status} requestId=${requestId} body=${errBody.slice(0, 200)}`);
+      throw new Error(`[APINEX HTTP ${resp.status} ERROR] ${errBody.slice(0, 180) || 'APInex request failed'}`);
     }
+  } catch (apinexErr: any) {
+    clearTimeout(timer);
+    console.error(`[APINEX ERROR] requestId=${requestId}:`, apinexErr?.message || apinexErr);
+    throw new Error(apinexErr?.message || 'APInex AI request failed.');
   }
-
-  // 2. FALLBACK ONLY: NVIDIA API (For genuine 5xx / outages)
-  if (nvidiaKey) {
-    try {
-      console.log(`[AI_REQUEST] provider=nvidia model=${nvidiaModel} requestId=${requestId}`);
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 28000);
-
-      const resp = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${nvidiaKey}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          model: nvidiaModel,
-          messages,
-          temperature,
-          max_tokens: effectiveMaxTokens,
-          ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
-        }),
-        signal: controller.signal
-      });
-
-      clearTimeout(timer);
-
-      if (resp.ok) {
-        const data = await resp.json();
-        const choiceMsg = data.choices?.[0]?.message;
-        const text = (
-          choiceMsg?.content ||
-          choiceMsg?.reasoning ||
-          choiceMsg?.reasoning_content ||
-          ''
-        ).trim();
-
-        if (text) {
-          const telemetry: AIPerformanceTelemetry = {
-            requestId,
-            providerUsed: 'nvidia',
-            modelUsed: nvidiaModel,
-            complexityTier: tier,
-            requestStart,
-            firstTokenLatencyMs: Date.now() - requestStart,
-            totalGenerationTimeMs: Date.now() - requestStart,
-            retries: 1,
-            fallbackTriggered: true,
-            streamed: false
-          };
-          console.log(`[AI_RESPONSE] provider=nvidia model=${nvidiaModel} status=200 requestId=${requestId} durationMs=${telemetry.totalGenerationTimeMs}`);
-          return { text, telemetry };
-        }
-      }
-    } catch (nvidiaErr: any) {
-      console.error(`[NVIDIA FALLBACK ERROR] requestId=${requestId}:`, nvidiaErr?.message || nvidiaErr);
-    }
-  }
-
-  throw new Error('APInex AI is currently unavailable or improperly configured. Please check your APINEX_API_KEY environment variable.');
 }
 
 /**
  * Server-Side Streaming Completion Engine.
- * APInex (Primary) -> NVIDIA (Fallback)
+ * Powered EXCLUSIVELY by APInex (https://api.apinex.bond/v1).
  */
 export async function streamAICompletion(
   options: AICompletionOptions,
   callbacks: {
-    onMeta?: (meta: { requestId: string; provider: 'apinex' | 'nvidia'; model: string; tier: TaskComplexityTier }) => void;
+    onMeta?: (meta: { requestId: string; provider: 'apinex'; model: string; tier: TaskComplexityTier }) => void;
     onToken: (token: string, firstTokenLatencyMs: number) => void;
     onComplete?: (fullText: string, telemetry: AIPerformanceTelemetry) => void;
   },
@@ -466,9 +363,8 @@ export async function streamAICompletion(
 
   const requestStart = Date.now();
   const apinexKey = getApinexApiKey();
-  const nvidiaKey = getNvidiaApiKey();
 
-  const { apinexModel, nvidiaModel, tier } = classifyTaskComplexity(prompt, {
+  const { apinexModel, tier } = classifyTaskComplexity(prompt, {
     endpointName,
     taskType,
     modelOverride,
@@ -478,7 +374,7 @@ export async function streamAICompletion(
     contextLength
   });
 
-  // CRITICAL FIX 1: Ignore modelOverride if it's an NVIDIA model ID, use proper APInex model ID
+  // Ignore modelOverride unless it is gpt-6-luna, deepseek-v4-pro, or glm-5.3-flash
   const effectiveApinexModel = resolveApinexModel(modelOverride, apinexModel);
   const messages = buildMessagesArray(systemInstruction, prompt, history);
   const effectiveMaxTokens = maxTokens || (tier === 'fast' ? 950 : 2048);
@@ -487,209 +383,109 @@ export async function streamAICompletion(
 
   if (!apinexKey) {
     console.error(`[APINEX CONFIG ERROR] APINEX_API_KEY environment variable is missing on server. requestId=${requestId}`);
-    if (!nvidiaKey) {
-      throw new Error('[APINEX CONFIG ERROR] APINEX_API_KEY is not configured on the server.');
-    }
-    console.log(`[AI_FALLBACK] from=apinex to=nvidia reason="APINEX_API_KEY missing" requestId=${requestId}`);
-  } else {
-    try {
-      const response = await fetch('https://api.apinex.bond/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apinexKey}`,
-          'Content-Type': 'application/json',
-          'Accept': 'text/event-stream'
-        },
-        body: JSON.stringify({
-          model: effectiveApinexModel,
-          messages,
-          temperature,
-          max_tokens: effectiveMaxTokens,
-          stream: true
-        }),
-        signal: abortSignal
-      });
-
-      if (!response.ok) {
-        const errText = await response.text().catch(() => '');
-        console.error(`[APINEX STREAM HTTP ERROR] status=${response.status} requestId=${requestId} body=${errText.slice(0, 180)}`);
-        
-        // CRITICAL FIX 3: DO NOT Fallback on 400, 401, 403, 404
-        if (response.status === 400 || response.status === 401 || response.status === 403 || response.status === 404) {
-          throw new Error(`[APINEX ${response.status} ERROR] HTTP ${response.status}: ${errText.slice(0, 160) || 'APInex API Error'}`);
-        }
-
-        console.log(`[AI_FALLBACK] from=apinex to=nvidia reason="APInex Stream HTTP ${response.status}" requestId=${requestId}`);
-      } else if (response.body) {
-        callbacks.onMeta?.({ requestId, provider: 'apinex', model: effectiveApinexModel, tier });
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let buffer = '';
-        let fullText = '';
-        let firstTokenLatencyMs: number | null = null;
-
-        while (true) {
-          if (abortSignal?.aborted) {
-            await reader.cancel().catch(() => {});
-            break;
-          }
-
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const rawLine of lines) {
-            const line = rawLine.trim();
-            if (!line || !line.startsWith('data:')) continue;
-            const payload = line.slice(5).trim();
-            if (payload === '[DONE]') continue;
-
-            try {
-              const parsed = JSON.parse(payload);
-              const delta = parsed.choices?.[0]?.delta;
-              
-              // CRITICAL FIX 2: Check content, reasoning, AND reasoning_content in streaming delta
-              const token = (
-                delta?.content ||
-                delta?.reasoning ||
-                delta?.reasoning_content ||
-                ''
-              );
-
-              if (token) {
-                if (firstTokenLatencyMs === null) {
-                  firstTokenLatencyMs = Date.now() - requestStart;
-                }
-                fullText += token;
-                callbacks.onToken(token, firstTokenLatencyMs);
-              }
-            } catch {}
-          }
-        }
-
-        if (fullText.trim().length > 0) {
-          const telemetry: AIPerformanceTelemetry = {
-            requestId,
-            providerUsed: 'apinex',
-            modelUsed: effectiveApinexModel,
-            complexityTier: tier,
-            requestStart,
-            firstTokenLatencyMs: firstTokenLatencyMs ?? (Date.now() - requestStart),
-            totalGenerationTimeMs: Date.now() - requestStart,
-            retries: 0,
-            fallbackTriggered: false,
-            streamed: true
-          };
-          console.log(`[AI_RESPONSE] provider=apinex model=${effectiveApinexModel} status=200 stream=true requestId=${requestId} durationMs=${telemetry.totalGenerationTimeMs}`);
-          callbacks.onComplete?.(fullText, telemetry);
-          return { text: fullText, telemetry };
-        }
-      }
-    } catch (apinexErr: any) {
-      if (abortSignal?.aborted) throw apinexErr;
-      if (apinexErr?.message?.includes('APINEX')) {
-        throw apinexErr;
-      }
-      console.warn(`[AI_FALLBACK] from=apinex to=nvidia reason="${apinexErr?.message || apinexErr}" requestId=${requestId}`);
-    }
+    throw new Error('[APINEX CONFIG ERROR] APINEX_API_KEY environment variable is not configured on the server.');
   }
 
-  // 2. FALLBACK ONLY: NVIDIA Streaming
-  if (nvidiaKey) {
-    try {
-      console.log(`[AI_REQUEST] provider=nvidia model=${nvidiaModel} stream=true requestId=${requestId}`);
-      const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${nvidiaKey}`,
-          'Content-Type': 'application/json',
-          'Accept': 'text/event-stream'
-        },
-        body: JSON.stringify({
-          model: nvidiaModel,
-          messages,
-          temperature,
-          max_tokens: effectiveMaxTokens,
-          stream: true
-        }),
-        signal: abortSignal
-      });
+  try {
+    const response = await fetch('https://api.apinex.bond/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apinexKey}`,
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream'
+      },
+      body: JSON.stringify({
+        model: effectiveApinexModel,
+        messages,
+        temperature,
+        max_tokens: effectiveMaxTokens,
+        stream: true
+      }),
+      signal: abortSignal
+    });
 
-      if (response.ok && response.body) {
-        callbacks.onMeta?.({ requestId, provider: 'nvidia', model: nvidiaModel, tier });
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let buffer = '';
-        let fullText = '';
-        let firstTokenLatencyMs: number | null = null;
-
-        while (true) {
-          if (abortSignal?.aborted) {
-            await reader.cancel().catch(() => {});
-            break;
-          }
-
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const rawLine of lines) {
-            const line = rawLine.trim();
-            if (!line || !line.startsWith('data:')) continue;
-            const payload = line.slice(5).trim();
-            if (payload === '[DONE]') continue;
-
-            try {
-              const parsed = JSON.parse(payload);
-              const delta = parsed.choices?.[0]?.delta;
-              const token = (
-                delta?.content ||
-                delta?.reasoning ||
-                delta?.reasoning_content ||
-                ''
-              );
-              if (token) {
-                if (firstTokenLatencyMs === null) {
-                  firstTokenLatencyMs = Date.now() - requestStart;
-                }
-                fullText += token;
-                callbacks.onToken(token, firstTokenLatencyMs);
-              }
-            } catch {}
-          }
-        }
-
-        if (fullText.trim().length > 0) {
-          const telemetry: AIPerformanceTelemetry = {
-            requestId,
-            providerUsed: 'nvidia',
-            modelUsed: nvidiaModel,
-            complexityTier: tier,
-            requestStart,
-            firstTokenLatencyMs: firstTokenLatencyMs ?? (Date.now() - requestStart),
-            totalGenerationTimeMs: Date.now() - requestStart,
-            retries: 1,
-            fallbackTriggered: true,
-            streamed: true
-          };
-          console.log(`[AI_RESPONSE] provider=nvidia model=${nvidiaModel} status=200 stream=true requestId=${requestId} durationMs=${telemetry.totalGenerationTimeMs}`);
-          callbacks.onComplete?.(fullText, telemetry);
-          return { text: fullText, telemetry };
-        }
-      }
-    } catch (nvidiaErr: any) {
-      if (abortSignal?.aborted) throw nvidiaErr;
-      console.error(`[NVIDIA STREAM FALLBACK ERROR]:`, nvidiaErr?.message || nvidiaErr);
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      console.error(`[APINEX STREAM HTTP ERROR] status=${response.status} requestId=${requestId} body=${errText.slice(0, 180)}`);
+      throw new Error(`[APINEX HTTP ${response.status} ERROR] ${errText.slice(0, 160) || 'APInex stream request failed'}`);
     }
-  }
 
-  throw new Error('APInex AI is currently unavailable or improperly configured. Please check your APINEX_API_KEY environment variable.');
+    if (!response.body) {
+      throw new Error('[APINEX STREAM ERROR] APInex stream response body is empty.');
+    }
+
+    callbacks.onMeta?.({ requestId, provider: 'apinex', model: effectiveApinexModel, tier });
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let fullText = '';
+    let firstTokenLatencyMs: number | null = null;
+
+    while (true) {
+      if (abortSignal?.aborted) {
+        await reader.cancel().catch(() => {});
+        break;
+      }
+
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line || !line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (payload === '[DONE]') continue;
+
+        try {
+          const parsed = JSON.parse(payload);
+          const delta = parsed.choices?.[0]?.delta;
+
+          // Read first non-empty delta field: content, reasoning_content, or reasoning
+          const token = (
+            delta?.content ||
+            delta?.reasoning_content ||
+            delta?.reasoning ||
+            ''
+          );
+
+          if (token) {
+            if (firstTokenLatencyMs === null) {
+              firstTokenLatencyMs = Date.now() - requestStart;
+            }
+            fullText += token;
+            callbacks.onToken(token, firstTokenLatencyMs);
+          }
+        } catch {}
+      }
+    }
+
+    if (fullText.trim().length > 0) {
+      const telemetry: AIPerformanceTelemetry = {
+        requestId,
+        providerUsed: 'apinex',
+        modelUsed: effectiveApinexModel,
+        complexityTier: tier,
+        requestStart,
+        firstTokenLatencyMs: firstTokenLatencyMs ?? (Date.now() - requestStart),
+        totalGenerationTimeMs: Date.now() - requestStart,
+        retries: 0,
+        fallbackTriggered: false,
+        streamed: true
+      };
+      console.log(`[AI_RESPONSE] provider=apinex model=${effectiveApinexModel} status=200 stream=true requestId=${requestId} durationMs=${telemetry.totalGenerationTimeMs}`);
+      callbacks.onComplete?.(fullText, telemetry);
+      return { text: fullText, telemetry };
+    } else {
+      throw new Error('[APINEX STREAM ERROR] Stream finished without returning any text tokens.');
+    }
+  } catch (apinexErr: any) {
+    if (abortSignal?.aborted) throw apinexErr;
+    console.error(`[APINEX STREAM ERROR] requestId=${requestId}:`, apinexErr?.message || apinexErr);
+    throw new Error(apinexErr?.message || 'APInex stream request failed.');
+  }
 }
