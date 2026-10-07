@@ -154,6 +154,66 @@ export function classifyTaskComplexity(
   return { apinexModel: 'free/gpt-6-luna', tier: 'general' };
 }
 
+/**
+ * Extracts non-empty text from an APInex response choice object.
+ * Checks in order:
+ * 1. message.content / delta.content (string or array of text parts)
+ * 2. message.reasoning_content
+ * 3. message.reasoning
+ * 4. message.output_text / choice.output_text
+ * 5. choice.text
+ */
+export function extractTextFromChoice(choice: any): string {
+  if (!choice) return '';
+  const msg = choice.message || choice.delta || choice;
+
+  // 1. content (string or array)
+  if (msg && msg.content) {
+    if (typeof msg.content === 'string' && msg.content.trim()) {
+      return msg.content.trim();
+    }
+    if (Array.isArray(msg.content)) {
+      const textParts = msg.content
+        .map((part: any) => {
+          if (typeof part === 'string') return part;
+          if (part && typeof part === 'object') return part.text || part.content || '';
+          return '';
+        })
+        .filter(Boolean);
+      const joined = textParts.join('').trim();
+      if (joined) return joined;
+    }
+  }
+
+  // 2. reasoning_content
+  if (msg && typeof msg.reasoning_content === 'string' && msg.reasoning_content.trim()) {
+    return msg.reasoning_content.trim();
+  }
+
+  // 3. reasoning
+  if (msg && typeof msg.reasoning === 'string' && msg.reasoning.trim()) {
+    return msg.reasoning.trim();
+  }
+
+  // 4. output_text
+  if (msg && typeof msg.output_text === 'string' && msg.output_text.trim()) {
+    return msg.output_text.trim();
+  }
+  if (typeof choice.output_text === 'string' && choice.output_text.trim()) {
+    return choice.output_text.trim();
+  }
+
+  // 5. text
+  if (typeof choice.text === 'string' && choice.text.trim()) {
+    return choice.text.trim();
+  }
+  if (msg && typeof msg.text === 'string' && msg.text.trim()) {
+    return msg.text.trim();
+  }
+
+  return '';
+}
+
 function buildMessagesArray(
   systemInstruction: string,
   prompt: string,
@@ -259,9 +319,13 @@ export async function generateAICompletionWithTelemetry(
   // Ignore modelOverride unless it is free/gpt-6-luna, free/deepseek-v4-pro-0813, or free/glm-5.3-flash
   const effectiveApinexModel = resolveApinexModel(modelOverride, apinexModel);
   const messages = buildMessagesArray(systemInstruction, prompt, history);
-  const effectiveMaxTokens = maxTokens || (tier === 'fast' ? 900 : tier === 'complex' ? 3200 : 2048);
 
-  console.log(`[AI_REQUEST] provider=apinex model=${effectiveApinexModel} requestId=${requestId}`);
+  // Guarantee sufficient token budget so reasoning models finish writing visible text
+  const effectiveMaxTokens = maxTokens
+    ? Math.max(maxTokens, 300)
+    : (tier === 'fast' ? 1200 : tier === 'complex' ? 3200 : 2048);
+
+  console.log(`[AI_REQUEST] provider=apinex model=${effectiveApinexModel} max_tokens=${effectiveMaxTokens} requestId=${requestId}`);
 
   if (!apinexKey) {
     console.error(`[APINEX CONFIG ERROR] APINEX_API_KEY environment variable is missing on server. requestId=${requestId}`);
@@ -293,15 +357,8 @@ export async function generateAICompletionWithTelemetry(
 
     if (resp.ok) {
       const data = await resp.json();
-      const choiceMsg = data.choices?.[0]?.message;
-
-      // Read first non-empty reply field: content, reasoning_content, or reasoning
-      const text = (
-        choiceMsg?.content ||
-        choiceMsg?.reasoning_content ||
-        choiceMsg?.reasoning ||
-        ''
-      ).trim();
+      const choice = data.choices?.[0];
+      const text = extractTextFromChoice(choice);
 
       if (text) {
         const telemetry: AIPerformanceTelemetry = {
@@ -319,7 +376,10 @@ export async function generateAICompletionWithTelemetry(
         console.log(`[AI_RESPONSE] provider=apinex model=${effectiveApinexModel} status=200 requestId=${requestId} durationMs=${telemetry.totalGenerationTimeMs}`);
         return { text, telemetry };
       } else {
-        throw new Error('[APINEX RESPONSE ERROR] APInex returned HTTP 200 but response content/reasoning fields were empty.');
+        const finishReason = choice?.finish_reason || data?.finish_reason || 'unknown';
+        const rawDump = JSON.stringify(choice || data || {}).slice(0, 220);
+        console.error(`[APINEX RESPONSE ERROR] Empty text received. finish_reason=${finishReason} choice=${rawDump} requestId=${requestId}`);
+        throw new Error(`[APINEX RESPONSE ERROR] APInex returned HTTP 200 but response text was empty. finish_reason=${finishReason}. choices[0]=${rawDump}`);
       }
     } else {
       const errBody = await resp.text().catch(() => '');
@@ -378,9 +438,13 @@ export async function streamAICompletion(
   // Ignore modelOverride unless it is free/gpt-6-luna, free/deepseek-v4-pro-0813, or free/glm-5.3-flash
   const effectiveApinexModel = resolveApinexModel(modelOverride, apinexModel);
   const messages = buildMessagesArray(systemInstruction, prompt, history);
-  const effectiveMaxTokens = maxTokens || (tier === 'fast' ? 950 : 2048);
 
-  console.log(`[AI_REQUEST] provider=apinex model=${effectiveApinexModel} stream=true requestId=${requestId}`);
+  // Guarantee sufficient token budget
+  const effectiveMaxTokens = maxTokens
+    ? Math.max(maxTokens, 300)
+    : (tier === 'fast' ? 1200 : 2048);
+
+  console.log(`[AI_REQUEST] provider=apinex model=${effectiveApinexModel} stream=true max_tokens=${effectiveMaxTokens} requestId=${requestId}`);
 
   if (!apinexKey) {
     console.error(`[APINEX CONFIG ERROR] APINEX_API_KEY environment variable is missing on server. requestId=${requestId}`);
@@ -422,6 +486,7 @@ export async function streamAICompletion(
     let buffer = '';
     let fullText = '';
     let firstTokenLatencyMs: number | null = null;
+    let lastChoice: any = null;
 
     while (true) {
       if (abortSignal?.aborted) {
@@ -444,15 +509,10 @@ export async function streamAICompletion(
 
         try {
           const parsed = JSON.parse(payload);
-          const delta = parsed.choices?.[0]?.delta;
+          const choice = parsed.choices?.[0];
+          if (choice) lastChoice = choice;
 
-          // Read first non-empty delta field: content, reasoning_content, or reasoning
-          const token = (
-            delta?.content ||
-            delta?.reasoning_content ||
-            delta?.reasoning ||
-            ''
-          );
+          const token = extractTextFromChoice(choice);
 
           if (token) {
             if (firstTokenLatencyMs === null) {
@@ -482,7 +542,9 @@ export async function streamAICompletion(
       callbacks.onComplete?.(fullText, telemetry);
       return { text: fullText, telemetry };
     } else {
-      throw new Error('[APINEX STREAM ERROR] Stream finished without returning any text tokens.');
+      const finishReason = lastChoice?.finish_reason || 'unknown';
+      const rawDump = JSON.stringify(lastChoice || {}).slice(0, 220);
+      throw new Error(`[APINEX STREAM ERROR] Stream finished without returning text tokens. finish_reason=${finishReason}. choices[0]=${rawDump}`);
     }
   } catch (apinexErr: any) {
     if (abortSignal?.aborted) throw apinexErr;

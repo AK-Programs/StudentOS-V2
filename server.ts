@@ -1213,7 +1213,7 @@ app.all('/api/ai/minimal-test', async (req, res) => {
       prompt: 'Reply with exactly: APINEX TEST OK',
       endpointName: 'MinimalApinexTest',
       modelOverride: 'free/gpt-6-luna',
-      maxTokens: 30,
+      maxTokens: 500,
       requestId
     });
     return res.json({
@@ -1236,7 +1236,7 @@ app.all('/api/ai/minimal-test', async (req, res) => {
   }
 });
 
-// Server-side diagnostic test route for NVIDIA API connection
+// Server-side diagnostic test route for APInex API connection
 app.get('/api/ai/diagnostic', async (req, res) => {
   const apinexKey = getApinexApiKey();
   const keyPresent = Boolean(apinexKey);
@@ -1246,7 +1246,7 @@ app.get('/api/ai/diagnostic', async (req, res) => {
     const { text, telemetry } = await generateAICompletionWithTelemetry({
       prompt: 'Say hello in 5 words.',
       endpointName: 'DiagnosticTest',
-      maxTokens: 30,
+      maxTokens: 500,
       requestId
     });
     return res.json({
@@ -1291,7 +1291,7 @@ app.get('/api/ai/debug-apinex', async (req, res) => {
       prompt: 'Hi',
       endpointName: 'ApinexDiagnostic',
       taskType: 'fast',
-      maxTokens: 30
+      maxTokens: 500
     });
 
     return res.json({
