@@ -2074,93 +2074,14 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
          {/* Global Action Handlers */}
          <div className="flex flex-wrap items-center gap-1 sm:gap-2">
            
-           <div className="relative">
-             <button 
-               onClick={() => setAiPromptOpen(!aiPromptOpen)}
-               className={`p-1.5 sm:p-2 border rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold ${isGeneratingDiagram ? 'bg-indigo-600 text-white border-indigo-400 animate-pulse' : 'bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border-indigo-500/20'}`}
-               title="AI Whiteboard & Shape Recognition"
-             >
-               <Sparkles className="w-3.5 h-3.5" />
-               <span className="hidden sm:inline">{isGeneratingDiagram ? 'Generating...' : 'AI Board'}</span>
-             </button>
-             {aiPromptOpen && (
-               <div className="fixed sm:absolute top-20 sm:top-full mt-0 sm:mt-2 inset-x-3 sm:inset-x-auto sm:right-0 sm:w-80 bg-slate-900 border border-indigo-500/30 rounded-2xl p-4 shadow-2xl z-50 space-y-3 backdrop-blur-xl animate-fadeIn">
-                 <div className="flex items-center justify-between">
-                   <div className="flex items-center gap-2">
-                     <Sparkles className="w-4 h-4 text-indigo-400" />
-                     <h4 className="text-sm font-extrabold text-white tracking-tight">AI Classroom Assistant</h4>
-                   </div>
-                   <button onClick={() => setAiPromptOpen(false)} className="text-slate-400 hover:text-white p-1 rounded-lg">✕</button>
-                 </div>
-
-                 <label className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-white/10 cursor-pointer">
-                   <div>
-                     <div className="text-xs font-bold text-white">Auto Shape Recognition</div>
-                     <div className="text-[10px] text-slate-400">Convert rough circles, squares & lines</div>
-                   </div>
-                   <input
-                     type="checkbox"
-                     checked={aiShapeAssistant}
-                     onChange={(e) => setAiShapeAssistant(e.target.checked)}
-                     className="w-4 h-4 accent-indigo-500 rounded cursor-pointer"
-                   />
-                 </label>
-
-                 <form onSubmit={handleGenerateDiagram} className="space-y-2.5 pt-1 border-t border-white/10">
-                   <div className="text-[10px] font-black uppercase tracking-wider text-indigo-300">Generate SVG, 3D Model or Diagram</div>
-                   <div className="flex gap-1">
-                     {(['auto', 'svg', '3d', 'mermaid', 'diagram'] as const).map(mode => (
-                       <button
-                         key={mode}
-                         type="button"
-                         onClick={() => setAiToolType(mode)}
-                         className={`flex-1 py-1 rounded-lg text-[10px] font-bold uppercase border transition-all ${aiToolType === mode ? 'bg-indigo-600 text-white border-indigo-400' : 'bg-slate-950 text-slate-400 border-white/10'}`}
-                       >
-                         {mode === '3d' ? '🧊 3D' : mode}
-                       </button>
-                     ))}
-                   </div>
-                   <input
-                     type="text"
-                     value={aiPromptQuery}
-                     onChange={(e) => setAiPromptQuery(e.target.value)}
-                     placeholder="e.g., Human heart SVG, Right triangle, Water cycle, 3D Prism..."
-                     className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white focus:outline-none focus:border-indigo-500"
-                   />
-                   <div className="flex flex-wrap gap-1 pt-0.5">
-                     {[
-                       { label: '❤️ Heart SVG', q: 'Labelled diagram of the human heart', m: 'svg' as const },
-                       { label: '📐 Right Triangle', q: 'Labelled right triangle showing opposite, adjacent and hypotenuse', m: 'svg' as const },
-                       { label: '💧 Water Cycle', q: 'Simple water cycle diagram', m: 'svg' as const },
-                       { label: '🧊 3D Water Cycle', q: 'Water Cycle', m: '3d' as const },
-                       { label: '⚛️ 3D Atom', q: '3D Atom Model', m: '3d' as const }
-                     ].map(preset => (
-                       <button
-                         key={preset.label}
-                         type="button"
-                         onClick={() => {
-                           setAiToolType(preset.m);
-                           setAiPromptQuery(preset.q);
-                         }}
-                         className="px-2 py-0.5 rounded-lg bg-slate-950 hover:bg-indigo-950/80 text-slate-300 hover:text-indigo-200 border border-white/10 text-[9px] font-bold transition-all"
-                       >
-                         {preset.label}
-                       </button>
-                     ))}
-                   </div>
-                   <div className="flex justify-end gap-2">
-                     <button
-                       type="submit"
-                       disabled={!aiPromptQuery.trim() || isGeneratingDiagram}
-                       className="px-4 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-xl font-bold transition-all shadow-md"
-                     >
-                       Insert Visual
-                     </button>
-                   </div>
-                 </form>
-               </div>
-             )}
-           </div>
+           <button 
+             onClick={() => setAiPromptOpen(true)}
+             className={`p-1.5 sm:p-2 border rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer ${isGeneratingDiagram ? 'bg-indigo-600 text-white border-indigo-400 animate-pulse' : 'bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border-indigo-500/20'}`}
+             title="AI Whiteboard & Shape Recognition"
+           >
+             <Sparkles className="w-3.5 h-3.5" />
+             <span className="hidden sm:inline">{isGeneratingDiagram ? 'Generating...' : 'AI Board'}</span>
+           </button>
            {/* Sticky Notes & Media Tools */}
            <button 
              onClick={() => { pushHistory(); handleInsertStickyNote('#fef08a'); }}
@@ -3093,6 +3014,134 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                 </button>
               </div>
             </form>
+          </div>
+        )}
+        {/* Centered, Fully-Responsive AI Classroom Assistant Modal */}
+        {aiPromptOpen && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/75 backdrop-blur-md animate-fadeIn"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setAiPromptOpen(false);
+            }}
+          >
+            <div 
+              className="w-full max-w-lg bg-slate-900 border border-indigo-500/40 rounded-3xl p-5 sm:p-6 shadow-2xl space-y-4 animate-scaleUp max-h-[90vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="h-8 w-8 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                    <Sparkles className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-white uppercase tracking-wider font-display">AI Classroom Assistant</h4>
+                    <p className="text-[10px] text-slate-400 font-mono">Generate educational SVGs, interactive 3D models & structured diagrams</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setAiPromptOpen(false)} 
+                  className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors text-sm cursor-pointer"
+                  title="Close Dialog"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <label className="flex items-center justify-between p-3 rounded-2xl bg-slate-950 border border-white/10 hover:border-indigo-500/30 transition-all cursor-pointer">
+                <div>
+                  <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <span>✨ Auto Shape Predictive Recognition</span>
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">Automatically converts hand-drawn rough circles, squares, rectangles & lines</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={aiShapeAssistant}
+                  onChange={(e) => setAiShapeAssistant(e.target.checked)}
+                  className="w-4 h-4 accent-indigo-500 rounded cursor-pointer"
+                />
+              </label>
+
+              <form onSubmit={handleGenerateDiagram} className="space-y-3.5 pt-2">
+                <div className="space-y-1.5">
+                  <div className="text-[10px] font-black uppercase tracking-wider text-indigo-300 font-mono">Visual Format Mode</div>
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {(['auto', 'svg', '3d', 'mermaid', 'diagram'] as const).map(mode => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setAiToolType(mode)}
+                        className={`py-2 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all cursor-pointer ${
+                          aiToolType === mode 
+                            ? 'bg-indigo-600 text-white border-indigo-400 shadow-md scale-[1.02]' 
+                            : 'bg-slate-950 text-slate-400 border-white/10 hover:text-white hover:bg-slate-800'
+                        }`}
+                      >
+                        {mode === '3d' ? '🧊 3D' : mode === 'svg' ? '🎨 SVG' : mode === 'mermaid' ? '🧜 Flow' : mode === 'auto' ? '⚡ Auto' : '📐 Diagram'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 font-mono">Educational Concept / Prompt</label>
+                  <input
+                    type="text"
+                    value={aiPromptQuery}
+                    onChange={(e) => setAiPromptQuery(e.target.value)}
+                    placeholder="e.g., Labelled diagram of the human heart, Right triangle geometry, Water cycle, 3D Prism..."
+                    className="w-full px-4 py-2.5 rounded-2xl bg-slate-950 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                    autoFocus
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 font-mono">Curriculum Quick-Presets:</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      { label: '❤️ Human Heart SVG', q: 'Labelled diagram of the human heart', m: 'svg' as const },
+                      { label: '📐 Right Triangle Trigonometry', q: 'Labelled right triangle showing opposite, adjacent and hypotenuse', m: 'svg' as const },
+                      { label: '💧 Water Cycle Diagram', q: 'Simple water cycle diagram', m: 'svg' as const },
+                      { label: '🧊 3D Water Cycle Model', q: 'Water Cycle', m: '3d' as const },
+                      { label: '⚛️ 3D Bohr Atom Model', q: '3D Atom Model', m: '3d' as const },
+                      { label: '🧬 DNA Helix Structure', q: 'DNA Double Helix', m: '3d' as const },
+                      { label: '🔋 Electric Circuit SVG', q: 'Simple electrical circuit with battery, bulb and switch', m: 'svg' as const },
+                      { label: '🌿 Plant Cell Anatomy', q: 'Diagram of a plant cell with chloroplast and cell wall', m: 'svg' as const }
+                    ].map(preset => (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() => {
+                          setAiToolType(preset.m);
+                          setAiPromptQuery(preset.q);
+                        }}
+                        className="px-2.5 py-1 rounded-xl bg-slate-950 hover:bg-indigo-950/80 text-slate-300 hover:text-indigo-200 border border-white/10 text-[10px] font-medium transition-all cursor-pointer"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-3 border-t border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => setAiPromptOpen(false)}
+                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!aiPromptQuery.trim() || isGeneratingDiagram}
+                    className="px-5 py-2 text-xs bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-40 text-white rounded-xl font-black uppercase tracking-wider transition-all shadow-lg hover:shadow-indigo-500/25 cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>{isGeneratingDiagram ? 'Generating visual...' : 'Insert on Whiteboard'}</span>
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         )}
       </div>
