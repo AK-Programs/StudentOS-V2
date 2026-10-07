@@ -511,17 +511,68 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
   // --- PHASE 2 CORE INTEGRATED ENGINES ---
   const handleRunInternetSearch = async (query: string) => {
     if (!query || !query.trim()) return;
+    const cleanQ = query.trim();
     setSearching(true);
-    setSearchQuery(query);
+    setSearchQuery(cleanQ);
     setActiveJarvisSection('search');
     setGeneratedNotesContent(null);
-    
-    // Display Coming Soon notice cleanly
-    setTimeout(() => {
-      setSearchResults(`🚀 **Web Search — Coming Soon**\n\nOnline search capabilities and live internet grounding will arrive in a future StudentOS update.`);
+    setIsNotesSaved(false);
+    setSearchResults(`🔍 **Searching verified web & academic sources for "${cleanQ}"...**`);
+    setJarvisFeedback(`🔍 Orion is searching verified external sources for "${cleanQ}"...`);
+
+    try {
+      const response = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: `Perform a comprehensive, verified research synthesis on: "${cleanQ}".
+Include:
+1. Executive Overview & Current Facts
+2. Key Educational / Scientific / Practical Breakdown
+3. Classroom or Study Takeaways
+Cite the verified web sources provided in context using [1], [2], etc.`,
+          persona: 'orion',
+          level: 'Secondary',
+          mode: 'explanatory',
+          webSearchMode: 'force',
+          userId: currentUser?.uid || 'guest',
+          userRole: effectiveRole || currentUser?.role || 'student'
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.message || `HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      const textOut = data.text || 'No grounded synthesis returned.';
+      const rawSources = Array.isArray(data.webSources) ? data.webSources : [];
+      const mappedSources = rawSources.map((s: any) => ({
+        title: s.title || s.domain || 'Web Source',
+        uri: s.url || s.uri || '#',
+        published_source: s.sourceType === 'academic' ? `Academic · ${s.domain}` : s.domain
+      }));
+
+      setSearchResults(textOut);
+      setSearchSources(mappedSources);
+      setGeneratedNotesContent({
+        title: `${cleanQ} (Orion Web Research)`,
+        content: textOut
+      });
+      setJarvisFeedback(
+        mappedSources.length > 0
+          ? `🌐 Synthesized live web intelligence for **"${cleanQ}"** across **${mappedSources.length} verified sources**. View the full research packet & citations in the Discovery Hub.`
+          : textOut
+      );
+      if (data.model) setOrionModelUsed(data.model);
+    } catch (err: any) {
+      console.error('Orion live web search failed:', err);
+      setSearchResults(`⚠️ **Web Search Notice**\n\nCould not reach live external sources right now (${err?.message || 'network timeout'}). Answering from Orion internal knowledge base instead.`);
       setSearchSources([]);
+    } finally {
       setSearching(false);
-    }, 300);
+    }
   };
 
   const handleRunResourceDiscovery = async (query: string) => {
@@ -739,7 +790,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
       );
 
       if (isSearchQuery) {
-        let queryStr = cmdLow
+        let queryStr = command
           .replace(/^search\s+(about|for|the\s+web\s+for|online\s+for)?\s*/gi, '')
           .replace(/^look\s+up\s+(information\s+about|info\s+about)?\s*/gi, '')
           .replace(/^find\s+information\s+about\s*/gi, '')
@@ -748,10 +799,10 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
           .trim();
 
         return {
-          responseText: "🚀 **Web Search — Coming Soon**\n\nOnline web search capabilities and live internet grounding will arrive in a future StudentOS update.",
+          responseText: `Searching verified web sources for "${queryStr || command}"...`,
           action: "web_search",
           targetValue: queryStr || command,
-          details: { query: queryStr || command }
+          details: { query: queryStr || command, title: queryStr || command }
         };
       }
 
@@ -822,6 +873,7 @@ Rules:
             level: 'Secondary',
             mode: 'explanatory',
             taskType: 'orion_command',
+            webSearchMode: 'auto',
             history: historyItems.map(item => ({ role: 'user', content: item.prompt })).flatMap(u => [u, { role: 'assistant', content: '...' }]).slice(-6),
             ragContext: ragContext,
             userId: currentUser?.uid || 'guest',
@@ -837,6 +889,15 @@ Rules:
         if (data.error) throw new Error(data.error);
         aiText = data.text || '';
         if (data.model) setOrionModelUsed(data.model);
+        if (Array.isArray(data.webSources) && data.webSources.length > 0) {
+          setSearchSources(
+            data.webSources.map((s: any) => ({
+              title: s.title || s.domain || 'Web Source',
+              uri: s.url || s.uri || '#',
+              published_source: s.sourceType === 'academic' ? `Academic · ${s.domain}` : s.domain
+            }))
+          );
+        }
         import('../lib/gamification').then(({ awardStudentXP }) => {
           awardStudentXP(currentUser, 'use_ai_study');
         }).catch(() => {});
@@ -1097,8 +1158,19 @@ Rules:
       else if (tabVal.includes('attendance')) setActiveTab('attendance_manager');
       else if (tabVal.includes('timetable') || tabVal.includes('schedule')) setActiveTab('timetable_viewer');
       else if (tabVal.includes('notice') || tabVal.includes('announcement')) setActiveTab('notice_viewer');
-    } else if (mappedAction === 'search_internet') {
-      handleRunInternetSearch(targetVal);
+    } else if (mappedAction === 'search_internet' || mappedAction === 'web_search') {
+      setSearchQuery(targetVal);
+      setSearchResults(resolvedFeedback);
+      const resultSources = pipelineRes.results?.find(r => r.data?.sources)?.data?.sources;
+      if (Array.isArray(resultSources) && resultSources.length > 0) {
+        setSearchSources(
+          resultSources.map((s: any) => ({
+            title: s.title || s.domain || 'Web Source',
+            uri: s.url || s.uri || '#',
+            published_source: s.sourceType === 'academic' ? `Academic · ${s.domain}` : s.domain
+          }))
+        );
+      }
     } else if (mappedAction === 'generate_notes') {
       setActiveTab('notes');
       handleGenerateNotes(targetVal);

@@ -953,7 +953,13 @@ export default function App() {
     title: string;
     personaId: string;
     mode: 'explanatory' | 'socratic' | 'coder' | 'quiz_gen';
-    messages: { role: 'user' | 'assistant'; content: string; files?: any[] }[];
+    messages: {
+      role: 'user' | 'assistant';
+      content: string;
+      files?: any[];
+      webSources?: { title: string; url: string; domain: string; snippet?: string; sourceType?: string }[];
+      webSearchUsed?: boolean;
+    }[];
     attachedFile?: { name: string; content: string; size: number; type: string } | null;
     attachedFiles?: any[];
     userId?: string;
@@ -1011,6 +1017,8 @@ export default function App() {
   const [speakingMsgIdx, setSpeakingMsgIdx] = useState<string | null>(null);
   const [aiActiveModelLabel, setAiActiveModelLabel] = useState<string>('');
   const [aiGroundedInData, setAiGroundedInData] = useState<boolean>(false);
+  const [aiWebSearchMode, setAiWebSearchMode] = useState<'auto' | 'force' | 'off'>('auto');
+  const [aiStatusMessage, setAiStatusMessage] = useState<string>('');
   const aiAbortControllerRef = useRef<AbortController | null>(null);
 
   // AI Quota & Limits State
@@ -5110,6 +5118,10 @@ ${roleLabel}: ${userQuery}`;
         content: m.content
       }));
 
+      let streamedWebSources: any[] = [];
+      let streamedWebUsed = false;
+      setAiStatusMessage(aiWebSearchMode === 'force' ? '🔍 Searching verified web & academic sources...' : '');
+
       const streamResult = await streamAIChatClient(
         {
           prompt: promptWithContext,
@@ -5120,12 +5132,21 @@ ${roleLabel}: ${userQuery}`;
           mode: aiMode,
           ragContext: ragContext || undefined,
           userId: userIdKey,
-          userRole: userRoleKey
+          userRole: userRoleKey,
+          webSearchMode: aiWebSearchMode
         },
         {
           signal: abortCtrl.signal,
+          onStatus: (statusMeta) => {
+            if (statusMeta.message) setAiStatusMessage(statusMeta.message);
+          },
           onStart: (meta) => {
+            setAiStatusMessage('');
             if (meta.model) setAiActiveModelLabel(meta.model);
+            if (meta.webSearchUsed) streamedWebUsed = true;
+            if (Array.isArray(meta.webSources) && meta.webSources.length > 0) {
+              streamedWebSources = meta.webSources;
+            }
           },
           onToken: (_delta, fullText) => {
             answer = fullText;
@@ -5133,20 +5154,37 @@ ${roleLabel}: ${userQuery}`;
               if (t.id === targetThreadId) {
                 return {
                   ...t,
-                  messages: [...updatedMessages, { role: 'assistant' as const, content: fullText }]
+                  messages: [
+                    ...updatedMessages,
+                    {
+                      role: 'assistant' as const,
+                      content: fullText,
+                      webSearchUsed: streamedWebUsed,
+                      webSources: streamedWebSources
+                    }
+                  ]
                 };
               }
               return t;
             }));
           },
           onDone: (finalMeta) => {
+            setAiStatusMessage('');
             if (finalMeta.model) setAiActiveModelLabel(finalMeta.model);
+            if (finalMeta.webSearchUsed) streamedWebUsed = true;
+            if (Array.isArray(finalMeta.webSources) && finalMeta.webSources.length > 0) {
+              streamedWebSources = finalMeta.webSources;
+            }
           }
         }
       );
 
       answer = streamResult.text || answer || 'I encountered an issue processing your lesson topic.';
       if (streamResult.model) setAiActiveModelLabel(streamResult.model);
+      const finalWebUsed = Boolean(streamResult.webSearchUsed || streamedWebUsed);
+      const finalWebSources = (streamResult.webSources && streamResult.webSources.length > 0)
+        ? streamResult.webSources
+        : streamedWebSources;
       awardStudentXP(currentUser, 'use_ai_study');
 
       if (streamResult.usage) {
@@ -5165,7 +5203,18 @@ ${roleLabel}: ${userQuery}`;
 
       setAiThreads(prev => prev.map(t => {
         if (t.id === targetThreadId) {
-          return { ...t, messages: [...updatedMessages, { role: 'assistant', content: answer }] };
+          return {
+            ...t,
+            messages: [
+              ...updatedMessages,
+              {
+                role: 'assistant',
+                content: answer,
+                webSearchUsed: finalWebUsed,
+                webSources: finalWebSources
+              }
+            ]
+          };
         }
         return t;
       }));
@@ -5176,7 +5225,15 @@ ${roleLabel}: ${userQuery}`;
            id: targetThreadId,
            userId: currentUser?.uid || "",
            title: newTitle,
-           messages: [...updatedMessages, { role: 'assistant', content: answer }] 
+           messages: [
+             ...updatedMessages,
+             {
+               role: 'assistant',
+               content: answer,
+               webSearchUsed: finalWebUsed,
+               webSources: finalWebSources
+             }
+           ] 
          } as any).catch(error => {
            console.error("Error saving AI buddy chat response:", error);
          });
@@ -11651,6 +11708,21 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                             <option value="quiz_gen" className="bg-slate-900 text-white">📝 Quiz Exam</option>
                           </select>
                         </div>
+
+                        {/* Web Search Mode Selector */}
+                        <div className="flex items-center gap-1.5 bg-slate-900 border border-teal-500/25 rounded-xl px-2.5 py-1 shadow-inner">
+                          <Globe className={`w-3.5 h-3.5 shrink-0 ${aiWebSearchMode === 'off' ? 'text-slate-500' : 'text-teal-400'}`} />
+                          <select
+                            value={aiWebSearchMode}
+                            onChange={(e) => setAiWebSearchMode(e.target.value as 'auto' | 'force' | 'off')}
+                            className="bg-transparent text-teal-300 text-[10px] font-bold focus:outline-none cursor-pointer uppercase tracking-wider"
+                            title="Controlled Web Search Intelligence Mode"
+                          >
+                            <option value="auto" className="bg-slate-900 text-white">🌐 Web: Smart Auto</option>
+                            <option value="force" className="bg-slate-900 text-white">🔍 Web: Always Search</option>
+                            <option value="off" className="bg-slate-900 text-white">⚡ Web: Offline Fast</option>
+                          </select>
+                        </div>
                       </div>
 
                       {/* Right Actions: Clear Chat */}
@@ -11725,14 +11797,19 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                               <span className="text-[8px] uppercase tracking-wider font-extrabold text-indigo-400">
                                 {m.role === 'user' ? `👤 ${currentUser?.role ? currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1) : 'Student'} Inquiry` : '🤖 AI Buddy Tutor'}
                               </span>
-                              {m.role === 'assistant' && isLatestAssistant && (
+                              {m.role === 'assistant' && (
                                 <div className="flex items-center gap-1.5 flex-wrap">
-                                  {aiGroundedInData && (
+                                  {m.webSearchUsed && (
+                                    <span className="text-[8px] px-1.5 py-0.5 rounded bg-teal-500/15 border border-teal-500/30 text-teal-300 font-mono font-bold flex items-center gap-1">
+                                      🌐 Web Grounded {m.webSources?.length ? `(${m.webSources.length})` : ''}
+                                    </span>
+                                  )}
+                                  {isLatestAssistant && aiGroundedInData && (
                                     <span className="text-[8px] px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-mono font-bold">
                                       ✓ StudentOS Live Data
                                     </span>
                                   )}
-                                  {aiActiveModelLabel && (
+                                  {isLatestAssistant && aiActiveModelLabel && (
                                     <span className="text-[8px] px-1.5 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 font-mono">
                                       ⚡ {aiActiveModelLabel.split('/').pop()}
                                     </span>
@@ -11750,6 +11827,45 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                             {/* Interactive Math / Geometry Visualization when relevant */}
                             {mathWidget && (
                               <InteractiveMathWidget widgetType={mathWidget} />
+                            )}
+
+                            {/* Verified Web Search Sources & Citations Panel */}
+                            {m.role === 'assistant' && m.webSources && m.webSources.length > 0 && (
+                              <div className="mt-3 pt-2.5 border-t border-teal-500/20 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[9px] font-mono uppercase tracking-wider text-teal-400 font-extrabold flex items-center gap-1">
+                                    <Globe className="w-3 h-3" /> Verified Web & Academic Sources ({m.webSources.length})
+                                  </span>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                  {m.webSources.map((src, sIdx) => (
+                                    <a
+                                      key={sIdx}
+                                      href={src.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="group flex items-start gap-2 p-2 rounded-xl bg-slate-950/70 hover:bg-slate-950 border border-white/5 hover:border-teal-500/40 transition-all text-left"
+                                    >
+                                      <span className="px-1.5 py-0.5 rounded bg-teal-500/15 border border-teal-500/30 text-teal-300 font-mono text-[9px] font-bold shrink-0">
+                                        [{sIdx + 1}]
+                                      </span>
+                                      <div className="min-w-0 flex-1">
+                                        <div className="text-[10px] font-bold text-slate-200 group-hover:text-teal-300 truncate">
+                                          {src.title}
+                                        </div>
+                                        <div className="flex items-center gap-1.5 mt-0.5">
+                                          <span className="text-[8px] font-mono text-slate-400 truncate">{src.domain}</span>
+                                          {src.sourceType === 'academic' && (
+                                            <span className="text-[7px] uppercase px-1 py-0.2 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-bold">
+                                              Academic
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </a>
+                                  ))}
+                                </div>
+                              </div>
                             )}
                             
                             {/* Attached Files visual inside bubbles */}
@@ -11882,7 +11998,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                         <div className="p-3 bg-amber-500/5 text-amber-400 border border-amber-500/20 rounded-2xl text-[10px] max-w-[85%] mr-auto flex items-center justify-between gap-3">
                           <div className="flex items-center gap-2 animate-pulse">
                             <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
-                            <span>AI Buddy is streaming response...</span>
+                            <span>{aiStatusMessage || 'AI Buddy is streaming response...'}</span>
                           </div>
                           <button
                             type="button"

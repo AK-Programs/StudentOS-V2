@@ -3,6 +3,15 @@ import { supabase } from './supabase';
 import { upsertDeck, upsertCard, syncDeckToSupabase, syncCardToSupabase } from './flashcardStorage';
 import { Flashcard, FlashcardDeck } from '../types';
 
+export interface WebSearchSourceInfo {
+  title: string;
+  url: string;
+  domain: string;
+  snippet: string;
+  sourceType: 'official' | 'academic' | 'news' | 'reference' | 'web';
+  publishedDate?: string;
+}
+
 export interface AIStreamTelemetry {
   requestId?: string;
   modelUsed?: string;
@@ -12,6 +21,8 @@ export interface AIStreamTelemetry {
   totalGenerationTimeMs: number;
   dataRetrievalLatencyMs: number;
   streamed: boolean;
+  webSearchUsed?: boolean;
+  webSources?: WebSearchSourceInfo[];
 }
 
 export interface StudentOSLocalContextSnapshot {
@@ -82,10 +93,10 @@ export async function buildAuthorizedStudentOSContext(
   currentUser: any,
   effectiveRole: string,
   localSnapshot?: StudentOSLocalContextSnapshot
-): Promise<{ contextString: string; retrievalMs: number }> {
+): Promise<{ contextString: string; retrievalMs: number; hasStudentOSData: boolean }> {
   const start = Date.now();
   if (!currentUser) {
-    return { contextString: '', retrievalMs: 0 };
+    return { contextString: '', retrievalMs: 0, hasStudentOSData: false };
   }
 
   const userId = String(currentUser.uid || currentUser.id || currentUser.email || 'guest');
@@ -110,7 +121,8 @@ export async function buildAuthorizedStudentOSContext(
   if (!doesPromptNeedStudentOSContext(prompt)) {
     return {
       contextString: `User Profile: ${profileHeader}`,
-      retrievalMs: Date.now() - start
+      retrievalMs: Date.now() - start,
+      hasStudentOSData: false
     };
   }
 
@@ -120,7 +132,8 @@ export async function buildAuthorizedStudentOSContext(
   if (cached && cached.userId === userId && Date.now() - cached.timestamp < CONTEXT_CACHE_TTL_MS) {
     return {
       contextString: cached.contextString,
-      retrievalMs: Date.now() - start
+      retrievalMs: Date.now() - start,
+      hasStudentOSData: true
     };
   }
 
@@ -296,7 +309,8 @@ export async function buildAuthorizedStudentOSContext(
 
   return {
     contextString: finalContext,
-    retrievalMs: Date.now() - start
+    retrievalMs: Date.now() - start,
+    hasStudentOSData: true
   };
 }
 
@@ -319,14 +333,39 @@ export async function streamStudentOSAI(
     modelOverride?: string;
     taskType?: string;
     dataRetrievalLatencyMs?: number;
+    webSearchMode?: 'auto' | 'always' | 'off';
   },
   callbacks: {
-    onMeta?: (meta: { model: string; tier: 'fast' | 'general' | 'complex'; requestId: string }) => void;
+    onStatus?: (status: {
+      phase: 'searching' | 'reading_sources' | 'generating' | 'search_failed';
+      message: string;
+      query?: string;
+      sources?: WebSearchSourceInfo[];
+    }) => void;
+    onMeta?: (meta: {
+      model: string;
+      tier: 'fast' | 'general' | 'complex';
+      requestId: string;
+      webSearchUsed?: boolean;
+      webSources?: WebSearchSourceInfo[];
+    }) => void;
     onToken: (delta: string, accumulatedText: string, firstTokenMs: number) => void;
-    onDone?: (result: { text: string; usage?: any; telemetry: AIStreamTelemetry }) => void;
+    onDone?: (result: {
+      text: string;
+      usage?: any;
+      telemetry: AIStreamTelemetry;
+      webSearchUsed?: boolean;
+      webSources?: WebSearchSourceInfo[];
+    }) => void;
   },
   abortSignal?: AbortSignal
-): Promise<{ text: string; usage?: any; telemetry: AIStreamTelemetry }> {
+): Promise<{
+  text: string;
+  usage?: any;
+  telemetry: AIStreamTelemetry;
+  webSearchUsed?: boolean;
+  webSources?: WebSearchSourceInfo[];
+}> {
   const requestStart = Date.now();
   const dataRetrievalLatencyMs = payload.dataRetrievalLatencyMs || 0;
 
@@ -369,6 +408,8 @@ export async function streamStudentOSAI(
     let complexityTier: 'fast' | 'general' | 'complex' = 'general';
     let requestId = '';
     let usageData: any = undefined;
+    let webSearchUsed = false;
+    let webSources: WebSearchSourceInfo[] = [];
 
     while (true) {
       if (abortSignal?.aborted) {
@@ -396,11 +437,26 @@ export async function streamStudentOSAI(
           continue;
         }
 
-        if (eventObj.type === 'meta') {
+        if (eventObj.type === 'status') {
+          if (Array.isArray(eventObj.sources)) {
+            webSearchUsed = true;
+            webSources = eventObj.sources;
+          }
+          callbacks.onStatus?.({
+            phase: eventObj.phase || 'generating',
+            message: eventObj.message || 'Generating answer…',
+            query: eventObj.query,
+            sources: eventObj.sources
+          });
+        } else if (eventObj.type === 'meta') {
           modelUsed = eventObj.model || modelUsed;
           complexityTier = eventObj.tier || complexityTier;
           requestId = eventObj.requestId || requestId;
-          callbacks.onMeta?.({ model: modelUsed, tier: complexityTier, requestId });
+          if (eventObj.webSearchUsed) webSearchUsed = true;
+          if (Array.isArray(eventObj.webSources) && eventObj.webSources.length > 0) {
+            webSources = eventObj.webSources;
+          }
+          callbacks.onMeta?.({ model: modelUsed, tier: complexityTier, requestId, webSearchUsed, webSources });
         } else if (eventObj.type === 'token' && eventObj.token) {
           if (firstTokenMs === null) {
             firstTokenMs = eventObj.firstTokenLatencyMs ?? (Date.now() - requestStart);
@@ -414,6 +470,10 @@ export async function streamStudentOSAI(
           if (eventObj.usage) usageData = eventObj.usage;
           if (eventObj.telemetry?.modelUsed) modelUsed = eventObj.telemetry.modelUsed;
           if (eventObj.telemetry?.complexityTier) complexityTier = eventObj.telemetry.complexityTier;
+          if (eventObj.webSearchUsed) webSearchUsed = true;
+          if (Array.isArray(eventObj.webSources) && eventObj.webSources.length > 0) {
+            webSources = eventObj.webSources;
+          }
         } else if (eventObj.type === 'error') {
           throw new Error(eventObj.details || eventObj.error || 'AI streaming failed.');
         }
@@ -428,10 +488,12 @@ export async function streamStudentOSAI(
       firstTokenLatencyMs: firstTokenMs ?? (Date.now() - requestStart),
       totalGenerationTimeMs: Date.now() - requestStart,
       dataRetrievalLatencyMs,
-      streamed: true
+      streamed: true,
+      webSearchUsed,
+      webSources
     };
 
-    const finalResult = { text: accumulated.trim(), usage: usageData, telemetry };
+    const finalResult = { text: accumulated.trim(), usage: usageData, telemetry, webSearchUsed, webSources };
     callbacks.onDone?.(finalResult);
     return finalResult;
   }
@@ -462,10 +524,18 @@ export async function streamStudentOSAI(
     firstTokenLatencyMs: elapsed,
     totalGenerationTimeMs: elapsed,
     dataRetrievalLatencyMs,
-    streamed: false
+    streamed: false,
+    webSearchUsed: Boolean(parsedRes.webSearchUsed),
+    webSources: parsedRes.webSources || []
   };
 
-  const finalResult = { text, usage: parsedRes.usage, telemetry };
+  const finalResult = {
+    text,
+    usage: parsedRes.usage,
+    telemetry,
+    webSearchUsed: Boolean(parsedRes.webSearchUsed),
+    webSources: parsedRes.webSources || []
+  };
   callbacks.onDone?.(finalResult);
   return finalResult;
 }
@@ -1013,20 +1083,54 @@ export async function streamAIChatClient(
     ragContext?: string;
     userId?: string;
     userRole?: string;
+    webSearchMode?: 'auto' | 'always' | 'off';
   },
   options: {
     signal?: AbortSignal;
-    onStart?: (meta: { model: string; tier: 'fast' | 'general' | 'complex'; requestId: string }) => void;
+    onStatus?: (status: {
+      phase: 'searching' | 'reading_sources' | 'generating' | 'search_failed';
+      message: string;
+      query?: string;
+      sources?: WebSearchSourceInfo[];
+    }) => void;
+    onStart?: (meta: {
+      model: string;
+      tier: 'fast' | 'general' | 'complex';
+      requestId: string;
+      webSearchUsed?: boolean;
+      webSources?: WebSearchSourceInfo[];
+    }) => void;
     onToken: (delta: string, fullText: string) => void;
-    onDone?: (meta: { model: string; text: string; usage?: any }) => void;
+    onDone?: (meta: {
+      model: string;
+      text: string;
+      usage?: any;
+      webSearchUsed?: boolean;
+      webSources?: WebSearchSourceInfo[];
+    }) => void;
   }
-): Promise<{ text: string; model: string; usage?: any; telemetry: AIStreamTelemetry }> {
+): Promise<{
+  text: string;
+  model: string;
+  usage?: any;
+  telemetry: AIStreamTelemetry;
+  webSearchUsed?: boolean;
+  webSources?: WebSearchSourceInfo[];
+}> {
   const result = await streamStudentOSAI(
     payload,
     {
+      onStatus: (st) => options.onStatus?.(st),
       onMeta: (meta) => options.onStart?.(meta),
       onToken: (delta, fullText) => options.onToken(delta, fullText),
-      onDone: (res) => options.onDone?.({ model: res.telemetry.modelUsed, text: res.text, usage: res.usage })
+      onDone: (res) =>
+        options.onDone?.({
+          model: res.telemetry.modelUsed,
+          text: res.text,
+          usage: res.usage,
+          webSearchUsed: res.webSearchUsed,
+          webSources: res.webSources
+        })
     },
     options.signal
   );
@@ -1035,7 +1139,9 @@ export async function streamAIChatClient(
     text: result.text,
     model: result.telemetry.modelUsed,
     usage: result.usage,
-    telemetry: result.telemetry
+    telemetry: result.telemetry,
+    webSearchUsed: result.webSearchUsed,
+    webSources: result.webSources
   };
 }
 

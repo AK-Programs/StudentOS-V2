@@ -207,7 +207,9 @@ export function validateActionPermission(
     'generate_notes',
     'add_task',
     'complete_task',
-    'delete_task'
+    'delete_task',
+    'web_search',
+    'search_internet'
   ];
 
   // Admin/Coordinator-only school-wide broadcast & destructive operations
@@ -2071,14 +2073,65 @@ export async function executeOrionActionPipeline(
         break;
 
       case 'web_search':
-      case 'search_internet':
-        res = {
-          success: true,
-          action: 'web_search',
-          message: 'Web Search Coming Soon',
-          summaryText: `🚀 **Web Search — Coming Soon**\n\nOnline web search capabilities and live internet grounding will arrive in a future StudentOS update.`
-        };
+      case 'search_internet': {
+        const searchQuery = (act.title || act.content || act.message || rawCommand || '').trim();
+        try {
+          const searchResp = await fetch('/api/ai/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: searchQuery })
+          });
+          const searchData = await searchResp.json().catch(() => ({}));
+          if (searchData && searchData.success && Array.isArray(searchData.results) && searchData.results.length > 0) {
+            const sources = searchData.results;
+            const rows: OrionStructuredTableRow[] = sources.slice(0, 6).map((s: any, idx: number) => ({
+              id: `src_${idx}`,
+              primary: s.title || 'External Reference',
+              secondary: s.description ? s.description.slice(0, 140) : s.uri,
+              badge: (s.sourceType || 'WEB').toUpperCase(),
+              badgeTone: s.sourceType === 'official' ? 'emerald' : s.sourceType === 'academic' ? 'indigo' : 'slate',
+              meta: s.published_source || s.uri
+            }));
+            const sourceMarkdownList = sources
+              .map((s: any, idx: number) => `${idx + 1}. **[${s.title}](${s.uri})** — *${s.published_source || 'Web Source'}*\n   ${s.description || ''}`)
+              .join('\n');
+            const summaryBody = `🌐 **Orion External Research & Intelligence Report**\n\n### 📌 Executive Synthesis (External Web Sources)\n${searchData.summary || ''}\n\n### 🏫 Internal StudentOS Context Separation\n- **Internal StudentOS Records**: Role-scoped to **${userContext.role.toUpperCase()}** (${userContext.grade || 'All Grades'}${userContext.section ? ` • ${userContext.section}` : ''}). No unauthorized internal records were exposed to external search.\n- **External Web Attribution**: Retrieved ${sources.length} verified public sources.\n\n### 📚 Cited External Sources\n${sourceMarkdownList}`;
+            res = {
+              success: true,
+              action: 'web_search',
+              message: `Retrieved ${sources.length} live web sources`,
+              summaryText: summaryBody,
+              structuredCard: {
+                title: `🌐 Web Intelligence: ${searchQuery.slice(0, 48)}`,
+                subtitle: 'External Web Sources vs. Internal StudentOS Context',
+                dateRange: new Date().toLocaleDateString(),
+                metrics: [
+                  { label: 'Sources Cited', value: sources.length, tone: 'indigo' },
+                  { label: 'Official / Academic', value: sources.filter((x: any) => x.sourceType === 'official' || x.sourceType === 'academic').length, tone: 'emerald' },
+                  { label: 'Data Scope', value: 'Separated', tone: 'default' }
+                ],
+                rows,
+                reportMarkdown: summaryBody
+              }
+            };
+          } else {
+            res = {
+              success: false,
+              action: 'web_search',
+              message: "I couldn't retrieve fresh web information right now.",
+              summaryText: `I couldn't retrieve fresh web information right now. However, I can help analyze your internal StudentOS records or explain foundational concepts from verified curriculum knowledge.`
+            };
+          }
+        } catch (err) {
+          res = {
+            success: false,
+            action: 'web_search',
+            message: "I couldn't retrieve fresh web information right now.",
+            summaryText: `I couldn't retrieve fresh web information right now. Please try again in a moment.`
+          };
+        }
         break;
+      }
 
       default:
         res = {

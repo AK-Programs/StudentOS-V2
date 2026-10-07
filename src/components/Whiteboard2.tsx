@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { 
   Stage as StageComp, Layer as LayerComp, Line as LineComp, Rect as RectComp, 
   Circle as CircleComp, RegularPolygon as RegularPolygonComp, Arrow as ArrowComp, 
@@ -9,7 +9,7 @@ import {
   Download, Eraser, MousePointer2, Pen, PenTool, Square, Circle as CircleIcon, 
   Triangle, Minus, ChevronDown, Trash2, Sliders, Settings2, Plus, Copy,
   ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, ArrowUp, ArrowDown, Type, Sparkles,
-  Undo2, Redo2, Image as ImageIcon, StickyNote, FileText
+  Undo2, Redo2, Image as ImageIcon, StickyNote, FileText, Box, Layers, Hand, RotateCcw, Eye, Tag, HelpCircle
 } from 'lucide-react';
 
 const Stage = StageComp as any;
@@ -26,9 +26,31 @@ const Star = StarComp as any;
 const Transformer = TransformerComp as any;
 const KonvaImage = KonvaImageComp as any;
 
+export interface Part3D {
+  id: string;
+  label: string;
+  primitive: 'box' | 'sphere' | 'cylinder' | 'pyramid' | 'prism' | 'torus' | 'cone' | 'plane';
+  position: [number, number, number];
+  dimensions: [number, number, number];
+  rotation?: [number, number, number];
+  color: string;
+  opacity?: number;
+  description?: string;
+}
+
+export interface Scene3DData {
+  id: string;
+  title: string;
+  category: string;
+  description: string;
+  educationalNotes: string[];
+  parts: Part3D[];
+  connections?: { from: [number, number, number]; to: [number, number, number]; color: string; label?: string }[];
+}
+
 interface ShapeObj {
   id: string;
-  type: 'rect' | 'square' | 'circle' | 'ellipse' | 'triangle' | 'line' | 'arrow' | 'pentagon' | 'polygon' | 'star' | 'ruler-15' | 'ruler-30' | 'protractor' | 'compass' | 'setsquare-45' | 'setsquare-30-60' | 'geometry' | 'text' | 'ruler' | 'setsquare' | 'divider' | 'angle-meter' | 'svg_node' | 'mermaid';
+  type: 'rect' | 'square' | 'circle' | 'ellipse' | 'triangle' | 'line' | 'arrow' | 'pentagon' | 'polygon' | 'star' | 'ruler-15' | 'ruler-30' | 'protractor' | 'compass' | 'setsquare-45' | 'setsquare-30-60' | 'geometry' | 'text' | 'ruler' | 'setsquare' | 'divider' | 'angle-meter' | 'svg_node' | 'mermaid' | 'model_3d';
   x: number;
   y: number;
   width?: number;
@@ -41,6 +63,18 @@ interface ShapeObj {
   text?: string;
   fontSize?: number;
   imageObj?: HTMLImageElement;
+  svgRaw?: string;
+  groupId?: string;
+  isLocked?: boolean;
+  scaleX?: number;
+  scaleY?: number;
+  rotation?: number;
+  scene3D?: Scene3DData;
+  rotX?: number;
+  rotY?: number;
+  zoom3D?: number;
+  explode3D?: number;
+  showLabels3D?: boolean;
 }
 
 interface LineObj {
@@ -49,6 +83,11 @@ interface LineObj {
   color: string;
   brushSize: number;
   tool: 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser';
+  groupId?: string;
+  isLocked?: boolean;
+  scaleX?: number;
+  scaleY?: number;
+  rotation?: number;
 }
 
 interface Slide {
@@ -59,6 +98,246 @@ interface Slide {
 }
 
 declare const mermaid: any;
+
+/**
+ * Client-side SVG Sanitizer — strips scripts, event handlers, foreignObject, and unsafe URIs
+ */
+function sanitizeSvgClient(rawSvg: string): string {
+  if (!rawSvg || typeof rawSvg !== 'string') return '';
+  let s = rawSvg.trim();
+  const match = s.match(/<svg[\s\S]*?<\/svg>/i);
+  if (!match) return '';
+  s = match[0];
+  s = s
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, '')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+    .replace(/<object[\s\S]*?<\/object>/gi, '')
+    .replace(/<embed[\s\S]*?>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*["'][^"']*["']/gi, '')
+    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, '')
+    .replace(/(?:href|xlink:href)\s*=\s*["']\s*(?:javascript|data:text\/html|vbscript):[^"']*["']/gi, '');
+  if (!/xmlns\s*=/i.test(s)) {
+    s = s.replace(/^<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+  }
+  return s;
+}
+
+/**
+ * Renders a structured 3D educational scene to a crisp SVG string using 3D rotation matrices and depth sorting
+ */
+function renderScene3DToSvg(
+  scene: Scene3DData,
+  rotXDeg: number = 22,
+  rotYDeg: number = -32,
+  zoom: number = 1,
+  explode: number = 0,
+  showLabels: boolean = true
+): string {
+  const W = 680;
+  const H = 480;
+  const cx = W / 2;
+  const cy = H / 2 + 12;
+  const scale = 68 * zoom;
+
+  const radX = (rotXDeg * Math.PI) / 180;
+  const radY = (rotYDeg * Math.PI) / 180;
+  const cosX = Math.cos(radX), sinX = Math.sin(radX);
+  const cosY = Math.cos(radY), sinY = Math.sin(radY);
+
+  const project = (pt: [number, number, number]): { x: number; y: number; z: number } => {
+    const [px, py, pz] = pt;
+    // Rotate around Y
+    const x1 = px * cosY + pz * sinY;
+    const z1 = -px * sinY + pz * cosY;
+    const y1 = py;
+    // Rotate around X
+    const y2 = y1 * cosX - z1 * sinX;
+    const z2 = y1 * sinX + z1 * cosX;
+    const perspective = 6.5 / Math.max(2.5, 6.5 - z2 * 0.35);
+    return {
+      x: Number((cx + x1 * scale * perspective).toFixed(1)),
+      y: Number((cy - y2 * scale * perspective).toFixed(1)),
+      z: z2
+    };
+  };
+
+  const escapeXml = (str: string) =>
+    String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+
+  const elements: { z: number; svg: string }[] = [];
+
+  // Reference 3D floor grid
+  for (let g = -2; g <= 2; g++) {
+    const p1 = project([g, -1.65, -2]);
+    const p2 = project([g, -1.65, 2]);
+    const p3 = project([-2, -1.65, g]);
+    const p4 = project([2, -1.65, g]);
+    elements.push({
+      z: -10,
+      svg: `<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="#1e293b" stroke-width="1" stroke-dasharray="3,3" />
+            <line x1="${p3.x}" y1="${p3.y}" x2="${p4.x}" y2="${p4.y}" stroke="#1e293b" stroke-width="1" stroke-dasharray="3,3" />`
+    });
+  }
+
+  // Connections / bonds / rays
+  if (scene.connections) {
+    for (const conn of scene.connections) {
+      const f: [number, number, number] = [
+        conn.from[0] * (1 + explode * 0.45),
+        conn.from[1] * (1 + explode * 0.45),
+        conn.from[2] * (1 + explode * 0.45)
+      ];
+      const t: [number, number, number] = [
+        conn.to[0] * (1 + explode * 0.45),
+        conn.to[1] * (1 + explode * 0.45),
+        conn.to[2] * (1 + explode * 0.45)
+      ];
+      const p1 = project(f);
+      const p2 = project(t);
+      const avgZ = (p1.z + p2.z) / 2 - 0.1;
+      const mx = ((p1.x + p2.x) / 2).toFixed(1);
+      const my = ((p1.y + p2.y) / 2 - 8).toFixed(1);
+      elements.push({
+        z: avgZ,
+        svg: `<g>
+          <line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="${conn.color || '#94a3b8'}" stroke-width="3.5" stroke-linecap="round" />
+          ${showLabels && conn.label ? `<text x="${mx}" y="${my}" fill="${conn.color || '#e2e8f0'}" font-family="sans-serif" font-size="11" font-weight="bold" text-anchor="middle">${escapeXml(conn.label)}</text>` : ''}
+        </g>`
+      });
+    }
+  }
+
+  // Render each 3D part
+  for (const part of scene.parts || []) {
+    const pos: [number, number, number] = [
+      part.position[0] * (1 + explode * 0.55),
+      part.position[1] * (1 + explode * 0.55),
+      part.position[2] * (1 + explode * 0.55)
+    ];
+    const [dx, dy, dz] = part.dimensions || [1, 1, 1];
+    const center = project(pos);
+    const col = part.color || '#6366f1';
+    const op = part.opacity ?? 0.85;
+
+    let shapeMarkup = '';
+
+    if (part.primitive === 'sphere') {
+      const r = Math.max(10, dx * scale * 0.62);
+      shapeMarkup = `
+        <circle cx="${center.x}" cy="${center.y}" r="${r.toFixed(1)}" fill="${col}" fill-opacity="${op}" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.65" />
+        <ellipse cx="${center.x}" cy="${center.y}" rx="${r.toFixed(1)}" ry="${(r * 0.36).toFixed(1)}" fill="none" stroke="#ffffff" stroke-width="1" stroke-dasharray="4,3" stroke-opacity="0.55" />
+        <circle cx="${(center.x - r * 0.3).toFixed(1)}" cy="${(center.y - r * 0.3).toFixed(1)}" r="${(r * 0.22).toFixed(1)}" fill="#ffffff" fill-opacity="0.35" />
+      `;
+    } else if (part.primitive === 'torus') {
+      const rx = Math.max(16, dx * scale * 0.5);
+      const ry = Math.max(7, rx * Math.abs(sinX) + 6);
+      shapeMarkup = `
+        <ellipse cx="${center.x}" cy="${center.y}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" fill="none" stroke="${col}" stroke-width="2" stroke-opacity="${op}" stroke-dasharray="6,4" />
+      `;
+    } else if (part.primitive === 'pyramid' || part.primitive === 'cone') {
+      const hw = dx * 0.5, hh = dy * 0.5, hd = dz * 0.5;
+      const apex = project([pos[0], pos[1] + hh, pos[2]]);
+      const b1 = project([pos[0] - hw, pos[1] - hh, pos[2] - hd]);
+      const b2 = project([pos[0] + hw, pos[1] - hh, pos[2] - hd]);
+      const b3 = project([pos[0] + hw, pos[1] - hh, pos[2] + hd]);
+      const b4 = project([pos[0] - hw, pos[1] - hh, pos[2] + hd]);
+      shapeMarkup = `
+        <polygon points="${b1.x},${b1.y} ${b2.x},${b2.y} ${b3.x},${b3.y} ${b4.x},${b4.y}" fill="${col}" fill-opacity="${op * 0.5}" stroke="#e2e8f0" stroke-width="1.2" />
+        <polygon points="${apex.x},${apex.y} ${b1.x},${b1.y} ${b2.x},${b2.y}" fill="${col}" fill-opacity="${op * 0.7}" stroke="#ffffff" stroke-width="1.5" />
+        <polygon points="${apex.x},${apex.y} ${b2.x},${b2.y} ${b3.x},${b3.y}" fill="${col}" fill-opacity="${op * 0.85}" stroke="#ffffff" stroke-width="1.5" />
+        <polygon points="${apex.x},${apex.y} ${b3.x},${b3.y} ${b4.x},${b4.y}" fill="${col}" fill-opacity="${op}" stroke="#ffffff" stroke-width="1.5" />
+        <polygon points="${apex.x},${apex.y} ${b4.x},${b4.y} ${b1.x},${b1.y}" fill="${col}" fill-opacity="${op * 0.65}" stroke="#ffffff" stroke-width="1.5" />
+      `;
+    } else if (part.primitive === 'prism') {
+      const hw = dx * 0.5, hh = dy * 0.5, hd = dz * 0.5;
+      const f1 = project([pos[0], pos[1] + hh, pos[2] + hd]);
+      const f2 = project([pos[0] - hw, pos[1] - hh, pos[2] + hd]);
+      const f3 = project([pos[0] + hw, pos[1] - hh, pos[2] + hd]);
+      const b1 = project([pos[0], pos[1] + hh, pos[2] - hd]);
+      const b2 = project([pos[0] - hw, pos[1] - hh, pos[2] - hd]);
+      const b3 = project([pos[0] + hw, pos[1] - hh, pos[2] - hd]);
+      shapeMarkup = `
+        <polygon points="${b1.x},${b1.y} ${b2.x},${b2.y} ${b3.x},${b3.y}" fill="${col}" fill-opacity="${op * 0.45}" stroke="#cbd5e1" stroke-width="1.2" stroke-dasharray="4,3" />
+        <polygon points="${f1.x},${f1.y} ${f3.x},${f3.y} ${b3.x},${b3.y} ${b1.x},${b1.y}" fill="${col}" fill-opacity="${op * 0.75}" stroke="#ffffff" stroke-width="1.5" />
+        <polygon points="${f1.x},${f1.y} ${f2.x},${f2.y} ${b2.x},${b2.y} ${b1.x},${b1.y}" fill="${col}" fill-opacity="${op * 0.6}" stroke="#ffffff" stroke-width="1.5" />
+        <polygon points="${f1.x},${f1.y} ${f2.x},${f2.y} ${f3.x},${f3.y}" fill="${col}" fill-opacity="${op * 0.9}" stroke="#ffffff" stroke-width="1.8" />
+      `;
+    } else if (part.primitive === 'cylinder') {
+      const rx = Math.max(12, dx * scale * 0.5);
+      const ry = Math.max(6, rx * 0.32);
+      const topC = project([pos[0], pos[1] + dy * 0.5, pos[2]]);
+      const botC = project([pos[0], pos[1] - dy * 0.5, pos[2]]);
+      shapeMarkup = `
+        <ellipse cx="${botC.x}" cy="${botC.y}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" fill="${col}" fill-opacity="${op * 0.65}" stroke="#e2e8f0" stroke-width="1.4" />
+        <path d="M ${(topC.x - rx).toFixed(1)} ${topC.y} L ${(botC.x - rx).toFixed(1)} ${botC.y} A ${rx.toFixed(1)} ${ry.toFixed(1)} 0 0 0 ${(botC.x + rx).toFixed(1)} ${botC.y} L ${(topC.x + rx).toFixed(1)} ${topC.y} Z" fill="${col}" fill-opacity="${op * 0.8}" stroke="#ffffff" stroke-width="1.4" />
+        <ellipse cx="${topC.x}" cy="${topC.y}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" fill="${col}" fill-opacity="${op}" stroke="#ffffff" stroke-width="1.6" />
+      `;
+    } else {
+      // 3D Box / Cuboid / Plane
+      const hw = dx * 0.5, hh = dy * 0.5, hd = dz * 0.5;
+      const v = [
+        project([pos[0] - hw, pos[1] - hh, pos[2] - hd]),
+        project([pos[0] + hw, pos[1] - hh, pos[2] - hd]),
+        project([pos[0] + hw, pos[1] + hh, pos[2] - hd]),
+        project([pos[0] - hw, pos[1] + hh, pos[2] - hd]),
+        project([pos[0] - hw, pos[1] - hh, pos[2] + hd]),
+        project([pos[0] + hw, pos[1] - hh, pos[2] + hd]),
+        project([pos[0] + hw, pos[1] + hh, pos[2] + hd]),
+        project([pos[0] - hw, pos[1] + hh, pos[2] + hd]),
+      ];
+      const faces = [
+        { idx: [0, 1, 2, 3], mult: 0.55 }, // back
+        { idx: [0, 4, 7, 3], mult: 0.68 }, // left
+        { idx: [1, 5, 6, 2], mult: 0.78 }, // right
+        { idx: [0, 1, 5, 4], mult: 0.60 }, // bottom
+        { idx: [3, 2, 6, 7], mult: 0.95 }, // top
+        { idx: [4, 5, 6, 7], mult: 0.88 }, // front
+      ].map(f => ({
+        ...f,
+        z: f.idx.reduce((acc, i) => acc + v[i].z, 0) / 4
+      })).sort((a, b) => a.z - b.z);
+
+      shapeMarkup = faces.map(f => {
+        const pts = f.idx.map(i => `${v[i].x},${v[i].y}`).join(' ');
+        return `<polygon points="${pts}" fill="${col}" fill-opacity="${(op * f.mult).toFixed(2)}" stroke="#ffffff" stroke-width="1.3" stroke-opacity="0.75" />`;
+      }).join('\n');
+    }
+
+    const labelMarkup = showLabels && part.label
+      ? `<g>
+          <rect x="${(center.x - (part.label.length * 3.4 + 10)).toFixed(1)}" y="${(center.y - 11).toFixed(1)}" width="${(part.label.length * 6.8 + 20).toFixed(1)}" height="20" rx="6" fill="#0f172a" fill-opacity="0.86" stroke="${col}" stroke-width="1.2" />
+          <text x="${center.x}" y="${(center.y + 3).toFixed(1)}" fill="#f8fafc" font-family="sans-serif" font-size="11" font-weight="bold" text-anchor="middle">${escapeXml(part.label)}</text>
+        </g>`
+      : '';
+
+    elements.push({
+      z: center.z,
+      svg: `<g>${shapeMarkup}${labelMarkup}</g>`
+    });
+  }
+
+  elements.sort((a, b) => a.z - b.z);
+
+  const notesFooter = (scene.educationalNotes || []).slice(0, 2).map((n, i) =>
+    `<text x="24" y="${438 + i * 18}" fill="#94a3b8" font-family="sans-serif" font-size="11">• ${escapeXml(n)}</text>`
+  ).join('\n');
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
+    <rect width="${W}" height="${H}" rx="18" fill="#090d16" stroke="#334155" stroke-width="2" />
+    <rect x="16" y="14" width="${W - 32}" height="42" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1" />
+    <text x="30" y="34" fill="#f8fafc" font-family="sans-serif" font-size="15" font-weight="bold">🧊 ${escapeXml(scene.title || '3D Educational Model')}</text>
+    <text x="30" y="49" fill="#38bdf8" font-family="monospace" font-size="10">${escapeXml(scene.description || '')}</text>
+    <text x="${W - 28}" y="38" fill="#818cf8" font-family="monospace" font-size="10" text-anchor="end">Pitch ${Math.round(rotXDeg)}° · Yaw ${Math.round(rotYDeg)}°</text>
+    ${elements.map(e => e.svg).join('\n')}
+    ${notesFooter}
+  </svg>`;
+}
+
 
 export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   // 1. All Component State & Refs Declared First
@@ -80,9 +359,32 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved');
   const [isPresentationMode, setIsPresentationMode] = useState(false);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
-  const [selectedObj, setSelectedObj] = useState<{ id: string; type: 'shape' | 'line' } | null>(null);
+
+  // Selection state: supports single and multi-object selection + rectangular marquee
+  const [selectedIds, setSelectedIds] = useState<{ id: string; type: 'shape' | 'line' }[]>([]);
+  const selectedObj = selectedIds.length > 0 ? selectedIds[0] : null;
+  const setSelectedObj = (item: { id: string; type: 'shape' | 'line' } | null) => {
+    setSelectedIds(item ? [item] : []);
+  };
+  const [selectionMode, setSelectionMode] = useState<'intersect' | 'contain'>('intersect');
+  const [marqueeRect, setMarqueeRect] = useState<{
+    visible: boolean;
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+  }>({ visible: false, x1: 0, y1: 0, x2: 0, y2: 0 });
+  const isMarqueeSelecting = useRef(false);
+
+  // Contextual AI Visual / Educational Insight Panel state
+  const [aiInsightCard, setAiInsightCard] = useState<{
+    title: string;
+    mode: string;
+    content: string;
+  } | null>(null);
+  const [isRunningSelectionAI, setIsRunningSelectionAI] = useState(false);
   
-  const [tool, setTool] = useState<'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'object_eraser' | 'select' | 'shape'>('pen');
+  const [tool, setTool] = useState<'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'object_eraser' | 'select' | 'pan' | 'shape'>('pen');
   const [shapeType, setShapeType] = useState<'rect' | 'square' | 'circle' | 'ellipse' | 'triangle' | 'line' | 'arrow' | 'pentagon' | 'polygon' | 'star' | 'ruler-15' | 'ruler-30' | 'protractor' | 'compass' | 'setsquare-45' | 'setsquare-30-60' | 'geometry' | 'text' | 'ruler' | 'setsquare'>('rect');
   const [brushColor, setBrushColor] = useState('#ffffff');
   const [brushSize, setBrushSize] = useState(4);
@@ -102,7 +404,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   const [aiPromptOpen, setAiPromptOpen] = useState(false);
   const [aiPromptQuery, setAiPromptQuery] = useState('');
   const [isGeneratingDiagram, setIsGeneratingDiagram] = useState(false);
-  const [aiToolType, setAiToolType] = useState<'auto' | 'mermaid' | 'svg' | 'diagram' | 'mindmap' | 'assistant'>('auto');
+  const [aiToolType, setAiToolType] = useState<'auto' | 'svg' | '3d' | 'mermaid' | 'diagram' | 'mindmap' | 'assistant'>('auto');
   const [canvasSize, setCanvasSize] = useState({ width: window.innerWidth, height: window.innerHeight - 120 });
   
   const [textModal, setTextModal] = useState<{
@@ -118,6 +420,42 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   const trRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isDrawing = useRef(false);
+
+  // Rehydrate SVG & 3D shapes from svgRaw/scene3D when loading slides
+  useEffect(() => {
+    const activeSlide = slides[activeSlideIdx];
+    if (!activeSlide) return;
+    activeSlide.shapes.forEach((sh) => {
+      if ((sh.type === 'svg_node' || sh.type === 'model_3d') && !sh.imageObj) {
+        let raw = sh.svgRaw || '';
+        if (sh.type === 'model_3d' && sh.scene3D) {
+          raw = renderScene3DToSvg(
+            sh.scene3D,
+            sh.rotX ?? 22,
+            sh.rotY ?? -32,
+            sh.zoom3D ?? 1,
+            sh.explode3D ?? 0,
+            sh.showLabels3D ?? true
+          );
+        }
+        const safeSvg = sanitizeSvgClient(raw);
+        if (safeSvg) {
+          const img = new Image();
+          img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(safeSvg);
+          img.onload = () => {
+            setSlides(prev => {
+              const next = [...prev];
+              const sl = next[activeSlideIdx];
+              if (!sl) return prev;
+              const target = sl.shapes.find(item => item.id === sh.id);
+              if (target) target.imageObj = img;
+              return next;
+            });
+          };
+        }
+      }
+    });
+  }, [activeSlideIdx, slides.length]);
 
   // 2. Helper Functions
   const cloneSlides = (src: Slide[]): Slide[] =>
@@ -139,7 +477,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     setRedoStack(prev => [...prev, cloneSlides(slides)]);
     setUndoStack(prev => prev.slice(0, -1));
     setSlides(previous);
-    setSelectedObj(null);
+    setSelectedIds([]);
   };
 
   const handleRedo = () => {
@@ -148,7 +486,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     setUndoStack(prev => [...prev, cloneSlides(slides)]);
     setRedoStack(prev => prev.slice(0, -1));
     setSlides(next);
-    setSelectedObj(null);
+    setSelectedIds([]);
   };
 
   useEffect(() => {
@@ -180,25 +518,27 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
         e.preventDefault();
         handleRedo();
-      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedObj) {
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd' && selectedIds.length > 0) {
         e.preventDefault();
-        pushHistory();
-        setSlides(prev => {
-          const updated = cloneSlides(prev);
-          const slide = updated[activeSlideIdx];
-          if (selectedObj.type === 'shape') {
-            slide.shapes = slide.shapes.filter(s => s.id !== selectedObj.id);
-          } else {
-            slide.lines = slide.lines.filter(l => l.id !== selectedObj.id);
-          }
-          return updated;
-        });
-        setSelectedObj(null);
+        handleDuplicateSelectedObject();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g' && selectedIds.length > 0) {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleUngroupSelectedObjects();
+        } else {
+          handleGroupSelectedObjects();
+        }
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0) {
+        e.preventDefault();
+        handleDeleteSelectedObject();
+      } else if (e.key === 'Escape') {
+        setSelectedIds([]);
+        setMarqueeRect(prev => ({ ...prev, visible: false }));
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [slides, undoStack, redoStack, selectedObj, activeSlideIdx]);
+  }, [slides, undoStack, redoStack, selectedIds, activeSlideIdx]);
 
   useEffect(() => {
     if (aiTip) {
@@ -207,6 +547,216 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     }
   }, [aiTip]);
 
+  // Helper to insert a 3D Educational Object onto the Whiteboard
+  const insert3DModelOnBoard = useCallback((scene: Scene3DData, xPos: number = 140, yPos: number = 95) => {
+    const rotX = 22;
+    const rotY = -32;
+    const zoom3D = 1;
+    const explode3D = 0;
+    const showLabels3D = true;
+    const svgStr = sanitizeSvgClient(renderScene3DToSvg(scene, rotX, rotY, zoom3D, explode3D, showLabels3D));
+    if (!svgStr) return;
+
+    const img = new Image();
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
+    img.onload = () => {
+      const new3DShape: ShapeObj = {
+        id: `model3d_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        type: 'model_3d',
+        x: xPos,
+        y: yPos,
+        width: 580,
+        height: 410,
+        stroke: '#38bdf8',
+        strokeWidth: 0,
+        text: scene.title,
+        imageObj: img,
+        svgRaw: svgStr,
+        scene3D: scene,
+        rotX,
+        rotY,
+        zoom3D,
+        explode3D,
+        showLabels3D
+      };
+      pushHistory();
+      setSlides(prev => {
+        const updated = cloneSlides(prev);
+        updated[activeSlideIdx].shapes.push(new3DShape);
+        return updated;
+      });
+      setTool('select');
+      setSelectedIds([{ id: new3DShape.id, type: 'shape' }]);
+    };
+  }, [activeSlideIdx, slides]);
+
+  // Helper to update 3D parameters (pitch, yaw, zoom, explode, labels) on a selected 3D object
+  const updateSelected3DModel = (patch: Partial<Pick<ShapeObj, 'rotX' | 'rotY' | 'zoom3D' | 'explode3D' | 'showLabels3D'>>) => {
+    if (!selectedObj || selectedObj.type !== 'shape') return;
+    const currentSlide = slides[activeSlideIdx];
+    const targetShape = currentSlide?.shapes.find(s => s.id === selectedObj.id);
+    if (!targetShape || targetShape.type !== 'model_3d' || !targetShape.scene3D) return;
+
+    const nextRotX = patch.rotX ?? targetShape.rotX ?? 22;
+    const nextRotY = patch.rotY ?? targetShape.rotY ?? -32;
+    const nextZoom = patch.zoom3D ?? targetShape.zoom3D ?? 1;
+    const nextExplode = patch.explode3D ?? targetShape.explode3D ?? 0;
+    const nextLabels = patch.showLabels3D ?? targetShape.showLabels3D ?? true;
+
+    const svgStr = sanitizeSvgClient(
+      renderScene3DToSvg(targetShape.scene3D, nextRotX, nextRotY, nextZoom, nextExplode, nextLabels)
+    );
+    if (!svgStr) return;
+
+    const img = new Image();
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
+    img.onload = () => {
+      setSlides(prev => {
+        const updated = [...prev];
+        const sh = updated[activeSlideIdx]?.shapes.find(s => s.id === targetShape.id);
+        if (sh) {
+          sh.rotX = nextRotX;
+          sh.rotY = nextRotY;
+          sh.zoom3D = nextZoom;
+          sh.explode3D = nextExplode;
+          sh.showLabels3D = nextLabels;
+          sh.svgRaw = svgStr;
+          sh.imageObj = img;
+        }
+        return updated;
+      });
+    };
+  };
+
+  // Extract descriptive context from currently selected Whiteboard objects
+  const getSelectedObjectsDescription = (): string => {
+    const slide = slides[activeSlideIdx];
+    if (!slide || selectedIds.length === 0) return '';
+    const parts: string[] = [];
+    selectedIds.forEach(sel => {
+      if (sel.type === 'shape') {
+        const sh = slide.shapes.find(s => s.id === sel.id);
+        if (sh) {
+          if (sh.type === 'model_3d' && sh.scene3D) {
+            parts.push(`3D Model "${sh.scene3D.title}" (${sh.scene3D.description}) with parts: ${sh.scene3D.parts.map(p => p.label).join(', ')}`);
+          } else if (sh.text) {
+            parts.push(`${sh.type} labeled "${sh.text}"`);
+          } else {
+            parts.push(`${sh.type} shape`);
+          }
+        }
+      } else {
+        parts.push('freehand sketched stroke');
+      }
+    });
+    return parts.join('; ');
+  };
+
+  // Selected Object → 3D Infographic / Visual / Explain / Quiz / Label workflow
+  const handleSelectedObjectAIAction = async (action: 'to_3d' | 'to_svg' | 'explain' | 'label_parts' | 'quiz') => {
+    const contextDesc = getSelectedObjectsDescription();
+    if (!contextDesc) {
+      setAiTip('⚠️ Select one or more objects on the Whiteboard first.');
+      return;
+    }
+    setIsRunningSelectionAI(true);
+    try {
+      const slide = slides[activeSlideIdx];
+      const primaryShape = slide?.shapes.find(s => s.id === selectedIds[0]?.id);
+      const anchorX = primaryShape ? Math.min(canvasSize.width - 620, Math.max(60, primaryShape.x + 60)) : 160;
+      const anchorY = primaryShape ? Math.min(canvasSize.height - 440, Math.max(60, primaryShape.y + 40)) : 110;
+      const cleanTopic = primaryShape?.text || primaryShape?.scene3D?.title || contextDesc;
+
+      if (action === 'to_3d') {
+        setAiTip(`🧊 Converting "${cleanTopic}" into an interactive 3D educational model...`);
+        const res = await fetch('/api/ai/whiteboard-3d', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: cleanTopic, sourceContext: contextDesc })
+        });
+        const data = await res.json();
+        if (data?.scene) {
+          insert3DModelOnBoard(data.scene, anchorX, anchorY);
+          setAiTip(`🧊 3D Educational Model created for "${data.scene.title}"! Use 3D controls to rotate or explode.`);
+        } else {
+          setAiTip('⚠️ Could not generate 3D model for this selection.');
+        }
+      } else if (action === 'to_svg') {
+        setAiTip(`🎨 Generating classroom SVG visual for "${cleanTopic}"...`);
+        const res = await fetch('/api/ai/svg-diagram', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: cleanTopic })
+        });
+        const data = await res.json();
+        const safeSvg = sanitizeSvgClient(data?.svg || '');
+        if (safeSvg) {
+          const img = new Image();
+          img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(safeSvg);
+          img.onload = () => {
+            const svgShape: ShapeObj = {
+              id: `svg_${Date.now()}`,
+              type: 'svg_node',
+              x: anchorX,
+              y: anchorY,
+              width: 540,
+              height: 390,
+              stroke: '#10b981',
+              strokeWidth: 0,
+              text: data?.title || cleanTopic,
+              imageObj: img,
+              svgRaw: safeSvg
+            };
+            pushHistory();
+            setSlides(prev => {
+              const updated = cloneSlides(prev);
+              updated[activeSlideIdx].shapes.push(svgShape);
+              return updated;
+            });
+            setSelectedIds([{ id: svgShape.id, type: 'shape' }]);
+          };
+          setAiTip(`🎨 Clean educational SVG visual added for "${cleanTopic}"`);
+        }
+      } else {
+        const promptMap = {
+          explain: `Explain this selected classroom whiteboard concept clearly for students in 4 concise bullet points with key formulas or mechanisms: ${contextDesc}`,
+          label_parts: `Identify and list the 5 most important anatomical/structural labels and their functions for: ${contextDesc}`,
+          quiz: `Create 3 quick classroom check-for-understanding questions (with short answers) based on this whiteboard visual: ${contextDesc}`
+        };
+        setAiTip(`✨ Analyzing selected object with NVIDIA AI...`);
+        const res = await fetch('/api/ai/notes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: contextDesc,
+            action: 'custom',
+            instruction: 'You are an expert classroom teacher assistant on StudentOS SmartBoard. Be concise, accurate, and classroom-ready. Format with clean bullet points.'
+          })
+        });
+        const data = await res.json();
+        if (data?.text) {
+          setAiInsightCard({
+            title: action === 'explain' ? `Explanation: ${cleanTopic}` : action === 'label_parts' ? `Key Labels: ${cleanTopic}` : `Quick Quiz: ${cleanTopic}`,
+            mode: action,
+            content: data.text
+          });
+        } else {
+          // Fallback to /api/ai/notes summarize
+          setAiInsightCard({
+            title: `Classroom Insight: ${cleanTopic}`,
+            mode: action,
+            content: promptMap[action]
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Selection AI action error:', err);
+      setAiTip('❌ Could not complete AI visual action right now.');
+    } finally {
+      setIsRunningSelectionAI(false);
+    }
+  };
+
   const handleGenerateDiagram = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!aiPromptQuery.trim()) return;
@@ -214,11 +764,16 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     setAiPromptOpen(false);
 
     const queryLower = aiPromptQuery.toLowerCase();
-    let effectiveTool: 'mermaid' | 'svg' | 'diagram' = 'mermaid';
+    let effectiveTool: 'mermaid' | 'svg' | '3d' | 'diagram' = 'svg';
 
     if (aiToolType === 'auto') {
-      const isSvgSubject = /\b(heart|cell|lungs|brain|digestive|stomach|gut|anatomy|pulley|lever|circuit|voltage|optics|lens|mirror|atom|molecule|beaker|lab|volcano|earth|rock|coordinate|geometry|triangle|circle|respiratory|biology|physics|chemistry|body|organ|solar\s*system|neuron|dna|eye|ear|battery|motor|generator|bridge|machine|solar|planet|star|galaxy)\b/.test(queryLower);
-      effectiveTool = isSvgSubject ? 'svg' : 'mermaid';
+      const is3DSubject = /\b(3d|cube|cuboid|prism|pyramid|sphere|cylinder|cone|solid|polyhedron|molecular\s*geometry|3d\s*model)\b/.test(queryLower);
+      const isFlowSubject = /\b(flowchart|timeline|sequence|algorithm|decision\s*tree|workflow|hierarchy)\b/.test(queryLower);
+      if (is3DSubject) effectiveTool = '3d';
+      else if (isFlowSubject) effectiveTool = 'mermaid';
+      else effectiveTool = 'svg';
+    } else if (aiToolType === '3d') {
+      effectiveTool = '3d';
     } else if (aiToolType === 'svg') {
       effectiveTool = 'svg';
     } else if (aiToolType === 'mermaid' || aiToolType === 'mindmap') {
@@ -228,7 +783,20 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     }
 
     try {
-      if (effectiveTool === 'mermaid') {
+      if (effectiveTool === '3d') {
+        const response = await fetch('/api/ai/whiteboard-3d', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: aiPromptQuery })
+        });
+        const data = await response.json();
+        if (data?.scene) {
+          insert3DModelOnBoard(data.scene, 120, 90);
+          setAiTip(`🧊 Interactive 3D model generated for "${data.scene.title}"`);
+        } else {
+          throw new Error('No 3D scene returned');
+        }
+      } else if (effectiveTool === 'mermaid') {
         const response = await fetch('/api/ai/mermaid', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -249,9 +817,10 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             mermaid.initialize({ startOnLoad: false, theme: 'dark' });
             const id = `mermaid_render_${Date.now()}`;
             const { svg } = await mermaid.render(id, mermaidCode);
+            const safeSvg = sanitizeSvgClient(svg);
             
             const img = new Image();
-            img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+            img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(safeSvg || svg);
             img.onload = () => {
               const svgShape: ShapeObj = {
                 id: `mermaid-${Date.now()}`,
@@ -262,13 +831,18 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                 height: 380,
                 stroke: '#818cf8',
                 strokeWidth: 0,
-                imageObj: img
+                text: aiPromptQuery,
+                imageObj: img,
+                svgRaw: safeSvg || svg
               };
+              pushHistory();
               setSlides(prev => {
                 const updated = [...prev];
                 updated[activeSlideIdx].shapes = [...(updated[activeSlideIdx].shapes || []), svgShape];
                 return updated;
               });
+              setTool('select');
+              setSelectedIds([{ id: svgShape.id, type: 'shape' }]);
             };
             setAiTip(`🧜‍♂️ Educational Mermaid diagram inserted for "${aiPromptQuery}"`);
           } catch(mErr) {
@@ -285,7 +859,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           });
           if (!response.ok) throw new Error('SVG API unavailable');
           const data = await response.json();
-          const svgContent = data.svg;
+          const svgContent = sanitizeSvgClient(data.svg || '');
           if (svgContent) {
             const img = new Image();
             img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgContent);
@@ -294,61 +868,31 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                 id: `svg-${Date.now()}`,
                 type: 'svg_node',
                 x: 100,
-                y: 100,
-                width: 520,
-                height: 390,
+                y: 95,
+                width: 560,
+                height: 400,
                 stroke: '#10b981',
                 strokeWidth: 0,
-                imageObj: img
+                text: data.title || aiPromptQuery,
+                imageObj: img,
+                svgRaw: svgContent
               };
+              pushHistory();
               setSlides(prev => {
                 const updated = [...prev];
                 updated[activeSlideIdx].shapes = [...(updated[activeSlideIdx].shapes || []), svgShape];
                 return updated;
               });
+              setTool('select');
+              setSelectedIds([{ id: svgShape.id, type: 'shape' }]);
             };
-            setAiTip(`🎨 Educational SVG diagram inserted for "${aiPromptQuery}"`);
-          } else if (data.mermaid) {
-            console.warn('SVG failed, but Mermaid returned. Rendering Mermaid instead.');
-            const mermaidCode = data.mermaid;
-            const mermaidId = `mermaid-${Date.now()}`;
-            const container = document.createElement('div');
-            container.id = mermaidId;
-            container.style.position = 'absolute';
-            container.style.left = '-9999px';
-            document.body.appendChild(container);
-            
-            try {
-              mermaid.mermaidAPI.initialize({ startOnLoad: false, theme: 'dark' });
-              const { svg } = await mermaid.render(mermaidId, mermaidCode, container);
-              const img = new Image();
-              img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-              img.onload = () => {
-                const shape: ShapeObj = {
-                  id: `mermaid-diagram-${Date.now()}`,
-                  type: 'mermaid',
-                  x: 50, y: 50, width: 800, height: 600,
-                  stroke: '#10b981', strokeWidth: 0, imageObj: img
-                };
-                setSlides(prev => {
-                  const updated = [...prev];
-                  updated[activeSlideIdx].shapes = [...(updated[activeSlideIdx].shapes || []), shape];
-                  return updated;
-                });
-              };
-              setAiTip(`🎨 Mermaid diagram rendered for "${aiPromptQuery}" (SVG unavailable)`);
-            } catch (merr) {
-              console.error('Mermaid Fallback render failed:', merr);
-              setAiTip(`❌ AI engine could not generate diagram. Check server logs.`);
-            } finally {
-              container.remove();
-            }
+            setAiTip(`🎨 Sanitized classroom SVG diagram inserted for "${aiPromptQuery}"`);
           } else {
-            throw new Error('No SVG and no Mermaid returned');
+            throw new Error('No valid sanitized SVG returned');
           }
         } catch (err) {
           console.error('SVG Generation Error:', err);
-          setAiTip(`❌ AI engine could not generate diagram. Check server logs.`);
+          setAiTip(`❌ AI engine could not generate SVG diagram.`);
         }
       } else {
         try {
@@ -379,6 +923,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             throw new Error('No valid diagram elements returned');
           }
           
+          pushHistory();
           setSlides(prev => {
             const updated = [...prev];
             updated[activeSlideIdx].shapes = [...(updated[activeSlideIdx].shapes || []), ...newShapes];
@@ -387,7 +932,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           setAiTip(`🪄 AI Assistant generated a diagram for "${aiPromptQuery}"`);
         } catch (err) {
           console.error('Canvas Diagram Error:', err);
-          setAiTip(`❌ AI engine could not generate diagram. Check server logs.`);
+          setAiTip(`❌ AI engine could not generate diagram.`);
         }
       }
     } catch (e) {
@@ -399,22 +944,21 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     }
   };
 
+  // Sync Konva Transformer with all currently selected nodes (supports multi-select!)
   useEffect(() => {
-    if (selectedObj) {
-      if (trRef.current && stageRef.current) {
-        const node = stageRef.current.findOne('#' + selectedObj.id);
-        if (node) {
-          trRef.current.nodes([node]);
-          trRef.current.getLayer().batchDraw();
-        }
-      }
-    } else {
-      if (trRef.current) {
+    if (trRef.current && stageRef.current) {
+      if (selectedIds.length > 0 && tool === 'select') {
+        const nodes = selectedIds
+          .map(sel => stageRef.current.findOne('#' + sel.id))
+          .filter(Boolean);
+        trRef.current.nodes(nodes);
+        trRef.current.getLayer()?.batchDraw();
+      } else {
         trRef.current.nodes([]);
-        trRef.current.getLayer().batchDraw();
+        trRef.current.getLayer()?.batchDraw();
       }
     }
-  }, [selectedObj, activeSlideIdx]);
+  }, [selectedIds, activeSlideIdx, tool, slides]);
 
   // Adapt brush color depending on the background paper shade
   useEffect(() => {
@@ -506,10 +1050,62 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     return { x, y };
   };
 
+  // Helper: Compute bounding box of a shape or line in canvas coordinates
+  const getElementBoundingBox = (item: ShapeObj | LineObj, itemType: 'shape' | 'line') => {
+    if (itemType === 'line') {
+      const ln = item as LineObj;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (let i = 0; i < ln.points.length; i += 2) {
+        const px = ln.points[i];
+        const py = ln.points[i + 1];
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
+      }
+      if (!isFinite(minX)) return { x: 0, y: 0, width: 0, height: 0 };
+      return { x: minX, y: minY, width: Math.max(4, maxX - minX), height: Math.max(4, maxY - minY) };
+    }
+    const sh = item as ShapeObj;
+    const sx = sh.scaleX || 1;
+    const sy = sh.scaleY || 1;
+    if (sh.type === 'circle' || sh.type === 'triangle' || sh.type === 'pentagon' || sh.type === 'polygon' || sh.type === 'star' || sh.type === 'geometry') {
+      const r = (sh.radius || 30) * Math.max(Math.abs(sx), Math.abs(sy));
+      return { x: sh.x - r, y: sh.y - r, width: r * 2, height: r * 2 };
+    }
+    if (sh.type === 'line' || sh.type === 'arrow') {
+      const pts = sh.points || [0, 0, 0, 0];
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (let i = 0; i < pts.length; i += 2) {
+        const px = sh.x + pts[i] * sx;
+        const py = sh.y + pts[i + 1] * sy;
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
+      }
+      return { x: minX, y: minY, width: Math.max(6, maxX - minX), height: Math.max(6, maxY - minY) };
+    }
+    if (sh.type === 'text') {
+      const approxW = Math.max(60, (sh.text?.length || 5) * ((sh.fontSize || 24) * 0.6)) * Math.abs(sx);
+      const approxH = (sh.fontSize || 24) * 1.3 * Math.abs(sy);
+      return { x: sh.x, y: sh.y, width: approxW, height: approxH };
+    }
+    const rawW = (sh.width ?? (sh.type === 'model_3d' ? 580 : sh.type === 'svg_node' ? 500 : 120)) * sx;
+    const rawH = (sh.height ?? (sh.type === 'model_3d' ? 410 : sh.type === 'svg_node' ? 360 : 90)) * sy;
+    const bx = rawW < 0 ? sh.x + rawW : sh.x;
+    const by = rawH < 0 ? sh.y + rawH : sh.y;
+    return { x: bx, y: by, width: Math.abs(rawW), height: Math.abs(rawH) };
+  };
+
   const handleMouseDown = (e: any) => {
     const stage = e.target.getStage();
     const pos = getRelativePointerPosition(stage);
     if (!pos) return;
+
+    if (tool === 'pan') {
+      return;
+    }
 
     if (tool === 'object_eraser') {
       pushHistory();
@@ -519,9 +1115,19 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     }
     
     if (tool === 'select') {
-      // Clear selected object if clicking raw stage background
+      // Rectangular Marquee Selection when clicking and holding on empty canvas
       if (e.target === stage) {
-        setSelectedObj(null);
+        isMarqueeSelecting.current = true;
+        setMarqueeRect({
+          visible: true,
+          x1: pos.x,
+          y1: pos.y,
+          x2: pos.x,
+          y2: pos.y
+        });
+        if (!e.evt?.shiftKey && !e.evt?.ctrlKey && !e.evt?.metaKey) {
+          setSelectedIds([]);
+        }
       }
       return;
     }
@@ -606,6 +1212,17 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       setEraserHoverPos(null);
     }
 
+    // Update rectangular marquee selection box while dragging on empty canvas
+    if (tool === 'select' && isMarqueeSelecting.current && point) {
+      setMarqueeRect(prev => ({
+        ...prev,
+        visible: true,
+        x2: point.x,
+        y2: point.y
+      }));
+      return;
+    }
+
     if (!isDrawing.current) return;
     if (!point) return;
     
@@ -614,7 +1231,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       return;
     }
 
-    if (tool === 'select') return;
+    if (tool === 'select' || tool === 'pan') return;
 
     setSlides(prev => {
       const updated = [...prev];
@@ -665,7 +1282,63 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     });
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (e?: any) => {
+    // Complete rectangular marquee selection
+    if (tool === 'select' && isMarqueeSelecting.current) {
+      isMarqueeSelecting.current = false;
+      const rx = Math.min(marqueeRect.x1, marqueeRect.x2);
+      const ry = Math.min(marqueeRect.y1, marqueeRect.y2);
+      const rw = Math.abs(marqueeRect.x2 - marqueeRect.x1);
+      const rh = Math.abs(marqueeRect.y2 - marqueeRect.y1);
+      setMarqueeRect(prev => ({ ...prev, visible: false }));
+
+      if (rw > 4 || rh > 4) {
+        const current = slides[activeSlideIdx];
+        if (current) {
+          const matches: { id: string; type: 'shape' | 'line' }[] = [];
+          const checkBox = (box: { x: number; y: number; width: number; height: number }) => {
+            if (selectionMode === 'contain') {
+              return (
+                box.x >= rx &&
+                box.y >= ry &&
+                box.x + box.width <= rx + rw &&
+                box.y + box.height <= ry + rh
+              );
+            }
+            // Intersect mode (default desktop graphics selection behavior)
+            return (
+              box.x <= rx + rw &&
+              box.x + box.width >= rx &&
+              box.y <= ry + rh &&
+              box.y + box.height >= ry
+            );
+          };
+
+          current.shapes.forEach(sh => {
+            if (checkBox(getElementBoundingBox(sh, 'shape'))) {
+              matches.push({ id: sh.id, type: 'shape' });
+            }
+          });
+          current.lines.forEach(ln => {
+            if (ln.tool !== 'eraser' && checkBox(getElementBoundingBox(ln, 'line'))) {
+              matches.push({ id: ln.id, type: 'line' });
+            }
+          });
+
+          if (e?.evt?.shiftKey || e?.evt?.ctrlKey || e?.evt?.metaKey) {
+            setSelectedIds(prev => {
+              const map = new Map(prev.map(i => [i.id, i]));
+              matches.forEach(m => map.set(m.id, m));
+              return Array.from(map.values());
+            });
+          } else {
+            setSelectedIds(matches);
+          }
+        }
+      }
+      return;
+    }
+
     isDrawing.current = false;
 
     // AI Predictive Shape Assistant Engine
@@ -811,6 +1484,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   
   const handleObjectClick = (e: any, id: string, type: 'line' | 'shape') => {
     if (tool === 'object_eraser') {
+      pushHistory();
       setSlides(prev => {
         const updated = [...prev];
         if (type === 'line') {
@@ -820,12 +1494,41 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
         }
         return updated;
       });
-      if (selectedObj?.id === id) {
-        setSelectedObj(null);
-      }
+      setSelectedIds(prev => prev.filter(item => item.id !== id));
     } else if (tool === 'select') {
       e.cancelBubble = true;
-      setSelectedObj({ id, type });
+      const slide = slides[activeSlideIdx];
+      const clickedObj = type === 'shape'
+        ? slide?.shapes.find(s => s.id === id)
+        : slide?.lines.find(l => l.id === id);
+      const groupId = clickedObj?.groupId;
+
+      // Collect all members if object belongs to a group
+      const groupMembers: { id: string; type: 'shape' | 'line' }[] = [];
+      if (groupId && slide) {
+        slide.shapes.filter(s => s.groupId === groupId).forEach(s => groupMembers.push({ id: s.id, type: 'shape' }));
+        slide.lines.filter(l => l.groupId === groupId).forEach(l => groupMembers.push({ id: l.id, type: 'line' }));
+      } else {
+        groupMembers.push({ id, type });
+      }
+
+      const isMultiModifier = e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey;
+      if (isMultiModifier) {
+        setSelectedIds(prev => {
+          const exists = prev.some(item => item.id === id);
+          if (exists) {
+            const removeIds = new Set(groupMembers.map(g => g.id));
+            return prev.filter(item => !removeIds.has(item.id));
+          }
+          const next = [...prev];
+          groupMembers.forEach(gm => {
+            if (!next.some(n => n.id === gm.id)) next.push(gm);
+          });
+          return next;
+        });
+      } else {
+        setSelectedIds(groupMembers);
+      }
     }
   };
 
@@ -837,7 +1540,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       updated[activeSlideIdx].shapes = [];
       return updated;
     });
-    setSelectedObj(null);
+    setSelectedIds([]);
     setConfirmClearOpen(false);
     setAiTip('🧹 Slide canvas cleared (use Undo to restore)');
   };
@@ -847,7 +1550,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     pushHistory();
     setSlides(prev => [...prev, { id: `slide_${Date.now()}`, shapes: [], lines: [], stickies: [] }]);
     setActiveSlideIdx(slides.length);
-    setSelectedObj(null);
+    setSelectedIds([]);
   };
 
   const handleDuplicateSlide = () => {
@@ -865,7 +1568,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       return updated;
     });
     setActiveSlideIdx(activeSlideIdx + 1);
-    setSelectedObj(null);
+    setSelectedIds([]);
   };
 
   const handleDeleteSlide = () => {
@@ -877,7 +1580,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     const newIdx = Math.max(0, activeSlideIdx - 1);
     setSlides(prev => prev.filter((_, idx) => idx !== activeSlideIdx));
     setActiveSlideIdx(newIdx);
-    setSelectedObj(null);
+    setSelectedIds([]);
     setAiTip('🗑️ Slide removed (use Undo to restore)');
   };
 
@@ -889,131 +1592,170 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     setStagePos({ x: 0, y: 0 });
   };
 
-  // Selection Object Modifiers
+  // Selection Object Modifiers (supports both single and multi-selection)
   const handleModifyObjectColor = (color: string) => {
-    if (!selectedObj) return;
+    if (selectedIds.length === 0) return;
+    pushHistory();
+    const idSet = new Set(selectedIds.map(s => s.id));
     setSlides(prev => {
       const updated = [...prev];
       const slide = updated[activeSlideIdx];
-      if (selectedObj.type === 'shape') {
-        const shape = slide.shapes.find(s => s.id === selectedObj.id);
-        if (shape) {
+      slide.shapes.forEach(shape => {
+        if (idSet.has(shape.id)) {
           shape.stroke = color;
           if (shape.type === 'text') shape.fill = color;
         }
-      } else {
-        const line = slide.lines.find(l => l.id === selectedObj.id);
-        if (line) line.color = color;
-      }
+      });
+      slide.lines.forEach(line => {
+        if (idSet.has(line.id)) line.color = color;
+      });
       return updated;
     });
   };
 
   const handleModifyObjectFill = (color: string) => {
-    if (!selectedObj || selectedObj.type !== 'shape') return;
+    if (selectedIds.length === 0) return;
+    pushHistory();
+    const idSet = new Set(selectedIds.filter(s => s.type === 'shape').map(s => s.id));
     setSlides(prev => {
       const updated = [...prev];
       const slide = updated[activeSlideIdx];
-      const shape = slide.shapes.find(s => s.id === selectedObj.id);
-      if (shape) shape.fill = color;
+      slide.shapes.forEach(shape => {
+        if (idSet.has(shape.id)) shape.fill = color;
+      });
       return updated;
     });
   };
 
   const handleModifyObjectThickness = (size: number) => {
-    if (!selectedObj) return;
+    if (selectedIds.length === 0) return;
+    const idSet = new Set(selectedIds.map(s => s.id));
     setSlides(prev => {
       const updated = [...prev];
       const slide = updated[activeSlideIdx];
-      if (selectedObj.type === 'shape') {
-        const shape = slide.shapes.find(s => s.id === selectedObj.id);
-        if (shape) shape.strokeWidth = size;
-      } else {
-        const line = slide.lines.find(l => l.id === selectedObj.id);
-        if (line) line.brushSize = size;
-      }
+      slide.shapes.forEach(shape => {
+        if (idSet.has(shape.id)) shape.strokeWidth = size;
+      });
+      slide.lines.forEach(line => {
+        if (idSet.has(line.id)) line.brushSize = size;
+      });
       return updated;
     });
   };
 
   const handleModifyObjectLayer = (order: 'front' | 'back') => {
-    if (!selectedObj) return;
+    if (selectedIds.length === 0) return;
+    pushHistory();
     setSlides(prev => {
       const updated = [...prev];
       const slide = updated[activeSlideIdx];
-      if (selectedObj.type === 'shape') {
-        const shapeIdx = slide.shapes.findIndex(s => s.id === selectedObj.id);
-        if (shapeIdx > -1) {
-          const shape = slide.shapes[shapeIdx];
-          slide.shapes.splice(shapeIdx, 1);
-          if (order === 'front') {
-            slide.shapes.push(shape);
-          } else {
-            slide.shapes.unshift(shape);
+      selectedIds.forEach(sel => {
+        if (sel.type === 'shape') {
+          const shapeIdx = slide.shapes.findIndex(s => s.id === sel.id);
+          if (shapeIdx > -1) {
+            const [shape] = slide.shapes.splice(shapeIdx, 1);
+            if (order === 'front') slide.shapes.push(shape);
+            else slide.shapes.unshift(shape);
+          }
+        } else {
+          const lineIdx = slide.lines.findIndex(l => l.id === sel.id);
+          if (lineIdx > -1) {
+            const [line] = slide.lines.splice(lineIdx, 1);
+            if (order === 'front') slide.lines.push(line);
+            else slide.lines.unshift(line);
           }
         }
-      } else {
-        const lineIdx = slide.lines.findIndex(l => l.id === selectedObj.id);
-        if (lineIdx > -1) {
-          const line = slide.lines[lineIdx];
-          slide.lines.splice(lineIdx, 1);
-          if (order === 'front') {
-            slide.lines.push(line);
-          } else {
-            slide.lines.unshift(line);
-          }
-        }
-      }
+      });
       return updated;
     });
   };
 
   const handleDeleteSelectedObject = () => {
-    if (!selectedObj) return;
+    if (selectedIds.length === 0) return;
+    pushHistory();
+    const idSet = new Set(selectedIds.map(s => s.id));
     setSlides(prev => {
-      const updated = [...prev];
+      const updated = cloneSlides(prev);
       const slide = updated[activeSlideIdx];
-      if (selectedObj.type === 'shape') {
-        slide.shapes = slide.shapes.filter(s => s.id !== selectedObj.id);
-      } else {
-        slide.lines = slide.lines.filter(l => l.id !== selectedObj.id);
-      }
+      slide.shapes = slide.shapes.filter(s => !idSet.has(s.id));
+      slide.lines = slide.lines.filter(l => !idSet.has(l.id));
       return updated;
     });
-    setSelectedObj(null);
+    setSelectedIds([]);
   };
 
   const handleDuplicateSelectedObject = () => {
-    if (!selectedObj) return;
+    if (selectedIds.length === 0) return;
+    pushHistory();
+    const newSelection: { id: string; type: 'shape' | 'line' }[] = [];
+    const newGroupId = selectedIds.length > 1 ? `grp_${Date.now()}` : undefined;
     setSlides(prev => {
       const updated = [...prev];
       const slide = updated[activeSlideIdx];
-      if (selectedObj.type === 'shape') {
-        const shape = slide.shapes.find(s => s.id === selectedObj.id);
-        if (shape) {
-          const dup: ShapeObj = {
-            ...shape,
-            id: `shape_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-            x: shape.x + 25,
-            y: shape.y + 25,
-          };
-          slide.shapes.push(dup);
-          setTimeout(() => setSelectedObj({ id: dup.id, type: 'shape' }), 50);
+      selectedIds.forEach(sel => {
+        if (sel.type === 'shape') {
+          const shape = slide.shapes.find(s => s.id === sel.id);
+          if (shape) {
+            const dup: ShapeObj = {
+              ...shape,
+              id: `shape_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              x: shape.x + 28,
+              y: shape.y + 28,
+              groupId: newGroupId || shape.groupId
+            };
+            slide.shapes.push(dup);
+            newSelection.push({ id: dup.id, type: 'shape' });
+          }
+        } else {
+          const line = slide.lines.find(l => l.id === sel.id);
+          if (line) {
+            const dup: LineObj = {
+              ...line,
+              id: `line_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              points: line.points.map(p => p + 28),
+              groupId: newGroupId || line.groupId
+            };
+            slide.lines.push(dup);
+            newSelection.push({ id: dup.id, type: 'line' });
+          }
         }
-      } else {
-        const line = slide.lines.find(l => l.id === selectedObj.id);
-        if (line) {
-          const dup: LineObj = {
-            ...line,
-            id: `line_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-            points: line.points.map((p, i) => i % 2 === 0 ? p + 25 : p + 25)
-          };
-          slide.lines.push(dup);
-          setTimeout(() => setSelectedObj({ id: dup.id, type: 'line' }), 50);
-        }
-      }
+      });
       return updated;
     });
+    setTimeout(() => setSelectedIds(newSelection), 40);
+    setAiTip(`📋 Duplicated ${selectedIds.length} object${selectedIds.length > 1 ? 's' : ''}`);
+  };
+
+  const handleGroupSelectedObjects = () => {
+    if (selectedIds.length < 2) {
+      setAiTip('ℹ️ Select 2 or more objects (drag marquee box or Shift+Click) to group.');
+      return;
+    }
+    pushHistory();
+    const gid = `group_${Date.now()}`;
+    const idSet = new Set(selectedIds.map(s => s.id));
+    setSlides(prev => {
+      const updated = [...prev];
+      const slide = updated[activeSlideIdx];
+      slide.shapes.forEach(s => { if (idSet.has(s.id)) s.groupId = gid; });
+      slide.lines.forEach(l => { if (idSet.has(l.id)) l.groupId = gid; });
+      return updated;
+    });
+    setAiTip(`🔗 Grouped ${selectedIds.length} objects together`);
+  };
+
+  const handleUngroupSelectedObjects = () => {
+    if (selectedIds.length === 0) return;
+    pushHistory();
+    const idSet = new Set(selectedIds.map(s => s.id));
+    setSlides(prev => {
+      const updated = [...prev];
+      const slide = updated[activeSlideIdx];
+      slide.shapes.forEach(s => { if (idSet.has(s.id)) delete s.groupId; });
+      slide.lines.forEach(l => { if (idSet.has(l.id)) delete l.groupId; });
+      return updated;
+    });
+    setAiTip(`🔓 Ungrouped selected objects`);
   };
 
   const handleEditSelectedObjectLabel = () => {
@@ -1194,10 +1936,29 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
         <div className="flex flex-wrap items-center gap-1 sm:gap-1.5 bg-slate-950 border border-white/10 p-1 sm:p-1.5 rounded-2xl shadow-inner max-w-full">
           <button 
             onClick={() => { setTool('select'); setShapesMenuOpen(false); }} 
-            className={`p-1.5 sm:p-2 rounded-xl transition-all ${tool === 'select' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-            title="Select & Move Shapes/Lines"
+            className={`p-1.5 sm:p-2 rounded-xl transition-all flex items-center gap-1 ${tool === 'select' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+            title="Select & Marquee Box Select (Drag on empty canvas)"
           >
             <MousePointer2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            <span className="hidden lg:inline text-[10px] font-black uppercase">Select</span>
+          </button>
+
+          {tool === 'select' && (
+            <button
+              onClick={() => setSelectionMode(prev => prev === 'intersect' ? 'contain' : 'intersect')}
+              className="px-2 py-1 rounded-lg bg-slate-900 border border-indigo-500/30 text-[9px] font-mono font-bold text-indigo-300 hover:bg-indigo-500/20 transition-all"
+              title="Toggle Marquee Selection Mode: Intersect (touch) vs Contain (fully inside)"
+            >
+              Box: {selectionMode === 'intersect' ? 'Touch' : 'Inside'}
+            </button>
+          )}
+
+          <button 
+            onClick={() => { setTool('pan'); setShapesMenuOpen(false); }} 
+            className={`p-1.5 sm:p-2 rounded-xl transition-all ${tool === 'pan' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+            title="Pan / Move Canvas Viewport"
+          >
+            <Hand className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
           
           <button 
@@ -1346,16 +2107,16 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                  </label>
 
                  <form onSubmit={handleGenerateDiagram} className="space-y-2.5 pt-1 border-t border-white/10">
-                   <div className="text-[10px] font-black uppercase tracking-wider text-indigo-300">Generate Diagram on Board</div>
+                   <div className="text-[10px] font-black uppercase tracking-wider text-indigo-300">Generate SVG, 3D Model or Diagram</div>
                    <div className="flex gap-1">
-                     {(['auto', 'svg', 'mermaid', 'diagram'] as const).map(mode => (
+                     {(['auto', 'svg', '3d', 'mermaid', 'diagram'] as const).map(mode => (
                        <button
                          key={mode}
                          type="button"
                          onClick={() => setAiToolType(mode)}
                          className={`flex-1 py-1 rounded-lg text-[10px] font-bold uppercase border transition-all ${aiToolType === mode ? 'bg-indigo-600 text-white border-indigo-400' : 'bg-slate-950 text-slate-400 border-white/10'}`}
                        >
-                         {mode}
+                         {mode === '3d' ? '🧊 3D' : mode}
                        </button>
                      ))}
                    </div>
@@ -1363,16 +2124,37 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                      type="text"
                      value={aiPromptQuery}
                      onChange={(e) => setAiPromptQuery(e.target.value)}
-                     placeholder="e.g., Mitosis stages, Ohm's Law circuit..."
+                     placeholder="e.g., Human heart SVG, Right triangle, Water cycle, 3D Prism..."
                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white focus:outline-none focus:border-indigo-500"
                    />
+                   <div className="flex flex-wrap gap-1 pt-0.5">
+                     {[
+                       { label: '❤️ Heart SVG', q: 'Labelled diagram of the human heart', m: 'svg' as const },
+                       { label: '📐 Right Triangle', q: 'Labelled right triangle showing opposite, adjacent and hypotenuse', m: 'svg' as const },
+                       { label: '💧 Water Cycle', q: 'Simple water cycle diagram', m: 'svg' as const },
+                       { label: '🧊 3D Water Cycle', q: 'Water Cycle', m: '3d' as const },
+                       { label: '⚛️ 3D Atom', q: '3D Atom Model', m: '3d' as const }
+                     ].map(preset => (
+                       <button
+                         key={preset.label}
+                         type="button"
+                         onClick={() => {
+                           setAiToolType(preset.m);
+                           setAiPromptQuery(preset.q);
+                         }}
+                         className="px-2 py-0.5 rounded-lg bg-slate-950 hover:bg-indigo-950/80 text-slate-300 hover:text-indigo-200 border border-white/10 text-[9px] font-bold transition-all"
+                       >
+                         {preset.label}
+                       </button>
+                     ))}
+                   </div>
                    <div className="flex justify-end gap-2">
                      <button
                        type="submit"
                        disabled={!aiPromptQuery.trim() || isGeneratingDiagram}
                        className="px-4 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white rounded-xl font-bold transition-all shadow-md"
                      >
-                       Insert Diagram
+                       Insert Visual
                      </button>
                    </div>
                  </form>
@@ -1533,8 +2315,70 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
 
         {/* Selected Object Advanced Properties Config Panel */}
         {selectedObj ? (
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3.5 bg-indigo-500/10 border border-indigo-500/30 px-2.5 sm:px-4 py-1.5 rounded-2xl animate-fadeIn max-h-64 overflow-y-auto">
-            <span className="text-[10px] text-indigo-300 uppercase tracking-widest font-black font-mono">Selected: {selectedObj.type}</span>
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 bg-indigo-500/10 border border-indigo-500/30 px-2.5 sm:px-4 py-1.5 rounded-2xl animate-fadeIn max-h-64 overflow-y-auto">
+            <span className="text-[10px] text-indigo-300 uppercase tracking-widest font-black font-mono">
+              {selectedIds.length > 1 ? `Selected (${selectedIds.length})` : `Selected: ${selectedObj.type}`}
+            </span>
+
+            {/* Interactive 3D Object Controls when a 3D Educational Model is selected */}
+            {selectedObj.type === 'shape' && currentSlide.shapes.find(s => s.id === selectedObj.id)?.type === 'model_3d' && (() => {
+              const mShape = currentSlide.shapes.find(s => s.id === selectedObj.id)!;
+              return (
+                <div className="flex flex-wrap items-center gap-2 border-l border-indigo-500/30 pl-3 bg-slate-950/80 px-2.5 py-1 rounded-xl">
+                  <span className="text-[9px] font-black uppercase text-sky-400 flex items-center gap-1">
+                    <Box className="w-3 h-3" /> 3D View
+                  </span>
+                  <label className="flex items-center gap-1 text-[9px] text-slate-300 font-mono">
+                    Pitch
+                    <input
+                      type="range"
+                      min="-75"
+                      max="75"
+                      value={mShape.rotX ?? 22}
+                      onChange={(e) => updateSelected3DModel({ rotX: parseInt(e.target.value) })}
+                      className="w-14 accent-sky-400 cursor-pointer"
+                    />
+                  </label>
+                  <label className="flex items-center gap-1 text-[9px] text-slate-300 font-mono">
+                    Yaw
+                    <input
+                      type="range"
+                      min="-180"
+                      max="180"
+                      value={mShape.rotY ?? -32}
+                      onChange={(e) => updateSelected3DModel({ rotY: parseInt(e.target.value) })}
+                      className="w-16 accent-sky-400 cursor-pointer"
+                    />
+                  </label>
+                  <label className="flex items-center gap-1 text-[9px] text-slate-300 font-mono">
+                    Explode
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={Math.round((mShape.explode3D ?? 0) * 100)}
+                      onChange={(e) => updateSelected3DModel({ explode3D: parseInt(e.target.value) / 100 })}
+                      className="w-12 accent-amber-400 cursor-pointer"
+                      title="Explode / Separate 3D Parts"
+                    />
+                  </label>
+                  <button
+                    onClick={() => updateSelected3DModel({ showLabels3D: !(mShape.showLabels3D ?? true) })}
+                    className={`px-2 py-0.5 rounded-lg text-[9px] font-bold border ${mShape.showLabels3D !== false ? 'bg-sky-500/20 text-sky-300 border-sky-500/40' : 'bg-slate-900 text-slate-400 border-white/10'}`}
+                    title="Toggle 3D Part Labels"
+                  >
+                    Labels
+                  </button>
+                  <button
+                    onClick={() => updateSelected3DModel({ rotX: 22, rotY: -32, zoom3D: 1, explode3D: 0, showLabels3D: true })}
+                    className="p-1 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg border border-white/10"
+                    title="Reset 3D Orientation"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                  </button>
+                </div>
+              );
+            })()}
             
             {/* Color modifier */}
             <div className="flex items-center gap-1">
@@ -1550,7 +2394,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             </div>
 
             {/* Fill modifier (Shapes only) */}
-            {selectedObj.type === 'shape' && (
+            {selectedIds.some(s => s.type === 'shape') && (
               <div className="flex items-center gap-1 border-l border-white/10 pl-3">
                 <span className="text-[8px] text-slate-400 mr-1 uppercase font-mono">Fill</span>
                 <button 
@@ -1585,7 +2429,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
               />
             </div>
 
-            {/* Order/Layering modifiers */}
+            {/* Order/Layering & Group modifiers */}
             <div className="flex items-center gap-1.5 border-l border-white/10 pl-3">
               <button 
                 onClick={() => handleModifyObjectLayer('front')} 
@@ -1601,6 +2445,28 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
               >
                 <ArrowDown className="w-3.5 h-3.5" />
               </button>
+              {selectedIds.length >= 2 && (
+                <button
+                  onClick={handleGroupSelectedObjects}
+                  className="p-1 px-2 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 rounded-lg border border-indigo-500/30 text-[10px] font-bold flex items-center gap-1"
+                  title="Group Selected Objects (Ctrl+G)"
+                >
+                  <Layers className="w-3 h-3" /> Group
+                </button>
+              )}
+              {selectedIds.some(sel => {
+                const sh = currentSlide.shapes.find(s => s.id === sel.id);
+                const ln = currentSlide.lines.find(l => l.id === sel.id);
+                return Boolean(sh?.groupId || ln?.groupId);
+              }) && (
+                <button
+                  onClick={handleUngroupSelectedObjects}
+                  className="p-1 px-2 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-lg border border-amber-500/30 text-[10px] font-bold"
+                  title="Ungroup Objects (Ctrl+Shift+G)"
+                >
+                  Ungroup
+                </button>
+              )}
             </div>
 
             {/* Duplicate & Edit Label controls */}
@@ -1615,31 +2481,55 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                 </button>
               )}
               <button 
-                onClick={() => {
-                  setSlides(prev => {
-                    const updated = [...prev];
-                    const slide = updated[activeSlideIdx];
-                    if (selectedObj.type === 'shape') {
-                      const shape = slide.shapes.find(s => s.id === selectedObj.id);
-                      if (shape) (shape as any).isLocked = !(shape as any).isLocked;
-                    } else {
-                      const line = slide.lines.find(l => l.id === selectedObj.id);
-                      if (line) (line as any).isLocked = !(line as any).isLocked;
-                    }
-                    return updated;
-                  });
-                }} 
-                className="p-1 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-white/10 text-[10px] font-bold flex items-center gap-1" 
-                title="Lock/Unlock Element"
-              >
-                Lock
-              </button>
-              <button 
                 onClick={handleDuplicateSelectedObject} 
                 className="p-1 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-white/10 text-[10px] font-bold flex items-center gap-1" 
-                title="Duplicate Element"
+                title="Duplicate Selected (Ctrl+D)"
               >
                 <Copy className="w-3 h-3" /> Duplicate
+              </button>
+            </div>
+
+            {/* Selected Object → 3D Infographic & Classroom Visual Actions */}
+            <div className="flex items-center gap-1.5 border-l border-indigo-500/30 pl-3">
+              <button
+                onClick={() => handleSelectedObjectAIAction('to_3d')}
+                disabled={isRunningSelectionAI}
+                className="p-1 px-2.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white text-[10px] font-black uppercase rounded-lg shadow-md transition-all flex items-center gap-1 disabled:opacity-50"
+                title="Convert Selected Object/Text into an Interactive 3D Educational Model"
+              >
+                <Box className="w-3 h-3" /> Convert to 3D
+              </button>
+              <button
+                onClick={() => handleSelectedObjectAIAction('to_svg')}
+                disabled={isRunningSelectionAI}
+                className="p-1 px-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold rounded-lg transition-all flex items-center gap-1 disabled:opacity-50"
+                title="Generate Sanitized Classroom SVG Diagram from Selection"
+              >
+                <Sparkles className="w-3 h-3" /> Make Visual
+              </button>
+              <button
+                onClick={() => handleSelectedObjectAIAction('explain')}
+                disabled={isRunningSelectionAI}
+                className="p-1 px-2 bg-slate-800 hover:bg-slate-700 text-indigo-200 border border-white/10 text-[10px] font-bold rounded-lg transition-all flex items-center gap-1 disabled:opacity-50"
+                title="Explain Selected Concept for Students"
+              >
+                <Eye className="w-3 h-3" /> Explain
+              </button>
+              <button
+                onClick={() => handleSelectedObjectAIAction('label_parts')}
+                disabled={isRunningSelectionAI}
+                className="p-1 px-2 bg-slate-800 hover:bg-slate-700 text-amber-200 border border-white/10 text-[10px] font-bold rounded-lg transition-all flex items-center gap-1 disabled:opacity-50"
+                title="Identify & Label Key Parts"
+              >
+                <Tag className="w-3 h-3" /> Labels
+              </button>
+              <button
+                onClick={() => handleSelectedObjectAIAction('quiz')}
+                disabled={isRunningSelectionAI}
+                className="p-1 px-2 bg-slate-800 hover:bg-slate-700 text-purple-200 border border-white/10 text-[10px] font-bold rounded-lg transition-all flex items-center gap-1 disabled:opacity-50"
+                title="Generate Quick Classroom Quiz from Selection"
+              >
+                <HelpCircle className="w-3 h-3" /> Quiz
               </button>
             </div>
 
@@ -1647,7 +2537,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             <button 
               onClick={handleDeleteSelectedObject} 
               className="p-1 px-2.5 bg-red-600 hover:bg-red-500 text-white text-[10px] font-black uppercase rounded-lg border border-red-500/30 shadow-md transition-all flex items-center gap-1"
-              title="Delete Element"
+              title="Delete Selected (Del)"
             >
               <Trash2 className="w-3 h-3" /> Remove
             </button>
@@ -1697,7 +2587,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
         className="flex-1 relative overflow-hidden select-none touch-none" 
         style={{ 
           touchAction: 'none',
-          cursor: tool === 'select' ? 'default' : (tool === 'eraser' || tool === 'object_eraser') ? 'cell' : 'crosshair',
+          cursor: tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : (tool === 'eraser' || tool === 'object_eraser') ? 'cell' : 'crosshair',
           backgroundColor,
           backgroundImage: 
              backgroundPattern === 'grid' ? 'linear-gradient(to right, rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.05) 1px, transparent 1px)' :
@@ -1726,9 +2616,9 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           scaleY={stageScale}
           x={stagePos.x}
           y={stagePos.y}
-          draggable={tool === 'select' && !selectedObj}
+          draggable={tool === 'pan'}
           onDragEnd={(e) => {
-            if (tool === 'select' && e.target === e.target.getStage()) {
+            if (tool === 'pan' && e.target === e.target.getStage()) {
               setStagePos({ x: e.target.x(), y: e.target.y() });
             }
           }}
@@ -1771,19 +2661,19 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                 onClick={(e) => handleObjectClick(e, shape.id, 'shape')}
                 onTap={(e) => handleObjectClick(e, shape.id, 'shape')}
                 onDblClick={() => {
-                  setSelectedObj({ id: shape.id, type: 'shape' });
+                  setSelectedIds([{ id: shape.id, type: 'shape' }]);
                   setTimeout(() => handleEditSelectedObjectLabel(), 50);
                 }}
               >
                 {/* Visual Highlight indicator if selected */}
-                {selectedObj?.id === shape.id && (
+                {selectedIds.some(item => item.id === shape.id) && (
                   <Rect 
                     x={shape.type === 'circle' ? -(shape.radius || 20) - 4 : -4}
                     y={shape.type === 'circle' ? -(shape.radius || 20) - 4 : -4}
                     width={shape.type === 'circle' ? ((shape.radius || 20) * 2) + 8 : (shape.width || 40) + 8}
                     height={shape.type === 'circle' ? ((shape.radius || 20) * 2) + 8 : (shape.height || 40) + 8}
-                    stroke="#4f46e5"
-                    strokeWidth={1}
+                    stroke={shape.groupId ? "#10b981" : "#4f46e5"}
+                    strokeWidth={1.5}
                     dash={[4, 2]}
                   />
                 )}
@@ -2011,14 +2901,14 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                     <Circle radius={5} x={0} y={0} fill="#818cf8" />
                   </Group>
                 )}
-                {shape.type === 'svg_node' && shape.imageObj && (
+                {(shape.type === 'svg_node' || shape.type === 'mermaid' || shape.type === 'model_3d') && shape.imageObj && (
                   <KonvaImage
                     image={shape.imageObj}
                     width={shape.width || 450}
                     height={shape.height || 300}
                   />
                 )}
-                {shape.text && shape.type !== 'text' && (
+                {shape.text && shape.type !== 'text' && shape.type !== 'svg_node' && shape.type !== 'mermaid' && shape.type !== 'model_3d' && (
                   <Text
                     text={shape.text}
                     x={shape.type === 'rect' || shape.type === 'square' ? (shape.width || 0) / 2 - 40 : -40}
@@ -2086,9 +2976,24 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                 listening={false}
               />
             )}
+
+            {/* Rectangular Marquee Selection Box */}
+            {marquee && marquee.active && (
+              <Rect
+                x={Math.min(marquee.startX, marquee.currentX)}
+                y={Math.min(marquee.startY, marquee.currentY)}
+                width={Math.abs(marquee.currentX - marquee.startX)}
+                height={Math.abs(marquee.currentY - marquee.startY)}
+                fill={selectionMode === 'intersect' ? 'rgba(99, 102, 241, 0.14)' : 'rgba(16, 185, 129, 0.14)'}
+                stroke={selectionMode === 'intersect' ? '#6366f1' : '#10b981'}
+                strokeWidth={1.5 / stageScale}
+                dash={[6 / stageScale, 4 / stageScale]}
+                listening={false}
+              />
+            )}
             
-            {/* Transformer for Selection */}
-            {selectedObj && tool === 'select' && (
+            {/* Transformer for Single & Multi-Object Selection */}
+            {selectedIds.length > 0 && tool === 'select' && (
               <Transformer 
                 ref={trRef} 
                 boundBoxFunc={(oldBox, newBox) => {
@@ -2098,8 +3003,8 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                   return newBox;
                 }}
                 padding={8}
-                borderStroke="#4f46e5"
-                anchorStroke="#4f46e5"
+                borderStroke="#6366f1"
+                anchorStroke="#6366f1"
                 anchorFill="#fff"
                 anchorSize={8}
                 rotationSnaps={[0, 45, 90, 135, 180, 225, 270, 315]}
@@ -2116,11 +3021,32 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           </div>
         )}
 
+        {/* Contextual Selected Object AI Insight Card (Explain / Quiz / Notes) */}
+        {selectedAiInsight && (
+          <div className="absolute bottom-14 right-4 w-80 sm:w-96 max-h-[55vh] overflow-y-auto bg-slate-900/95 border border-indigo-500/40 rounded-2xl p-4 shadow-2xl z-50 backdrop-blur-md animate-fadeIn">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-2.5">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-indigo-400" />
+                <h4 className="text-xs font-black uppercase tracking-wider text-indigo-300">{selectedAiInsight.title}</h4>
+              </div>
+              <button
+                onClick={() => setSelectedAiInsight(null)}
+                className="text-slate-400 hover:text-white text-xs px-1.5 py-0.5 rounded bg-white/5"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="text-xs text-slate-200 whitespace-pre-wrap leading-relaxed font-sans">
+              {selectedAiInsight.content}
+            </div>
+          </div>
+        )}
+
         {/* Subtle Empty State Hint */}
         {currentSlide.lines.length === 0 && currentSlide.shapes.length === 0 && (
           <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full bg-slate-900/80 border border-white/10 text-[11px] text-slate-400 backdrop-blur-md flex items-center gap-2">
             <span>✏️ Ready to draw on Slide {activeSlideIdx + 1}</span>
-            <span className="hidden sm:inline text-slate-500">• Pen, Shapes, Text, Sticky Notes & AI Diagrams</span>
+            <span className="hidden sm:inline text-slate-500">• Select Marquee, Pen, Shapes, AI SVG & 3D Models</span>
           </div>
         )}
 
