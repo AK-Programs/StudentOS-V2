@@ -1288,15 +1288,15 @@ app.get('/api/ai/debug-apinex', async (req, res) => {
   if (!configured) {
     return res.status(200).json({
       success: false,
-      provider: 'apinex',
-      model: 'gpt-6-luna',
+      providerUsed: 'none',
+      modelUsed: 'none',
       apinexKeyConfigured: false,
       message: 'APINEX_API_KEY environment variable is not configured on the server process.'
     });
   }
 
   try {
-    const text = await generateAICompletion({
+    const { text, telemetry } = await generateAICompletionWithTelemetry({
       systemInstruction: 'You are an APInex diagnostic agent.',
       prompt: 'Hi',
       endpointName: 'ApinexDiagnostic',
@@ -1306,17 +1306,18 @@ app.get('/api/ai/debug-apinex', async (req, res) => {
 
     return res.json({
       success: true,
-      provider: 'apinex',
-      model: 'gpt-6-luna',
+      providerUsed: telemetry.providerUsed,
+      modelUsed: telemetry.modelUsed,
       apinexKeyConfigured: true,
       httpStatus: 200,
-      response: text
+      response: text,
+      telemetry
     });
   } catch (err: any) {
     return res.status(500).json({
       success: false,
-      provider: 'apinex',
-      model: 'gpt-6-luna',
+      providerUsed: 'error',
+      modelUsed: 'error',
       apinexKeyConfigured: true,
       error: err.message || 'APInex diagnostic test failed'
     });

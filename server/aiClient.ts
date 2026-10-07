@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * Central AI Provider Service for StudentOS
- * APInex (Primary) -> NVIDIA (Fallback ONLY for genuine 5xx / outages)
+ * APInex (Primary) -> NVIDIA (Fallback ONLY for genuine 5xx / 429 / outages)
  * ZERO Gemini / OpenRouter dependencies.
  *
  * APInex Configuration:
@@ -81,6 +81,34 @@ export function getNvidiaApiKey(): string {
     process.env.AI_API_KEY ||
     '';
   return rawKey.trim().replace(/^["']|["']$/g, '');
+}
+
+/**
+ * Validates whether a model string is a supported APInex model ID.
+ * Prevents NVIDIA model overrides (e.g. nvidia/nemotron-...) from being sent to APInex.
+ */
+export function isApinexModel(modelName?: string): boolean {
+  if (!modelName || typeof modelName !== 'string') return false;
+  const clean = modelName.trim().toLowerCase();
+  const validApinexModels = [
+    'gpt-6-luna',
+    'deepseek-v4-pro',
+    'glm-5.3-flash',
+    'free/gpt-6-luna',
+    'free/glm-5.3-flash'
+  ];
+  return validApinexModels.includes(clean) || clean.startsWith('free/');
+}
+
+/**
+ * Resolves the appropriate APInex model to use.
+ * Ignores modelOverride if it contains an NVIDIA/OpenAI model ID.
+ */
+export function resolveApinexModel(modelOverride?: string, fallbackModel: ApinexModel = 'gpt-6-luna'): string {
+  if (modelOverride && isApinexModel(modelOverride)) {
+    return modelOverride.trim();
+  }
+  return fallbackModel;
 }
 
 /**
@@ -259,7 +287,8 @@ export async function generateAICompletionWithTelemetry(
     contextLength
   });
 
-  const effectiveApinexModel = modelOverride || apinexModel;
+  // CRITICAL FIX 1: Ignore modelOverride if it's an NVIDIA model ID, use proper APInex model ID
+  const effectiveApinexModel = resolveApinexModel(modelOverride, apinexModel);
   const messages = buildMessagesArray(systemInstruction, prompt, history);
   const effectiveMaxTokens = maxTokens || (tier === 'fast' ? 900 : tier === 'complex' ? 3200 : 2048);
 
@@ -298,7 +327,15 @@ export async function generateAICompletionWithTelemetry(
       if (resp.ok) {
         const data = await resp.json();
         const choiceMsg = data.choices?.[0]?.message;
-        const text = (choiceMsg?.content || choiceMsg?.reasoning_content || '').trim();
+        
+        // CRITICAL FIX 2: Check content, reasoning, AND reasoning_content for APInex models
+        const text = (
+          choiceMsg?.content ||
+          choiceMsg?.reasoning ||
+          choiceMsg?.reasoning_content ||
+          ''
+        ).trim();
+
         if (text) {
           const telemetry: AIPerformanceTelemetry = {
             requestId,
@@ -314,23 +351,23 @@ export async function generateAICompletionWithTelemetry(
           };
           console.log(`[AI_RESPONSE] provider=apinex model=${effectiveApinexModel} status=200 requestId=${requestId} durationMs=${telemetry.totalGenerationTimeMs}`);
           return { text, telemetry };
+        } else {
+          console.warn(`[APINEX WARN] APInex returned HTTP 200 but choice message content/reasoning was empty. requestId=${requestId}`);
         }
       } else {
         const errBody = await resp.text().catch(() => '');
         console.error(`[APINEX HTTP ERROR] status=${resp.status} requestId=${requestId} body=${errBody.slice(0, 200)}`);
         
-        // Check if error is Auth/Config/40x - DO NOT FALLBACK FOR CONFIG/AUTH ISSUES
-        if (resp.status === 401 || resp.status === 403) {
-          throw new Error(`[APINEX AUTH ERROR] HTTP ${resp.status}: Invalid or unauthorized APINEX_API_KEY.`);
-        } else if (resp.status === 400 || resp.status === 404) {
-          throw new Error(`[APINEX REQUEST ERROR] HTTP ${resp.status}: ${errBody.slice(0, 150)}`);
+        // CRITICAL FIX 3: DO NOT Fallback on 400, 401, 403, 404
+        if (resp.status === 400 || resp.status === 401 || resp.status === 403 || resp.status === 404) {
+          throw new Error(`[APINEX ${resp.status} ERROR] HTTP ${resp.status}: ${errBody.slice(0, 160) || 'APInex API Error'}`);
         }
 
         // Only fallback for genuine 5xx / 429
         console.log(`[AI_FALLBACK] from=apinex to=nvidia reason="APInex HTTP ${resp.status}" requestId=${requestId}`);
       }
     } catch (apinexErr: any) {
-      if (apinexErr?.message?.includes('APINEX AUTH ERROR') || apinexErr?.message?.includes('APINEX REQUEST ERROR')) {
+      if (apinexErr?.message?.includes('APINEX')) {
         throw apinexErr;
       }
       console.warn(`[AI_FALLBACK] from=apinex to=nvidia reason="${apinexErr?.message || apinexErr}" requestId=${requestId}`);
@@ -366,7 +403,13 @@ export async function generateAICompletionWithTelemetry(
       if (resp.ok) {
         const data = await resp.json();
         const choiceMsg = data.choices?.[0]?.message;
-        const text = (choiceMsg?.content || choiceMsg?.reasoning_content || '').trim();
+        const text = (
+          choiceMsg?.content ||
+          choiceMsg?.reasoning ||
+          choiceMsg?.reasoning_content ||
+          ''
+        ).trim();
+
         if (text) {
           const telemetry: AIPerformanceTelemetry = {
             requestId,
@@ -435,7 +478,8 @@ export async function streamAICompletion(
     contextLength
   });
 
-  const effectiveApinexModel = modelOverride || apinexModel;
+  // CRITICAL FIX 1: Ignore modelOverride if it's an NVIDIA model ID, use proper APInex model ID
+  const effectiveApinexModel = resolveApinexModel(modelOverride, apinexModel);
   const messages = buildMessagesArray(systemInstruction, prompt, history);
   const effectiveMaxTokens = maxTokens || (tier === 'fast' ? 950 : 2048);
 
@@ -470,10 +514,9 @@ export async function streamAICompletion(
         const errText = await response.text().catch(() => '');
         console.error(`[APINEX STREAM HTTP ERROR] status=${response.status} requestId=${requestId} body=${errText.slice(0, 180)}`);
         
-        if (response.status === 401 || response.status === 403) {
-          throw new Error(`[APINEX AUTH ERROR] HTTP ${response.status}: Invalid or unauthorized APINEX_API_KEY.`);
-        } else if (response.status === 400 || response.status === 404) {
-          throw new Error(`[APINEX REQUEST ERROR] HTTP ${response.status}: ${errText.slice(0, 150)}`);
+        // CRITICAL FIX 3: DO NOT Fallback on 400, 401, 403, 404
+        if (response.status === 400 || response.status === 401 || response.status === 403 || response.status === 404) {
+          throw new Error(`[APINEX ${response.status} ERROR] HTTP ${response.status}: ${errText.slice(0, 160) || 'APInex API Error'}`);
         }
 
         console.log(`[AI_FALLBACK] from=apinex to=nvidia reason="APInex Stream HTTP ${response.status}" requestId=${requestId}`);
@@ -508,7 +551,15 @@ export async function streamAICompletion(
             try {
               const parsed = JSON.parse(payload);
               const delta = parsed.choices?.[0]?.delta;
-              const token = delta?.content || '';
+              
+              // CRITICAL FIX 2: Check content, reasoning, AND reasoning_content in streaming delta
+              const token = (
+                delta?.content ||
+                delta?.reasoning ||
+                delta?.reasoning_content ||
+                ''
+              );
+
               if (token) {
                 if (firstTokenLatencyMs === null) {
                   firstTokenLatencyMs = Date.now() - requestStart;
@@ -540,7 +591,7 @@ export async function streamAICompletion(
       }
     } catch (apinexErr: any) {
       if (abortSignal?.aborted) throw apinexErr;
-      if (apinexErr?.message?.includes('APINEX AUTH ERROR') || apinexErr?.message?.includes('APINEX REQUEST ERROR')) {
+      if (apinexErr?.message?.includes('APINEX')) {
         throw apinexErr;
       }
       console.warn(`[AI_FALLBACK] from=apinex to=nvidia reason="${apinexErr?.message || apinexErr}" requestId=${requestId}`);
@@ -599,7 +650,12 @@ export async function streamAICompletion(
             try {
               const parsed = JSON.parse(payload);
               const delta = parsed.choices?.[0]?.delta;
-              const token = delta?.content || '';
+              const token = (
+                delta?.content ||
+                delta?.reasoning ||
+                delta?.reasoning_content ||
+                ''
+              );
               if (token) {
                 if (firstTokenLatencyMs === null) {
                   firstTokenLatencyMs = Date.now() - requestStart;
