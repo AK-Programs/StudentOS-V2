@@ -502,6 +502,15 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   const [aiPromptQuery, setAiPromptQuery] = useState('');
   const [isGeneratingDiagram, setIsGeneratingDiagram] = useState(false);
   const [aiToolType, setAiToolType] = useState<'auto' | 'svg' | '3d' | 'mermaid' | 'diagram' | 'mindmap' | 'assistant'>('auto');
+
+  // 3D Model Request & Urgent Notification Modal State
+  const [modelRequestOpen, setModelRequestOpen] = useState(false);
+  const [modelRequestTopic, setModelRequestTopic] = useState('');
+  const [modelRequestType, setModelRequestType] = useState<'normal' | 'urgent'>('normal');
+  const [modelRequestPurpose, setModelRequestPurpose] = useState('');
+  const [modelRequestDeadline, setModelRequestDeadline] = useState('');
+  const [modelRequestSubmitting, setModelRequestSubmitting] = useState(false);
+  const [modelRequestFeedback, setModelRequestFeedback] = useState<string | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: window.innerWidth, height: window.innerHeight - 120 });
   
   const [textModal, setTextModal] = useState<{
@@ -517,6 +526,42 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   const trRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isDrawing = useRef(false);
+
+  const handle3DModelRequestSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!modelRequestTopic.trim()) return;
+    setModelRequestSubmitting(true);
+    setModelRequestFeedback(null);
+    try {
+      const resp = await fetch('/api/3d-model-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestType: modelRequestType,
+          subject: modelRequestTopic,
+          requesterName: currentUser?.name || 'StudentOS User',
+          userRole: currentUser?.role || 'student',
+          schoolId: currentUser?.school_id || 'default_school',
+          urgencyDeadline: modelRequestDeadline,
+          educationalPurpose: modelRequestPurpose
+        })
+      });
+      const data = await resp.json();
+      if (data?.success) {
+        setModelRequestFeedback(data.message || 'Request submitted successfully.');
+        setTimeout(() => {
+          setModelRequestOpen(false);
+          setModelRequestFeedback(null);
+        }, 2200);
+      } else {
+        setModelRequestFeedback('⚠️ Request submission failed. Please try again.');
+      }
+    } catch {
+      setModelRequestFeedback('⚠️ Request submission failed. Please try again.');
+    } finally {
+      setModelRequestSubmitting(false);
+    }
+  };
 
   // Rehydrate SVG & 3D shapes from svgRaw/scene3D when loading slides
   useEffect(() => {

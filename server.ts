@@ -7,6 +7,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { generateAICompletion, generateAICompletionWithTelemetry, streamAICompletion, classifyTaskComplexity } from './server/aiClient';
+import { generateApinexTTS, transcribeApinexSTT } from './server/voiceService';
 import dotenv from 'dotenv';
 import { WebSocketServer, WebSocket as WSWebSocket } from 'ws';
 import { generateMermaidDiagram, generateSvgDiagram, generateCanvasElements } from './server/diagramEngine';
@@ -1750,6 +1751,128 @@ app.post('/api/ai/search', async (req, res) => {
       results: []
     });
   }
+});
+
+// APInex Server-Side Text-To-Speech (TTS) Endpoint
+app.post('/api/voice/tts', async (req, res) => {
+  const { text, voice = 'nova', speed = 1.0 } = req.body || {};
+  if (!text) {
+    return res.status(400).json({ error: 'Text prompt is required for Speech Generation.' });
+  }
+
+  try {
+    const { audioBuffer, contentType } = await generateApinexTTS({ text, voice, speed });
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'no-cache');
+    return res.send(audioBuffer);
+  } catch (err: any) {
+    console.error('[Voice Server] APInex TTS error:', err?.message || err);
+    return res.status(502).json({
+      error: 'APInex Voice TTS is temporarily unavailable.',
+      details: err?.message || String(err)
+    });
+  }
+});
+
+// APInex Server-Side Speech-To-Text (STT) Endpoint
+app.post('/api/voice/stt', async (req, res) => {
+  const { audioBase64, mimeType = 'audio/webm' } = req.body || {};
+  if (!audioBase64) {
+    return res.status(400).json({ error: 'Audio payload (audioBase64) is required.' });
+  }
+
+  try {
+    const buffer = Buffer.from(audioBase64.replace(/^data:audio\/[a-z]+;base64,/, ''), 'base64');
+    const result = await transcribeApinexSTT(buffer, mimeType);
+    if (result.success) {
+      return res.json({ success: true, text: result.text });
+    }
+    return res.status(502).json({ success: false, error: result.error || 'STT transcription failed.' });
+  } catch (err: any) {
+    console.error('[Voice Server] APInex STT error:', err?.message || err);
+    return res.status(500).json({ success: false, error: 'Voice transcription failed.' });
+  }
+});
+
+// 3D Model Request & Urgent Notification Endpoint
+interface Model3DRequestItem {
+  id: string;
+  requestType: 'normal' | 'urgent';
+  subject: string;
+  requesterName: string;
+  userRole: string;
+  schoolId?: string;
+  classContext?: string;
+  urgencyDeadline?: string;
+  educationalPurpose?: string;
+  timestamp: number;
+  status: 'pending' | 'in_review' | 'fulfilled';
+}
+
+const memory3DModelRequests: Model3DRequestItem[] = [];
+
+app.post('/api/3d-model-requests', async (req, res) => {
+  const {
+    requestType = 'normal',
+    subject,
+    requesterName = 'Student',
+    userRole = 'student',
+    schoolId = 'default_school',
+    classContext = '',
+    urgencyDeadline = '',
+    educationalPurpose = ''
+  } = req.body || {};
+
+  if (!subject) {
+    return res.status(400).json({ error: 'Subject / Topic is required for 3D model request.' });
+  }
+
+  const newRequest: Model3DRequestItem = {
+    id: 'req3d_' + Math.random().toString(36).substring(2, 10),
+    requestType: requestType === 'urgent' ? 'urgent' : 'normal',
+    subject: String(subject).slice(0, 100),
+    requesterName: String(requesterName).slice(0, 80),
+    userRole: String(userRole).slice(0, 30),
+    schoolId: String(schoolId).slice(0, 50),
+    classContext: String(classContext).slice(0, 100),
+    urgencyDeadline: String(urgencyDeadline).slice(0, 50),
+    educationalPurpose: String(educationalPurpose).slice(0, 300),
+    timestamp: Date.now(),
+    status: 'pending'
+  };
+
+  memory3DModelRequests.unshift(newRequest);
+  if (memory3DModelRequests.length > 100) memory3DModelRequests.pop();
+
+  console.log(`[3D REQUEST SERVER] Stored ${requestType.toUpperCase()} 3D Model Request: "${subject}" by ${requesterName} (${userRole})`);
+
+  // Broadcast WebSocket notification to connected admins
+  if (globalWss) {
+    const notifyPayload = JSON.stringify({
+      type: '3d_model_request:created',
+      request: newRequest
+    });
+    globalWss.clients.forEach(client => {
+      if (client.readyState === WSWebSocket.OPEN) {
+        client.send(notifyPayload);
+      }
+    });
+  }
+
+  return res.json({
+    success: true,
+    message: requestType === 'urgent'
+      ? `Urgent 3D model request for "${subject}" submitted to StudentOS Curriculum Team.`
+      : `3D model request for "${subject}" submitted successfully.`,
+    request: newRequest
+  });
+});
+
+app.get('/api/3d-model-requests', (req, res) => {
+  res.json({
+    success: true,
+    requests: memory3DModelRequests
+  });
 });
 
 app.post('/api/ai/notes', async (req, res) => {

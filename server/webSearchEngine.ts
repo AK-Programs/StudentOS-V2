@@ -2,10 +2,15 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * StudentOS Controlled Server-Side Web Search Engine
- * Provides intelligent search intent detection, privacy-preserving query extraction,
- * multi-source retrieval, untrusted content sanitization, and source attribution.
+ * StudentOS Controlled Server-Side Web Search & Research Engine
+ * APInex-First Web Intelligence Architecture
+ * Endpoints:
+ * - Search: POST https://api.apinex.bond/v1/tools/web/search
+ * - Contents: POST https://api.apinex.bond/v1/tools/web/contents
+ * - Research: POST https://api.apinex.bond/v1/tools/web/research
  */
+
+import { getApinexApiKey } from './aiClient';
 
 export interface WebSearchSource {
   title: string;
@@ -27,7 +32,7 @@ export interface WebSearchResult {
 }
 
 /**
- * Sanitizes untrusted webpage snippets before passing to NVIDIA AI models.
+ * Sanitizes untrusted webpage snippets before passing to AI models.
  * Strips HTML, scripts, control characters, and prompt-injection patterns.
  */
 export function sanitizeWebSnippet(raw: string, maxLength = 420): string {
@@ -75,9 +80,7 @@ function classifyDomainAuthority(urlStr: string): {
       domain.includes('isro.gov') ||
       domain.includes('who.int') ||
       domain.includes('unesco.org') ||
-      domain.includes('un.org') ||
-      domain.includes('noaa.gov') ||
-      domain.includes('nih.gov')
+      domain.includes('un.org')
     ) {
       return { domain, sourceType: 'official', priorityScore: 100 };
     }
@@ -92,9 +95,7 @@ function classifyDomainAuthority(urlStr: string): {
       domain.includes('science.org') ||
       domain.includes('ieee.org') ||
       domain.includes('khanacademy.org') ||
-      domain.includes('britannica.com') ||
-      domain.includes('mit.edu') ||
-      domain.includes('stanford.edu')
+      domain.includes('britannica.com')
     ) {
       return { domain, sourceType: 'academic', priorityScore: 90 };
     }
@@ -105,13 +106,7 @@ function classifyDomainAuthority(urlStr: string): {
       domain.includes('bbc.com') ||
       domain.includes('bbc.co.uk') ||
       domain.includes('thehindu.com') ||
-      domain.includes('indianexpress.com') ||
-      domain.includes('npr.org') ||
-      domain.includes('pbs.org') ||
-      domain.includes('phys.org') ||
-      domain.includes('newscientist.com') ||
-      domain.includes('scientificamerican.com') ||
-      domain.includes('space.com')
+      domain.includes('indianexpress.com')
     ) {
       return { domain, sourceType: 'news', priorityScore: 80 };
     }
@@ -127,9 +122,7 @@ function classifyDomainAuthority(urlStr: string): {
 }
 
 /**
- * Determines whether a prompt genuinely requires fresh external web search.
- * Prevents unnecessary searches for foundational curriculum explanations ("Explain photosynthesis")
- * or pure internal StudentOS queries ("Show my homework for tomorrow").
+ * Determines whether a prompt requires fresh external web search.
  */
 export function detectWebSearchIntent(
   prompt: string,
@@ -145,74 +138,50 @@ export function detectWebSearchIntent(
     return { shouldSearch: false, cleanQuery: '', reason: 'Empty prompt' };
   }
 
-  // Strip any attached base64 or internal context markers before checking
   const textOnly = raw
     .replace(/Image Data: data:image\/[^\s]+/gi, '')
-    .replace(/\[Attached File:[\s\S]*$/i, '')
+    .replace(/\[Attached Diagram\/Image\]/gi, '')
     .trim();
-
-  const lower = textOnly.toLowerCase();
 
   if (explicitMode === 'always') {
     return {
       shouldSearch: true,
       cleanQuery: extractPrivacySafeSearchQuery(textOnly),
-      reason: 'User explicitly enabled web search'
+      reason: 'Explicit search mode requested'
     };
   }
 
-  // 1. Check if it's purely an internal StudentOS action/lookup with no external component
-  const pureInternalPatterns = [
-    /^(show|list|check|what is|what are|do i have)\s+(my|our)\s+(homework|assignments?|attendance|notes?|vault|flashcards?|streak|xp|level|house points|schedule|timetable|tasks?)\s*\??$/i,
-    /^(create|add|delete|complete|mark)\s+(a\s+)?(task|note|flashcard|schedule|reminder)/i,
-    /^(clear|save)\s+whiteboard/i,
-    /^(hi|hello|hey|good morning|good afternoon|good evening|thanks|thank you|ok|okay)\b/i
+  const temporalTriggers = [
+    /\b(latest|current|recent|today|yesterday|this week|this month|now|news|update|developments?|version|release|2025|2026)\b/i,
+    /\b(who is currently|what happened in|recent study|breaking|status of|live score|market|election|weather)\b/i
   ];
-  if (pureInternalPatterns.some((rx) => rx.test(lower)) && !/\b(compare|official|circular|policy|guideline|news|latest|web|internet|online)\b/i.test(lower)) {
-    return { shouldSearch: false, cleanQuery: '', reason: 'Purely internal StudentOS lookup or greeting' };
-  }
 
-  // 2. Check if it's a timeless foundational textbook concept without freshness markers
-  const hasFreshnessOrExternalMarker = /\b(latest|current|recent|today|this week|this month|this year|2024|2025|2026|new|newest|breaking|update|updates|updated|live|now|upcoming|circular|policy|guideline|guidelines|regulation|ministry|cbse|ncert|icse|unesco|who|nasa|isro|esa|cern|nobel|olympics|world cup|tournament|match|score|winner|champion|election|president|prime minister|minister|ceo|stock|price|market|weather|earthquake|hurricane|cyclone|mission|launch|rover|telescope|jwst|artemis|chandrayaan|gaganyaan|ai model|technology trend|discover|discovery|discovered|research report|search the web|search online|look up|find online|according to official|cite sources)\b/i.test(
-    lower
-  );
+  const researchTriggers = [
+    /\b(research|investigate|compare|deep dive|comprehensive report|survey|overview of current)\b/i
+  ];
 
-  if (!hasFreshnessOrExternalMarker) {
+  const isTemporal = temporalTriggers.some(rgx => rgx.test(textOnly));
+  const isResearch = researchTriggers.some(rgx => rgx.test(textOnly));
+
+  if (isTemporal || isResearch || persona === 'orion') {
     return {
-      shouldSearch: false,
-      cleanQuery: '',
-      reason: 'Timeless educational concept or internal query; no web search needed'
-    };
-  }
-
-  // 3. Avoid searching if the user only said "today's homework" or "my attendance today" (internal school data)
-  const isInternalTodayOnly =
-    /\b(my|our)\s+(homework|assignment|attendance|schedule|timetable|classes|tasks|notes)\s+(for\s+)?(today|this week|tomorrow)\b/i.test(lower) &&
-    !/\b(compare|official|cbse|ncert|government|national|global|guidance|policy|circular|news|web|external)\b/i.test(lower);
-
-  if (isInternalTodayOnly) {
-    return {
-      shouldSearch: false,
-      cleanQuery: '',
-      reason: 'Internal StudentOS temporal query (homework/attendance today)'
+      shouldSearch: true,
+      cleanQuery: extractPrivacySafeSearchQuery(textOnly),
+      reason: persona === 'orion' ? 'Orion external research' : 'Fresh temporal web query'
     };
   }
 
   return {
-    shouldSearch: true,
+    shouldSearch: false,
     cleanQuery: extractPrivacySafeSearchQuery(textOnly),
-    reason: persona === 'orion' ? 'Orion external authority / current research query' : 'AI Buddy fresh web information query'
+    reason: 'Internal curriculum Q&A'
   };
 }
 
-/**
- * Strips private StudentOS identifiers, conversational filler, and grade instructions
- * so only the core public topic is sent to external search providers.
- */
 export function extractPrivacySafeSearchQuery(prompt: string): string {
   let q = String(prompt || '')
     .replace(/\b(my|our)\s+(class\s+\d+|grade\s+\d+|section\s+\w+|school|students?|teachers?)\b/gi, '')
-    .replace(/\b(explain|in simple terms|for class \d+|for grade \d+|step by step|and compare with our|compare our|with our|prepare a short report|research and|find the|what is the|what are the|tell me about)\b/gi, ' ')
+    .replace(/\b(explain|in simple terms|for class \d+|for grade \d+|step by step|find the|what is the|what are the|tell me about)\b/gi, ' ')
     .replace(/[^\w\s\-.,?']/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -221,215 +190,171 @@ export function extractPrivacySafeSearchQuery(prompt: string): string {
     q = String(prompt || '').replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
   }
 
-  // Add current year hint if query asks for "latest" or "current" without a year
   if (/\b(latest|current|recent|new)\b/i.test(q) && !/\b(2024|2025|2026)\b/.test(q)) {
-    q = `${q} 2025 2026`;
+    q = `${q} 2026`;
   }
 
   return q.slice(0, 140).trim();
 }
 
 /**
- * Provider 1: Tavily Search API (High-precision web search layer for StudentOS)
+ * Provider 1: Primary APInex Web Search API
+ * Endpoint: POST https://api.apinex.bond/v1/tools/web/search
  */
-async function searchViaTavily(query: string, apiKey: string, signal: AbortSignal): Promise<WebSearchSource[]> {
+async function searchViaApinex(query: string, apiKey: string, signal: AbortSignal): Promise<WebSearchSource[]> {
   try {
-    const cleanApiKey = apiKey.trim().replace(/^["']|["']$/g, '');
-    if (!cleanApiKey) return [];
-
-    const resp = await fetch('https://api.tavily.com/search', {
+    const resp = await fetch('https://api.apinex.bond/v1/tools/web/search', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        api_key: cleanApiKey,
-        query,
-        search_depth: 'advanced',
-        include_answer: true,
-        max_results: 6,
-        include_raw_content: false
-      }),
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({ query, limit: 6 }),
       signal
     });
 
     if (!resp.ok) {
-      const errText = await resp.text().catch(() => '');
-      console.warn(`[Tavily Search Notice] HTTP ${resp.status}:`, errText.slice(0, 160));
+      console.warn(`[APInex Web Search Notice] HTTP ${resp.status}`);
       return [];
     }
 
     const data = await resp.json();
+    const items = data.results || data.data || (Array.isArray(data) ? data : []);
     const sources: WebSearchSource[] = [];
 
-    if (Array.isArray(data?.results)) {
-      for (const r of data.results) {
-        if (!r || !r.url || !r.title) continue;
-        const auth = classifyDomainAuthority(r.url);
+    if (Array.isArray(items)) {
+      for (const item of items) {
+        if (!item || (!item.url && !item.link)) continue;
+        const urlStr = item.url || item.link;
+        const auth = classifyDomainAuthority(urlStr);
         sources.push({
-          title: sanitizeWebSnippet(r.title, 130),
-          url: String(r.url),
+          title: sanitizeWebSnippet(item.title || 'Web Search Result', 130),
+          url: urlStr,
           domain: auth.domain,
-          snippet: sanitizeWebSnippet(r.content || r.snippet || '', 420),
+          snippet: sanitizeWebSnippet(item.snippet || item.content || item.description || '', 420),
           sourceType: auth.sourceType,
-          publishedDate: r.published_date || undefined
+          publishedDate: item.published_date || item.date
         });
       }
     }
 
-    if (data?.answer && typeof data.answer === 'string' && data.answer.length > 20 && sources.length > 0) {
-      // Ingest synthesized direct answer snippet into primary source context
-      sources[0].snippet = `${sanitizeWebSnippet(data.answer, 240)} — ${sources[0].snippet}`;
-    }
-
     if (sources.length > 0) {
-      console.log(`[Tavily Web Search] Successfully retrieved ${sources.length} sources for query: "${query}"`);
+      console.log(`[APInex Web Search] Retrieved ${sources.length} live sources for: "${query}"`);
     }
 
     return sources;
   } catch (err: any) {
     if (err?.name !== 'AbortError') {
-      console.warn('[Tavily Search Error]:', err?.message || err);
+      console.warn('[APInex Search Notice]:', err?.message || err);
     }
     return [];
   }
 }
 
 /**
- * Provider 2: DuckDuckGo HTML Search (Zero API key required, retrieves real live web results)
+ * Provider 1.1: APInex Web Research API
+ * Endpoint: POST https://api.apinex.bond/v1/tools/web/research
  */
-async function searchViaDuckDuckGoHtml(query: string, signal: AbortSignal): Promise<WebSearchSource[]> {
-  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-  const resp = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml',
-      'Accept-Language': 'en-US,en;q=0.9'
-    },
-    signal
-  });
+export async function performApinexWebResearch(query: string, apiKey: string, signal?: AbortSignal): Promise<WebSearchSource[]> {
+  try {
+    const resp = await fetch('https://api.apinex.bond/v1/tools/web/research', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({ query, depth: 'detailed' }),
+      signal
+    });
 
-  if (!resp.ok) return [];
-  const html = await resp.text();
-  const results: WebSearchSource[] = [];
+    if (!resp.ok) return [];
 
-  // Match result blocks in DDG HTML
-  const resultBlocks = html.split(/class="result\s+results_links/i).slice(1, 10);
-  for (const block of resultBlocks) {
-    const titleMatch = block.match(/class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
-    const snippetMatch = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>|class="result__snippet"[^>]*>([\s\S]*?)<\/div>/i);
+    const data = await resp.json();
+    const items = data.results || data.sources || data.data || [];
+    const sources: WebSearchSource[] = [];
 
-    if (titleMatch) {
-      let rawHref = titleMatch[1] || '';
-      const rawTitle = titleMatch[2] || '';
-      const rawSnippet = snippetMatch ? (snippetMatch[1] || snippetMatch[2] || '') : '';
-
-      // Decode DuckDuckGo redirect URLs (?uddg=...)
-      if (rawHref.includes('uddg=')) {
-        try {
-          const uddgMatch = rawHref.match(/[?&]uddg=([^&]+)/);
-          if (uddgMatch && uddgMatch[1]) {
-            rawHref = decodeURIComponent(uddgMatch[1]);
-          }
-        } catch (_) {}
-      } else if (rawHref.startsWith('//')) {
-        rawHref = 'https:' + rawHref;
-      }
-
-      if (!rawHref.startsWith('http')) continue;
-      // Skip ad/tracker links
-      if (rawHref.includes('duckduckgo.com/y.js')) continue;
-
-      const auth = classifyDomainAuthority(rawHref);
-      const cleanTitle = sanitizeWebSnippet(rawTitle, 130);
-      const cleanSnippet = sanitizeWebSnippet(rawSnippet, 420);
-
-      if (cleanTitle && cleanSnippet) {
-        results.push({
-          title: cleanTitle,
-          url: rawHref,
+    if (Array.isArray(items)) {
+      for (const item of items) {
+        if (!item || (!item.url && !item.link)) continue;
+        const urlStr = item.url || item.link;
+        const auth = classifyDomainAuthority(urlStr);
+        sources.push({
+          title: sanitizeWebSnippet(item.title || 'Web Research Source', 130),
+          url: urlStr,
           domain: auth.domain,
-          snippet: cleanSnippet,
+          snippet: sanitizeWebSnippet(item.content || item.snippet || item.summary || '', 500),
           sourceType: auth.sourceType
         });
       }
     }
-  }
 
-  return results;
-}
-
-/**
- * Provider 3: Wikipedia Live Search API (Authoritative encyclopedic & current event articles)
- */
-async function searchViaWikipedia(query: string, signal: AbortSignal): Promise<WebSearchSource[]> {
-  const cleanQ = query.replace(/\b(2025|2026|latest|current)\b/gi, '').trim() || query;
-  const apiUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(
-    cleanQ
-  )}&utf8=&format=json&srlimit=3`;
-
-  const resp = await fetch(apiUrl, {
-    headers: { 'User-Agent': 'StudentOS-Educational-Search/3.0 (https://studentos.internal)' },
-    signal
-  });
-
-  if (!resp.ok) return [];
-  const data = await resp.json();
-  const items = data?.query?.search || [];
-  if (!Array.isArray(items)) return [];
-
-  return items.map((item: any) => {
-    const title = sanitizeWebSnippet(item.title || 'Wikipedia Reference', 120);
-    const pageUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(String(item.title || '').replace(/\s+/g, '_'))}`;
-    const snippet = sanitizeWebSnippet(item.snippet || '', 400);
-    return {
-      title: `${title} — Wikipedia Encyclopedia`,
-      url: pageUrl,
-      domain: 'en.wikipedia.org',
-      snippet,
-      sourceType: 'reference' as const,
-      publishedDate: item.timestamp ? item.timestamp.split('T')[0] : undefined
-    };
-  });
-}
-
-/**
- * Provider 4: ArXiv Scientific Research API (for science, physics, math, CS, AI discovery queries)
- */
-async function searchViaArxiv(query: string, signal: AbortSignal): Promise<WebSearchSource[]> {
-  if (!/\b(science|scientific|physics|quantum|math|biology|chemistry|astronomy|nasa|space|ai|neural|algorithm|research|discovery|study|paper|theorem)\b/i.test(query)) {
+    return sources;
+  } catch {
     return [];
   }
-  const url = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&start=0&max_results=2&sortBy=submittedDate&sortOrder=descending`;
-  const resp = await fetch(url, { signal });
-  if (!resp.ok) return [];
-  const xml = await resp.text();
-
-  const entries = xml.split('<entry>').slice(1, 3);
-  const sources: WebSearchSource[] = [];
-
-  for (const entry of entries) {
-    const title = entry.match(/<title>([\s\S]*?)<\/title>/i)?.[1] || '';
-    const summary = entry.match(/<summary>([\s\S]*?)<\/summary>/i)?.[1] || '';
-    const idUrl = entry.match(/<id>([\s\S]*?)<\/id>/i)?.[1] || '';
-    const published = entry.match(/<published>([\s\S]*?)<\/published>/i)?.[1] || '';
-
-    if (title && summary && idUrl) {
-      sources.push({
-        title: `${sanitizeWebSnippet(title, 120)} (arXiv Research)`,
-        url: idUrl.trim(),
-        domain: 'arxiv.org',
-        snippet: sanitizeWebSnippet(summary, 380),
-        sourceType: 'academic',
-        publishedDate: published ? published.split('T')[0] : undefined
-      });
-    }
-  }
-  return sources;
 }
 
 /**
- * Executes controlled server-side web search with strict timeout, deduplication,
- * authority ranking, and untrusted content sanitization.
+ * Fallback Web Search via DuckDuckGo & Wikipedia
+ */
+async function searchViaFallbackHtml(query: string, signal: AbortSignal): Promise<WebSearchSource[]> {
+  try {
+    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html'
+      },
+      signal
+    });
+
+    if (!resp.ok) return [];
+    const html = await resp.text();
+    const results: WebSearchSource[] = [];
+
+    const resultBlocks = html.split(/class="result\s+results_links/i).slice(1, 8);
+    for (const block of resultBlocks) {
+      const titleMatch = block.match(/class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
+      const snippetMatch = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>|class="result__snippet"[^>]*>([\s\S]*?)<\/div>/i);
+
+      if (titleMatch) {
+        let rawHref = titleMatch[1] || '';
+        const rawTitle = titleMatch[2] || '';
+        const rawSnippet = snippetMatch ? (snippetMatch[1] || snippetMatch[2] || '') : '';
+
+        if (rawHref.includes('uddg=')) {
+          const uddgMatch = rawHref.match(/[?&]uddg=([^&]+)/);
+          if (uddgMatch && uddgMatch[1]) {
+            rawHref = decodeURIComponent(uddgMatch[1]);
+          }
+        }
+        if (!rawHref.startsWith('http') || rawHref.includes('duckduckgo.com')) continue;
+
+        const auth = classifyDomainAuthority(rawHref);
+        const cleanTitle = sanitizeWebSnippet(rawTitle, 130);
+        const cleanSnippet = sanitizeWebSnippet(rawSnippet, 420);
+
+        if (cleanTitle && cleanSnippet) {
+          results.push({
+            title: cleanTitle,
+            url: rawHref,
+            domain: auth.domain,
+            snippet: cleanSnippet,
+            sourceType: auth.sourceType
+          });
+        }
+      }
+    }
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Executes controlled server-side web search with APInex Primary.
  */
 export async function performControlledWebSearch(rawQuery: string): Promise<WebSearchResult> {
   const startTime = Date.now();
@@ -448,31 +373,30 @@ export async function performControlledWebSearch(rawQuery: string): Promise<WebS
   }
 
   const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), 5500);
+  const timeout = setTimeout(() => abortController.abort(), 6000);
 
   try {
-    const tavilyKey = (process.env.TAVILY_API_KEY || process.env.VITE_TAVILY_API_KEY || '').trim();
+    const apinexKey = getApinexApiKey();
+    let sources: WebSearchSource[] = [];
 
-    const tasks: Promise<WebSearchSource[]>[] = [
-      searchViaDuckDuckGoHtml(queryUsed, abortController.signal).catch(() => []),
-      searchViaWikipedia(queryUsed, abortController.signal).catch(() => []),
-      searchViaArxiv(queryUsed, abortController.signal).catch(() => [])
-    ];
-
-    if (tavilyKey) {
-      tasks.unshift(searchViaTavily(queryUsed, tavilyKey, abortController.signal).catch(() => []));
+    if (apinexKey) {
+      sources = await searchViaApinex(queryUsed, apinexKey, abortController.signal);
+      if (sources.length === 0) {
+        // Try APInex Web Research endpoint
+        sources = await performApinexWebResearch(queryUsed, apinexKey, abortController.signal);
+      }
     }
 
-    const settledArrays = await Promise.all(tasks);
-    const merged = settledArrays.flat();
+    if (sources.length === 0) {
+      sources = await searchViaFallbackHtml(queryUsed, abortController.signal);
+    }
 
-    // Deduplicate by URL and sort by authority score
     const seenUrls = new Set<string>();
     const uniqueSources: WebSearchSource[] = [];
 
-    for (const src of merged) {
+    for (const src of sources) {
       const normUrl = src.url.toLowerCase().replace(/\/$/, '');
-      if (!seenUrls.has(normUrl) && src.snippet.length >= 20) {
+      if (!seenUrls.has(normUrl) && src.snippet.length >= 15) {
         seenUrls.add(normUrl);
         uniqueSources.push(src);
       }
