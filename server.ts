@@ -1769,6 +1769,13 @@ app.post('/api/ai/whiteboard-3d', async (req, res) => {
     const { query, sourceContext } = req.body || {};
     if (!query) return res.status(400).json({ success: false, error: 'Query is required' });
     const scene = await generateEducational3DScene(String(query), sourceContext ? String(sourceContext) : undefined);
+    if (!scene) {
+      return res.status(200).json({
+        success: false,
+        available: false,
+        error: 'This 3D model is not currently in the verified catalog.'
+      });
+    }
     return res.status(200).json({ success: true, scene });
   } catch (err: any) {
     console.error('[AI Server] Whiteboard 3D error:', err);

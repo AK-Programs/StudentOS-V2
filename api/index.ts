@@ -380,47 +380,120 @@ async function streamApinexCompletion(
   }
 }
 
-async function callApinexWebSearch(query: string, apiKey: string): Promise<any[]> {
-  const resp = await fetch('https://api.apinex.bond/v1/tools/web/search', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json'
-    },
-    body: JSON.stringify({ query, num: 5, limit: 5 })
-  });
-
-  if (!resp.ok) {
-    const errText = await resp.text().catch(() => '');
-    throw new Error(`APInex Web Search HTTP ${resp.status}: ${errText.slice(0, 180) || 'Search tool request failed'}`);
-  }
-
-  const data = await resp.json();
-  const rawItems = data.results || data.data || data.items || (Array.isArray(data) ? data : []);
-  if (!Array.isArray(rawItems)) {
+async function searchViaFallbackHtml(query: string): Promise<any[]> {
+  try {
+    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        Accept: 'text/html'
+      }
+    });
+    if (!resp.ok) return [];
+    const html = await resp.text();
+    const results: any[] = [];
+    const resultBlocks = html.split(/class="result\s+results_links/i).slice(1, 8);
+    for (const block of resultBlocks) {
+      const titleMatch = block.match(/class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
+      const snippetMatch = block.match(
+        /class="result__snippet"[^>]*>([\s\S]*?)<\/a>|class="result__snippet"[^>]*>([\s\S]*?)<\/div>/i
+      );
+      if (titleMatch) {
+        let rawHref = titleMatch[1] || '';
+        const rawTitle = (titleMatch[2] || '').replace(/<[^>]+>/g, '').trim();
+        const rawSnippet = (snippetMatch ? snippetMatch[1] || snippetMatch[2] || '' : '')
+          .replace(/<[^>]+>/g, '')
+          .trim();
+        if (rawHref.includes('uddg=')) {
+          const uddgMatch = rawHref.match(/[?&]uddg=([^&]+)/);
+          if (uddgMatch && uddgMatch[1]) {
+            rawHref = decodeURIComponent(uddgMatch[1]);
+          }
+        }
+        if (!rawHref.startsWith('http') || rawHref.includes('duckduckgo.com')) continue;
+        let domain = 'web-source';
+        try {
+          domain = new URL(rawHref).hostname.replace(/^www\./, '');
+        } catch {}
+        if (rawTitle && rawSnippet) {
+          results.push({
+            title: rawTitle,
+            url: rawHref,
+            snippet: rawSnippet,
+            uri: rawHref,
+            description: rawSnippet,
+            published_source: domain,
+            sourceType:
+              domain.includes('.edu') || domain.includes('.gov') || domain.includes('wikipedia')
+                ? 'academic'
+                : 'web'
+          });
+        }
+      }
+    }
+    return results;
+  } catch {
     return [];
   }
+}
 
+async function callApinexWebSearch(query: string, apiKey: string): Promise<any[]> {
   const results: any[] = [];
-  for (const item of rawItems) {
-    if (!item) continue;
-    const title = String(item.title || item.name || '').trim();
-    const url = String(item.url || item.link || item.href || '').trim();
-    const snippet = String(item.snippet || item.description || item.content || item.summary || '').trim();
 
-    if (url || snippet || title) {
-      results.push({
-        title: title || 'Educational Resource',
-        url: url || '',
-        snippet: snippet || '',
-        uri: url || '',
-        description: snippet || ''
+  if (apiKey) {
+    try {
+      const resp = await fetch('https://api.apinex.bond/v1/tools/web/search', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json'
+        },
+        body: JSON.stringify({ query, num: 5, limit: 5 })
       });
+
+      if (resp.ok) {
+        const data = await resp.json();
+        const rawItems = data.results || data.data || data.items || (Array.isArray(data) ? data : []);
+        if (Array.isArray(rawItems)) {
+          for (const item of rawItems) {
+            if (!item) continue;
+            const title = String(item.title || item.name || '').trim();
+            const url = String(item.url || item.link || item.href || '').trim();
+            const snippet = String(item.snippet || item.description || item.content || item.summary || '').trim();
+            let domain = 'web-source';
+            try {
+              if (url) domain = new URL(url).hostname.replace(/^www\./, '');
+            } catch {}
+
+            if (url || snippet || title) {
+              results.push({
+                title: title || 'Educational Resource',
+                url: url || '',
+                snippet: snippet || '',
+                uri: url || '',
+                description: snippet || '',
+                published_source: domain,
+                sourceType: domain.includes('.edu') || domain.includes('.gov') ? 'academic' : 'web'
+              });
+            }
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn('[Vercel Web Search] APInex tool search notice:', e?.message);
     }
   }
 
-  return results;
+  // If APInex tool returned results, return them
+  if (results.length > 0) {
+    return results;
+  }
+
+  // Seamless fallback search ensuring students always get real verified live sources
+  const fallbackResults = await searchViaFallbackHtml(query);
+  return fallbackResults;
 }
 
 async function generateSearchSummary(

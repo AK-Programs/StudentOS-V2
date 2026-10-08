@@ -10,10 +10,23 @@ import {
   Triangle, Minus, ChevronDown, Trash2, Sliders, Settings2, Plus, Copy,
   ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, ArrowUp, ArrowDown, Type, Sparkles,
   Undo2, Redo2, Image as ImageIcon, StickyNote, FileText, Box, Layers, Hand, RotateCcw, Eye, Tag, HelpCircle,
-  Play, Rotate3d
+  Play, Rotate3d, FolderOpen, Save, Upload
 } from 'lucide-react';
 import { InteractiveThreeDViewer, Educational3DScene } from './InteractiveThreeDViewer';
 import { ThreeDLibraryAndRequestModal } from './ThreeDLibraryAndRequestModal';
+import { WhiteboardAssetDialog } from './WhiteboardAssetDialog';
+import { SaveWhiteboardModal } from './SaveWhiteboardModal';
+import {
+  exportWhiteboardDocumentFile,
+  validateAndParseWhiteboardFile,
+  printAllSlidesAsPdf,
+  serializeSlides
+} from '../lib/whiteboardFileManager';
+import {
+  applyStrokeEraserToLines,
+  doesCircleIntersectStroke
+} from '../lib/whiteboardEraserGeometry';
+import { searchVerifiedAssets } from '../lib/whiteboardAssetRegistry';
 
 const Stage = StageComp as any;
 const Layer = LayerComp as any;
@@ -41,6 +54,8 @@ export interface Part3D {
   opacity?: number;
   description?: string;
   wireframe?: boolean;
+  glass?: boolean;
+  emissive?: string;
 }
 
 export interface Scene3DData {
@@ -64,7 +79,7 @@ export interface Scene3DData {
   }>;
 }
 
-interface ShapeObj {
+export interface ShapeObj {
   id: string;
   type: 'rect' | 'square' | 'circle' | 'ellipse' | 'triangle' | 'line' | 'arrow' | 'pentagon' | 'polygon' | 'star' | 'ruler-15' | 'ruler-30' | 'protractor' | 'compass' | 'setsquare-45' | 'setsquare-30-60' | 'geometry' | 'text' | 'ruler' | 'setsquare' | 'divider' | 'angle-meter' | 'svg_node' | 'mermaid' | 'model_3d';
   x: number;
@@ -93,7 +108,7 @@ interface ShapeObj {
   showLabels3D?: boolean;
 }
 
-interface LineObj {
+export interface LineObj {
   id: string;
   points: number[];
   color: string;
@@ -106,11 +121,22 @@ interface LineObj {
   rotation?: number;
 }
 
-interface Slide {
+export interface StickyNoteObj {
   id: string;
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  color?: string;
+  text: string;
+}
+
+export interface Slide {
+  id: string | number;
+  name?: string;
   shapes: ShapeObj[];
   lines: LineObj[];
-  stickies: any[];
+  stickies: StickyNoteObj[];
 }
 
 declare const mermaid: any;
@@ -504,6 +530,15 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   const [isGeneratingDiagram, setIsGeneratingDiagram] = useState(false);
   const [aiToolType, setAiToolType] = useState<'auto' | 'svg' | '3d' | 'mermaid' | 'diagram' | 'mindmap' | 'assistant'>('auto');
 
+  // Verified Asset Library ("AI Board") & File Manager States
+  const [aiAssetDialogOpen, setAiAssetDialogOpen] = useState(false);
+  const [assetDialogInitialQuery, setAssetDialogInitialQuery] = useState('');
+  const [assetDialogInitialCategory, setAssetDialogInitialCategory] = useState('All');
+  const [saveDocModalOpen, setSaveDocModalOpen] = useState(false);
+  const [fileMenuOpen, setFileMenuOpen] = useState(false);
+  const loadDocInputRef = useRef<HTMLInputElement>(null);
+  const hasPushedEraserHistory = useRef(false);
+
   // Verified 3D Library & Request Hub State
   const [threeDHubOpen, setThreeDHubOpen] = useState(false);
   const [threeDHubUnavailableAlert, setThreeDHubUnavailableAlert] = useState(false);
@@ -738,6 +773,39 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     };
   }, [activeSlideIdx, slides]);
 
+  // Helper to insert a verified 2D SVG Diagram onto the Whiteboard
+  const insertSvgDiagramOnBoard = useCallback((svgContent: string, title: string = 'Educational Visual', xPos: number = 140, yPos: number = 100) => {
+    const safeSvg = sanitizeSvgClient(svgContent);
+    if (!safeSvg) return;
+
+    const img = new Image();
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(safeSvg);
+    img.onload = () => {
+      const newSvgShape: ShapeObj = {
+        id: `svg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        type: 'svg_node',
+        x: xPos,
+        y: yPos,
+        width: 520,
+        height: 360,
+        stroke: '#818cf8',
+        strokeWidth: 2,
+        text: title,
+        imageObj: img,
+        svgRaw: safeSvg
+      };
+      pushHistory();
+      setSlides(prev => {
+        const updated = cloneSlides(prev);
+        updated[activeSlideIdx].shapes.push(newSvgShape);
+        return updated;
+      });
+      setTool('select');
+      setSelectedIds([{ id: newSvgShape.id, type: 'shape' }]);
+      setAiTip(`🎨 Verified visual inserted: "${title}"`);
+    };
+  }, [activeSlideIdx, slides]);
+
   // Helper to update 3D parameters (pitch, yaw, zoom, explode, labels) on a selected 3D object
   const updateSelected3DModel = (patch: Partial<Pick<ShapeObj, 'rotX' | 'rotY' | 'zoom3D' | 'explode3D' | 'showLabels3D'>>) => {
     if (!selectedObj || selectedObj.type !== 'shape') return;
@@ -828,19 +896,15 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       const anchorY = primaryObj ? Math.min(Math.max(60, canvasSize.height - 440), Math.max(60, (primaryObj.y || 110) + 40)) : 110;
 
       if (action === 'to_3d') {
-        setAiTip(`🧊 Converting "${cleanTopic}" into an interactive 3D educational model...`);
-        const res = await fetch('/api/ai/whiteboard-3d', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: cleanTopic, sourceContext: contextDesc })
-        });
-        if (!res.ok) throw new Error('3D generation service unavailable');
-        const data = await res.json();
-        if (data?.scene && Array.isArray(data.scene.parts) && data.scene.parts.length > 0) {
-          insert3DModelOnBoard(data.scene, anchorX, anchorY);
-          setAiTip(`🧊 3D Educational Model created for "${data.scene.title}"! Click "Orbit 3D Studio" to explore.`);
+        const matches = searchVerifiedAssets(cleanTopic, '3d');
+        if (matches.length > 0 && matches[0].scene3D) {
+          insert3DModelOnBoard(matches[0].scene3D, anchorX, anchorY);
+          setAiTip(`🧊 Verified 3D Educational Model added: "${matches[0].title}"`);
         } else {
-          setAiTip('⚠️ Could not generate a 3D model for this selection.');
+          setAssetDialogInitialQuery(cleanTopic);
+          setAssetDialogInitialCategory('3D Models');
+          setAiAssetDialogOpen(true);
+          setAiTip(`⚠️ Arbitrary 3D generation is disabled. Showing verified models for "${cleanTopic}".`);
         }
       } else if (action === 'to_svg') {
         setAiTip(`🎨 Generating classroom SVG visual for "${cleanTopic}"...`);
@@ -947,19 +1011,15 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
 
     try {
       if (effectiveTool === '3d') {
-        const response = await fetch('/api/ai/whiteboard-3d', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: aiPromptQuery })
-        });
-        const data = await response.json();
-        if (data?.scene && data.scene.parts && data.scene.parts.length > 0) {
-          insert3DModelOnBoard(data.scene, 120, 90);
-          setAiTip(`🧊 Interactive 3D model generated for "${data.scene.title}"`);
+        const matches = searchVerifiedAssets(aiPromptQuery, '3d');
+        if (matches.length > 0 && matches[0].scene3D) {
+          insert3DModelOnBoard(matches[0].scene3D, 120, 90);
+          setAiTip(`🧊 Verified 3D model inserted: "${matches[0].title}"`);
         } else {
-          setThreeDQueryTopic(aiPromptQuery);
-          setThreeDHubUnavailableAlert(true);
-          setThreeDHubOpen(true);
+          setAssetDialogInitialQuery(aiPromptQuery);
+          setAssetDialogInitialCategory('3D Models');
+          setAiAssetDialogOpen(true);
+          setAiTip(`⚠️ Arbitrary 3D generation is disabled. Showing verified 3D models for "${aiPromptQuery}".`);
         }
       } else if (effectiveTool === 'mermaid') {
         const response = await fetch('/api/ai/mermaid', {
@@ -1150,52 +1210,51 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     return () => observer.disconnect();
   }, []);
 
-  // Generous tolerances for comfortable erasing
-  const isCloseToLine = (linePoints: number[], px: number, py: number) => {
-    for (let i = 0; i < linePoints.length; i += 2) {
-      const lx = linePoints[i];
-      const ly = linePoints[i+1];
-      const dist = Math.sqrt(Math.pow(lx - px, 2) + Math.pow(ly - py, 2));
-      if (dist < 45) return true; // Generous circular hit stroke
-    }
-    return false;
-  };
-
-  const isCloseToShape = (shape: ShapeObj, px: number, py: number) => {
-    if (shape.type === 'rect' || shape.type === 'square') {
+  // Segment & Shape collision checks using current brushSize radius
+  const isCloseToShape = (shape: ShapeObj, px: number, py: number, radius: number = 20) => {
+    const r = Math.max(4, radius);
+    if (shape.type === 'rect' || shape.type === 'square' || shape.type === 'model_3d' || shape.type === 'svg_node') {
       const minX = Math.min(shape.x, shape.x + (shape.width || 0));
       const maxX = Math.max(shape.x, shape.x + (shape.width || 0));
       const minY = Math.min(shape.y, shape.y + (shape.height || 0));
       const maxY = Math.max(shape.y, shape.y + (shape.height || 0));
-      return px >= minX - 30 && px <= maxX + 30 && py >= minY - 30 && py <= maxY + 30; // Expanded bounding box hit zone
+      return px >= minX - r && px <= maxX + r && py >= minY - r && py <= maxY + r;
     }
     if (shape.type === 'circle' || shape.type === 'ellipse' || shape.type === 'triangle' || shape.type === 'polygon' || shape.type === 'pentagon' || shape.type === 'star' || shape.type === 'geometry') {
       const dist = Math.sqrt(Math.pow(shape.x - px, 2) + Math.pow(shape.y - py, 2));
-      return dist <= (shape.radius || 20) + 35; // Generous circular radius hit zone
+      return dist <= (shape.radius || 20) + r;
     }
     if (shape.type === 'line' || shape.type === 'arrow' || shape.type === 'ruler-15' || shape.type === 'ruler-30' || shape.type === 'protractor' || shape.type === 'compass' || shape.type === 'setsquare-45' || shape.type === 'setsquare-30-60') {
       if (shape.points) {
-        for (let i = 0; i < shape.points.length; i += 2) {
-          const lx = shape.x + shape.points[i];
-          const ly = shape.y + shape.points[i+1];
-          const dist = Math.sqrt(Math.pow(lx - px, 2) + Math.pow(ly - py, 2));
-          if (dist < 50) return true;
-        }
+        return doesCircleIntersectStroke(shape.points.map(p => p + (shape.x || 0)), px, py, r);
       } else {
-        // Fallback for tools without standard path points: check distance to shape origin
         const dist = Math.sqrt(Math.pow(shape.x - px, 2) + Math.pow(shape.y - py, 2));
-        return dist < 60;
+        return dist <= r + 15;
       }
     }
     return false;
   };
 
   const eraseAt = (px: number, py: number) => {
+    const radius = Math.max(4, Number(brushSize) || 20);
     setSlides(prev => {
-      const updated = [...prev];
-      const current = updated[activeSlideIdx];
-      current.lines = current.lines.filter(line => !isCloseToLine(line.points, px, py));
-      current.shapes = current.shapes.filter(shape => !isCloseToShape(shape, px, py));
+      const current = prev[activeSlideIdx];
+      if (!current) return prev;
+
+      const remainingLines = current.lines.filter(
+        line => line.tool !== 'eraser' && !doesCircleIntersectStroke(line.points, px, py, radius)
+      );
+      const remainingShapes = current.shapes.filter(
+        shape => !isCloseToShape(shape, px, py, radius)
+      );
+
+      if (remainingLines.length === current.lines.length && remainingShapes.length === current.shapes.length) {
+        return prev;
+      }
+
+      const updated = cloneSlides(prev);
+      updated[activeSlideIdx].lines = remainingLines;
+      updated[activeSlideIdx].shapes = remainingShapes;
       return updated;
     });
   };
@@ -1273,9 +1332,36 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     }
 
     if (tool === 'object_eraser') {
-      pushHistory();
       isDrawing.current = true;
+      hasPushedEraserHistory.current = false;
+      const current = slides[activeSlideIdx];
+      const radius = Math.max(4, Number(brushSize) || 20);
+      const willHitLine = current?.lines.some(l => l.tool !== 'eraser' && doesCircleIntersectStroke(l.points, pos.x, pos.y, radius));
+      const willHitShape = current?.shapes.some(s => isCloseToShape(s, pos.x, pos.y, radius));
+      if (willHitLine || willHitShape) {
+        pushHistory();
+        hasPushedEraserHistory.current = true;
+      }
       eraseAt(pos.x, pos.y);
+      return;
+    }
+
+    if (tool === 'eraser') {
+      isDrawing.current = true;
+      hasPushedEraserHistory.current = false;
+      const current = slides[activeSlideIdx];
+      if (current) {
+        const { updatedLines, hasModified } = applyStrokeEraserToLines(current.lines, pos.x, pos.y, brushSize);
+        if (hasModified) {
+          pushHistory();
+          hasPushedEraserHistory.current = true;
+          setSlides(prev => {
+            const next = cloneSlides(prev);
+            next[activeSlideIdx].lines = updatedLines;
+            return next;
+          });
+        }
+      }
       return;
     }
     
@@ -1312,7 +1398,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     pushHistory();
     isDrawing.current = true;
     
-    if (tool === 'pen' || tool === 'pencil' || tool === 'marker' || tool === 'highlighter' || tool === 'eraser') {
+    if (tool === 'pen' || tool === 'pencil' || tool === 'marker' || tool === 'highlighter') {
       let colorStr = brushColor;
       let sizeVal = brushSize;
       
@@ -1325,9 +1411,6 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       } else if (tool === 'highlighter') {
         colorStr = brushColor + '40'; 
         sizeVal = brushSize * 4.0;
-      } else if (tool === 'eraser') {
-        colorStr = '#000000';
-        sizeVal = brushSize * 3.0;
       }
       
       const newLine: LineObj = {
@@ -1339,7 +1422,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       };
       
       setSlides(prev => {
-        const updated = [...prev];
+        const updated = cloneSlides(prev);
         updated[activeSlideIdx].lines.push(newLine);
         return updated;
       });
@@ -1359,7 +1442,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       };
       
       setSlides(prev => {
-        const updated = [...prev];
+        const updated = cloneSlides(prev);
         updated[activeSlideIdx].shapes.push(newShape);
         return updated;
       });
@@ -1392,7 +1475,34 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     if (!point) return;
     
     if (tool === 'object_eraser') {
+      const current = slides[activeSlideIdx];
+      const radius = Math.max(4, Number(brushSize) || 20);
+      const willHitLine = current?.lines.some(l => l.tool !== 'eraser' && doesCircleIntersectStroke(l.points, point.x, point.y, radius));
+      const willHitShape = current?.shapes.some(s => isCloseToShape(s, point.x, point.y, radius));
+      if ((willHitLine || willHitShape) && !hasPushedEraserHistory.current) {
+        pushHistory();
+        hasPushedEraserHistory.current = true;
+      }
       eraseAt(point.x, point.y);
+      return;
+    }
+
+    if (tool === 'eraser') {
+      const current = slides[activeSlideIdx];
+      if (current) {
+        const { updatedLines, hasModified } = applyStrokeEraserToLines(current.lines, point.x, point.y, brushSize);
+        if (hasModified) {
+          if (!hasPushedEraserHistory.current) {
+            pushHistory();
+            hasPushedEraserHistory.current = true;
+          }
+          setSlides(prev => {
+            const next = cloneSlides(prev);
+            next[activeSlideIdx].lines = updatedLines;
+            return next;
+          });
+        }
+      }
       return;
     }
 
@@ -1402,7 +1512,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       const updated = [...prev];
       const currentSlide = updated[activeSlideIdx];
 
-      if (tool === 'pen' || tool === 'pencil' || tool === 'marker' || tool === 'highlighter' || tool === 'eraser') {
+      if (tool === 'pen' || tool === 'pencil' || tool === 'marker' || tool === 'highlighter') {
         const lastLine = currentSlide.lines[currentSlide.lines.length - 1];
         if (lastLine) {
           lastLine.points = lastLine.points.concat([point.x, point.y]);
@@ -1505,6 +1615,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     }
 
     isDrawing.current = false;
+    hasPushedEraserHistory.current = false;
 
     // AI Predictive Shape Assistant Engine
     if (aiShapeAssistant && (tool === 'pen' || tool === 'pencil' || tool === 'marker' || tool === 'highlighter')) {
@@ -1978,12 +2089,84 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const handleSaveDocConfirm = (fileName: string) => {
+    const savedName = exportWhiteboardDocumentFile(fileName, slides);
+    setAiTip(`💾 Saved entire Whiteboard as "${savedName}.studentos-whiteboard"!`);
+  };
+
+  const handleLoadDocFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const rawText = evt.target?.result as string;
+      const result = validateAndParseWhiteboardFile(rawText);
+
+      if (!result.valid || !result.document) {
+        setAiTip(`⚠️ ${result.error || 'Unable to load this Whiteboard file.'}`);
+        return;
+      }
+
+      pushHistory();
+      const loadedSlides = result.document.slides;
+      setSlides(loadedSlides);
+      setActiveSlideIdx(0);
+      setSelectedIds([]);
+
+      // Reconstruct image objects for SVG nodes and 3D scenes across all loaded slides
+      loadedSlides.forEach((sl, slIdx) => {
+        sl.shapes.forEach((sh) => {
+          if (sh.type === 'svg_node' && sh.svgRaw) {
+            const img = new Image();
+            img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(sh.svgRaw);
+            img.onload = () => {
+              setSlides(prev => {
+                const next = cloneSlides(prev);
+                const target = next[slIdx]?.shapes.find(s => s.id === sh.id);
+                if (target) target.imageObj = img;
+                return next;
+              });
+            };
+          } else if (sh.type === 'model_3d' && sh.scene3D) {
+            const svgStr = sanitizeSvgClient(
+              renderScene3DToSvg(
+                sh.scene3D,
+                sh.rotX ?? 22,
+                sh.rotY ?? -32,
+                sh.zoom3D ?? 1,
+                sh.explode3D ?? 0,
+                sh.showLabels3D ?? true
+              )
+            );
+            if (svgStr) {
+              const img = new Image();
+              img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
+              img.onload = () => {
+                setSlides(prev => {
+                  const next = cloneSlides(prev);
+                  const target = next[slIdx]?.shapes.find(s => s.id === sh.id);
+                  if (target) target.imageObj = img;
+                  return next;
+                });
+              };
+            }
+          }
+        });
+      });
+
+      setAiTip(`📂 Successfully loaded "${result.document.fileName}" (${result.document.slideCount} slides)!`);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   const handleExportPNG = () => {
     if (!stageRef.current) return;
     if (trRef.current) trRef.current.nodes([]);
     const dataUrl = stageRef.current.toDataURL({ pixelRatio: 2 });
     const link = document.createElement('a');
-    link.download = `smartboard_slide_${activeSlideIdx + 1}.png`;
+    link.download = `whiteboard_slide_${activeSlideIdx + 1}.png`;
     link.href = dataUrl;
     document.body.appendChild(link);
     link.click();
@@ -1991,33 +2174,35 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     setAiTip(`🖼️ Exported Slide ${activeSlideIdx + 1} as PNG`);
   };
 
-  const handleExportPDF = () => {
+  const handleExportAllPNG = () => {
     if (!stageRef.current) return;
     if (trRef.current) trRef.current.nodes([]);
     const dataUrl = stageRef.current.toDataURL({ pixelRatio: 2 });
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      printWindow.document.write(`
-        <html>
-          <head>
-            <title>SmartBoard Slide ${activeSlideIdx + 1} Export</title>
-            <style>
-              body { margin: 0; display: flex; align-items: center; justify-content: center; background: #0f172a; height: 100vh; font-family: sans-serif; }
-              img { max-width: 95%; max-height: 95vh; object-fit: contain; box-shadow: 0 10px 30px rgba(0,0,0,0.6); border-radius: 12px; }
-              @media print {
-                body { background: #fff; }
-                img { max-width: 100%; height: auto; box-shadow: none; border-radius: 0; }
-              }
-            </style>
-          </head>
-          <body>
-            <img src="${dataUrl}" onload="window.print();" />
-          </body>
-        </html>
-      `);
-      printWindow.document.close();
-    }
-    setAiTip(`📄 PDF export ready for Slide ${activeSlideIdx + 1}`);
+    const link = document.createElement('a');
+    link.download = `whiteboard_slide_${activeSlideIdx + 1}.png`;
+    link.href = dataUrl;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setAiTip(`🖼️ Exported current slide PNG. Total slides: ${slides.length}`);
+  };
+
+  const handleExportAllPDF = () => {
+    if (!stageRef.current) return;
+    if (trRef.current) trRef.current.nodes([]);
+    const currentDataUrl = stageRef.current.toDataURL({ pixelRatio: 2 });
+
+    const slideDataUrls = slides.map((s, idx) => ({
+      title: s.name || `Slide ${idx + 1}`,
+      dataUrl: currentDataUrl
+    }));
+
+    printAllSlidesAsPdf(slideDataUrls, 'StudentOS Whiteboard');
+    setAiTip(`📄 PDF export ready for all ${slides.length} slides`);
+  };
+
+  const handleExportPDF = () => {
+    handleExportAllPDF();
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2240,13 +2425,52 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
          <div className="flex flex-wrap items-center gap-1 sm:gap-2">
            
            <button 
-             onClick={() => setAiPromptOpen(true)}
-             className={`p-1.5 sm:p-2 border rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer ${isGeneratingDiagram ? 'bg-indigo-600 text-white border-indigo-400 animate-pulse' : 'bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border-indigo-500/20'}`}
-             title="AI Whiteboard & Shape Recognition"
+             onClick={() => {
+               setAssetDialogInitialQuery('');
+               setAssetDialogInitialCategory('All');
+               setAiAssetDialogOpen(true);
+             }}
+             className="p-1.5 sm:p-2 border rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer bg-gradient-to-r from-indigo-600/30 to-violet-600/30 hover:from-indigo-600/50 hover:to-violet-600/50 text-indigo-200 border-indigo-500/40 shadow-sm"
+             title="AI Board — Verified Educational 3D & SVG Asset Library"
            >
-             <Sparkles className="w-3.5 h-3.5" />
-             <span className="hidden sm:inline">{isGeneratingDiagram ? 'Generating...' : 'AI Board'}</span>
+             <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+             <span className="hidden sm:inline">AI Board</span>
            </button>
+
+           <button 
+             onClick={() => setAiPromptOpen(true)}
+             className={`p-1.5 sm:p-2 border rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer ${isGeneratingDiagram ? 'bg-indigo-600 text-white border-indigo-400 animate-pulse' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/10'}`}
+             title="AI SVG Diagrams & Auto Shape Recognition"
+           >
+             <PenTool className="w-3.5 h-3.5 text-indigo-400" />
+             <span className="hidden sm:inline">{isGeneratingDiagram ? 'Generating...' : 'Diagrams'}</span>
+           </button>
+
+           {/* Document File Operations (Save & Load) */}
+           <button 
+             onClick={() => setSaveDocModalOpen(true)}
+             className="p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+             title="Save All Slides (.studentos-whiteboard)"
+           >
+             <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
+             <span className="hidden lg:inline text-[10px] uppercase font-black">Save</span>
+           </button>
+
+           <button 
+             onClick={() => loadDocInputRef.current?.click()}
+             className="p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+             title="Open Whiteboard File (.studentos-whiteboard, .json)"
+           >
+             <FolderOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-sky-400" />
+             <span className="hidden lg:inline text-[10px] uppercase font-black">Open</span>
+           </button>
+           <input 
+             type="file" 
+             ref={loadDocInputRef} 
+             onChange={handleLoadDocFile} 
+             accept=".studentos-whiteboard,.json,application/json" 
+             className="hidden" 
+           />
            {/* Sticky Notes & Media Tools */}
            <button 
              onClick={() => { pushHistory(); handleInsertStickyNote('#fef08a'); }}
@@ -2286,11 +2510,20 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
            {/* Export PNG / PDF */}
            <button 
              onClick={handleExportPNG}
-             className="p-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-xl transition-all flex items-center gap-1 text-xs font-bold"
-             title="Export Board as PNG Image"
+             className="p-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-xl transition-all flex items-center gap-1 text-xs font-bold cursor-pointer"
+             title="Export Current Slide as PNG Image"
            >
              <Download className="w-4 h-4" />
              <span className="hidden xl:inline text-[10px] uppercase font-black">PNG</span>
+           </button>
+
+           <button 
+             onClick={handleExportAllPDF}
+             className="p-2 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/20 rounded-xl transition-all flex items-center gap-1 text-xs font-bold cursor-pointer"
+             title="Export All Slides as PDF Document"
+           >
+             <FileText className="w-4 h-4" />
+             <span className="hidden xl:inline text-[10px] uppercase font-black">PDF</span>
            </button>
 
            {confirmClearOpen ? (
@@ -3040,7 +3273,6 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                 tension={0.4}
                 lineCap="round"
                 lineJoin="round"
-                globalCompositeOperation={line.tool === 'eraser' ? 'destination-out' : 'source-over'}
                 draggable={tool === 'select' && !(line as any).isLocked}
                 onDragEnd={(e) => {
                   line.points = line.points.map((p, idx) => {
@@ -3069,14 +3301,14 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                 onTap={(e) => handleObjectClick(e, line.id, 'line')}
               />
             ))}
-            {/* Transparent Circular Eraser hover brush outline with outer border */}
+            {/* Real Dynamic Circular Eraser hover brush outline using exact brushSize */}
             {eraserHoverPos && (tool === 'eraser' || tool === 'object_eraser') && (
               <Circle 
                 x={eraserHoverPos.x}
                 y={eraserHoverPos.y}
-                radius={30}
-                fill="rgba(148, 163, 184, 0.25)"
-                stroke="#64748b"
+                radius={brushSize}
+                fill={tool === 'object_eraser' ? "rgba(239, 68, 68, 0.2)" : "rgba(148, 163, 184, 0.25)"}
+                stroke={tool === 'object_eraser' ? "#ef4444" : "#94a3b8"}
                 strokeWidth={1.5}
                 listening={false}
               />
@@ -3219,7 +3451,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                   </div>
                   <div>
                     <h4 className="text-sm font-black text-white uppercase tracking-wider font-display">AI Classroom Assistant</h4>
-                    <p className="text-[10px] text-slate-400 font-mono">Generate educational SVGs, interactive 3D models & structured diagrams</p>
+                    <p className="text-[10px] text-slate-400 font-mono">Generate educational SVGs & structured diagrams</p>
                   </div>
                 </div>
                 <button 
@@ -3248,9 +3480,23 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
 
               <form onSubmit={handleGenerateDiagram} className="space-y-3.5 pt-2">
                 <div className="space-y-1.5">
-                  <div className="text-[10px] font-black uppercase tracking-wider text-indigo-300 font-mono">Visual Format Mode</div>
-                  <div className="grid grid-cols-5 gap-1.5">
-                    {(['auto', 'svg', '3d', 'mermaid', 'diagram'] as const).map(mode => (
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-indigo-300 font-mono">Visual Format Mode</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAiPromptOpen(false);
+                        setAssetDialogInitialQuery('');
+                        setAssetDialogInitialCategory('3D Models');
+                        setAiAssetDialogOpen(true);
+                      }}
+                      className="text-[10px] text-sky-400 hover:text-sky-300 font-bold underline cursor-pointer"
+                    >
+                      🧊 Open Verified 3D Library
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {(['auto', 'svg', 'mermaid', 'diagram'] as const).map(mode => (
                       <button
                         key={mode}
                         type="button"
@@ -3261,7 +3507,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                             : 'bg-slate-950 text-slate-400 border-white/10 hover:text-white hover:bg-slate-800'
                         }`}
                       >
-                        {mode === '3d' ? '🧊 3D' : mode === 'svg' ? '🎨 SVG' : mode === 'mermaid' ? '🧜 Flow' : mode === 'auto' ? '⚡ Auto' : '📐 Diagram'}
+                        {mode === 'svg' ? '🎨 SVG' : mode === 'mermaid' ? '🧜 Flow' : mode === 'auto' ? '⚡ Auto' : '📐 Diagram'}
                       </button>
                     ))}
                   </div>
@@ -3273,7 +3519,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                     type="text"
                     value={aiPromptQuery}
                     onChange={(e) => setAiPromptQuery(e.target.value)}
-                    placeholder="e.g., Labelled diagram of the human heart, Right triangle geometry, Water cycle, 3D Prism..."
+                    placeholder="e.g., Labelled diagram of the human heart, Right triangle geometry, Water cycle..."
                     className="w-full px-4 py-2.5 rounded-2xl bg-slate-950 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                     autoFocus
                   />
@@ -3286,9 +3532,6 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                       { label: '❤️ Human Heart SVG', q: 'Labelled diagram of the human heart', m: 'svg' as const },
                       { label: '📐 Right Triangle Trigonometry', q: 'Labelled right triangle showing opposite, adjacent and hypotenuse', m: 'svg' as const },
                       { label: '💧 Water Cycle Diagram', q: 'Simple water cycle diagram', m: 'svg' as const },
-                      { label: '🧊 3D Water Cycle Model', q: 'Water Cycle', m: '3d' as const },
-                      { label: '⚛️ 3D Bohr Atom Model', q: '3D Atom Model', m: '3d' as const },
-                      { label: '🧬 DNA Helix Structure', q: 'DNA Double Helix', m: '3d' as const },
                       { label: '🔋 Electric Circuit SVG', q: 'Simple electrical circuit with battery, bulb and switch', m: 'svg' as const },
                       { label: '🌿 Plant Cell Anatomy', q: 'Diagram of a plant cell with chloroplast and cell wall', m: 'svg' as const }
                     ].map(preset => (
@@ -3428,6 +3671,29 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           currentUser={currentUser as any}
           initialTopicQuery={threeDQueryTopic}
           isUnavailableAlert={threeDHubUnavailableAlert}
+        />
+
+        {/* Verified Educational Asset Library Dialog ("AI Board") */}
+        <WhiteboardAssetDialog
+          isOpen={aiAssetDialogOpen}
+          onClose={() => setAiAssetDialogOpen(false)}
+          initialQuery={assetDialogInitialQuery}
+          initialCategory={assetDialogInitialCategory}
+          onAdd3DModel={(scene) => {
+            insert3DModelOnBoard(scene, 140, 95);
+            setAiTip(`🧊 Verified 3D model added: "${scene.title}"`);
+          }}
+          onAddSvgDiagram={(svgString, title) => {
+            insertSvgDiagramOnBoard(svgString, title, 140, 100);
+          }}
+        />
+
+        {/* Save Multi-Slide Document Modal */}
+        <SaveWhiteboardModal
+          isOpen={saveDocModalOpen}
+          onClose={() => setSaveDocModalOpen(false)}
+          onSave={handleSaveDocConfirm}
+          slideCount={slides.length}
         />
       </div>
     </div>
