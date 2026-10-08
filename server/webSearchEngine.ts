@@ -210,7 +210,7 @@ async function searchViaApinex(query: string, apiKey: string, signal: AbortSigna
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      body: JSON.stringify({ query, limit: 6 }),
+      body: JSON.stringify({ query, num: 5, limit: 5 }),
       signal
     });
 

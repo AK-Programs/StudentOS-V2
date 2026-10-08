@@ -1795,6 +1795,8 @@ app.post('/api/ai/search', async (req, res) => {
 
     const searchResultsList = searchRes.sources.map((s) => ({
       title: s.title,
+      url: s.url,
+      snippet: s.snippet,
       description: s.snippet,
       uri: s.url,
       published_source: s.domain,
@@ -1802,7 +1804,7 @@ app.post('/api/ai/search', async (req, res) => {
     }));
 
     const summaryContext = searchResultsList
-      .map((s, i) => `[Source ${i + 1}]: ${s.title} (${s.uri}) - ${s.description}`)
+      .map((s, i) => `[Source ${i + 1}]: ${s.title} (${s.url || s.uri}) - ${s.snippet || s.description}`)
       .join('\n');
 
     let summaryText = '';
@@ -1813,7 +1815,7 @@ app.post('/api/ai/search', async (req, res) => {
         prompt: `Query: "${query}"\n\nVerified Web Sources:\n${summaryContext}`,
         endpointName: 'WebSearchSummary',
         taskType: 'fast',
-        maxTokens: 350
+        maxTokens: 1200
       });
     } catch (_) {
       summaryText = `Retrieved ${searchResultsList.length} live web sources for "${query}". Review the cited sources below.`;
@@ -1826,10 +1828,10 @@ app.post('/api/ai/search', async (req, res) => {
     });
   } catch (err: any) {
     console.error('[AI Server] Search error:', err);
-    return res.status(500).json({
+    return res.status(200).json({
       success: false,
       summary: "I couldn't retrieve fresh web information right now.",
-      error: "I couldn't retrieve fresh web information right now.",
+      error: err?.message || "Search service temporarily unavailable.",
       results: []
     });
   }

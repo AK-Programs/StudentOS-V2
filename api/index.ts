@@ -380,6 +380,102 @@ async function streamApinexCompletion(
   }
 }
 
+async function callApinexWebSearch(query: string, apiKey: string): Promise<any[]> {
+  const resp = await fetch('https://api.apinex.bond/v1/tools/web/search', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    },
+    body: JSON.stringify({ query, num: 5, limit: 5 })
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    throw new Error(`APInex Web Search HTTP ${resp.status}: ${errText.slice(0, 180) || 'Search tool request failed'}`);
+  }
+
+  const data = await resp.json();
+  const rawItems = data.results || data.data || data.items || (Array.isArray(data) ? data : []);
+  if (!Array.isArray(rawItems)) {
+    return [];
+  }
+
+  const results: any[] = [];
+  for (const item of rawItems) {
+    if (!item) continue;
+    const title = String(item.title || item.name || '').trim();
+    const url = String(item.url || item.link || item.href || '').trim();
+    const snippet = String(item.snippet || item.description || item.content || item.summary || '').trim();
+
+    if (url || snippet || title) {
+      results.push({
+        title: title || 'Educational Resource',
+        url: url || '',
+        snippet: snippet || '',
+        uri: url || '',
+        description: snippet || ''
+      });
+    }
+  }
+
+  return results;
+}
+
+async function generateSearchSummary(
+  query: string,
+  results: any[],
+  requestId: string
+): Promise<string> {
+  const contextText = results
+    .slice(0, 5)
+    .map((r, i) => `[Source ${i + 1}] Title: ${r.title}\nURL: ${r.url}\nExcerpt: ${r.snippet}`)
+    .join('\n\n');
+
+  const systemPrompt =
+    'You are a supportive, high-clarity StudentOS Academic Research Assistant. Synthesize a concise, school-appropriate educational summary directly answering the student query based on the verified search results. Explain key definitions and core concepts clearly.';
+  const userPrompt = `Student Query: "${query}"\n\nVerified Web Search Results:\n${contextText}\n\nProvide a clear educational summary and key takeaways:`;
+
+  // First attempt with free/gpt-6-luna and max_tokens: 1200
+  try {
+    const res1 = await callApinexCompletion(userPrompt, systemPrompt, [], {
+      modelOverride: 'free/gpt-6-luna',
+      taskType: 'fast',
+      maxTokens: 1200,
+      requestId,
+      endpointName: 'WebSearchSummary'
+    });
+    if (res1.text && res1.text.trim()) {
+      return res1.text.trim();
+    }
+  } catch (err: any) {
+    const isLengthError = err?.message && (err.message.includes('finish_reason=length') || err.message.includes('length'));
+    if (isLengthError) {
+      console.warn(`[WebSearchSummary] Retrying summary with max_tokens: 2000 due to finish_reason=length`);
+      try {
+        const res2 = await callApinexCompletion(userPrompt, systemPrompt, [], {
+          modelOverride: 'free/gpt-6-luna',
+          taskType: 'fast',
+          maxTokens: 2000,
+          requestId,
+          endpointName: 'WebSearchSummary'
+        });
+        if (res2.text && res2.text.trim()) {
+          return res2.text.trim();
+        }
+      } catch (retryErr: any) {
+        console.warn(`[WebSearchSummary] Retry with 2000 tokens failed:`, retryErr?.message);
+      }
+    } else {
+      console.warn(`[WebSearchSummary] Summary generation error:`, err?.message);
+    }
+  }
+
+  // School-appropriate fallback summary so the student receives a complete non-empty answer alongside the retrieved sources
+  return `Retrieved ${results.length} verified educational web sources for "${query}". Review the key sources, explanations, and excerpts below.`;
+}
+
 async function parseJsonBody(req: any): Promise<any> {
   if (req.body && typeof req.body === 'object') {
     return req.body;
@@ -650,42 +746,68 @@ ${combinedContext}
   if (pathname === '/api/ai/search' || pathname === '/api/ai/search/') {
     const body = await parseJsonBody(req);
     const { query = '' } = body;
+    const cleanQuery = String(query || '').trim();
 
-    try {
-      const result = await callApinexCompletion(
-        `Query: "${query}"`,
-        'You are a StudentOS Research Summarizer powered by StudentOS AI. Synthesize a concise 3-4 sentence academic summary for the query.',
-        [],
-        {
-          endpointName: 'WebSearchSummary',
-          taskType: 'fast',
-          requestId
-        }
-      );
-
-      return sendJson(res, 200, {
-        success: true,
-        summary: result.text,
-        results: [],
-        requestId,
-        telemetry: {
-          requestId,
-          providerUsed: 'apinex',
-          modelUsed: result.modelUsed,
-          complexityTier: result.tier,
-          totalGenerationTimeMs: result.totalMs,
-          streamed: false
-        }
-      });
-    } catch (err: any) {
-      return sendJson(res, 200, {
+    if (!cleanQuery) {
+      return sendJson(res, 400, {
         success: false,
-        summary: "I couldn't retrieve fresh web information right now.",
-        error: err.message || 'Search synthesis failed',
+        summary: 'Search query is required.',
+        error: 'Query is required',
         results: [],
         requestId
       });
     }
+
+    const apiKey = getApinexApiKey();
+    if (!apiKey) {
+      return sendJson(res, 200, {
+        success: false,
+        summary: "I couldn't retrieve fresh web information right now.",
+        error: 'APINEX_API_KEY environment variable is not configured on the server.',
+        results: [],
+        requestId
+      });
+    }
+
+    let searchResults: any[] = [];
+    try {
+      searchResults = await callApinexWebSearch(cleanQuery, apiKey);
+    } catch (searchErr: any) {
+      console.error(`[APInex Web Search Error] requestId=${requestId}:`, searchErr?.message || searchErr);
+      return sendJson(res, 200, {
+        success: false,
+        summary: "I couldn't retrieve fresh web information right now.",
+        error: searchErr.message || 'Search tool request failed',
+        results: [],
+        requestId
+      });
+    }
+
+    if (searchResults.length === 0) {
+      return sendJson(res, 200, {
+        success: false,
+        summary: `No relevant web sources found for "${cleanQuery}".`,
+        error: `No results returned from web search for: "${cleanQuery}"`,
+        results: [],
+        requestId
+      });
+    }
+
+    // Only summarize after real results exist
+    const summary = await generateSearchSummary(cleanQuery, searchResults, requestId);
+
+    return sendJson(res, 200, {
+      success: true,
+      summary,
+      results: searchResults,
+      requestId,
+      telemetry: {
+        requestId,
+        providerUsed: 'apinex',
+        modelUsed: 'free/gpt-6-luna',
+        resultsCount: searchResults.length
+      }
+    });
   }
 
   // 6. Dynamic load fallback for Express app from dist/server.cjs inside request
