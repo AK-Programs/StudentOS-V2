@@ -12,12 +12,14 @@ import { Educational3DScene, generateEducational3DScene } from './whiteboardVisu
 
 export interface ThreeDModelRequest {
   id: string;
+  requestType?: '3d' | 'svg';
   topic: string;
   subject: string;
   description: string;
   purpose: string;
   grade: string;
   urgency: 'normal' | 'urgent';
+  requesterId?: string;
   requesterName: string;
   requesterRole: string;
   schoolId: string;
@@ -88,8 +90,19 @@ function saveRequestsToFile() {
 
 loadRequestsFromFile();
 
-export function getAllThreeDRequests(): ThreeDModelRequest[] {
-  return [...requestsMemory];
+export function getAllThreeDRequests(filter?: { schoolId?: string; requesterId?: string; isSuperAdmin?: boolean }): ThreeDModelRequest[] {
+  let list = [...requestsMemory];
+  if (!filter || filter.isSuperAdmin) {
+    return list;
+  }
+  if (filter.schoolId) {
+    list = list.filter(r => !r.schoolId || r.schoolId === filter.schoolId || r.schoolId === 'school_default');
+  }
+  if (filter.requesterId) {
+    // Non-admins can also see their own requests across schools if relevant
+    list = list.filter(r => r.requesterId === filter.requesterId || (!filter.schoolId && true));
+  }
+  return list;
 }
 
 export function createThreeDRequest(data: Omit<ThreeDModelRequest, 'id' | 'status' | 'createdDate'>): ThreeDModelRequest {

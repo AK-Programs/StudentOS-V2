@@ -459,6 +459,8 @@ function renderScene3DToSvg(
 }
 
 
+export const ERASER_SIZE = 24;
+
 export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   // 1. All Component State & Refs Declared First
   const [slides, setSlides] = useState<Slide[]>(() => {
@@ -1236,7 +1238,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   };
 
   const eraseAt = (px: number, py: number) => {
-    const radius = Math.max(4, Number(brushSize) || 20);
+    const radius = ERASER_SIZE;
     setSlides(prev => {
       const current = prev[activeSlideIdx];
       if (!current) return prev;
@@ -1351,7 +1353,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       hasPushedEraserHistory.current = false;
       const current = slides[activeSlideIdx];
       if (current) {
-        const { updatedLines, hasModified } = applyStrokeEraserToLines(current.lines, pos.x, pos.y, brushSize);
+        const { updatedLines, hasModified } = applyStrokeEraserToLines(current.lines, pos.x, pos.y, ERASER_SIZE);
         if (hasModified) {
           pushHistory();
           hasPushedEraserHistory.current = true;
@@ -1490,7 +1492,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     if (tool === 'eraser') {
       const current = slides[activeSlideIdx];
       if (current) {
-        const { updatedLines, hasModified } = applyStrokeEraserToLines(current.lines, point.x, point.y, brushSize);
+        const { updatedLines, hasModified } = applyStrokeEraserToLines(current.lines, point.x, point.y, ERASER_SIZE);
         if (hasModified) {
           if (!hasPushedEraserHistory.current) {
             pushHistory();
@@ -2437,14 +2439,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
              <span className="hidden sm:inline">AI Board</span>
            </button>
 
-           <button 
-             onClick={() => setAiPromptOpen(true)}
-             className={`p-1.5 sm:p-2 border rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer ${isGeneratingDiagram ? 'bg-indigo-600 text-white border-indigo-400 animate-pulse' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/10'}`}
-             title="AI SVG Diagrams & Auto Shape Recognition"
-           >
-             <PenTool className="w-3.5 h-3.5 text-indigo-400" />
-             <span className="hidden sm:inline">{isGeneratingDiagram ? 'Generating...' : 'Diagrams'}</span>
-           </button>
+           
 
            {/* Document File Operations (Save & Load) */}
            <button 
@@ -2880,8 +2875,14 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
               <Trash2 className="w-3 h-3" /> Remove
             </button>
           </div>
+        ) : (tool === 'eraser' || tool === 'object_eraser') ? (
+          /* Fixed 24px Eraser: User cannot adjust eraser size */
+          <div className="flex items-center gap-2 bg-slate-950 border border-red-500/30 px-3 py-1.5 rounded-xl text-red-300 text-xs font-mono font-bold shadow-inner">
+            <Eraser className="w-3.5 h-3.5 text-red-400" />
+            <span>Fixed {ERASER_SIZE}px Precision Eraser</span>
+          </div>
         ) : (
-          /* General Stroke Thickness Controls */
+          /* General Stroke Thickness Controls for Pens and Shapes */
           <div className="flex flex-wrap items-center gap-2 sm:gap-4">
             <div className="flex items-center gap-1.5 bg-slate-950 border border-white/5 p-1 rounded-full">
               {[ '#ffffff', '#ef4444', '#3b82f6', '#10b981', '#eab308', '#a855f7', '#f97316', '#ec4899' ].map(c => (
@@ -3301,12 +3302,12 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                 onTap={(e) => handleObjectClick(e, line.id, 'line')}
               />
             ))}
-            {/* Real Dynamic Circular Eraser hover brush outline using exact brushSize */}
+            {/* Fixed 24px Circular Eraser hover brush outline */}
             {eraserHoverPos && (tool === 'eraser' || tool === 'object_eraser') && (
               <Circle 
                 x={eraserHoverPos.x}
                 y={eraserHoverPos.y}
-                radius={brushSize}
+                radius={ERASER_SIZE}
                 fill={tool === 'object_eraser' ? "rgba(239, 68, 68, 0.2)" : "rgba(148, 163, 184, 0.25)"}
                 stroke={tool === 'object_eraser' ? "#ef4444" : "#94a3b8"}
                 strokeWidth={1.5}
@@ -3432,146 +3433,6 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             </form>
           </div>
         )}
-        {/* Centered, Fully-Responsive AI Classroom Assistant Modal */}
-        {aiPromptOpen && (
-          <div 
-            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/75 backdrop-blur-md animate-fadeIn"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) setAiPromptOpen(false);
-            }}
-          >
-            <div 
-              className="w-full max-w-lg bg-slate-900 border border-indigo-500/40 rounded-3xl p-5 sm:p-6 shadow-2xl space-y-4 animate-scaleUp max-h-[90vh] overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between border-b border-white/10 pb-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="h-8 w-8 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
-                    <Sparkles className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-black text-white uppercase tracking-wider font-display">AI Classroom Assistant</h4>
-                    <p className="text-[10px] text-slate-400 font-mono">Generate educational SVGs & structured diagrams</p>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => setAiPromptOpen(false)} 
-                  className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-colors text-sm cursor-pointer"
-                  title="Close Dialog"
-                >
-                  ✕
-                </button>
-              </div>
-
-              <label className="flex items-center justify-between p-3 rounded-2xl bg-slate-950 border border-white/10 hover:border-indigo-500/30 transition-all cursor-pointer">
-                <div>
-                  <div className="text-xs font-bold text-white flex items-center gap-1.5">
-                    <span>✨ Auto Shape Predictive Recognition</span>
-                  </div>
-                  <div className="text-[10px] text-slate-400 mt-0.5">Automatically converts hand-drawn rough circles, squares, rectangles & lines</div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={aiShapeAssistant}
-                  onChange={(e) => setAiShapeAssistant(e.target.checked)}
-                  className="w-4 h-4 accent-indigo-500 rounded cursor-pointer"
-                />
-              </label>
-
-              <form onSubmit={handleGenerateDiagram} className="space-y-3.5 pt-2">
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-indigo-300 font-mono">Visual Format Mode</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAiPromptOpen(false);
-                        setAssetDialogInitialQuery('');
-                        setAssetDialogInitialCategory('3D Models');
-                        setAiAssetDialogOpen(true);
-                      }}
-                      className="text-[10px] text-sky-400 hover:text-sky-300 font-bold underline cursor-pointer"
-                    >
-                      🧊 Open Verified 3D Library
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-4 gap-1.5">
-                    {(['auto', 'svg', 'mermaid', 'diagram'] as const).map(mode => (
-                      <button
-                        key={mode}
-                        type="button"
-                        onClick={() => setAiToolType(mode)}
-                        className={`py-2 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all cursor-pointer ${
-                          aiToolType === mode 
-                            ? 'bg-indigo-600 text-white border-indigo-400 shadow-md scale-[1.02]' 
-                            : 'bg-slate-950 text-slate-400 border-white/10 hover:text-white hover:bg-slate-800'
-                        }`}
-                      >
-                        {mode === 'svg' ? '🎨 SVG' : mode === 'mermaid' ? '🧜 Flow' : mode === 'auto' ? '⚡ Auto' : '📐 Diagram'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 font-mono">Educational Concept / Prompt</label>
-                  <input
-                    type="text"
-                    value={aiPromptQuery}
-                    onChange={(e) => setAiPromptQuery(e.target.value)}
-                    placeholder="e.g., Labelled diagram of the human heart, Right triangle geometry, Water cycle..."
-                    className="w-full px-4 py-2.5 rounded-2xl bg-slate-950 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                    autoFocus
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 font-mono">Curriculum Quick-Presets:</span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {[
-                      { label: '❤️ Human Heart SVG', q: 'Labelled diagram of the human heart', m: 'svg' as const },
-                      { label: '📐 Right Triangle Trigonometry', q: 'Labelled right triangle showing opposite, adjacent and hypotenuse', m: 'svg' as const },
-                      { label: '💧 Water Cycle Diagram', q: 'Simple water cycle diagram', m: 'svg' as const },
-                      { label: '🔋 Electric Circuit SVG', q: 'Simple electrical circuit with battery, bulb and switch', m: 'svg' as const },
-                      { label: '🌿 Plant Cell Anatomy', q: 'Diagram of a plant cell with chloroplast and cell wall', m: 'svg' as const }
-                    ].map(preset => (
-                      <button
-                        key={preset.label}
-                        type="button"
-                        onClick={() => {
-                          setAiToolType(preset.m);
-                          setAiPromptQuery(preset.q);
-                        }}
-                        className="px-2.5 py-1 rounded-xl bg-slate-950 hover:bg-indigo-950/80 text-slate-300 hover:text-indigo-200 border border-white/10 text-[10px] font-medium transition-all cursor-pointer"
-                      >
-                        {preset.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-end gap-2 pt-3 border-t border-white/10">
-                  <button
-                    type="button"
-                    onClick={() => setAiPromptOpen(false)}
-                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={!aiPromptQuery.trim() || isGeneratingDiagram}
-                    className="px-5 py-2 text-xs bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-40 text-white rounded-xl font-black uppercase tracking-wider transition-all shadow-lg hover:shadow-indigo-500/25 cursor-pointer flex items-center gap-1.5"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>{isGeneratingDiagram ? 'Generating visual...' : 'Insert on Whiteboard'}</span>
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
         {/* Real Interactive Three.js WebGL 3D Studio Modal */}
         {interactive3DScene && (
           <div
@@ -3679,6 +3540,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           onClose={() => setAiAssetDialogOpen(false)}
           initialQuery={assetDialogInitialQuery}
           initialCategory={assetDialogInitialCategory}
+          currentUser={currentUser}
           onAdd3DModel={(scene) => {
             insert3DModelOnBoard(scene, 140, 95);
             setAiTip(`🧊 Verified 3D model added: "${scene.title}"`);

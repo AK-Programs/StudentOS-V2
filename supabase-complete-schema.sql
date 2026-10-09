@@ -507,6 +507,102 @@ CREATE TABLE IF NOT EXISTS public.system_updates (
 );
 
 -- ==============================================================================
+-- 8B. STUDENTOS WHITEBOARD CLOUD FILES & ASSET REQUESTS (RLS + SCHOOL ISOLATED)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.whiteboard_files (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    subject TEXT DEFAULT 'General',
+    owner_id TEXT NOT NULL,
+    owner_name TEXT DEFAULT 'StudentOS User',
+    owner_role TEXT DEFAULT 'student',
+    school_id TEXT NOT NULL DEFAULT 'default_school',
+    slide_count INTEGER NOT NULL DEFAULT 1,
+    format TEXT NOT NULL DEFAULT 'studentos-whiteboard',
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    document_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.whiteboard_asset_requests (
+    id TEXT PRIMARY KEY,
+    requester_id TEXT NOT NULL,
+    requester_name TEXT DEFAULT 'StudentOS User',
+    requester_role TEXT DEFAULT 'student',
+    school_id TEXT NOT NULL DEFAULT 'default_school',
+    request_type TEXT NOT NULL DEFAULT '3d_model', -- '3d_model' | 'svg_diagram'
+    topic TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    subject TEXT NOT NULL DEFAULT 'General',
+    class_grade TEXT DEFAULT '',
+    purpose TEXT DEFAULT '',
+    urgency TEXT NOT NULL DEFAULT 'normal', -- 'normal' | 'urgent'
+    status TEXT NOT NULL DEFAULT 'Requested', -- 'Requested' | 'Under Review' | 'In Progress' | 'Ready' | 'Rejected'
+    admin_notes TEXT DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.whiteboard_files ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.whiteboard_asset_requests ENABLE ROW LEVEL SECURITY;
+
+-- School-isolated & owner-isolated RLS policies for Whiteboard Files
+DROP POLICY IF EXISTS "whiteboard_files_select_policy" ON public.whiteboard_files;
+CREATE POLICY "whiteboard_files_select_policy" ON public.whiteboard_files
+    FOR SELECT USING (
+        owner_id = COALESCE(auth.uid()::text, current_setting('request.jwt.claim.sub', true), owner_id)
+        AND school_id = COALESCE(
+            (SELECT COALESCE(raw_data->>'school_id', 'default_school') FROM public.user_profiles WHERE id = auth.uid()::text LIMIT 1),
+            school_id
+        )
+    );
+
+DROP POLICY IF EXISTS "whiteboard_files_insert_policy" ON public.whiteboard_files;
+CREATE POLICY "whiteboard_files_insert_policy" ON public.whiteboard_files
+    FOR INSERT WITH CHECK (
+        owner_id = COALESCE(auth.uid()::text, current_setting('request.jwt.claim.sub', true), owner_id)
+    );
+
+DROP POLICY IF EXISTS "whiteboard_files_update_policy" ON public.whiteboard_files;
+CREATE POLICY "whiteboard_files_update_policy" ON public.whiteboard_files
+    FOR UPDATE USING (
+        owner_id = COALESCE(auth.uid()::text, current_setting('request.jwt.claim.sub', true), owner_id)
+    );
+
+DROP POLICY IF EXISTS "whiteboard_files_delete_policy" ON public.whiteboard_files;
+CREATE POLICY "whiteboard_files_delete_policy" ON public.whiteboard_files
+    FOR DELETE USING (
+        owner_id = COALESCE(auth.uid()::text, current_setting('request.jwt.claim.sub', true), owner_id)
+    );
+
+-- School-isolated RLS policies for Whiteboard Asset Requests
+DROP POLICY IF EXISTS "whiteboard_asset_requests_select_policy" ON public.whiteboard_asset_requests;
+CREATE POLICY "whiteboard_asset_requests_select_policy" ON public.whiteboard_asset_requests
+    FOR SELECT USING (
+        requester_id = COALESCE(auth.uid()::text, current_setting('request.jwt.claim.sub', true), requester_id)
+        OR EXISTS (
+            SELECT 1 FROM public.user_profiles u
+            WHERE u.id = auth.uid()::text AND u.role IN ('admin', 'super_admin')
+        )
+    );
+
+DROP POLICY IF EXISTS "whiteboard_asset_requests_insert_policy" ON public.whiteboard_asset_requests;
+CREATE POLICY "whiteboard_asset_requests_insert_policy" ON public.whiteboard_asset_requests
+    FOR INSERT WITH CHECK (
+        requester_id = COALESCE(auth.uid()::text, current_setting('request.jwt.claim.sub', true), requester_id)
+    );
+
+DROP POLICY IF EXISTS "whiteboard_asset_requests_update_policy" ON public.whiteboard_asset_requests;
+CREATE POLICY "whiteboard_asset_requests_update_policy" ON public.whiteboard_asset_requests
+    FOR UPDATE USING (
+        EXISTS (
+            SELECT 1 FROM public.user_profiles u
+            WHERE u.id = auth.uid()::text AND u.role IN ('admin', 'super_admin')
+        )
+    );
+
+-- ==============================================================================
 -- 9. SEED INITIAL HOUSES & SYSTEM DATA (Safe Idempotent Inserts)
 -- ==============================================================================
 INSERT INTO public.life_houses (id, name, color, points, rank, captain, vice_captain, motto, house_teacher, trophies, banner_url)

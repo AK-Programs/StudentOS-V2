@@ -1324,25 +1324,54 @@ app.get('/api/3d-models/verified', async (req, res) => {
   }
 });
 
-// 3D Model Request Management Endpoints
-app.get('/api/3d-models/requests', (req, res) => {
-  const requests = getAllThreeDRequests();
+// 3D Model & SVG Request Management Endpoints
+app.get(['/api/whiteboard/requests', '/api/3d-models/requests'], (req, res) => {
+  const { schoolId, requesterId, role } = req.query;
+  const isSuperAdmin = role === 'super_admin' || role === 'admin';
+  const requests = getAllThreeDRequests({
+    schoolId: schoolId ? String(schoolId) : undefined,
+    requesterId: requesterId ? String(requesterId) : undefined,
+    isSuperAdmin
+  });
   return res.json({ success: true, count: requests.length, requests });
 });
 
-app.post(['/api/3d-models/requests', '/api/3d-model-requests'], (req, res) => {
-  const { topic, subject, description, purpose, grade, urgency, requesterName, requesterRole, schoolId, schoolName } = req.body || {};
-  if (!topic) {
-    return res.status(400).json({ success: false, error: 'Model topic is required.' });
+app.post(['/api/whiteboard/requests', '/api/3d-models/requests', '/api/3d-model-requests'], (req, res) => {
+  const {
+    topic,
+    name,
+    title,
+    requestType,
+    subject,
+    description,
+    purpose,
+    whyNeeded,
+    grade,
+    classGrade,
+    urgency,
+    requesterId,
+    requesterName,
+    requesterRole,
+    schoolId,
+    schoolName
+  } = req.body || {};
+
+  const resolvedTopic = topic || name || title;
+  if (!resolvedTopic) {
+    return res.status(400).json({ success: false, error: 'Model/SVG topic or name is required.' });
   }
 
+  const isSvg = requestType === 'svg' || requestType === 'SVG / Diagram' || requestType === 'svg_diagram';
+
   const created = createThreeDRequest({
-    topic: String(topic),
-    subject: String(subject || 'STEM Academics'),
+    requestType: isSvg ? 'svg' : '3d',
+    topic: String(resolvedTopic),
+    subject: String(subject || 'General Academics'),
     description: String(description || ''),
-    purpose: String(purpose || 'Classroom Instruction'),
-    grade: String(grade || 'General'),
+    purpose: String(whyNeeded || purpose || 'Classroom Whiteboard Instruction'),
+    grade: String(classGrade || grade || ''),
     urgency: urgency === 'urgent' ? 'urgent' : 'normal',
+    requesterId: String(requesterId || 'usr_' + Math.random().toString(36).substring(2, 9)),
     requesterName: String(requesterName || 'Authenticated User'),
     requesterRole: String(requesterRole || 'Student'),
     schoolId: String(schoolId || 'school_default'),
@@ -1351,12 +1380,12 @@ app.post(['/api/3d-models/requests', '/api/3d-model-requests'], (req, res) => {
 
   return res.json({
     success: true,
-    message: '3D model request submitted successfully and logged for Super Admin review.',
+    message: `${isSvg ? 'SVG diagram' : '3D model'} request submitted successfully and logged for review.`,
     request: created
   });
 });
 
-app.patch('/api/3d-models/requests/:id', (req, res) => {
+app.patch(['/api/whiteboard/requests/:id', '/api/3d-models/requests/:id'], (req, res) => {
   const { id } = req.params;
   const { status, notes, completedModelData } = req.body || {};
   const updated = updateThreeDRequestStatus(id, { status, notes, completedModelData });
