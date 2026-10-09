@@ -1378,6 +1378,30 @@ app.post(['/api/whiteboard/requests', '/api/3d-models/requests', '/api/3d-model-
     schoolName: String(schoolName || 'StudentOS Academy')
   });
 
+  // Asynchronously persist visual request to Supabase
+  (async () => {
+    try {
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+      const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+      await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
+        method: 'POST',
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({
+          id: `__wb_asset_req_${created.id}__`,
+          data: created,
+          title: created.topic,
+          subject: created.subject,
+          updated_at: new Date().toISOString()
+        })
+      });
+    } catch (_) {}
+  })();
+
   return res.json({
     success: true,
     message: `${isSvg ? 'SVG diagram' : '3D model'} request submitted successfully and logged for review.`,
@@ -1392,6 +1416,29 @@ app.patch(['/api/whiteboard/requests/:id', '/api/3d-models/requests/:id'], (req,
   if (!updated) {
     return res.status(404).json({ success: false, error: 'Request not found' });
   }
+
+  // Sync update to Supabase
+  (async () => {
+    try {
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+      const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+      await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
+        method: 'POST',
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({
+          id: `__wb_asset_req_${id}__`,
+          data: updated,
+          updated_at: new Date().toISOString()
+        })
+      });
+    } catch (_) {}
+  })();
+
   return res.json({ success: true, request: updated });
 });
 
@@ -1408,9 +1455,43 @@ interface CloudWhiteboardDocument {
   updatedAt: string;
 }
 
-const cloudWhiteboardsMemory: CloudWhiteboardDocument[] = [];
+let cloudWhiteboardsMemory: CloudWhiteboardDocument[] = [];
 
-app.get('/api/whiteboard/documents', (req, res) => {
+// Helper to hydrate memory from Supabase if needed
+async function hydrateWhiteboardsFromSupabase() {
+  try {
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+    const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+    const r = await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.__wb_documents_index__&select=*`, {
+      headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
+    });
+    if (r.ok) {
+      const rows = await r.json();
+      if (rows?.[0]?.data && Array.isArray(rows[0].data)) {
+        rows[0].data.forEach((item: any) => {
+          if (!cloudWhiteboardsMemory.some(m => m.id === item.id)) {
+            cloudWhiteboardsMemory.push({
+              id: item.id,
+              fileName: item.fileName || item.title || 'Whiteboard',
+              slideCount: item.slideCount || 1,
+              slides: [],
+              userId: item.userId || 'usr_anonymous',
+              userName: item.userName || 'StudentOS User',
+              schoolId: item.schoolId || 'school_default',
+              createdAt: item.createdAt || new Date().toISOString(),
+              updatedAt: item.updatedAt || new Date().toISOString()
+            });
+          }
+        });
+      }
+    }
+  } catch (_) {}
+}
+
+app.get('/api/whiteboard/documents', async (req, res) => {
+  if (cloudWhiteboardsMemory.length === 0) {
+    await hydrateWhiteboardsFromSupabase();
+  }
   const { schoolId, userId, role } = req.query;
   const isSuperAdmin = role === 'super_admin' || role === 'admin';
   let list = cloudWhiteboardsMemory;
@@ -1438,16 +1519,36 @@ app.get('/api/whiteboard/documents', (req, res) => {
   });
 });
 
-app.get('/api/whiteboard/documents/:id', (req, res) => {
+app.get('/api/whiteboard/documents/:id', async (req, res) => {
   const { id } = req.params;
-  const doc = cloudWhiteboardsMemory.find(d => d.id === id);
+  let doc = cloudWhiteboardsMemory.find(d => d.id === id);
+  if (!doc || !doc.slides || doc.slides.length === 0) {
+    // Try to load full document from Supabase
+    try {
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+      const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+      const r = await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.__wb_doc_${encodeURIComponent(id)}__&select=*`, {
+        headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
+      });
+      if (r.ok) {
+        const rows = await r.json();
+        if (rows?.[0]?.data) {
+          doc = rows[0].data;
+          const idx = cloudWhiteboardsMemory.findIndex(m => m.id === id);
+          if (idx >= 0) cloudWhiteboardsMemory[idx] = doc!;
+          else cloudWhiteboardsMemory.unshift(doc!);
+        }
+      }
+    } catch (_) {}
+  }
+
   if (!doc) {
     return res.status(404).json({ success: false, error: 'Whiteboard document not found' });
   }
   return res.json({ success: true, document: doc });
 });
 
-app.post('/api/whiteboard/documents', (req, res) => {
+app.post('/api/whiteboard/documents', async (req, res) => {
   const { id, fileName, slides, slideCount, userId, userName, schoolId } = req.body || {};
   if (!fileName || !slides) {
     return res.status(400).json({ success: false, error: 'Document name and slides are required.' });
@@ -1471,16 +1572,48 @@ app.post('/api/whiteboard/documents', (req, res) => {
   } else {
     cloudWhiteboardsMemory.unshift(newDoc);
   }
+
+  // Persist to Supabase
+  try {
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+    const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+    await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
+      method: 'POST',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({
+        id: `__wb_doc_${docId}__`,
+        data: newDoc,
+        title: newDoc.fileName,
+        updated_at: now
+      })
+    });
+  } catch (_) {}
+
   return res.json({ success: true, document: newDoc });
 });
 
-app.delete('/api/whiteboard/documents/:id', (req, res) => {
+app.delete('/api/whiteboard/documents/:id', async (req, res) => {
   const { id } = req.params;
   const idx = cloudWhiteboardsMemory.findIndex(d => d.id === id);
-  if (idx < 0) {
-    return res.status(404).json({ success: false, error: 'Whiteboard document not found' });
+  if (idx >= 0) {
+    cloudWhiteboardsMemory.splice(idx, 1);
   }
-  cloudWhiteboardsMemory.splice(idx, 1);
+
+  // Delete from Supabase
+  try {
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+    const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+    await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.__wb_doc_${encodeURIComponent(id)}__`, {
+      method: 'DELETE',
+      headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
+    });
+  } catch (_) {}
+
   return res.json({ success: true, message: 'Document deleted successfully' });
 });
 

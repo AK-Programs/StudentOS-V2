@@ -13,20 +13,22 @@ import { WHITEBOARD_FILE_EXTENSION } from '../lib/whiteboardFileManager';
 interface Props {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (fileName: string, target: 'local' | 'cloud') => Promise<void> | void;
+  onSave: (fileName: string) => Promise<void> | void;
   slideCount: number;
+  initialFileName?: string;
 }
 
 export const SaveWhiteboardModal: React.FC<Props> = ({
   isOpen,
   onClose,
   onSave,
-  slideCount
+  slideCount,
+  initialFileName = 'My Whiteboard'
 }) => {
-  const [fileName, setFileName] = useState('My Whiteboard');
-  const [saveTarget, setSaveTarget] = useState<'cloud' | 'local'>('cloud');
+  const [fileName, setFileName] = useState(initialFileName);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -35,15 +37,17 @@ export const SaveWhiteboardModal: React.FC<Props> = ({
     if (!fileName.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
+    setErrorMsg(null);
     try {
-      await onSave(fileName.trim(), saveTarget);
+      await onSave(fileName.trim());
       setSavedSuccess(true);
       setTimeout(() => {
         setSavedSuccess(false);
         setIsSubmitting(false);
         onClose();
       }, 700);
-    } catch {
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to save to StudentOS Cloud');
       setIsSubmitting(false);
     }
   };
@@ -60,14 +64,14 @@ export const SaveWhiteboardModal: React.FC<Props> = ({
         <div className="flex items-center justify-between border-b border-white/10 pb-3">
           <div className="flex items-center gap-2.5">
             <div className="h-9 w-9 rounded-2xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
-              <Save className="w-4 h-4" />
+              <Cloud className="w-4 h-4" />
             </div>
             <div>
               <h3 className="text-sm font-black text-white uppercase tracking-wider font-display">
-                Save Whiteboard
+                Save to StudentOS Cloud
               </h3>
               <p className="text-[11px] text-slate-400 font-sans">
-                Save all {slideCount} slide{slideCount === 1 ? '' : 's'} to StudentOS Cloud or your device.
+                Save all {slideCount} slide{slideCount === 1 ? '' : 's'} to your authenticated StudentOS account.
               </p>
             </div>
           </div>
@@ -80,40 +84,12 @@ export const SaveWhiteboardModal: React.FC<Props> = ({
           </button>
         </div>
 
-        {/* Storage Destination Switcher */}
-        <div className="grid grid-cols-2 gap-2 p-1 bg-slate-950 rounded-2xl border border-white/10">
-          <button
-            type="button"
-            onClick={() => setSaveTarget('cloud')}
-            className={`flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              saveTarget === 'cloud'
-                ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Cloud className="w-3.5 h-3.5" />
-            <span>StudentOS Cloud</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setSaveTarget('local')}
-            className={`flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              saveTarget === 'local'
-                ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Laptop className="w-3.5 h-3.5" />
-            <span>Local File</span>
-          </button>
-        </div>
-
         <form onSubmit={handleSubmit} className="space-y-4 pt-1">
           <div className="space-y-1.5">
             <label className="text-[11px] font-black uppercase tracking-wider text-slate-300 font-mono flex items-center justify-between">
-              <span>Document Name</span>
+              <span>Board Filename</span>
               <span className="text-[10px] text-indigo-400 font-sans font-normal">
-                {saveTarget === 'cloud' ? 'Cloud Sync' : WHITEBOARD_FILE_EXTENSION}
+                StudentOS Cloud
               </span>
             </label>
             <div className="relative">
@@ -126,32 +102,27 @@ export const SaveWhiteboardModal: React.FC<Props> = ({
                 autoFocus
                 required
               />
-              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[10px] font-mono text-slate-500 pointer-events-none">
-                {saveTarget === 'cloud' ? '☁️ Cloud' : '.whiteboard'}
+              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[10px] font-mono text-indigo-400 pointer-events-none flex items-center gap-1">
+                ☁️ Cloud
               </span>
             </div>
           </div>
 
           <div className="p-3 rounded-2xl bg-slate-950/70 border border-white/5 space-y-1 text-[11px] text-slate-400">
             <div className="flex items-center gap-1.5 text-slate-300 font-bold">
-              {saveTarget === 'cloud' ? (
-                <>
-                  <Cloud className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>StudentOS Persistent Cloud Storage</span>
-                </>
-              ) : (
-                <>
-                  <FileText className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Full Multi-Slide Document Package</span>
-                </>
-              )}
+              <Cloud className="w-3.5 h-3.5 text-indigo-400" />
+              <span>StudentOS Persistent Cloud Storage</span>
             </div>
             <p className="leading-relaxed">
-              {saveTarget === 'cloud'
-                ? `Syncs all ${slideCount} slide${slideCount === 1 ? '' : 's'} to your StudentOS cloud account with school isolation. Access it from any browser or device anytime.`
-                : `Downloads all ${slideCount} slide${slideCount === 1 ? '' : 's'}, drawings, 3D models, SVG diagrams, and styles into a standalone .studentos-whiteboard file.`}
+              Syncs all {slideCount} slide{slideCount === 1 ? '' : 's'}, pen strokes, shapes, SVGs, 3D models, and settings directly to StudentOS Supabase backend with school isolation.
             </p>
           </div>
+
+          {errorMsg && (
+            <div className="p-2.5 rounded-xl bg-rose-950/70 border border-rose-500/40 text-[11px] text-rose-300">
+              {errorMsg}
+            </div>
+          )}
 
           <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/10">
             <button
@@ -170,12 +141,14 @@ export const SaveWhiteboardModal: React.FC<Props> = ({
               {savedSuccess ? (
                 <>
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
-                  <span>{saveTarget === 'cloud' ? 'Cloud Synced!' : 'Saved!'}</span>
+                  <span>Cloud Synced!</span>
                 </>
+              ) : isSubmitting ? (
+                <span>Saving to Cloud...</span>
               ) : (
                 <>
-                  {saveTarget === 'cloud' ? <Cloud className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-                  <span>{saveTarget === 'cloud' ? 'Save to Cloud' : 'Save Document'}</span>
+                  <Cloud className="w-3.5 h-3.5" />
+                  <span>Save to StudentOS</span>
                 </>
               )}
             </button>

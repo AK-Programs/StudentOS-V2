@@ -509,6 +509,17 @@ CREATE TABLE IF NOT EXISTS public.system_updates (
 -- ==============================================================================
 -- 8B. STUDENTOS WHITEBOARD CLOUD FILES & ASSET REQUESTS (RLS + SCHOOL ISOLATED)
 -- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.whiteboard_documents (
+    id TEXT PRIMARY KEY,
+    school_id TEXT NOT NULL DEFAULT 'default_school',
+    owner_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    document_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS public.whiteboard_files (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -521,6 +532,22 @@ CREATE TABLE IF NOT EXISTS public.whiteboard_files (
     format TEXT NOT NULL DEFAULT 'studentos-whiteboard',
     schema_version INTEGER NOT NULL DEFAULT 1,
     document_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.ai_board_asset_requests (
+    id TEXT PRIMARY KEY,
+    school_id TEXT NOT NULL DEFAULT 'default_school',
+    requester_id TEXT NOT NULL,
+    requester_name TEXT DEFAULT 'StudentOS User',
+    requester_role TEXT DEFAULT 'student',
+    asset_type TEXT NOT NULL DEFAULT '3d_model', -- '3d_model' | 'svg_diagram'
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    prompt TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending', -- 'pending' | 'approved' | 'fulfilled' | 'rejected'
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -544,8 +571,15 @@ CREATE TABLE IF NOT EXISTS public.whiteboard_asset_requests (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+ALTER TABLE public.whiteboard_documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.whiteboard_files ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.ai_board_asset_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.whiteboard_asset_requests ENABLE ROW LEVEL SECURITY;
+
+GRANT ALL ON public.whiteboard_documents TO anon, authenticated;
+GRANT ALL ON public.whiteboard_files TO anon, authenticated;
+GRANT ALL ON public.ai_board_asset_requests TO anon, authenticated;
+GRANT ALL ON public.whiteboard_asset_requests TO anon, authenticated;
 
 -- School-isolated & owner-isolated RLS policies for Whiteboard Files
 DROP POLICY IF EXISTS "whiteboard_files_select_policy" ON public.whiteboard_files;

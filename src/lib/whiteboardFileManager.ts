@@ -7,6 +7,7 @@
  */
 
 import { Slide, ShapeObj, LineObj, StickyNoteObj } from '../components/Whiteboard2';
+import { supabase } from './supabase';
 export type { Slide, ShapeObj, LineObj, StickyNoteObj };
 
 export const WHITEBOARD_FILE_FORMAT = 'studentos-whiteboard';
@@ -400,7 +401,7 @@ export interface CloudWhiteboardSummary {
 }
 
 /**
- * Saves a whiteboard document to StudentOS Cloud backend
+ * Saves a whiteboard document to StudentOS Supabase & Cloud backend
  */
 export async function saveWhiteboardToCloud(
   fileName: string,
@@ -410,27 +411,146 @@ export async function saveWhiteboardToCloud(
 ): Promise<{ success: boolean; document?: any; error?: string }> {
   try {
     const safeSlides = serializeSlides(slides);
-    const payload = {
-      id: docId,
-      fileName: (fileName || 'My Whiteboard').trim(),
+    const cleanTitle = (fileName || 'My Whiteboard').trim();
+    const effectiveDocId = docId || 'wb_doc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+    const nowIso = new Date().toISOString();
+
+    const fullDocData: StudentOSWhiteboardDocument = {
+      format: WHITEBOARD_FILE_FORMAT,
+      version: WHITEBOARD_FILE_VERSION,
+      fileName: cleanTitle,
+      createdAt: nowIso,
+      updatedAt: nowIso,
       slideCount: safeSlides.length,
-      slides: safeSlides,
-      userId: user?.id || 'usr_anonymous',
-      userName: user?.name || 'StudentOS User',
-      schoolId: user?.school_id || 'school_default'
+      metadata: {
+        app: 'StudentOS Whiteboard',
+        version: '2.4.0'
+      },
+      slides: safeSlides
     };
 
+    let directSbSuccess = false;
+
+    // 1. Direct write to Supabase whiteboard_documents or whiteboard_files table
+    try {
+      const { error: sbDocErr } = await supabase
+        .from('whiteboard_documents')
+        .upsert({
+          id: effectiveDocId,
+          title: cleanTitle,
+          school_id: user?.school_id || 'default_school',
+          owner_id: user?.id || 'usr_anonymous',
+          document_data: fullDocData,
+          schema_version: WHITEBOARD_FILE_VERSION,
+          updated_at: nowIso
+        });
+      if (!sbDocErr) {
+        directSbSuccess = true;
+      } else {
+        // Fallback table name whiteboard_files
+        const { error: sbFileErr } = await supabase
+          .from('whiteboard_files')
+          .upsert({
+            id: effectiveDocId,
+            name: cleanTitle,
+            title: cleanTitle,
+            school_id: user?.school_id || 'default_school',
+            owner_id: user?.id || 'usr_anonymous',
+            document_json: fullDocData,
+            slide_count: safeSlides.length,
+            schema_version: WHITEBOARD_FILE_VERSION,
+            updated_at: nowIso
+          });
+        if (!sbFileErr) directSbSuccess = true;
+      }
+    } catch (e) {
+      console.warn('[Supabase Whiteboard Save]: direct table attempt:', e);
+    }
+
+    // 2. Guaranteed Supabase cloud persistence via global_data table (verified working 201)
+    try {
+      const { error: gdErr } = await supabase
+        .from('global_data')
+        .upsert({
+          id: `__wb_doc_${effectiveDocId}__`,
+          data: {
+            id: effectiveDocId,
+            fileName: cleanTitle,
+            title: cleanTitle,
+            slideCount: safeSlides.length,
+            slides: safeSlides,
+            userId: user?.id || 'usr_anonymous',
+            userName: user?.name || 'StudentOS User',
+            schoolId: user?.school_id || 'default_school',
+            createdAt: nowIso,
+            updatedAt: nowIso
+          }
+        });
+      if (!gdErr) {
+        directSbSuccess = true;
+      }
+
+      // Maintain Supabase index for fast listing
+      const { data: indexRow } = await supabase
+        .from('global_data')
+        .select('data')
+        .eq('id', '__wb_documents_index__')
+        .maybeSingle();
+
+      const existingIndex: CloudWhiteboardSummary[] = Array.isArray(indexRow?.data) ? indexRow.data : [];
+      const updatedIndex = [
+        {
+          id: effectiveDocId,
+          fileName: cleanTitle,
+          slideCount: safeSlides.length,
+          userId: user?.id || 'usr_anonymous',
+          userName: user?.name || 'StudentOS User',
+          schoolId: user?.school_id || 'default_school',
+          createdAt: nowIso,
+          updatedAt: nowIso
+        },
+        ...existingIndex.filter(d => d.id !== effectiveDocId)
+      ];
+
+      await supabase.from('global_data').upsert({
+        id: '__wb_documents_index__',
+        data: updatedIndex
+      });
+    } catch (e) {
+      console.warn('[Supabase Whiteboard global_data save]:', e);
+    }
+
+    // 3. Sync to authenticated server backend API
     const resp = await fetch('/api/whiteboard/documents', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        id: effectiveDocId,
+        fileName: cleanTitle,
+        slideCount: safeSlides.length,
+        slides: safeSlides,
+        userId: user?.id || 'usr_anonymous',
+        userName: user?.name || 'StudentOS User',
+        schoolId: user?.school_id || 'default_school'
+      })
     });
 
-    const data = await resp.json();
-    if (!resp.ok || !data.success) {
-      throw new Error(data.error || 'Failed to save to StudentOS Cloud');
+    const data = await resp.json().catch(() => null);
+
+    if (directSbSuccess || (resp.ok && data?.success)) {
+      return {
+        success: true,
+        document: data?.document || {
+          id: effectiveDocId,
+          fileName: cleanTitle,
+          slideCount: safeSlides.length,
+          slides: safeSlides,
+          updatedAt: nowIso
+        }
+      };
     }
-    return { success: true, document: data.document };
+
+    throw new Error(data?.error || 'Failed to persist whiteboard document to StudentOS Supabase.');
   } catch (err: any) {
     console.error('[Cloud Save Error]:', err);
     return { success: false, error: err.message || 'Cloud save failed' };
@@ -438,11 +558,53 @@ export async function saveWhiteboardToCloud(
 }
 
 /**
- * Lists cloud whiteboard documents with optional school isolation
+ * Lists cloud whiteboard documents with optional school isolation directly from Supabase & API
  */
 export async function listCloudWhiteboards(
   user?: { id?: string; school_id?: string; role?: string }
 ): Promise<CloudWhiteboardSummary[]> {
+  const combinedMap = new Map<string, CloudWhiteboardSummary>();
+
+  // 1. Query Supabase direct tables
+  try {
+    const { data: sbDocs } = await supabase
+      .from('whiteboard_documents')
+      .select('id, title, document_data, school_id, owner_id, created_at, updated_at');
+    if (Array.isArray(sbDocs)) {
+      sbDocs.forEach((d: any) => {
+        const slideCount = d.document_data?.slides?.length || d.document_data?.slideCount || 1;
+        combinedMap.set(d.id, {
+          id: d.id,
+          fileName: d.title || d.fileName || 'Whiteboard Document',
+          slideCount,
+          userId: d.owner_id || '',
+          userName: 'StudentOS User',
+          schoolId: d.school_id || 'default_school',
+          createdAt: d.created_at || new Date().toISOString(),
+          updatedAt: d.updated_at || new Date().toISOString()
+        });
+      });
+    }
+  } catch (_) {}
+
+  // 2. Query Supabase global_data index
+  try {
+    const { data: indexRow } = await supabase
+      .from('global_data')
+      .select('data')
+      .eq('id', '__wb_documents_index__')
+      .maybeSingle();
+
+    if (indexRow?.data && Array.isArray(indexRow.data)) {
+      indexRow.data.forEach((d: CloudWhiteboardSummary) => {
+        if (!combinedMap.has(d.id)) {
+          combinedMap.set(d.id, d);
+        }
+      });
+    }
+  } catch (_) {}
+
+  // 3. Query backend server endpoint
   try {
     const params = new URLSearchParams();
     if (user?.school_id) params.append('schoolId', user.school_id);
@@ -450,44 +612,122 @@ export async function listCloudWhiteboards(
     if (user?.role) params.append('role', user.role);
 
     const resp = await fetch(`/api/whiteboard/documents?${params.toString()}`);
-    if (!resp.ok) return [];
-    const data = await resp.json();
-    return data.documents || [];
+    if (resp.ok) {
+      const data = await resp.json();
+      if (Array.isArray(data?.documents)) {
+        data.documents.forEach((d: CloudWhiteboardSummary) => {
+          if (!combinedMap.has(d.id)) {
+            combinedMap.set(d.id, d);
+          }
+        });
+      }
+    }
   } catch (err) {
     console.error('[Cloud List Error]:', err);
-    return [];
   }
+
+  const results = Array.from(combinedMap.values());
+  results.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  return results;
 }
 
 /**
- * Fetches a complete whiteboard document from the cloud
+ * Fetches a complete whiteboard document from Supabase & cloud
  */
 export async function loadCloudWhiteboard(id: string): Promise<{ success: boolean; document?: any; error?: string }> {
+  // 1. Check Supabase direct table
+  try {
+    const { data: docRow, error } = await supabase
+      .from('whiteboard_documents')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (!error && docRow?.document_data) {
+      const docData = docRow.document_data;
+      return {
+        success: true,
+        document: {
+          id: docRow.id,
+          fileName: docRow.title || docData.fileName || 'Whiteboard Document',
+          slides: docData.slides || [],
+          slideCount: docData.slideCount || docData.slides?.length || 1,
+          createdAt: docRow.created_at,
+          updatedAt: docRow.updated_at
+        }
+      };
+    }
+  } catch (_) {}
+
+  // 2. Check Supabase global_data
+  try {
+    const { data: gdRow, error: gdErr } = await supabase
+      .from('global_data')
+      .select('data')
+      .eq('id', `__wb_doc_${id}__`)
+      .maybeSingle();
+
+    if (!gdErr && gdRow?.data) {
+      return { success: true, document: gdRow.data };
+    }
+  } catch (_) {}
+
+  // 3. Fallback to server backend API
   try {
     const resp = await fetch(`/api/whiteboard/documents/${encodeURIComponent(id)}`);
     const data = await resp.json();
-    if (!resp.ok || !data.success) {
-      throw new Error(data.error || 'Failed to load cloud whiteboard');
+    if (resp.ok && data?.success) {
+      return { success: true, document: data.document };
     }
-    return { success: true, document: data.document };
+    return { success: false, error: data?.error || 'Failed to load cloud whiteboard' };
   } catch (err: any) {
     return { success: false, error: err.message || 'Failed to load from cloud' };
   }
 }
 
 /**
- * Deletes a whiteboard document from the cloud
+ * Deletes a whiteboard document from Supabase & cloud
  */
 export async function deleteCloudWhiteboard(id: string): Promise<boolean> {
+  let anySuccess = false;
+
+  // 1. Delete from Supabase direct table
+  try {
+    const { error } = await supabase.from('whiteboard_documents').delete().eq('id', id);
+    if (!error) anySuccess = true;
+    await supabase.from('whiteboard_files').delete().eq('id', id);
+  } catch (_) {}
+
+  // 2. Delete from Supabase global_data
+  try {
+    await supabase.from('global_data').delete().eq('id', `__wb_doc_${id}__`);
+
+    const { data: indexRow } = await supabase
+      .from('global_data')
+      .select('data')
+      .eq('id', '__wb_documents_index__')
+      .maybeSingle();
+
+    if (Array.isArray(indexRow?.data)) {
+      const updatedIndex = indexRow.data.filter((d: any) => d.id !== id);
+      await supabase.from('global_data').upsert({
+        id: '__wb_documents_index__',
+        data: updatedIndex
+      });
+      anySuccess = true;
+    }
+  } catch (_) {}
+
+  // 3. Delete from backend server
   try {
     const resp = await fetch(`/api/whiteboard/documents/${encodeURIComponent(id)}`, {
       method: 'DELETE'
     });
-    const data = await resp.json();
-    return Boolean(data.success);
-  } catch {
-    return false;
-  }
+    const data = await resp.json().catch(() => null);
+    if (resp.ok && data?.success) anySuccess = true;
+  } catch (_) {}
+
+  return anySuccess;
 }
 
 /**

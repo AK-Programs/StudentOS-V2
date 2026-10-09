@@ -386,54 +386,289 @@ export function saveStoredCards(cards: Flashcard[]): void {
   }
 }
 
-// Save or Update a single Deck
-export function upsertDeck(deck: FlashcardDeck): FlashcardDeck[] {
-  const current = getStoredDecks();
-  const index = current.findIndex(d => d.id === deck.id);
-  let updated: FlashcardDeck[];
-  if (index >= 0) {
-    updated = [...current];
-    updated[index] = { ...deck, updatedAt: new Date().toISOString() };
-  } else {
-    updated = [deck, ...current];
+// ==========================================
+// SUPABASE CLOUD CANONICAL PERSISTENCE
+// ==========================================
+
+export async function fetchSupabaseDecks(userId?: string): Promise<FlashcardDeck[]> {
+  const combinedMap = new Map<string, FlashcardDeck>();
+
+  // 1. Check Supabase flashcard_decks table
+  if (supabase) {
+    try {
+      const query = supabase.from('flashcard_decks').select('*');
+      if (userId) {
+        query.or(`user_id.eq.${userId},user_id.eq.system,user_id.is.null`);
+      }
+      const { data, error } = await query;
+      if (!error && Array.isArray(data) && data.length > 0) {
+        data.forEach((d: any) => {
+          combinedMap.set(d.id, {
+            id: d.id,
+            title: d.title,
+            description: d.description || '',
+            subject: d.subject || 'General',
+            color: d.color || 'from-indigo-600 to-violet-800',
+            icon: d.icon || '📚',
+            tags: Array.isArray(d.tags) ? d.tags : [],
+            isFavorite: Boolean(d.is_favorite),
+            createdAt: d.created_at || new Date().toISOString(),
+            updatedAt: d.updated_at || new Date().toISOString(),
+            createdBy: d.user_id || 'system'
+          });
+        });
+      }
+    } catch (_) {}
+
+    // 2. Check Supabase global_data for permanent guaranteed persistence
+    try {
+      const keys = [`__flashcard_decks_${userId || 'default'}__`, '__flashcard_decks_system__'];
+      for (const k of keys) {
+        const { data: gdRow } = await supabase
+          .from('global_data')
+          .select('data')
+          .eq('id', k)
+          .maybeSingle();
+
+        if (Array.isArray(gdRow?.data)) {
+          gdRow.data.forEach((d: FlashcardDeck) => {
+            if (!combinedMap.has(d.id)) {
+              combinedMap.set(d.id, d);
+            }
+          });
+        }
+      }
+    } catch (_) {}
   }
-  saveStoredDecks(updated);
-  return updated;
-}
 
-// Delete Deck and associated cards
-export function removeDeck(deckId: string): { decks: FlashcardDeck[]; cards: Flashcard[] } {
-  const decks = getStoredDecks().filter(d => d.id !== deckId);
-  const cards = getStoredCards().filter(c => c.deckId !== deckId);
-  saveStoredDecks(decks);
-  saveStoredCards(cards);
-  return { decks, cards };
-}
-
-// Add or edit a Card
-export function upsertCard(card: Flashcard): Flashcard[] {
-  const current = getStoredCards();
-  const index = current.findIndex(c => c.id === card.id);
-  let updated: Flashcard[];
-  if (index >= 0) {
-    updated = [...current];
-    updated[index] = card;
-  } else {
-    updated = [card, ...current];
+  // If Supabase returned decks, cache them and return
+  if (combinedMap.size > 0) {
+    const list = Array.from(combinedMap.values());
+    saveStoredDecks(list);
+    return list;
   }
-  saveStoredCards(updated);
-  return updated;
+
+  // Otherwise seed starter decks into Supabase and local cache
+  const starters = [...STARTER_DECKS];
+  saveStoredDecks(starters);
+  if (supabase) {
+    try {
+      await supabase.from('global_data').upsert({
+        id: `__flashcard_decks_${userId || 'default'}__`,
+        data: starters
+      });
+    } catch (_) {}
+  }
+  return starters;
 }
 
-// Delete a single Card
-export function removeCard(cardId: string): Flashcard[] {
-  const updated = getStoredCards().filter(c => c.id !== cardId);
-  saveStoredCards(updated);
-  return updated;
+export async function fetchSupabaseCards(deckId?: string, userId?: string): Promise<Flashcard[]> {
+  const cardMap = new Map<string, Flashcard>();
+
+  if (supabase) {
+    // 1. Direct table
+    try {
+      let query = supabase.from('flashcards').select('*');
+      if (deckId) query = query.eq('deck_id', deckId);
+      const { data, error } = await query;
+      if (!error && Array.isArray(data) && data.length > 0) {
+        data.forEach((c: any) => {
+          cardMap.set(c.id, {
+            id: c.id,
+            deckId: c.deck_id,
+            front: c.front,
+            back: c.back,
+            hint: c.hint || undefined,
+            tags: Array.isArray(c.tags) ? c.tags : [],
+            interval: c.interval || 0,
+            repetition: c.repetition || 0,
+            easeFactor: Number(c.ease_factor) || 2.5,
+            nextReviewDate: c.next_review_date || new Date().toISOString(),
+            lastReviewedDate: c.last_reviewed_date || undefined,
+            state: (c.state as any) || 'new',
+            history: Array.isArray(c.history) ? c.history : []
+          });
+        });
+      }
+    } catch (_) {}
+
+    // 2. Supabase global_data
+    try {
+      const { data: gdRow } = await supabase
+        .from('global_data')
+        .select('data')
+        .eq('id', `__flashcard_cards_${userId || 'default'}__`)
+        .maybeSingle();
+
+      if (Array.isArray(gdRow?.data)) {
+        gdRow.data.forEach((c: Flashcard) => {
+          if (!deckId || c.deckId === deckId) {
+            if (!cardMap.has(c.id)) {
+              cardMap.set(c.id, c);
+            }
+          }
+        });
+      }
+    } catch (_) {}
+  }
+
+  if (cardMap.size > 0) {
+    const list = Array.from(cardMap.values());
+    // update cache
+    const currentCached = getStoredCards().filter(c => deckId ? c.deckId !== deckId : false);
+    saveStoredCards([...currentCached, ...list]);
+    return list;
+  }
+
+  // Fallback to starter cards
+  const allStarters = [...STARTER_CARDS];
+  const relevant = deckId ? allStarters.filter(c => c.deckId === deckId) : allStarters;
+  if (supabase) {
+    try {
+      await supabase.from('global_data').upsert({
+        id: `__flashcard_cards_${userId || 'default'}__`,
+        data: allStarters
+      });
+    } catch (_) {}
+  }
+  return relevant;
 }
 
-// Process an SM-2 Review response for a card
-export function logCardReview(cardId: string, quality: FlashcardQuality): { card: Flashcard; allCards: Flashcard[] } {
+export async function persistDeckToSupabase(deck: FlashcardDeck, userId?: string): Promise<FlashcardDeck[]> {
+  const currentDecks = getStoredDecks();
+  const index = currentDecks.findIndex(d => d.id === deck.id);
+  const updatedDeck = { ...deck, updatedAt: new Date().toISOString(), createdBy: userId || deck.createdBy || 'user' };
+  let nextDecks: FlashcardDeck[];
+  if (index >= 0) {
+    nextDecks = [...currentDecks];
+    nextDecks[index] = updatedDeck;
+  } else {
+    nextDecks = [updatedDeck, ...currentDecks];
+  }
+  saveStoredDecks(nextDecks);
+
+  if (supabase) {
+    try {
+      await supabase.from('flashcard_decks').upsert({
+        id: updatedDeck.id,
+        user_id: userId || 'user',
+        title: updatedDeck.title,
+        description: updatedDeck.description,
+        subject: updatedDeck.subject,
+        color: updatedDeck.color,
+        icon: updatedDeck.icon,
+        tags: updatedDeck.tags || [],
+        is_favorite: Boolean(updatedDeck.isFavorite),
+        updated_at: new Date().toISOString()
+      });
+    } catch (_) {}
+
+    try {
+      await supabase.from('global_data').upsert({
+        id: `__flashcard_decks_${userId || 'default'}__`,
+        data: nextDecks
+      });
+    } catch (_) {}
+  }
+
+  return nextDecks;
+}
+
+export async function deleteDeckFromSupabase(deckId: string, userId?: string): Promise<{ decks: FlashcardDeck[]; cards: Flashcard[] }> {
+  const nextDecks = getStoredDecks().filter(d => d.id !== deckId);
+  const nextCards = getStoredCards().filter(c => c.deckId !== deckId);
+  saveStoredDecks(nextDecks);
+  saveStoredCards(nextCards);
+
+  if (supabase) {
+    try {
+      await supabase.from('flashcard_decks').delete().eq('id', deckId);
+      await supabase.from('flashcards').delete().eq('deck_id', deckId);
+    } catch (_) {}
+
+    try {
+      await supabase.from('global_data').upsert({
+        id: `__flashcard_decks_${userId || 'default'}__`,
+        data: nextDecks
+      });
+      await supabase.from('global_data').upsert({
+        id: `__flashcard_cards_${userId || 'default'}__`,
+        data: nextCards
+      });
+    } catch (_) {}
+  }
+
+  return { decks: nextDecks, cards: nextCards };
+}
+
+export async function persistCardToSupabase(card: Flashcard, userId?: string): Promise<Flashcard[]> {
+  const currentCards = getStoredCards();
+  const index = currentCards.findIndex(c => c.id === card.id);
+  let nextCards: Flashcard[];
+  if (index >= 0) {
+    nextCards = [...currentCards];
+    nextCards[index] = card;
+  } else {
+    nextCards = [card, ...currentCards];
+  }
+  saveStoredCards(nextCards);
+
+  if (supabase) {
+    try {
+      await supabase.from('flashcards').upsert({
+        id: card.id,
+        deck_id: card.deckId,
+        user_id: userId || 'user',
+        front: card.front,
+        back: card.back,
+        hint: card.hint || null,
+        tags: card.tags || [],
+        interval: card.interval,
+        repetition: card.repetition,
+        ease_factor: card.easeFactor,
+        next_review_date: card.nextReviewDate,
+        last_reviewed_date: card.lastReviewedDate || null,
+        state: card.state,
+        history: card.history || [],
+        updated_at: new Date().toISOString()
+      });
+    } catch (_) {}
+
+    try {
+      await supabase.from('global_data').upsert({
+        id: `__flashcard_cards_${userId || 'default'}__`,
+        data: nextCards
+      });
+    } catch (_) {}
+  }
+
+  return nextCards;
+}
+
+export async function deleteCardFromSupabase(cardId: string, userId?: string): Promise<Flashcard[]> {
+  const nextCards = getStoredCards().filter(c => c.id !== cardId);
+  saveStoredCards(nextCards);
+
+  if (supabase) {
+    try {
+      await supabase.from('flashcards').delete().eq('id', cardId);
+    } catch (_) {}
+    try {
+      await supabase.from('global_data').upsert({
+        id: `__flashcard_cards_${userId || 'default'}__`,
+        data: nextCards
+      });
+    } catch (_) {}
+  }
+
+  return nextCards;
+}
+
+export async function recordCardReviewInSupabase(
+  cardId: string,
+  quality: FlashcardQuality,
+  userId?: string
+): Promise<{ card: Flashcard; allCards: Flashcard[] }> {
   const cards = getStoredCards();
   const cardIndex = cards.findIndex(c => c.id === cardId);
   if (cardIndex < 0) {
@@ -465,11 +700,39 @@ export function logCardReview(cardId: string, quality: FlashcardQuality): { card
   updatedCards[cardIndex] = updatedCard;
   saveStoredCards(updatedCards);
 
+  if (supabase) {
+    try {
+      await supabase.from('flashcards').upsert({
+        id: updatedCard.id,
+        deck_id: updatedCard.deckId,
+        user_id: userId || 'user',
+        front: updatedCard.front,
+        back: updatedCard.back,
+        hint: updatedCard.hint || null,
+        tags: updatedCard.tags || [],
+        interval: updatedCard.interval,
+        repetition: updatedCard.repetition,
+        ease_factor: updatedCard.easeFactor,
+        next_review_date: updatedCard.nextReviewDate,
+        last_reviewed_date: updatedCard.lastReviewedDate,
+        state: updatedCard.state,
+        history: updatedCard.history,
+        updated_at: new Date().toISOString()
+      });
+    } catch (_) {}
+
+    try {
+      await supabase.from('global_data').upsert({
+        id: `__flashcard_cards_${userId || 'default'}__`,
+        data: updatedCards
+      });
+    } catch (_) {}
+  }
+
   return { card: updatedCard, allCards: updatedCards };
 }
 
-// Reset deck progress (restart spaced repetition for all cards in deck)
-export function resetDeckProgress(deckId: string): Flashcard[] {
+export async function resetDeckProgressInSupabase(deckId: string, userId?: string): Promise<Flashcard[]> {
   const cards = getStoredCards();
   const updated = cards.map(c => {
     if (c.deckId === deckId) {
@@ -486,114 +749,48 @@ export function resetDeckProgress(deckId: string): Flashcard[] {
     return c;
   });
   saveStoredCards(updated);
+
+  if (supabase) {
+    try {
+      await supabase.from('global_data').upsert({
+        id: `__flashcard_cards_${userId || 'default'}__`,
+        data: updated
+      });
+    } catch (_) {}
+  }
   return updated;
 }
 
-// ==========================================
-// SUPABASE CLOUD SYNCHRONIZATION HELPERS
-// ==========================================
-
-export async function fetchSupabaseDecks(userId?: string): Promise<FlashcardDeck[] | null> {
-  if (!supabase) return null;
-  try {
-    const query = supabase.from('flashcard_decks').select('*');
-    if (userId) {
-      query.or(`user_id.eq.${userId},user_id.eq.system,user_id.is.null`);
-    }
-    const { data, error } = await query;
-    if (error || !data) return null;
-
-    return data.map((d: any) => ({
-      id: d.id,
-      title: d.title,
-      description: d.description || '',
-      subject: d.subject || 'General',
-      color: d.color || 'from-indigo-600 to-violet-800',
-      icon: d.icon || '📚',
-      tags: Array.isArray(d.tags) ? d.tags : [],
-      isFavorite: Boolean(d.is_favorite),
-      createdAt: d.created_at || new Date().toISOString(),
-      updatedAt: d.updated_at || new Date().toISOString(),
-      createdBy: d.user_id || 'system'
-    }));
-  } catch (err) {
-    console.warn('[Flashcards] Supabase decks fetch error (using local storage):', err);
-    return null;
-  }
+// Retain legacy synchronous signatures for backward-compatibility
+export function upsertDeck(deck: FlashcardDeck): FlashcardDeck[] {
+  const res = persistDeckToSupabase(deck);
+  return getStoredDecks();
 }
-
-export async function fetchSupabaseCards(deckId?: string): Promise<Flashcard[] | null> {
-  if (!supabase) return null;
-  try {
-    let query = supabase.from('flashcards').select('*');
-    if (deckId) {
-      query = query.eq('deck_id', deckId);
-    }
-    const { data, error } = await query;
-    if (error || !data) return null;
-
-    return data.map((c: any) => ({
-      id: c.id,
-      deckId: c.deck_id,
-      front: c.front,
-      back: c.back,
-      hint: c.hint || undefined,
-      tags: Array.isArray(c.tags) ? c.tags : [],
-      interval: c.interval || 0,
-      repetition: c.repetition || 0,
-      easeFactor: Number(c.ease_factor) || 2.5,
-      nextReviewDate: c.next_review_date || new Date().toISOString(),
-      lastReviewedDate: c.last_reviewed_date || undefined,
-      state: (c.state as any) || 'new',
-      history: Array.isArray(c.history) ? c.history : []
-    }));
-  } catch (err) {
-    console.warn('[Flashcards] Supabase cards fetch error (using local storage):', err);
-    return null;
-  }
+export function removeDeck(deckId: string): { decks: FlashcardDeck[]; cards: Flashcard[] } {
+  deleteDeckFromSupabase(deckId);
+  return { decks: getStoredDecks(), cards: getStoredCards() };
 }
-
+export function upsertCard(card: Flashcard): Flashcard[] {
+  persistCardToSupabase(card);
+  return getStoredCards();
+}
+export function removeCard(cardId: string): Flashcard[] {
+  deleteCardFromSupabase(cardId);
+  return getStoredCards();
+}
+export function logCardReview(cardId: string, quality: FlashcardQuality): { card: Flashcard; allCards: Flashcard[] } {
+  recordCardReviewInSupabase(cardId, quality);
+  const cards = getStoredCards();
+  const card = cards.find(c => c.id === cardId) || cards[0];
+  return { card, allCards: cards };
+}
+export function resetDeckProgress(deckId: string): Flashcard[] {
+  resetDeckProgressInSupabase(deckId);
+  return getStoredCards();
+}
 export async function syncDeckToSupabase(deck: FlashcardDeck, userId?: string): Promise<void> {
-  if (!supabase) return;
-  try {
-    await supabase.from('flashcard_decks').upsert({
-      id: deck.id,
-      user_id: userId || deck.createdBy || 'system',
-      title: deck.title,
-      description: deck.description,
-      subject: deck.subject,
-      color: deck.color,
-      icon: deck.icon,
-      tags: deck.tags || [],
-      is_favorite: Boolean(deck.isFavorite),
-      updated_at: new Date().toISOString()
-    });
-  } catch (err) {
-    console.warn('[Flashcards] Failed to sync deck to Supabase:', err);
-  }
+  await persistDeckToSupabase(deck, userId);
 }
-
 export async function syncCardToSupabase(card: Flashcard, userId?: string): Promise<void> {
-  if (!supabase) return;
-  try {
-    await supabase.from('flashcards').upsert({
-      id: card.id,
-      deck_id: card.deckId,
-      user_id: userId || 'system',
-      front: card.front,
-      back: card.back,
-      hint: card.hint || null,
-      tags: card.tags || [],
-      interval: card.interval,
-      repetition: card.repetition,
-      ease_factor: card.easeFactor,
-      next_review_date: card.nextReviewDate,
-      last_reviewed_date: card.lastReviewedDate || null,
-      state: card.state,
-      history: card.history || [],
-      updated_at: new Date().toISOString()
-    });
-  } catch (err) {
-    console.warn('[Flashcards] Failed to sync card to Supabase:', err);
-  }
+  await persistCardToSupabase(card, userId);
 }

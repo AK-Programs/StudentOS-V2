@@ -18,7 +18,9 @@ import { ProfessionalTabDropdown } from './ProfessionalTabDropdown';
 import { Flashcard, FlashcardDeck, FlashcardQuality, UserProfile, VaultNote } from '../types';
 import { 
   getStoredDecks, saveStoredDecks, getStoredCards, saveStoredCards,
-  upsertDeck, removeDeck, upsertCard, removeCard, logCardReview, resetDeckProgress
+  upsertDeck, removeDeck, upsertCard, removeCard, logCardReview, resetDeckProgress,
+  fetchSupabaseDecks, fetchSupabaseCards, persistDeckToSupabase, deleteDeckFromSupabase,
+  persistCardToSupabase, deleteCardFromSupabase, recordCardReviewInSupabase, resetDeckProgressInSupabase
 } from '../lib/flashcardStorage';
 import { 
   calculateSM2, formatIntervalDays, getButtonIntervalPreviews, 
@@ -92,12 +94,24 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
   const [userNotes, setUserNotes] = useState<VaultNote[]>([]);
   const [selectedNoteId, setSelectedNoteId] = useState<string>('');
 
-  // Load decks and cards on mount
+  // Load decks and cards on mount from Supabase as canonical source of truth
   useEffect(() => {
-    const loadedDecks = getStoredDecks();
-    const loadedCards = getStoredCards();
-    setDecks(loadedDecks);
-    setCards(loadedCards);
+    // 1. Initial fast hydration from local cache
+    setDecks(getStoredDecks());
+    setCards(getStoredCards());
+
+    // 2. Fetch canonical source of truth from Supabase
+    fetchSupabaseDecks(currentUser?.uid).then(sbDecks => {
+      if (Array.isArray(sbDecks) && sbDecks.length > 0) {
+        setDecks(sbDecks);
+      }
+    });
+
+    fetchSupabaseCards(undefined, currentUser?.uid).then(sbCards => {
+      if (Array.isArray(sbCards) && sbCards.length > 0) {
+        setCards(sbCards);
+      }
+    });
 
     // Fetch user notes for AI import
     if (currentUser?.uid) {
@@ -263,8 +277,9 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
     // Log in SM-2 unless in pure cram mode
     if (!isCramMode) {
       try {
-        const { allCards } = logCardReview(currentCard.id, quality);
-        setCards(allCards);
+        recordCardReviewInSupabase(currentCard.id, quality, currentUser?.uid).then(({ allCards }) => {
+          setCards(allCards);
+        });
       } catch (err) {
         console.error('Failed to log SM-2 review:', err);
       }
@@ -354,11 +369,12 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
       tags: [deckForm.subject]
     };
 
-    const updated = upsertDeck(newDeck);
-    setDecks(updated);
+    persistDeckToSupabase(newDeck, currentUser?.uid).then(updated => {
+      setDecks(updated);
+    });
     setIsDeckModalOpen(false);
     setDeckForm({ title: '', description: '', subject: 'General', icon: '📚' });
-    showNotification(`✓ Deck "${newDeck.title}" saved successfully!`);
+    showNotification(`✓ Deck "${newDeck.title}" saved to StudentOS Supabase!`);
   };
 
   // Handle card save
@@ -384,11 +400,12 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
       state: 'new'
     };
 
-    const updated = upsertCard(newCard);
-    setCards(updated);
+    persistCardToSupabase(newCard, currentUser?.uid).then(updated => {
+      setCards(updated);
+    });
     setIsCardModalOpen(false);
     setCardForm({ front: '', back: '', hint: '', tags: '' });
-    showNotification('✓ Flashcard saved successfully!');
+    showNotification('✓ Flashcard saved to StudentOS Supabase!');
   };
 
   // Handle AI Flashcard Generation
@@ -491,23 +508,25 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
   // Reset Progress of a deck
   const handleResetDeck = (deckId: string) => {
     if (confirm('Are you sure you want to reset your spaced repetition progress for all cards in this deck?')) {
-      const updated = resetDeckProgress(deckId);
-      setCards(updated);
-      showNotification('✓ Deck study progress has been reset.');
+      resetDeckProgressInSupabase(deckId, currentUser?.uid).then(updated => {
+        setCards(updated);
+      });
+      showNotification('✓ Deck study progress has been reset in Supabase.');
     }
   };
 
   // Delete Deck
   const handleDeleteDeck = (deckId: string, title: string) => {
     if (confirm(`Delete deck "${title}" and all its flashcards? This cannot be undone.`)) {
-      const { decks: updatedDecks, cards: updatedCards } = removeDeck(deckId);
-      setDecks(updatedDecks);
-      setCards(updatedCards);
-      if (activeDeckId === deckId) {
-        setViewMode('decks');
-        setActiveDeckId(null);
-      }
-      showNotification(`✓ Deleted deck "${title}".`);
+      deleteDeckFromSupabase(deckId, currentUser?.uid).then(({ decks: updatedDecks, cards: updatedCards }) => {
+        setDecks(updatedDecks);
+        setCards(updatedCards);
+        if (activeDeckId === deckId) {
+          setViewMode('decks');
+          setActiveDeckId(null);
+        }
+        showNotification(`✓ Deleted deck "${title}" from StudentOS.`);
+      });
     }
   };
 
@@ -1136,8 +1155,9 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
                     <button
                       onClick={() => {
                         if (confirm('Delete this card?')) {
-                          const updated = removeCard(card.id);
-                          setCards(updated);
+                          deleteCardFromSupabase(card.id, currentUser?.uid).then(updated => {
+                            setCards(updated);
+                          });
                           showNotification('✓ Flashcard removed.');
                         }
                       }}

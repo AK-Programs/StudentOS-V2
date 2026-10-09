@@ -123,7 +123,7 @@ export const CloudWhiteboardBrowserModal: React.FC<Props> = ({
             </div>
             <div>
               <h3 className="text-sm font-black text-white uppercase tracking-wider font-display flex items-center gap-2">
-                <span>StudentOS Cloud Whiteboards</span>
+                <span>StudentOS Whiteboard Files</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-mono">
                   {documents.length} Saved
                 </span>

@@ -2394,18 +2394,18 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     });
   };
 
-  const handleSaveDocConfirm = async (fileName: string, target: 'local' | 'cloud' = 'cloud') => {
-    if (target === 'cloud') {
-      const res = await saveWhiteboardToCloud(fileName, slides, currentUser);
-      if (res.success) {
-        setAiTip(`☁️ Synced "${fileName}" to StudentOS Cloud Storage!`);
-      } else {
-        setAiTip(`⚠️ Cloud save notice: ${res.error || 'Failed to save to cloud'}`);
-      }
+  const handleSaveDocConfirm = async (fileName: string) => {
+    const res = await saveWhiteboardToCloud(fileName, slides, currentUser);
+    if (res.success) {
+      setAiTip(`☁️ Successfully saved "${fileName}" to StudentOS!`);
     } else {
-      const savedName = exportWhiteboardDocumentFile(fileName, slides);
-      setAiTip(`💾 Saved entire Whiteboard as "${savedName}.studentos-whiteboard"!`);
+      setAiTip(`⚠️ Save notice: ${res.error || 'Failed to save to StudentOS'}`);
     }
+  };
+
+  const handleExportWhiteboardPackage = () => {
+    const savedName = exportWhiteboardDocumentFile('Whiteboard Document', slides);
+    setAiTip(`💾 Exported "${savedName}.studentos-whiteboard" to your device!`);
   };
 
   const handleSelectCloudDocument = (loadedSlides: Slide[], title: string) => {
@@ -2724,8 +2724,8 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
            {/* Document File Operations (Save & Load) */}
            <button 
              onClick={() => setSaveDocModalOpen(true)}
-             className="p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer"
-             title="Save All Slides (.studentos-whiteboard)"
+             className="p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-emerald-500/30 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+             title="Save Complete Whiteboard to StudentOS Cloud"
            >
              <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
              <span className="hidden lg:inline text-[10px] uppercase font-black">Save</span>
@@ -2733,28 +2733,21 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
 
            <button
              onClick={() => setCloudBrowserOpen(true)}
-             className="p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-indigo-500/30 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer"
-             title="Browse & Open Saved StudentOS Cloud Whiteboards"
-           >
-             <Cloud className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-400" />
-             <span className="hidden lg:inline text-[10px] uppercase font-black">Cloud Files</span>
-           </button>
-
-           <button 
-             onClick={() => loadDocInputRef.current?.click()}
-             className="p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer"
-             title="Open Whiteboard File (.studentos-whiteboard, .json)"
+             className="p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-sky-500/30 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+             title="Open Saved StudentOS Whiteboard Files"
            >
              <FolderOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-sky-400" />
              <span className="hidden lg:inline text-[10px] uppercase font-black">Open</span>
            </button>
-           <input 
-             type="file" 
-             ref={loadDocInputRef} 
-             onChange={handleLoadDocFile} 
-             accept=".studentos-whiteboard,.json,application/json" 
-             className="hidden" 
-           />
+
+           <button 
+             onClick={handleExportWhiteboardPackage}
+             className="p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+             title="Export Whiteboard Document File to Device (.studentos-whiteboard)"
+           >
+             <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-400" />
+             <span className="hidden xl:inline text-[10px] uppercase font-black">Export File</span>
+           </button>
            {/* Sticky Notes & Media Tools */}
            <button 
              onClick={() => { pushHistory(); handleInsertStickyNote('#fef08a'); }}

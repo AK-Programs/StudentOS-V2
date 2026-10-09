@@ -62,34 +62,52 @@ export async function submitVisualRequest(input: CreateVisualRequestInput): Prom
       schoolName: input.schoolName || 'StudentOS School'
     };
 
-    // 1. Attempt Supabase direct insert with RLS
+    // 1. Attempt Supabase direct insert with RLS (support both ai_board_asset_requests and whiteboard_asset_requests)
     try {
+      const dbRow = {
+        request_type: payload.requestType,
+        asset_type: payload.requestType,
+        topic: payload.topic,
+        title: payload.topic,
+        subject: payload.subject,
+        description: payload.description,
+        prompt: payload.description,
+        grade: payload.grade,
+        class_grade: payload.grade,
+        why_needed: payload.whyNeeded,
+        purpose: payload.whyNeeded,
+        urgency: payload.urgency,
+        status: 'Requested',
+        requester_id: payload.requesterId,
+        requester_name: payload.requesterName,
+        requester_role: payload.requesterRole,
+        school_id: payload.schoolId,
+        school_name: payload.schoolName
+      };
+
       const { data: sbData, error: sbErr } = await supabase
-        .from('whiteboard_asset_requests')
-        .insert([{
-          request_type: payload.requestType,
-          topic: payload.topic,
-          subject: payload.subject,
-          description: payload.description,
-          grade: payload.grade,
-          why_needed: payload.whyNeeded,
-          urgency: payload.urgency,
-          status: 'Requested',
-          requester_id: payload.requesterId,
-          requester_name: payload.requesterName,
-          requester_role: payload.requesterRole,
-          school_id: payload.schoolId,
-          school_name: payload.schoolName
-        }])
+        .from('ai_board_asset_requests')
+        .insert([dbRow])
         .select()
         .single();
 
-      if (!sbErr && sbData) {
-        console.log('[Supabase] Whiteboard visual request persisted directly:', sbData.id);
+      if (sbErr) {
+        await supabase
+          .from('whiteboard_asset_requests')
+          .insert([dbRow])
+          .select()
+          .single();
       }
+
+      // Also persist to Supabase global_data for guaranteed persistence
+      await supabase.from('global_data').upsert({
+        id: `__wb_asset_req_${payload.topic.slice(0, 15)}_${Date.now()}__`,
+        data: payload,
+        title: payload.topic,
+        subject: payload.subject
+      });
     } catch (e) {
-      // Supabase table may not exist in user's project yet; fall through to server API
-      console.warn('[Supabase] Direct insert not available or table missing, relying on backend API:', e);
+      console.warn('[Supabase] Visual request direct attempt:', e);
     }
 
     // 2. Submit to authenticated backend API
