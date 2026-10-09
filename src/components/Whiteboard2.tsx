@@ -10,17 +10,21 @@ import {
   Triangle, Minus, ChevronDown, Trash2, Sliders, Settings2, Plus, Copy,
   ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, ArrowUp, ArrowDown, Type, Sparkles,
   Undo2, Redo2, Image as ImageIcon, StickyNote, FileText, Box, Layers, Hand, RotateCcw, Eye, Tag, HelpCircle,
-  Play, Rotate3d, FolderOpen, Save, Upload
+  Play, Rotate3d, FolderOpen, Save, Upload, Cloud
 } from 'lucide-react';
 import { InteractiveThreeDViewer, Educational3DScene } from './InteractiveThreeDViewer';
 import { ThreeDLibraryAndRequestModal } from './ThreeDLibraryAndRequestModal';
 import { WhiteboardAssetDialog } from './WhiteboardAssetDialog';
 import { SaveWhiteboardModal } from './SaveWhiteboardModal';
+import { CloudWhiteboardBrowserModal } from './CloudWhiteboardBrowserModal';
 import {
   exportWhiteboardDocumentFile,
   validateAndParseWhiteboardFile,
   printAllSlidesAsPdf,
-  serializeSlides
+  serializeSlides,
+  saveWhiteboardToCloud,
+  saveWhiteboardRecoverySnapshot,
+  getWhiteboardRecoverySnapshot
 } from '../lib/whiteboardFileManager';
 import {
   applyStrokeEraserToLines,
@@ -472,6 +476,10 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           return parsed;
         }
       }
+      const snapshot = getWhiteboardRecoverySnapshot();
+      if (snapshot && snapshot.length > 0) {
+        return snapshot;
+      }
     } catch (_) {}
     return [{ id: 'slide_1', shapes: [], lines: [], stickies: [] }];
   });
@@ -523,7 +531,17 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   const [shapesMenuOpen, setShapesMenuOpen] = useState(false);
   const [eraserMenuOpen, setEraserMenuOpen] = useState(false);
   
-  const [eraserHoverPos, setEraserHoverPos] = useState<{ x: number; y: number } | null>(null);
+  // Active Eraser Visibility & Position (Only shown while an erasing gesture is actively happening)
+  const [isActivelyErasing, setIsActivelyErasing] = useState(false);
+  const [activeEraserPos, setActiveEraserPos] = useState<{ x: number; y: number } | null>(null);
+  const [cloudBrowserOpen, setCloudBrowserOpen] = useState(false);
+
+  // Multi-Touch & Palm/Wrist Contact Tracking Engine
+  const lastTouchTimeRef = useRef<number>(0);
+  const lastStrokeStartTimeRef = useRef<number>(0);
+  const currentDrawingLineIdRef = useRef<string | null>(null);
+  const gestureModeRef = useRef<'idle' | 'drawing' | 'three_finger_erase' | 'palm_erase'>('idle');
+
   const [aiTip, setAiTip] = useState<string | null>(null);
   const [stageScale, setStageScale] = useState(1);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
@@ -683,6 +701,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           shapes: s.shapes.map(({ imageObj, ...rest }) => rest)
         }));
         localStorage.setItem('studentos_smartboard_slides_v3', JSON.stringify(serializable));
+        saveWhiteboardRecoverySnapshot(slides);
       } catch (_) {}
       setSaveState('saved');
     }, 350);
@@ -1329,6 +1348,121 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     const pos = getRelativePointerPosition(stage);
     if (!pos) return;
 
+    // Deduplicate synthetic mouse event immediately after touch
+    if (e.evt && !e.evt.touches && Date.now() - lastTouchTimeRef.current < 650) {
+      return;
+    }
+
+    if (e.evt?.touches) {
+      lastTouchTimeRef.current = Date.now();
+      const touches = e.evt.touches;
+
+      // 1. Three-finger eraser gesture recognition
+      if (touches.length === 3) {
+        e.evt.preventDefault?.();
+        gestureModeRef.current = 'three_finger_erase';
+
+        // Discard accidental stroke started by first finger touching down
+        if (Date.now() - lastStrokeStartTimeRef.current < 450 && currentDrawingLineIdRef.current) {
+          setSlides(prev => {
+            const next = cloneSlides(prev);
+            const cur = next[activeSlideIdx];
+            if (cur && cur.lines.length > 0 && cur.lines[cur.lines.length - 1].id === currentDrawingLineIdRef.current) {
+              cur.lines.pop();
+            }
+            return next;
+          });
+        }
+
+        const stagePosVal = { x: stage.x(), y: stage.y() };
+        const scale = stage.scaleX();
+        const rect = stage.container().getBoundingClientRect();
+        let totalX = 0, totalY = 0;
+        for (let i = 0; i < 3; i++) {
+          totalX += (touches[i].clientX - rect.left - stagePosVal.x) / scale;
+          totalY += (touches[i].clientY - rect.top - stagePosVal.y) / scale;
+        }
+        const cx = totalX / 3;
+        const cy = totalY / 3;
+
+        setIsActivelyErasing(true);
+        setActiveEraserPos({ x: cx, y: cy });
+
+        const current = slides[activeSlideIdx];
+        if (current) {
+          const { updatedLines, hasModified } = applyStrokeEraserToLines(current.lines, cx, cy, ERASER_SIZE);
+          if (hasModified) {
+            pushHistory();
+            hasPushedEraserHistory.current = true;
+            setSlides(prev => {
+              const next = cloneSlides(prev);
+              next[activeSlideIdx].lines = updatedLines;
+              return next;
+            });
+          }
+        }
+        eraseAt(cx, cy);
+        return;
+      }
+
+      // 2. Wrist / Palm / Hand contact detection on single touch
+      if (touches.length === 1) {
+        const t0 = touches[0];
+        const rx = t0.radiusX || (t0 as any).webkitRadiusX || 0;
+        const ry = t0.radiusY || (t0 as any).webkitRadiusY || 0;
+        if (rx >= 20 || ry >= 20) {
+          e.evt.preventDefault?.();
+          gestureModeRef.current = 'palm_erase';
+          setIsActivelyErasing(true);
+          setActiveEraserPos({ x: pos.x, y: pos.y });
+
+          const current = slides[activeSlideIdx];
+          if (current) {
+            const { updatedLines, hasModified } = applyStrokeEraserToLines(current.lines, pos.x, pos.y, ERASER_SIZE);
+            if (hasModified) {
+              pushHistory();
+              hasPushedEraserHistory.current = true;
+              setSlides(prev => {
+                const next = cloneSlides(prev);
+                next[activeSlideIdx].lines = updatedLines;
+                return next;
+              });
+            }
+          }
+          eraseAt(pos.x, pos.y);
+          return;
+        }
+      }
+    }
+
+    // PointerEvent contact geometry for palm/wrist detection
+    if (e.evt && e.evt.pointerType === 'touch') {
+      const w = e.evt.width || 0;
+      const h = e.evt.height || 0;
+      if (w >= 28 || h >= 28 || (w > 0 && h > 0 && w * h >= 650)) {
+        e.evt.preventDefault?.();
+        gestureModeRef.current = 'palm_erase';
+        setIsActivelyErasing(true);
+        setActiveEraserPos({ x: pos.x, y: pos.y });
+
+        const current = slides[activeSlideIdx];
+        if (current) {
+          const { updatedLines, hasModified } = applyStrokeEraserToLines(current.lines, pos.x, pos.y, ERASER_SIZE);
+          if (hasModified) {
+            pushHistory();
+            hasPushedEraserHistory.current = true;
+            setSlides(prev => {
+              const next = cloneSlides(prev);
+              next[activeSlideIdx].lines = updatedLines;
+              return next;
+            });
+          }
+        }
+        eraseAt(pos.x, pos.y);
+        return;
+      }
+    }
+
     if (tool === 'pan') {
       return;
     }
@@ -1336,8 +1470,11 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     if (tool === 'object_eraser') {
       isDrawing.current = true;
       hasPushedEraserHistory.current = false;
+      setIsActivelyErasing(true);
+      setActiveEraserPos({ x: pos.x, y: pos.y });
+
       const current = slides[activeSlideIdx];
-      const radius = Math.max(4, Number(brushSize) || 20);
+      const radius = ERASER_SIZE;
       const willHitLine = current?.lines.some(l => l.tool !== 'eraser' && doesCircleIntersectStroke(l.points, pos.x, pos.y, radius));
       const willHitShape = current?.shapes.some(s => isCloseToShape(s, pos.x, pos.y, radius));
       if (willHitLine || willHitShape) {
@@ -1351,6 +1488,9 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     if (tool === 'eraser') {
       isDrawing.current = true;
       hasPushedEraserHistory.current = false;
+      setIsActivelyErasing(true);
+      setActiveEraserPos({ x: pos.x, y: pos.y });
+
       const current = slides[activeSlideIdx];
       if (current) {
         const { updatedLines, hasModified } = applyStrokeEraserToLines(current.lines, pos.x, pos.y, ERASER_SIZE);
@@ -1415,8 +1555,13 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
         sizeVal = brushSize * 4.0;
       }
       
+      const newLineId = Date.now().toString();
+      currentDrawingLineIdRef.current = newLineId;
+      lastStrokeStartTimeRef.current = Date.now();
+      gestureModeRef.current = 'drawing';
+
       const newLine: LineObj = {
-        id: Date.now().toString(),
+        id: newLineId,
         tool,
         color: colorStr,
         brushSize: sizeVal,
@@ -1452,15 +1597,90 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   };
 
   const handleMouseMove = (e: any) => {
+    // Deduplicate synthesized mouse move
+    if (e.evt && !e.evt.touches && Date.now() - lastTouchTimeRef.current < 650) {
+      return;
+    }
+
+    if (e.evt?.touches) {
+      lastTouchTimeRef.current = Date.now();
+      const touches = e.evt.touches;
+
+      // Three-finger active erase move
+      if (touches.length === 3 || gestureModeRef.current === 'three_finger_erase') {
+        if (touches.length < 3) {
+          // If fewer than 3 touches remain, immediately cease erasing and hide cursor
+          setIsActivelyErasing(false);
+          setActiveEraserPos(null);
+          gestureModeRef.current = 'idle';
+          return;
+        }
+        e.evt.preventDefault?.();
+        const stage = e.target.getStage();
+        const stagePosVal = { x: stage.x(), y: stage.y() };
+        const scale = stage.scaleX();
+        const rect = stage.container().getBoundingClientRect();
+        let totalX = 0, totalY = 0;
+        for (let i = 0; i < 3; i++) {
+          totalX += (touches[i].clientX - rect.left - stagePosVal.x) / scale;
+          totalY += (touches[i].clientY - rect.top - stagePosVal.y) / scale;
+        }
+        const cx = totalX / 3;
+        const cy = totalY / 3;
+
+        setIsActivelyErasing(true);
+        setActiveEraserPos({ x: cx, y: cy });
+
+        const current = slides[activeSlideIdx];
+        if (current) {
+          const { updatedLines, hasModified } = applyStrokeEraserToLines(current.lines, cx, cy, ERASER_SIZE);
+          if (hasModified) {
+            if (!hasPushedEraserHistory.current) {
+              pushHistory();
+              hasPushedEraserHistory.current = true;
+            }
+            setSlides(prev => {
+              const next = cloneSlides(prev);
+              next[activeSlideIdx].lines = updatedLines;
+              return next;
+            });
+          }
+        }
+        eraseAt(cx, cy);
+        return;
+      }
+
+      // Palm active erase move
+      if (gestureModeRef.current === 'palm_erase') {
+        e.evt.preventDefault?.();
+        const stage = e.target.getStage();
+        const point = getRelativePointerPosition(stage);
+        if (point) {
+          setIsActivelyErasing(true);
+          setActiveEraserPos(point);
+          const current = slides[activeSlideIdx];
+          if (current) {
+            const { updatedLines, hasModified } = applyStrokeEraserToLines(current.lines, point.x, point.y, ERASER_SIZE);
+            if (hasModified) {
+              if (!hasPushedEraserHistory.current) {
+                pushHistory();
+                hasPushedEraserHistory.current = true;
+              }
+              setSlides(prev => {
+                const next = cloneSlides(prev);
+                next[activeSlideIdx].lines = updatedLines;
+                return next;
+              });
+            }
+          }
+          eraseAt(point.x, point.y);
+        }
+        return;
+      }
+    }
+
     const stage = e.target.getStage();
     const point = getRelativePointerPosition(stage);
-    
-    // Eraser hover state tracking for circular outline
-    if (point && (tool === 'eraser' || tool === 'object_eraser')) {
-      setEraserHoverPos(point);
-    } else {
-      setEraserHoverPos(null);
-    }
 
     // Update rectangular marquee selection box while dragging on empty canvas
     if (tool === 'select' && isMarqueeSelecting.current && point) {
@@ -1473,12 +1693,22 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       return;
     }
 
-    if (!isDrawing.current) return;
+    // STRICT: Only show eraser cursor and process erasing while user is actively erasing!
+    // Never leave an eraser circle hovering or drawn on canvas when idle
+    if (!isDrawing.current) {
+      if (isActivelyErasing) {
+        setIsActivelyErasing(false);
+        setActiveEraserPos(null);
+      }
+      return;
+    }
     if (!point) return;
-    
+
     if (tool === 'object_eraser') {
+      setIsActivelyErasing(true);
+      setActiveEraserPos(point);
       const current = slides[activeSlideIdx];
-      const radius = Math.max(4, Number(brushSize) || 20);
+      const radius = ERASER_SIZE;
       const willHitLine = current?.lines.some(l => l.tool !== 'eraser' && doesCircleIntersectStroke(l.points, point.x, point.y, radius));
       const willHitShape = current?.shapes.some(s => isCloseToShape(s, point.x, point.y, radius));
       if ((willHitLine || willHitShape) && !hasPushedEraserHistory.current) {
@@ -1490,6 +1720,8 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     }
 
     if (tool === 'eraser') {
+      setIsActivelyErasing(true);
+      setActiveEraserPos(point);
       const current = slides[activeSlideIdx];
       if (current) {
         const { updatedLines, hasModified } = applyStrokeEraserToLines(current.lines, point.x, point.y, ERASER_SIZE);
@@ -1616,6 +1848,10 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       return;
     }
 
+    setIsActivelyErasing(false);
+    setActiveEraserPos(null);
+    gestureModeRef.current = 'idle';
+    currentDrawingLineIdRef.current = null;
     isDrawing.current = false;
     hasPushedEraserHistory.current = false;
 
@@ -1759,6 +1995,31 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       }
     }
   };
+
+  const handleInteractionStop = () => {
+    setIsActivelyErasing(false);
+    setActiveEraserPos(null);
+    gestureModeRef.current = 'idle';
+    currentDrawingLineIdRef.current = null;
+    isDrawing.current = false;
+    hasPushedEraserHistory.current = false;
+    if (isMarqueeSelecting.current) {
+      isMarqueeSelecting.current = false;
+      setMarqueeRect(prev => ({ ...prev, visible: false }));
+    }
+  };
+
+  useEffect(() => {
+    const handleGlobalStop = () => {
+      handleInteractionStop();
+    };
+    window.addEventListener('blur', handleGlobalStop);
+    window.addEventListener('pointercancel', handleGlobalStop);
+    return () => {
+      window.removeEventListener('blur', handleGlobalStop);
+      window.removeEventListener('pointercancel', handleGlobalStop);
+    };
+  }, []);
   
   const handleObjectClick = (e: any, id: string, type: 'line' | 'shape') => {
     if (tool === 'object_eraser') {
@@ -2091,9 +2352,69 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleSaveDocConfirm = (fileName: string) => {
-    const savedName = exportWhiteboardDocumentFile(fileName, slides);
-    setAiTip(`💾 Saved entire Whiteboard as "${savedName}.studentos-whiteboard"!`);
+  const reconstructImagesForSlides = (targetSlides: Slide[]) => {
+    targetSlides.forEach((sl, slIdx) => {
+      sl.shapes.forEach((sh) => {
+        if (sh.type === 'svg_node' && sh.svgRaw) {
+          const img = new Image();
+          img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(sh.svgRaw);
+          img.onload = () => {
+            setSlides(prev => {
+              const next = cloneSlides(prev);
+              const target = next[slIdx]?.shapes.find(s => s.id === sh.id);
+              if (target) target.imageObj = img;
+              return next;
+            });
+          };
+        } else if (sh.type === 'model_3d' && sh.scene3D) {
+          const svgStr = sanitizeSvgClient(
+            renderScene3DToSvg(
+              sh.scene3D,
+              sh.rotX ?? 22,
+              sh.rotY ?? -32,
+              sh.zoom3D ?? 1,
+              sh.explode3D ?? 0,
+              sh.showLabels3D ?? true
+            )
+          );
+          if (svgStr) {
+            const img = new Image();
+            img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
+            img.onload = () => {
+              setSlides(prev => {
+                const next = cloneSlides(prev);
+                const target = next[slIdx]?.shapes.find(s => s.id === sh.id);
+                if (target) target.imageObj = img;
+                return next;
+              });
+            };
+          }
+        }
+      });
+    });
+  };
+
+  const handleSaveDocConfirm = async (fileName: string, target: 'local' | 'cloud' = 'cloud') => {
+    if (target === 'cloud') {
+      const res = await saveWhiteboardToCloud(fileName, slides, currentUser);
+      if (res.success) {
+        setAiTip(`☁️ Synced "${fileName}" to StudentOS Cloud Storage!`);
+      } else {
+        setAiTip(`⚠️ Cloud save notice: ${res.error || 'Failed to save to cloud'}`);
+      }
+    } else {
+      const savedName = exportWhiteboardDocumentFile(fileName, slides);
+      setAiTip(`💾 Saved entire Whiteboard as "${savedName}.studentos-whiteboard"!`);
+    }
+  };
+
+  const handleSelectCloudDocument = (loadedSlides: Slide[], title: string) => {
+    pushHistory();
+    setSlides(loadedSlides);
+    setActiveSlideIdx(0);
+    setSelectedIds([]);
+    reconstructImagesForSlides(loadedSlides);
+    setAiTip(`☁️ Loaded "${title}" from StudentOS Cloud!`);
   };
 
   const handleLoadDocFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2115,48 +2436,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       setSlides(loadedSlides);
       setActiveSlideIdx(0);
       setSelectedIds([]);
-
-      // Reconstruct image objects for SVG nodes and 3D scenes across all loaded slides
-      loadedSlides.forEach((sl, slIdx) => {
-        sl.shapes.forEach((sh) => {
-          if (sh.type === 'svg_node' && sh.svgRaw) {
-            const img = new Image();
-            img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(sh.svgRaw);
-            img.onload = () => {
-              setSlides(prev => {
-                const next = cloneSlides(prev);
-                const target = next[slIdx]?.shapes.find(s => s.id === sh.id);
-                if (target) target.imageObj = img;
-                return next;
-              });
-            };
-          } else if (sh.type === 'model_3d' && sh.scene3D) {
-            const svgStr = sanitizeSvgClient(
-              renderScene3DToSvg(
-                sh.scene3D,
-                sh.rotX ?? 22,
-                sh.rotY ?? -32,
-                sh.zoom3D ?? 1,
-                sh.explode3D ?? 0,
-                sh.showLabels3D ?? true
-              )
-            );
-            if (svgStr) {
-              const img = new Image();
-              img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
-              img.onload = () => {
-                setSlides(prev => {
-                  const next = cloneSlides(prev);
-                  const target = next[slIdx]?.shapes.find(s => s.id === sh.id);
-                  if (target) target.imageObj = img;
-                  return next;
-                });
-              };
-            }
-          }
-        });
-      });
-
+      reconstructImagesForSlides(loadedSlides);
       setAiTip(`📂 Successfully loaded "${result.document.fileName}" (${result.document.slideCount} slides)!`);
     };
     reader.readAsText(file);
@@ -2449,6 +2729,15 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
            >
              <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
              <span className="hidden lg:inline text-[10px] uppercase font-black">Save</span>
+           </button>
+
+           <button
+             onClick={() => setCloudBrowserOpen(true)}
+             className="p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-indigo-500/30 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+             title="Browse & Open Saved StudentOS Cloud Whiteboards"
+           >
+             <Cloud className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-400" />
+             <span className="hidden lg:inline text-[10px] uppercase font-black">Cloud Files</span>
            </button>
 
            <button 
@@ -2950,6 +3239,10 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           onTouchStart={handleMouseDown}
           onTouchMove={handleMouseMove}
           onTouchEnd={handleMouseUp}
+          onMouseLeave={handleInteractionStop}
+          onTouchCancel={handleInteractionStop}
+          onPointerLeave={handleInteractionStop}
+          onPointerCancel={handleInteractionStop}
           ref={stageRef}
           scaleX={stageScale}
           scaleY={stageScale}
@@ -3303,12 +3596,12 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
               />
             ))}
             {/* Fixed 24px Circular Eraser hover brush outline */}
-            {eraserHoverPos && (tool === 'eraser' || tool === 'object_eraser') && (
+            {isActivelyErasing && activeEraserPos && (
               <Circle 
-                x={eraserHoverPos.x}
-                y={eraserHoverPos.y}
+                x={activeEraserPos.x}
+                y={activeEraserPos.y}
                 radius={ERASER_SIZE}
-                fill={tool === 'object_eraser' ? "rgba(239, 68, 68, 0.2)" : "rgba(148, 163, 184, 0.25)"}
+                fill={tool === 'object_eraser' ? "rgba(239, 68, 68, 0.25)" : "rgba(148, 163, 184, 0.25)"}
                 stroke={tool === 'object_eraser' ? "#ef4444" : "#94a3b8"}
                 strokeWidth={1.5}
                 listening={false}
@@ -3556,6 +3849,14 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           onClose={() => setSaveDocModalOpen(false)}
           onSave={handleSaveDocConfirm}
           slideCount={slides.length}
+        />
+
+        {/* Cloud Whiteboards Browser Modal */}
+        <CloudWhiteboardBrowserModal
+          isOpen={cloudBrowserOpen}
+          onClose={() => setCloudBrowserOpen(false)}
+          onSelectDocument={handleSelectCloudDocument}
+          currentUser={currentUser}
         />
       </div>
     </div>

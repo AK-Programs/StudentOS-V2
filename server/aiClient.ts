@@ -214,6 +214,34 @@ export function extractTextFromChoice(choice: any): string {
   return '';
 }
 
+export function extractStreamingToken(choice: any): string {
+  if (!choice) return '';
+  const delta = choice.delta || choice.message || choice;
+  if (!delta) return '';
+
+  if (typeof delta.content === 'string') {
+    return delta.content;
+  }
+  if (Array.isArray(delta.content)) {
+    return delta.content
+      .map((part: any) => (typeof part === 'string' ? part : part?.text || part?.content || ''))
+      .join('');
+  }
+  if (typeof delta.reasoning_content === 'string') {
+    return delta.reasoning_content;
+  }
+  if (typeof delta.reasoning === 'string') {
+    return delta.reasoning;
+  }
+  if (typeof delta.output_text === 'string') {
+    return delta.output_text;
+  }
+  if (typeof choice.text === 'string') {
+    return choice.text;
+  }
+  return '';
+}
+
 function buildMessagesArray(
   systemInstruction: string,
   prompt: string,
@@ -512,7 +540,7 @@ export async function streamAICompletion(
           const choice = parsed.choices?.[0];
           if (choice) lastChoice = choice;
 
-          const token = extractTextFromChoice(choice);
+          const token = extractStreamingToken(choice);
 
           if (token) {
             if (firstTokenLatencyMs === null) {

@@ -1395,6 +1395,95 @@ app.patch(['/api/whiteboard/requests/:id', '/api/3d-models/requests/:id'], (req,
   return res.json({ success: true, request: updated });
 });
 
+// --- StudentOS Cloud Whiteboard File Management Endpoints ---
+interface CloudWhiteboardDocument {
+  id: string;
+  fileName: string;
+  slideCount: number;
+  slides: any[];
+  userId: string;
+  userName: string;
+  schoolId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const cloudWhiteboardsMemory: CloudWhiteboardDocument[] = [];
+
+app.get('/api/whiteboard/documents', (req, res) => {
+  const { schoolId, userId, role } = req.query;
+  const isSuperAdmin = role === 'super_admin' || role === 'admin';
+  let list = cloudWhiteboardsMemory;
+  if (!isSuperAdmin) {
+    if (schoolId) {
+      list = list.filter(d => d.schoolId === String(schoolId) || !d.schoolId);
+    }
+    if (userId) {
+      list = list.filter(d => d.userId === String(userId) || d.schoolId === String(schoolId));
+    }
+  }
+  return res.json({
+    success: true,
+    count: list.length,
+    documents: list.map(d => ({
+      id: d.id,
+      fileName: d.fileName,
+      slideCount: d.slideCount,
+      userId: d.userId,
+      userName: d.userName,
+      schoolId: d.schoolId,
+      createdAt: d.createdAt,
+      updatedAt: d.updatedAt
+    }))
+  });
+});
+
+app.get('/api/whiteboard/documents/:id', (req, res) => {
+  const { id } = req.params;
+  const doc = cloudWhiteboardsMemory.find(d => d.id === id);
+  if (!doc) {
+    return res.status(404).json({ success: false, error: 'Whiteboard document not found' });
+  }
+  return res.json({ success: true, document: doc });
+});
+
+app.post('/api/whiteboard/documents', (req, res) => {
+  const { id, fileName, slides, slideCount, userId, userName, schoolId } = req.body || {};
+  if (!fileName || !slides) {
+    return res.status(400).json({ success: false, error: 'Document name and slides are required.' });
+  }
+  const docId = id || 'wb_doc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+  const existingIdx = cloudWhiteboardsMemory.findIndex(d => d.id === docId);
+  const now = new Date().toISOString();
+  const newDoc: CloudWhiteboardDocument = {
+    id: docId,
+    fileName: String(fileName).trim(),
+    slideCount: Number(slideCount) || (Array.isArray(slides) ? slides.length : 1),
+    slides: slides,
+    userId: String(userId || 'usr_anonymous'),
+    userName: String(userName || 'StudentOS User'),
+    schoolId: String(schoolId || 'school_default'),
+    createdAt: existingIdx >= 0 ? cloudWhiteboardsMemory[existingIdx].createdAt : now,
+    updatedAt: now
+  };
+  if (existingIdx >= 0) {
+    cloudWhiteboardsMemory[existingIdx] = newDoc;
+  } else {
+    cloudWhiteboardsMemory.unshift(newDoc);
+  }
+  return res.json({ success: true, document: newDoc });
+});
+
+app.delete('/api/whiteboard/documents/:id', (req, res) => {
+  const { id } = req.params;
+  const idx = cloudWhiteboardsMemory.findIndex(d => d.id === id);
+  if (idx < 0) {
+    return res.status(404).json({ success: false, error: 'Whiteboard document not found' });
+  }
+  cloudWhiteboardsMemory.splice(idx, 1);
+  return res.json({ success: true, message: 'Document deleted successfully' });
+});
+
 // Secure API endpoint for AI Teacher and Buddy conversations (Supports both JSON and real-time SSE Streaming)
 app.post(['/api/ai/chat', '/api/ai/chat/stream'], async (req, res) => {
   const requestId = 'req_' + Math.random().toString(36).substring(2, 10);

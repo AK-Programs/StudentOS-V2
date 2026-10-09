@@ -7,6 +7,7 @@
  */
 
 import { Slide, ShapeObj, LineObj, StickyNoteObj } from '../components/Whiteboard2';
+export type { Slide, ShapeObj, LineObj, StickyNoteObj };
 
 export const WHITEBOARD_FILE_FORMAT = 'studentos-whiteboard';
 export const WHITEBOARD_FILE_VERSION = 1;
@@ -386,3 +387,139 @@ export function printAllSlidesAsPdf(
   `);
   printWindow.document.close();
 }
+
+export interface CloudWhiteboardSummary {
+  id: string;
+  fileName: string;
+  slideCount: number;
+  userId: string;
+  userName: string;
+  schoolId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Saves a whiteboard document to StudentOS Cloud backend
+ */
+export async function saveWhiteboardToCloud(
+  fileName: string,
+  slides: Slide[],
+  user?: { id?: string; name?: string; school_id?: string },
+  docId?: string
+): Promise<{ success: boolean; document?: any; error?: string }> {
+  try {
+    const safeSlides = serializeSlides(slides);
+    const payload = {
+      id: docId,
+      fileName: (fileName || 'My Whiteboard').trim(),
+      slideCount: safeSlides.length,
+      slides: safeSlides,
+      userId: user?.id || 'usr_anonymous',
+      userName: user?.name || 'StudentOS User',
+      schoolId: user?.school_id || 'school_default'
+    };
+
+    const resp = await fetch('/api/whiteboard/documents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await resp.json();
+    if (!resp.ok || !data.success) {
+      throw new Error(data.error || 'Failed to save to StudentOS Cloud');
+    }
+    return { success: true, document: data.document };
+  } catch (err: any) {
+    console.error('[Cloud Save Error]:', err);
+    return { success: false, error: err.message || 'Cloud save failed' };
+  }
+}
+
+/**
+ * Lists cloud whiteboard documents with optional school isolation
+ */
+export async function listCloudWhiteboards(
+  user?: { id?: string; school_id?: string; role?: string }
+): Promise<CloudWhiteboardSummary[]> {
+  try {
+    const params = new URLSearchParams();
+    if (user?.school_id) params.append('schoolId', user.school_id);
+    if (user?.id) params.append('userId', user.id);
+    if (user?.role) params.append('role', user.role);
+
+    const resp = await fetch(`/api/whiteboard/documents?${params.toString()}`);
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    return data.documents || [];
+  } catch (err) {
+    console.error('[Cloud List Error]:', err);
+    return [];
+  }
+}
+
+/**
+ * Fetches a complete whiteboard document from the cloud
+ */
+export async function loadCloudWhiteboard(id: string): Promise<{ success: boolean; document?: any; error?: string }> {
+  try {
+    const resp = await fetch(`/api/whiteboard/documents/${encodeURIComponent(id)}`);
+    const data = await resp.json();
+    if (!resp.ok || !data.success) {
+      throw new Error(data.error || 'Failed to load cloud whiteboard');
+    }
+    return { success: true, document: data.document };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to load from cloud' };
+  }
+}
+
+/**
+ * Deletes a whiteboard document from the cloud
+ */
+export async function deleteCloudWhiteboard(id: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`/api/whiteboard/documents/${encodeURIComponent(id)}`, {
+      method: 'DELETE'
+    });
+    const data = await resp.json();
+    return Boolean(data.success);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Recovery Snapshots: Stores resilient workspace backup in sessionStorage and localStorage
+ */
+const RECOVERY_STORAGE_KEY = 'studentos_wb_recovery_snapshot_v1';
+
+export function saveWhiteboardRecoverySnapshot(slides: Slide[]): void {
+  try {
+    const serialized = JSON.stringify(serializeSlides(slides));
+    sessionStorage.setItem(RECOVERY_STORAGE_KEY, serialized);
+    localStorage.setItem(RECOVERY_STORAGE_KEY, serialized);
+  } catch {}
+}
+
+export function getWhiteboardRecoverySnapshot(): Slide[] | null {
+  try {
+    const raw = sessionStorage.getItem(RECOVERY_STORAGE_KEY) || localStorage.getItem(RECOVERY_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+export function clearWhiteboardRecoverySnapshot(): void {
+  try {
+    sessionStorage.removeItem(RECOVERY_STORAGE_KEY);
+    localStorage.removeItem(RECOVERY_STORAGE_KEY);
+  } catch {}
+}
+
