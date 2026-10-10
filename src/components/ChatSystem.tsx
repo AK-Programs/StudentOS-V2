@@ -656,6 +656,9 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
       new_chat_message: (payload) => {
         if (payload) {
           const newMsg = payload as ChatMessage;
+          if (newMsg.ownerUid !== currentUser?.uid) {
+            soundService.playMessageSound();
+          }
           setChats(prev => {
             const idx = prev.findIndex(m => m.id === newMsg.id);
             if (idx >= 0) {
@@ -699,6 +702,7 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
   const [editText, setEditText] = useState('');
   const [forwardingMsg, setForwardingMsg] = useState<ChatMessage | null>(null);
   const [activeMenuMsg, setActiveMenuMsg] = useState<ChatMessage | null>(null);
+  const [activeMediaPreview, setActiveMediaPreview] = useState<{ type: 'image' | 'video'; url: string; name: string } | null>(null);
   const longPressTimerRef = useRef<any>(null);
 
   const handleTouchStartMessage = (msg: ChatMessage) => {
@@ -1009,6 +1013,7 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
     setNewChatText('');
     setAttachedFiles([]);
     setReplyingTo(null);
+    soundService.playToggle(true);
 
     // Save to Supabase
     await savePeerMessage(newMsg);
@@ -1685,18 +1690,57 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                       {msg.attachments && msg.attachments.length > 0 && (
                         <div className="mt-2 space-y-1.5">
                           {msg.attachments.map((att, i) => (
-                            <div key={i} className="rounded-xl overflow-hidden border border-white/10 bg-black/20 p-1.5">
+                            <div key={i} className="rounded-xl overflow-hidden border border-white/10 bg-black/20 p-2 space-y-2">
                               {att.type === 'image' && (
-                                <img src={att.url} alt={att.name} className="max-h-48 rounded-lg object-cover w-full" />
+                                <div className="relative group/img cursor-pointer" onClick={() => setActiveMediaPreview({ type: 'image', url: att.url, name: att.name || 'Image Attachment' })}>
+                                  <img src={att.url} alt={att.name} className="max-h-48 rounded-lg object-cover w-full hover:opacity-95 transition-opacity" />
+                                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center rounded-lg">
+                                    <span className="text-white text-[10px] font-bold bg-black/60 px-2 py-1 rounded-md">Tap to Preview</span>
+                                  </div>
+                                </div>
+                              )}
+                              {att.type === 'video' && (
+                                <div className="space-y-1.5">
+                                  <video controls src={att.url} className="max-h-48 rounded-lg object-cover w-full bg-black" />
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[10px] text-slate-300 font-mono truncate">{att.name}</span>
+                                    <button 
+                                      onClick={() => setActiveMediaPreview({ type: 'video', url: att.url, name: att.name || 'Video Attachment' })}
+                                      className="text-[10px] text-indigo-400 hover:underline font-bold"
+                                    >
+                                      Fullscreen
+                                    </button>
+                                  </div>
+                                </div>
                               )}
                               {att.type === 'audio' && (
                                 <audio controls src={att.url} className="w-full h-8" />
                               )}
-                              {att.type === 'pdf' && (
-                                <a href={att.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-indigo-300 hover:underline text-[11px] font-bold">
-                                  <Paperclip className="w-3.5 h-3.5" />
-                                  <span>{att.name}</span>
-                                </a>
+                              {(att.type === 'pdf' || att.type === 'file') && (
+                                <div className="flex items-center justify-between gap-2">
+                                  <a href={att.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-indigo-300 hover:underline text-[11px] font-bold truncate">
+                                    <Paperclip className="w-3.5 h-3.5 shrink-0" />
+                                    <span className="truncate">{att.name}</span>
+                                  </a>
+                                  <a 
+                                    href={att.url} 
+                                    download={att.name || 'download'} 
+                                    className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-[10px] font-bold shrink-0 flex items-center gap-1"
+                                  >
+                                    <span>Download</span>
+                                  </a>
+                                </div>
+                              )}
+                              {att.type !== 'pdf' && att.type !== 'file' && (
+                                <div className="flex justify-end pt-1">
+                                  <a 
+                                    href={att.url} 
+                                    download={att.name || 'download'} 
+                                    className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-slate-200 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors"
+                                  >
+                                    <span>Download File</span>
+                                  </a>
+                                </div>
                               )}
                             </div>
                           ))}
@@ -2541,6 +2585,41 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
               )}
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* MEDIA PREVIEW MODAL */}
+      {activeMediaPreview && (
+        <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-[10000] flex flex-col items-center justify-center p-4 animate-fadeIn">
+          <div className="max-w-4xl w-full max-h-[90vh] flex flex-col items-center relative space-y-4">
+            <div className="w-full flex items-center justify-between bg-slate-900/80 px-4 py-3 rounded-2xl border border-white/10">
+              <span className="text-xs font-bold text-white truncate">{activeMediaPreview.name}</span>
+              <div className="flex items-center gap-2">
+                <a
+                  href={activeMediaPreview.url}
+                  download={activeMediaPreview.name}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download</span>
+                </a>
+                <button
+                  onClick={() => setActiveMediaPreview(null)}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-xl bg-white/5 hover:bg-white/10"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 flex items-center justify-center overflow-hidden w-full">
+              {activeMediaPreview.type === 'image' ? (
+                <img src={activeMediaPreview.url} alt="" className="max-h-[75vh] max-w-full rounded-2xl object-contain shadow-2xl border border-white/10" />
+              ) : (
+                <video controls src={activeMediaPreview.url} className="max-h-[75vh] max-w-full rounded-2xl shadow-2xl border border-white/10 bg-black" />
+              )}
+            </div>
           </div>
         </div>
       )}
