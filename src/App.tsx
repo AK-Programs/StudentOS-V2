@@ -7026,17 +7026,6 @@ ${roleLabel}: ${userQuery}`;
                             </button>
                           )}
 
-                          {effectiveRole !== 'student' && !presentationMode && matchesFilter('Panel Mode', 'smartboard projector classroom') && (
-                            <button
-                              type="button"
-                              onClick={() => handleTabSelect('panel_mode')}
-                              className={getSidebarBtnClass('panel_mode')}
-                              title="Classroom Panel Mode"
-                            >
-                              <Monitor className="w-4 h-4 shrink-0" />
-                              {sidebarOpen && <span className="truncate">Panel Mode</span>}
-                            </button>
-                          )}
 
                           {(!presentationMode || isTabAllowedInPresentation('study_hub')) &&
                             matchesFilter('Study Hub Flashcards Tasks Planner', 'spaced repetition sm2 cards study center') && (
@@ -13175,6 +13164,65 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
         allUsers={students}
         onNavigateTab={handleTabSelect}
       />
+
+      {/* Classroom Panel Board Setup Dialog */}
+      {showPanelSetupDialog && (
+        <PanelBoardSetupDialog
+          currentUser={currentUser}
+          effectiveRole={effectiveRole}
+          onSuccess={(reg) => {
+            setPanelBoardRegistration(reg);
+            setShowPanelSetupDialog(false);
+            setIsPanelBoardOpen(true);
+            showNotification('✓ Classroom Panel Board registered successfully!');
+          }}
+          onContinueGuest={() => {
+            setShowPanelSetupDialog(false);
+            setIsPanelBoardOpen(true);
+          }}
+          onCancel={() => {
+            setShowPanelSetupDialog(false);
+          }}
+        />
+      )}
+
+      {/* Active Classroom Panel Board Workspace */}
+      {isPanelBoardOpen && (
+        <ClassroomPanelBoard
+          registration={panelBoardRegistration}
+          currentUser={currentUser}
+          effectiveRole={effectiveRole}
+          onExit={() => setIsPanelBoardOpen(false)}
+          onReassignRequest={() => {
+            setIsPanelBoardOpen(false);
+            setShowPanelSetupDialog(true);
+          }}
+          showNotification={showNotification}
+        />
+      )}
+
+      {/* In-App Document Viewer */}
+      {inAppViewerDoc && (
+        <InAppDocumentViewer
+          url={inAppViewerDoc.url}
+          title={inAppViewerDoc.title}
+          fileName={inAppViewerDoc.fileName}
+          fileType={inAppViewerDoc.fileType}
+          currentUser={currentUser}
+          showNotification={showNotification}
+          onClose={() => setInAppViewerDoc(null)}
+          onDownload={() => {
+            const link = document.createElement('a');
+            link.href = inAppViewerDoc.url;
+            link.download = inAppViewerDoc.fileName || inAppViewerDoc.title || 'document';
+            link.target = '_blank';
+            link.click();
+          }}
+          onShareToChat={() => {
+            showNotification('Shared document link to active chat stream.');
+          }}
+        />
+      )}
 
     </div>
   );
