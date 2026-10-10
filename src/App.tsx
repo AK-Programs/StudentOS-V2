@@ -681,6 +681,7 @@ export default function App() {
 
   const [lockScreenPinInput, setLockScreenPinInput] = useState<string>('');
   const [lockScreenError, setLockScreenError] = useState<string>('');
+  const [useKeyMode, setUseKeyMode] = useState<boolean>(false);
 
   const isTabAllowedInPresentation = (tab: string) => {
     return ['whiteboard', 'ai_teacher', 'materials', 'assignments', 'homework', 'pomodoro', 'planner', 'tasks', 'flashcards', 'study_hub'].includes(tab);
@@ -1895,7 +1896,7 @@ export default function App() {
           if (cachedUserStr) {
             try {
               const u = JSON.parse(cachedUserStr);
-              if (u?.uid && (u.uid.startsWith('demo-') || u.isDemo)) {
+              if (u?.uid && (u.uid.startsWith('demo-') || u.isDemo || u.isLocalAuth || u.uid.startsWith('usr-') || u.uid.startsWith('manual-') || u.email)) {
                 isDemoUser = true;
               }
             } catch (_) {}
@@ -2735,15 +2736,51 @@ ${resultText}
     try {
       setAuthError(null);
       setFirebaseLoading(true);
-      
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: loginEmail,
-        password: loginPassword,
-      });
 
-      if (error) {
-        throw error;
+      let authenticated = false;
+
+      // 1. First attempt Supabase Auth sign-in
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: loginEmail.trim(),
+          password: loginPassword,
+        });
+
+        if (!error && data?.user) {
+          authenticated = true;
+        }
+      } catch (authErr) {
+        console.warn('Supabase Auth signIn failed, attempting backend password verification:', authErr);
       }
+
+      // 2. If Supabase Auth failed (e.g. forgot password, custom scrypt hash), verify via server endpoint
+      if (!authenticated) {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: loginEmail.trim(), password: loginPassword })
+        });
+        const resData = await res.json();
+        if (res.ok && resData.success && resData.profile) {
+          authenticated = true;
+          const userProfile = resData.profile;
+          setCurrentUser(userProfile);
+          try {
+            localStorage.setItem('s_os_user', JSON.stringify(userProfile));
+          } catch (_) {}
+          updateRecentAccounts(userProfile);
+          try {
+            sessionStorage.removeItem('s_os_startup_shown');
+          } catch (_) {}
+          setShowStartup(true);
+          setFirebaseLoading(false);
+          showNotification(`Welcome back, ${userProfile.name}! ✅`);
+          return;
+        } else {
+          throw new Error(resData.error || 'Invalid credentials or incorrect password.');
+        }
+      }
+
       try {
         sessionStorage.removeItem('s_os_startup_shown');
       } catch (_) {}
@@ -5426,97 +5463,166 @@ ${roleLabel}: ${userQuery}`;
               <p className="text-xs text-slate-400">Classroom Safety Guard Active. Enter PIN to unlock.</p>
             </div>
 
-            {/* Hidden Input field for keyboard users and visible indicator dots */}
-            <div className="space-y-4">
-              <input
-                type="password"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                maxLength={6}
-                value={lockScreenPinInput}
-                onChange={(e) => {
-                  const clean = e.target.value.replace(/[^0-9]/g, '');
-                  if (clean.length <= 6) {
-                    setLockScreenPinInput(clean);
-                    setLockScreenError('');
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    handleUnlockWithPin();
-                  }
-                }}
-                className="sr-only"
-                autoFocus
-                aria-label="Enter Security PIN"
-              />
-
-              <div className="flex justify-center gap-3">
-                {Array.from({ length: Math.max(4, lockScreenPinInput.length) }).slice(0, 6).map((_, i) => (
-                  <div
-                    key={i}
-                    className={`w-4 h-4 rounded-full border-2 transition-all duration-150 ${
-                      lockScreenPinInput.length > i
-                        ? 'bg-indigo-500 border-indigo-400 scale-110 shadow-lg shadow-indigo-500/50'
-                        : 'bg-transparent border-slate-700'
-                    }`}
-                  />
-                ))}
-              </div>
-
-              {lockScreenError && (
-                <p className="text-xs text-red-400 font-semibold animate-pulse">{lockScreenError}</p>
-              )}
-            </div>
-
-            {/* Smart Touch Numeric Keypad */}
-            <div className="grid grid-cols-3 gap-3 max-w-[280px] mx-auto pt-2">
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
-                <button
-                  key={num}
-                  type="button"
-                  onClick={() => {
-                    if (lockScreenPinInput.length < 6) {
-                      setLockScreenPinInput(prev => prev + num.toString());
+            {/* PIN Keypad vs Password / Recovery Key Switcher */}
+            {useKeyMode ? (
+              <div className="space-y-4 max-w-[320px] mx-auto pt-2">
+                <div className="space-y-2 text-left">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                    Security Password / Recovery Key
+                  </label>
+                  <input
+                    type="password"
+                    value={lockScreenPinInput}
+                    onChange={(e) => {
+                      setLockScreenPinInput(e.target.value);
                       setLockScreenError('');
-                    }
-                  }}
-                  className="h-14 w-14 rounded-2xl bg-white/5 hover:bg-white/10 active:scale-95 text-white text-lg font-bold transition-all flex items-center justify-center border border-white/5 cursor-pointer"
-                >
-                  {num}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => {
-                  setLockScreenPinInput('');
-                  setLockScreenError('');
-                }}
-                className="h-14 w-14 rounded-2xl bg-red-500/10 hover:bg-red-500/20 active:scale-95 text-red-400 text-xs font-bold transition-all flex items-center justify-center border border-red-500/10 cursor-pointer"
-              >
-                Clear
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (lockScreenPinInput.length < 6) {
-                    setLockScreenPinInput(prev => prev + '0');
-                    setLockScreenError('');
-                  }
-                }}
-                className="h-14 w-14 rounded-2xl bg-white/5 hover:bg-white/10 active:scale-95 text-white text-lg font-bold transition-all flex items-center justify-center border border-white/5 cursor-pointer"
-              >
-                0
-              </button>
-              <button
-                type="button"
-                disabled={isUnlocking}
-                onClick={handleUnlockWithPin}
-                className="h-14 w-14 rounded-2xl bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-xs transition-all flex items-center justify-center cursor-pointer shadow-lg disabled:opacity-50"
-              >
-                {isUnlocking ? <RefreshCw className="w-4 h-4 animate-spin text-slate-950" /> : 'Enter'}
-              </button>
-            </div>
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        handleUnlockWithPin();
+                      }
+                    }}
+                    placeholder="Enter password or paste recovery hash"
+                    className="w-full text-sm px-4 py-3 rounded-xl bg-slate-900 border border-white/10 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-white font-mono placeholder-slate-600 transition-all"
+                    autoFocus
+                  />
+                </div>
+
+                {lockScreenError && (
+                  <p className="text-xs text-red-400 font-semibold animate-pulse">{lockScreenError}</p>
+                )}
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUseKeyMode(false);
+                      setLockScreenPinInput('');
+                      setLockScreenError('');
+                    }}
+                    className="flex-1 py-3 px-4 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 font-bold text-xs transition-all cursor-pointer"
+                  >
+                    🔢 Keypad
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isUnlocking}
+                    onClick={handleUnlockWithPin}
+                    className="flex-1 py-3 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs transition-all flex items-center justify-center cursor-pointer shadow-lg disabled:opacity-50"
+                  >
+                    {isUnlocking ? <RefreshCw className="w-4 h-4 animate-spin text-slate-950" /> : 'Unlock'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* Hidden Input field for keyboard users and visible indicator dots */}
+                <div className="space-y-4">
+                  <input
+                    type="password"
+                    value={lockScreenPinInput}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val.length > 6) {
+                        setLockScreenPinInput(val);
+                        setUseKeyMode(true);
+                      } else {
+                        const clean = val.replace(/[^0-9]/g, '');
+                        setLockScreenPinInput(clean);
+                      }
+                      setLockScreenError('');
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        handleUnlockWithPin();
+                      }
+                    }}
+                    className="sr-only"
+                    autoFocus
+                    aria-label="Enter Security PIN"
+                  />
+
+                  <div className="flex justify-center gap-3">
+                    {Array.from({ length: Math.max(4, lockScreenPinInput.length) }).slice(0, 6).map((_, i) => (
+                      <div
+                        key={i}
+                        className={`w-4 h-4 rounded-full border-2 transition-all duration-150 ${
+                          lockScreenPinInput.length > i
+                            ? 'bg-indigo-500 border-indigo-400 scale-110 shadow-lg shadow-indigo-500/50'
+                            : 'bg-transparent border-slate-700'
+                        }`}
+                      />
+                    ))}
+                  </div>
+
+                  {lockScreenError && (
+                    <p className="text-xs text-red-400 font-semibold animate-pulse">{lockScreenError}</p>
+                  )}
+                </div>
+
+                {/* Smart Touch Numeric Keypad */}
+                <div className="grid grid-cols-3 gap-3 max-w-[280px] mx-auto pt-2">
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => {
+                        if (lockScreenPinInput.length < 6) {
+                          setLockScreenPinInput(prev => prev + num.toString());
+                          setLockScreenError('');
+                        }
+                      }}
+                      className="h-14 w-14 rounded-2xl bg-white/5 hover:bg-white/10 active:scale-95 text-white text-lg font-bold transition-all flex items-center justify-center border border-white/5 cursor-pointer"
+                    >
+                      {num}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLockScreenPinInput('');
+                      setLockScreenError('');
+                    }}
+                    className="h-14 w-14 rounded-2xl bg-red-500/10 hover:bg-red-500/20 active:scale-95 text-red-400 text-xs font-bold transition-all flex items-center justify-center border border-red-500/10 cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (lockScreenPinInput.length < 6) {
+                        setLockScreenPinInput(prev => prev + '0');
+                        setLockScreenError('');
+                      }
+                    }}
+                    className="h-14 w-14 rounded-2xl bg-white/5 hover:bg-white/10 active:scale-95 text-white text-lg font-bold transition-all flex items-center justify-center border border-white/5 cursor-pointer"
+                  >
+                    0
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isUnlocking}
+                    onClick={handleUnlockWithPin}
+                    className="h-14 w-14 rounded-2xl bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-xs transition-all flex items-center justify-center cursor-pointer shadow-lg disabled:opacity-50"
+                  >
+                    {isUnlocking ? <RefreshCw className="w-4 h-4 animate-spin text-slate-950" /> : 'Enter'}
+                  </button>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUseKeyMode(true);
+                      setLockScreenError('');
+                    }}
+                    className="text-xs text-indigo-400 hover:text-indigo-300 font-medium transition-colors cursor-pointer"
+                  >
+                    🔑 Unlock with Password or Recovery Key
+                  </button>
+                </div>
+              </>
+            )}
 
             <p className="text-[10px] text-slate-500 uppercase tracking-widest pt-2">
               Secure Classroom Smart Board Session
@@ -5557,19 +5663,15 @@ ${roleLabel}: ${userQuery}`;
             <div className="space-y-3 pt-2 text-left">
               {hasPinConfigured && (
                 <div>
-                  <label className="text-[10px] uppercase font-mono text-slate-400 font-bold">Current PIN</label>
+                  <label className="text-[10px] uppercase font-mono text-slate-400 font-bold">Current PIN or Recovery Key</label>
                   <input
                     type="password"
-                    pattern="[0-9]*"
-                    inputMode="numeric"
-                    maxLength={6}
                     value={currentPinInput}
                     onChange={(e) => {
-                      const cleanVal = e.target.value.replace(/[^0-9]/g, '');
-                      setCurrentPinInput(cleanVal);
+                      setCurrentPinInput(e.target.value.trim());
                     }}
-                    className="w-full mt-1 px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-center text-lg tracking-widest font-black focus:border-indigo-500 outline-none"
-                    placeholder="••••"
+                    className="w-full mt-1 px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-center text-sm tracking-wider font-mono focus:border-indigo-500 outline-none text-white"
+                    placeholder="Enter PIN or recovery key"
                     autoFocus
                   />
                 </div>
@@ -5670,21 +5772,17 @@ ${roleLabel}: ${userQuery}`;
             <div className="pt-2 text-center">
               <input
                 type="password"
-                pattern="[0-9]*"
-                inputMode="numeric"
-                maxLength={6}
                 value={verifyPinInput}
                 onChange={(e) => {
-                  const cleanVal = e.target.value.replace(/[^0-9]/g, '');
-                  setVerifyPinInput(cleanVal);
+                  setVerifyPinInput(e.target.value.trim());
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     handleVerifyPin();
                   }
                 }}
-                className="w-full max-w-[200px] mx-auto px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-center text-lg tracking-widest font-black focus:border-amber-500 outline-none"
-                placeholder="••••"
+                className="w-full max-w-[240px] mx-auto px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-center text-sm tracking-wider font-mono focus:border-amber-500 outline-none text-white"
+                placeholder="PIN or recovery key"
                 autoFocus
               />
 
