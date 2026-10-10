@@ -5,7 +5,7 @@
  * StudentOS Professional In-App Learning Workspace Document Viewer
  * High-fidelity, self-contained educational document reader supporting
  * PDF.js canvas rendering, rich images, video/audio lectures, code/text,
- * and built-in Orion AI learning companion tools without leaving the app.
+ * Pen Mode freehand drawing, Eraser, Full Screen viewing, and annotation persistence.
  */
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -13,9 +13,17 @@ import {
   X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, RotateCw,
   Download, Share2, Sparkles, FileText, Image as ImageIcon,
   Video, Music, Loader2, Maximize2, Minimize2, ExternalLink,
-  BookOpen, Layers, HelpCircle, Globe, Check, Copy
+  BookOpen, Layers, HelpCircle, Globe, Check, Copy, PenTool, Eraser, Save
 } from 'lucide-react';
 import { UserProfile } from '../types';
+
+interface Stroke {
+  id: string;
+  page: number;
+  color: string;
+  width: number;
+  points: { x: number; y: number }[];
+}
 
 interface InAppDocumentViewerProps {
   url: string;
@@ -44,6 +52,19 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
   const [rotation, setRotation] = useState<number>(0);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Pen Mode & Eraser State
+  const [isPenMode, setIsPenMode] = useState<boolean>(false);
+  const [isEraser, setIsEraser] = useState<boolean>(false);
+  const [penColor, setPenColor] = useState<string>('#4f46e5'); // Indigo default
+  const [penWidth, setPenWidth] = useState<number>(3);
+  const [strokes, setStrokes] = useState<Stroke[]>([]);
+  const [isDrawing, setIsDrawing] = useState<boolean>(false);
+  const [currentStroke, setCurrentStroke] = useState<{ x: number; y: number }[] | null>(null);
+  const [isSavingAnnotations, setIsSavingAnnotations] = useState<boolean>(false);
+  const [annotationSaveStatus, setAnnotationSaveStatus] = useState<'saved' | 'saving' | 'error' | null>(null);
+
+  const drawingCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // PDF specific state
   const [isPdf, setIsPdf] = useState<boolean>(false);
@@ -85,6 +106,79 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
     setIsPdf(checkIsPdf);
     setIsText(checkIsText);
   }, [url, extension, fileType]);
+
+  // Load saved annotations on mount
+  useEffect(() => {
+    if (!url) return;
+    async function loadSavedAnnotations() {
+      try {
+        const res = await fetch(`/api/document-annotations?url=${encodeURIComponent(url)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.annotations)) {
+            setStrokes(data.annotations);
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load annotations:', err);
+      }
+    }
+    loadSavedAnnotations();
+  }, [url]);
+
+  // Save annotations to backend
+  const persistAnnotations = async (updatedStrokes: Stroke[]) => {
+    setAnnotationSaveStatus('saving');
+    setIsSavingAnnotations(true);
+    try {
+      const res = await fetch('/api/document-annotations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url,
+          annotations: updatedStrokes,
+          userId: currentUser?.uid || 'guest'
+        })
+      });
+      if (res.ok) {
+        setAnnotationSaveStatus('saved');
+        if (showNotification) showNotification('✓ Annotations saved successfully.');
+      } else {
+        setAnnotationSaveStatus('error');
+      }
+    } catch (e) {
+      setAnnotationSaveStatus('error');
+    } finally {
+      setIsSavingAnnotations(false);
+    }
+  };
+
+  // Full Screen Handler
+  const toggleFullscreen = () => {
+    if (!containerRef.current) return;
+    if (!document.fullscreenElement) {
+      containerRef.current.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => setIsFullscreen(false));
+    } else {
+      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {});
+    }
+  };
+
+  useEffect(() => {
+    const handleFsChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFsChange);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isFullscreen]);
 
   // Load PDF when PDF detected
   useEffect(() => {
@@ -152,7 +246,6 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
     };
   }, [url, checkIsPdf]);
 
-  // Re-render PDF page on page change or scale change
   const renderPdfPage = async (pageNum: number, currentScale = scale, doc = pdfDocRef.current) => {
     if (!doc || !canvasRef.current) return;
 
@@ -179,6 +272,7 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
       const task = page.render(renderContext);
       renderTaskRef.current = task;
       await task.promise;
+      redrawOverlay();
     } catch (e: any) {
       if (e.name !== 'RenderingCancelledException') {
         console.error('Render error:', e);
@@ -186,11 +280,137 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
     }
   };
 
+  // Redraw drawing overlay strokes
+  const redrawOverlay = () => {
+    const canvas = drawingCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const parent = canvas.parentElement;
+    if (parent) {
+      canvas.width = parent.clientWidth;
+      canvas.height = parent.clientHeight;
+    }
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw saved strokes for current page
+    const pageStrokes = strokes.filter(s => s.page === currentPage);
+    for (const stroke of pageStrokes) {
+      if (!stroke.points || stroke.points.length === 0) continue;
+      ctx.beginPath();
+      ctx.strokeStyle = stroke.color;
+      ctx.lineWidth = stroke.width;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      stroke.points.forEach((pt, idx) => {
+        if (idx === 0) ctx.moveTo(pt.x * canvas.width, pt.y * canvas.height);
+        else ctx.lineTo(pt.x * canvas.width, pt.y * canvas.height);
+      });
+      ctx.stroke();
+    }
+
+    // Draw active stroke if any
+    if (currentStroke && currentStroke.length > 0 && !isEraser) {
+      ctx.beginPath();
+      ctx.strokeStyle = penColor;
+      ctx.lineWidth = penWidth;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      currentStroke.forEach((pt, idx) => {
+        if (idx === 0) ctx.moveTo(pt.x * canvas.width, pt.y * canvas.height);
+        else ctx.lineTo(pt.x * canvas.width, pt.y * canvas.height);
+      });
+      ctx.stroke();
+    }
+  };
+
+  useEffect(() => {
+    redrawOverlay();
+  }, [strokes, currentStroke, currentPage, scale, isPenMode]);
+
+  // Drawing Handlers
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement> | React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    if (!isPenMode) return;
+    const canvas = drawingCanvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const clientX = 'clientX' in e ? e.clientX : (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+    const clientY = 'clientY' in e ? e.clientY : (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+
+    const x = (clientX - rect.left) / rect.width;
+    const y = (clientY - rect.top) / rect.height;
+
+    if (isEraser) {
+      eraseAtPoint(x, y);
+      setIsDrawing(true);
+    } else {
+      setIsDrawing(true);
+      setCurrentStroke([{ x, y }]);
+    }
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement> | React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    if (!isPenMode || !isDrawing) return;
+    const canvas = drawingCanvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const clientX = 'clientX' in e ? e.clientX : (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+    const clientY = 'clientY' in e ? e.clientY : (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+
+    const x = (clientX - rect.left) / rect.width;
+    const y = (clientY - rect.top) / rect.height;
+
+    if (isEraser) {
+      eraseAtPoint(x, y);
+    } else {
+      setCurrentStroke(prev => (prev ? [...prev, { x, y }] : [{ x, y }]));
+    }
+  };
+
+  const handlePointerUp = () => {
+    if (!isPenMode || !isDrawing) return;
+    setIsDrawing(false);
+
+    if (!isEraser && currentStroke && currentStroke.length > 0) {
+      const newStroke: Stroke = {
+        id: 'stroke_' + Date.now() + Math.random().toString(36).substring(2, 6),
+        page: currentPage,
+        color: penColor,
+        width: penWidth,
+        points: currentStroke
+      };
+      const updated = [...strokes, newStroke];
+      setStrokes(updated);
+      setCurrentStroke(null);
+      persistAnnotations(updated);
+    }
+  };
+
+  const eraseAtPoint = (x: number, y: number) => {
+    const threshold = 0.03; // hit-testing radius
+    const remainingStrokes = strokes.filter(stroke => {
+      if (stroke.page !== currentPage) return true;
+      const hit = stroke.points.some(pt => Math.hypot(pt.x - x, pt.y - y) < threshold);
+      return !hit;
+    });
+
+    if (remainingStrokes.length !== strokes.length) {
+      setStrokes(remainingStrokes);
+      persistAnnotations(remainingStrokes);
+    }
+  };
+
   const handleNextPage = () => {
     if (currentPage < numPages) {
       const next = currentPage + 1;
       setCurrentPage(next);
-      renderPdfPage(next);
+      if (checkIsPdf) renderPdfPage(next);
     }
   };
 
@@ -198,7 +418,7 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
     if (currentPage > 1) {
       const prev = currentPage - 1;
       setCurrentPage(prev);
-      renderPdfPage(prev);
+      if (checkIsPdf) renderPdfPage(prev);
     }
   };
 
@@ -318,9 +538,60 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
         {/* Center / Action Toolbar */}
         <div className="flex items-center gap-1.5 sm:gap-2">
           
+          {/* Pen Mode Toggle */}
+          <button
+            onClick={() => {
+              setIsPenMode(!isPenMode);
+              if (isPenMode) setIsEraser(false);
+            }}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${isPenMode ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 border border-indigo-400' : 'bg-slate-800 text-slate-300 hover:text-white border border-white/5'}`}
+            title="Toggle Pen Mode"
+          >
+            <PenTool className="w-4 h-4" />
+            <span className="hidden sm:inline">Pen Mode</span>
+          </button>
+
+          {/* Eraser Button (Only visible when Pen Mode is active) */}
+          {isPenMode && (
+            <button
+              onClick={() => setIsEraser(!isEraser)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${isEraser ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/30 border border-rose-400' : 'bg-slate-800 text-slate-300 hover:text-white border border-white/5'}`}
+              title="Toggle Eraser"
+            >
+              <Eraser className="w-4 h-4" />
+              <span className="hidden sm:inline">Eraser</span>
+            </button>
+          )}
+
+          {/* Pen Color & Width selectors when Pen Mode is active */}
+          {isPenMode && !isEraser && (
+            <div className="flex items-center gap-1 bg-slate-950 px-2 py-1 rounded-xl border border-white/10">
+              {['#4f46e5', '#ef4444', '#22c55e', '#eab308', '#ffffff', '#000000'].map(c => (
+                <button
+                  key={c}
+                  onClick={() => setPenColor(c)}
+                  style={{ backgroundColor: c }}
+                  className={`w-4 h-4 rounded-full border transition-transform ${penColor === c ? 'scale-125 border-white ring-2 ring-indigo-500' : 'border-transparent hover:scale-110'}`}
+                  title={`Color ${c}`}
+                />
+              ))}
+              <select
+                value={penWidth}
+                onChange={(e) => setPenWidth(Number(e.target.value))}
+                className="bg-slate-900 text-white text-[10px] font-bold rounded px-1 py-0.5 border border-white/10 ml-1"
+                title="Stroke Width"
+              >
+                <option value={2}>2px</option>
+                <option value={3}>3px</option>
+                <option value={5}>5px</option>
+                <option value={8}>8px</option>
+              </select>
+            </div>
+          )}
+
           {/* PDF Page Navigator */}
           {checkIsPdf && numPages > 1 && (
-            <div className="flex items-center gap-1 bg-slate-950 px-2 py-1 rounded-xl border border-white/5 mr-2">
+            <div className="flex items-center gap-1 bg-slate-950 px-2 py-1 rounded-xl border border-white/5 mr-1">
               <button
                 onClick={handlePrevPage}
                 disabled={currentPage <= 1}
@@ -329,7 +600,7 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              <span className="text-xs font-mono font-bold px-2 text-slate-200">
+              <span className="text-xs font-mono font-bold px-1 text-slate-200">
                 {currentPage}/{numPages}
               </span>
               <button
@@ -362,6 +633,15 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
             </button>
           </div>
 
+          {/* Full Screen Toggle Button */}
+          <button
+            onClick={toggleFullscreen}
+            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-white/5 transition-colors"
+            title={isFullscreen ? 'Exit Full Screen' : 'Full Screen'}
+          >
+            {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+          </button>
+
           {/* AI Learning Assistant Drawer Toggle */}
           <button
             onClick={() => {
@@ -386,17 +666,6 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
             <Download className="w-4 h-4" />
           </button>
 
-          {/* Share to Class Chat */}
-          {onShareToChat && (
-            <button
-              onClick={onShareToChat}
-              className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-white/5 transition-colors"
-              title="Share to Class Chat Room"
-            >
-              <Share2 className="w-4 h-4" />
-            </button>
-          )}
-
           {/* Close Viewer */}
           <button
             onClick={onClose}
@@ -411,9 +680,16 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
       {/* Main Document Canvas Viewport */}
       <main className="flex-1 relative overflow-auto flex items-center justify-center p-4 sm:p-8 bg-slate-950">
         
+        {/* Saving Indicator Overlay */}
+        {isSavingAnnotations && (
+          <div className="absolute top-4 left-4 z-40 bg-slate-900/90 border border-white/10 px-3 py-1.5 rounded-xl text-[11px] text-indigo-300 flex items-center gap-2 shadow-lg backdrop-blur">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" /> Saving annotations...
+          </div>
+        )}
+
         {/* 1. PDF Canvas Mode */}
         {checkIsPdf && (
-          <div className="max-w-full max-h-full flex items-center justify-center">
+          <div className="relative max-w-full max-h-full flex items-center justify-center">
             {pdfLoading && (
               <div className="flex flex-col items-center gap-3">
                 <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
@@ -439,22 +715,47 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
               </div>
             )}
 
-            <canvas
-              ref={canvasRef}
-              className={`max-w-full shadow-2xl rounded-xl border border-white/10 bg-white transition-all ${pdfLoading || pdfError ? 'hidden' : 'block'}`}
-            />
+            <div className="relative inline-block">
+              <canvas
+                ref={canvasRef}
+                className={`max-w-full shadow-2xl rounded-xl border border-white/10 bg-white transition-all ${pdfLoading || pdfError ? 'hidden' : 'block'}`}
+              />
+              {/* Drawing / Eraser Canvas Overlay */}
+              <canvas
+                ref={drawingCanvasRef}
+                onMouseDown={handlePointerDown}
+                onMouseMove={handlePointerMove}
+                onMouseUp={handlePointerUp}
+                onTouchStart={handlePointerDown}
+                onTouchMove={handlePointerMove}
+                onTouchEnd={handlePointerUp}
+                className={`absolute inset-0 z-10 w-full h-full rounded-xl ${isPenMode ? (isEraser ? 'cursor-cell' : 'cursor-crosshair') : 'pointer-events-none'}`}
+              />
+            </div>
           </div>
         )}
 
         {/* 2. High-Res Image Mode */}
         {isImage && (
-          <div className="max-w-full max-h-full flex items-center justify-center overflow-auto p-4">
-            <img
-              src={url}
-              alt={cleanTitle}
-              style={{ transform: `scale(${scale}) rotate(${rotation}deg)` }}
-              className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl border border-white/10 transition-transform duration-200"
-            />
+          <div className="relative max-w-full max-h-full flex items-center justify-center overflow-auto p-4">
+            <div className="relative inline-block">
+              <img
+                src={url}
+                alt={cleanTitle}
+                style={{ transform: `scale(${scale}) rotate(${rotation}deg)` }}
+                className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl border border-white/10 transition-transform duration-200"
+              />
+              <canvas
+                ref={drawingCanvasRef}
+                onMouseDown={handlePointerDown}
+                onMouseMove={handlePointerMove}
+                onMouseUp={handlePointerUp}
+                onTouchStart={handlePointerDown}
+                onTouchMove={handlePointerMove}
+                onTouchEnd={handlePointerUp}
+                className={`absolute inset-0 z-10 w-full h-full rounded-2xl ${isPenMode ? (isEraser ? 'cursor-cell' : 'cursor-crosshair') : 'pointer-events-none'}`}
+              />
+            </div>
           </div>
         )}
 

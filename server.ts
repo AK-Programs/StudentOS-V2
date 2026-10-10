@@ -1536,6 +1536,26 @@ app.get('/api/whiteboard/documents', async (req, res) => {
   });
 });
 
+// Document Annotations Memory & Endpoints
+const documentAnnotationsMemory: Record<string, any[]> = {};
+
+app.get('/api/document-annotations', (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: 'URL is required' });
+  const key = String(url);
+  const annotations = documentAnnotationsMemory[key] || [];
+  return res.json({ success: true, annotations });
+});
+
+app.post('/api/document-annotations', (req, res) => {
+  const { url, annotations } = req.body || {};
+  if (!url) return res.status(400).json({ error: 'URL is required' });
+  const key = String(url);
+  documentAnnotationsMemory[key] = Array.isArray(annotations) ? annotations : [];
+  console.log(`[ANNOTATIONS] Saved ${documentAnnotationsMemory[key].length} strokes for document url: ${key.slice(0, 40)}...`);
+  return res.json({ success: true, count: documentAnnotationsMemory[key].length });
+});
+
 app.get('/api/whiteboard/documents/:id', async (req, res) => {
   const { id } = req.params;
   let doc = cloudWhiteboardsMemory.find(d => d.id === id);
