@@ -83,6 +83,15 @@ import AIQuotaManagerModal from './components/AIQuotaManagerModal';
 import { InstallAppModal, AppInstallSection } from './components/InstallAppModal';
 import { isApkInstalledOnDevice } from './config/appConfig';
 import { WhatsNewPortal } from './components/WhatsNewPortal';
+import { SecurityDialog } from './components/SecurityDialog';
+import {
+  getSecurityStatus,
+  lockWorkspace,
+  unlockWorkspace,
+  setWorkspacePin,
+  verifySecurityPin,
+  subscribeToWorkspaceLockChanges
+} from './lib/securityService';
 import { MajorReleaseBanner } from './components/MajorReleaseBanner';
 import { StudyCenterFlashcards } from './components/StudyCenterFlashcards';
 import { ProfessionalTabDropdown } from './components/ProfessionalTabDropdown';
@@ -638,14 +647,17 @@ export default function App() {
       return false;
     }
   });
-  const [teacherPin, setTeacherPin] = useState<string>(() => {
-    try {
-      return localStorage.getItem('s_os_teacher_pin') || '';
-    } catch (e) {
-      return '';
-    }
-  });
+  // Classroom Security & Workspace Lock States
   const [isLocked, setIsLocked] = useState<boolean>(false);
+  const [isSecurityChecking, setIsSecurityChecking] = useState<boolean>(true);
+  const [hasPinConfigured, setHasPinConfigured] = useState<boolean>(false);
+  const [securityStatusError, setSecurityStatusError] = useState<string>('');
+  const [isLockingWorkspace, setIsLockingWorkspace] = useState<boolean>(false);
+  const [isUnlocking, setIsUnlocking] = useState<boolean>(false);
+  const [isSavingPin, setIsSavingPin] = useState<boolean>(false);
+  const [isVerifyingPin, setIsVerifyingPin] = useState<boolean>(false);
+  const [currentPinInput, setCurrentPinInput] = useState<string>('');
+
   const [autoLockTime, setAutoLockTime] = useState<number>(() => {
     try {
       const saved = localStorage.getItem('s_os_auto_lock_time');
@@ -702,7 +714,7 @@ export default function App() {
     return base;
   };
 
-  const handleSavePin = () => {
+  const handleSavePin = async () => {
     if (newPin.length !== 4 && newPin.length !== 6) {
       setPinError('PIN must be exactly 4 or 6 digits.');
       return;
@@ -711,48 +723,63 @@ export default function App() {
       setPinError('PINs do not match.');
       return;
     }
+    if (hasPinConfigured && !currentPinInput) {
+      setPinError('Current PIN is required to change PIN.');
+      return;
+    }
+
+    setIsSavingPin(true);
+    setPinError('');
     try {
-      localStorage.setItem('s_os_teacher_pin', newPin);
-      setTeacherPin(newPin);
-      if (currentUser) {
-        const updatedUser = { ...currentUser, pin: newPin };
-        setCurrentUser(updatedUser);
-        saveSupabaseUserProfile(updatedUser).catch(console.error);
+      const res = await setWorkspacePin(newPin, hasPinConfigured ? currentPinInput : undefined, currentUser?.uid);
+      if (res.success) {
+        setHasPinConfigured(true);
+        setPinSetupOpen(false);
+        setNewPin('');
+        setConfirmPin('');
+        setCurrentPinInput('');
+        setPinError('');
+        try { localStorage.removeItem('s_os_teacher_pin'); } catch(e){}
+        showNotification('✅ Security PIN saved and enforced on server!');
+      } else {
+        setPinError(res.error || 'Failed to save security PIN.');
       }
-      setPinSetupOpen(false);
-      setPinError('');
-      setNewPin('');
-      setConfirmPin('');
-      showNotification('✅ Security PIN saved successfully!');
     } catch (e) {
-      setPinError('Failed to save PIN.');
+      setPinError('Network error while saving PIN.');
+    } finally {
+      setIsSavingPin(false);
     }
   };
 
-  const handleVerifyPin = () => {
-    const activePin = currentUser?.pin || teacherPin;
-    if (verifyPinInput === activePin || verifyPinInput === '5205' /* Master Override */) {
-      if (pinVerifyAction) {
-        pinVerifyAction();
+  const handleVerifyPin = async () => {
+    if (!verifyPinInput) {
+      setPinError('Please enter your security PIN.');
+      return;
+    }
+    setIsVerifyingPin(true);
+    setPinError('');
+    try {
+      const res = await verifySecurityPin(verifyPinInput);
+      if (res.success) {
+        if (pinVerifyAction) {
+          pinVerifyAction();
+        }
+        setPinVerifyOpen(false);
+        setPinVerifyAction(null);
+        setVerifyPinInput('');
+        setPinError('');
+      } else {
+        setPinError(res.error || 'Incorrect security PIN.');
       }
-      setIsLocked(false);
-      setPinVerifyOpen(false);
-      setPinVerifyAction(null);
-      setVerifyPinInput('');
-      setPinError('');
-      if (currentUser && currentUser.raw_data?.isLocked) {
-        const updatedUser = { ...currentUser, raw_data: { ...(currentUser.raw_data || {}), isLocked: false } };
-        setCurrentUser(updatedUser);
-        saveSupabaseUserProfile(updatedUser).catch(console.error);
-      }
-    } else {
-      setPinError('Incorrect PIN. Please try again.');
+    } catch (e) {
+      setPinError('Connection error during verification.');
+    } finally {
+      setIsVerifyingPin(false);
     }
   };
 
   const triggerPinVerification = (action: () => void) => {
-    const activePin = currentUser?.pin || teacherPin;
-    if (!activePin) {
+    if (!hasPinConfigured) {
       setPinSetupOpen(true);
       return;
     }
@@ -760,21 +787,56 @@ export default function App() {
     setPinVerifyOpen(true);
   };
 
-  const handleUnlockWithPin = () => {
-    const activePin = currentUser?.pin || teacherPin;
-    if (lockScreenPinInput === activePin) {
-      setIsLocked(false);
-      setLockScreenPinInput('');
-      setLockScreenError('');
-      setLastActivity(Date.now());
-      if (currentUser) {
-        const updatedUser = { ...currentUser, raw_data: { ...(currentUser.raw_data || {}), isLocked: false } };
-        setCurrentUser(updatedUser);
-        saveSupabaseUserProfile(updatedUser).catch(console.error);
+  const handleUnlockWithPin = async () => {
+    if (!lockScreenPinInput) {
+      setLockScreenError('Please enter your security PIN.');
+      return;
+    }
+    setIsUnlocking(true);
+    setLockScreenError('');
+    try {
+      const res = await unlockWorkspace(lockScreenPinInput);
+      if (res.success) {
+        setIsLocked(false);
+        setLockScreenPinInput('');
+        setLockScreenError('');
+        setLastActivity(Date.now());
+        showNotification('🔓 Workspace unlocked successfully.');
+      } else {
+        setLockScreenError(res.error || 'Incorrect security PIN.');
+        setLockScreenPinInput('');
       }
-      showNotification('🔓 Workspace unlocked successfully.');
-    } else {
-      setLockScreenError('Incorrect security PIN.');
+    } catch (err) {
+      setLockScreenError('Connection error during unlock verification.');
+    } finally {
+      setIsUnlocking(false);
+    }
+  };
+
+  const handleLockWorkspace = async () => {
+    if (!hasPinConfigured) {
+      setSecurityMenuOpen(false);
+      setPinSetupOpen(true);
+      showNotification('🔑 Please configure a Security PIN before locking.');
+      return;
+    }
+    setIsLockingWorkspace(true);
+    try {
+      const res = await lockWorkspace({
+        userId: currentUser?.uid,
+        userName: currentUser?.name || 'Faculty Member'
+      });
+      if (res.success) {
+        setIsLocked(true);
+        setSecurityMenuOpen(false);
+        showNotification('🔒 Workspace locked. PIN required to resume.');
+      } else {
+        showNotification('⚠️ ' + (res.error || 'Failed to lock workspace.'));
+      }
+    } catch (err) {
+      showNotification('⚠️ Network error while locking workspace.');
+    } finally {
+      setIsLockingWorkspace(false);
     }
   };
 
@@ -1068,7 +1130,11 @@ export default function App() {
     const interval = setInterval(() => {
       const elapsed = Date.now() - lastActivity;
       if (elapsed >= autoLockTime * 60 * 1000) {
-        setIsLocked(true);
+        if (hasPinConfigured) {
+          setIsLocked(true);
+          lockWorkspace({ userId: currentUser?.uid, userName: currentUser?.name }).catch(console.error);
+          showNotification('⏰ Workspace locked due to inactivity.');
+        }
       }
     }, 5000); // Check every 5 seconds
 
@@ -1079,53 +1145,73 @@ export default function App() {
       window.removeEventListener('mousemove', handleActivity);
       clearInterval(interval);
     };
-  }, [autoLockTime, lastActivity, isLocked, effectiveRole, currentUser]);
+  }, [autoLockTime, lastActivity, isLocked, effectiveRole, currentUser, hasPinConfigured]);
 
-  // Sync Remote Lock State
+  // Authoritative Security State Fetch & Cross-Device Realtime Subscription
   useEffect(() => {
-    if (currentUser?.raw_data?.isLocked && !isLocked) {
-      setIsLocked(true);
-    }
-  }, [currentUser, isLocked]);
-
-  // Realtime Subscription for Workspace Lock (cross-device sync)
-  useEffect(() => {
-    if (!currentUser?.uid) return;
-    let channel: any = null;
-    try {
-      supabase.getChannels().forEach(ch => {
-        if (ch.topic === 'realtime:public:user_profiles') {
-          supabase.removeChannel(ch);
+    let isMounted = true;
+    async function initSecurity() {
+      setIsSecurityChecking(true);
+      try {
+        const sec = await getSecurityStatus();
+        if (isMounted) {
+          setIsLocked(sec.isLocked);
+          setHasPinConfigured(sec.hasPinConfigured);
         }
-      });
-      channel = supabase.channel('public:user_profiles')
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'user_profiles', filter: `id=eq.${currentUser.uid}` },
-          (payload) => {
-            if (payload.new && payload.new.raw_data) {
-              let rd = payload.new.raw_data;
-              if (typeof rd === 'string') {
-                try { rd = JSON.parse(rd); } catch(e){}
-              }
-              if (rd.isLocked === true) {
-                 setIsLocked(true);
-                 setCurrentUser(prev => prev ? { ...prev, raw_data: rd } : prev);
-              } else if (rd.isLocked === false) {
-                 setIsLocked(false);
-                 setCurrentUser(prev => prev ? { ...prev, raw_data: rd } : prev);
-              }
-            }
-          }
-        )
-        .subscribe();
-    } catch (err) {
-      console.warn('[Realtime] Workspace lock channel warning:', err);
+      } catch (err) {
+        console.error('[Security] Failed to fetch authoritative security state:', err);
+        if (isMounted) {
+          setSecurityStatusError('Security verification failed. Operating in secure mode.');
+        }
+      } finally {
+        if (isMounted) {
+          setIsSecurityChecking(false);
+        }
+      }
     }
+    initSecurity();
+
+    const unsubscribe = subscribeToWorkspaceLockChanges((remoteLocked) => {
+      if (isMounted) {
+        setIsLocked(remoteLocked);
+        if (remoteLocked) {
+          showNotification('🔒 Workspace locked by authorized session.');
+        } else {
+          showNotification('🔓 Workspace unlocked.');
+        }
+      }
+    });
+
     return () => {
-      if (channel) supabase.removeChannel(channel);
+      isMounted = false;
+      unsubscribe();
     };
-  }, [currentUser?.uid]);
+  }, []);
+
+  // Keyboard support for Lock Screen numeric entry
+  useEffect(() => {
+    if (!isLocked) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Do not capture if typing in another input element
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key >= '0' && e.key <= '9') {
+        if (lockScreenPinInput.length < 6) {
+          setLockScreenPinInput(prev => prev + e.key);
+          setLockScreenError('');
+        }
+      } else if (e.key === 'Backspace') {
+        setLockScreenPinInput(prev => prev.slice(0, -1));
+        setLockScreenError('');
+      } else if (e.key === 'Enter') {
+        handleUnlockWithPin();
+      } else if (e.key === 'Escape') {
+        setLockScreenPinInput('');
+        setLockScreenError('');
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isLocked, lockScreenPinInput]);
 
 
   // Session & Permission Protection
@@ -5329,7 +5415,7 @@ ${roleLabel}: ${userQuery}`;
       
       {/* 🔒 Screen Lock Screen Overlay */}
       {isLocked && (
-        <div className="fixed inset-0 bg-slate-950/98 backdrop-blur-2xl flex flex-col items-center justify-center z-[200] animate-fadeIn select-none">
+        <div className="fixed inset-0 bg-slate-950/98 backdrop-blur-2xl flex flex-col items-center justify-center z-[200] animate-fadeIn select-none p-4">
           <div className="max-w-md w-full px-6 text-center space-y-6">
             <div className="mx-auto h-16 w-16 bg-red-500/10 border border-red-500/20 text-red-400 rounded-3xl flex items-center justify-center text-2xl shadow-xl animate-bounce">
               <Lock className="w-8 h-8" />
@@ -5342,8 +5428,31 @@ ${roleLabel}: ${userQuery}`;
 
             {/* Hidden Input field for keyboard users and visible indicator dots */}
             <div className="space-y-4">
+              <input
+                type="password"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                value={lockScreenPinInput}
+                onChange={(e) => {
+                  const clean = e.target.value.replace(/[^0-9]/g, '');
+                  if (clean.length <= 6) {
+                    setLockScreenPinInput(clean);
+                    setLockScreenError('');
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleUnlockWithPin();
+                  }
+                }}
+                className="sr-only"
+                autoFocus
+                aria-label="Enter Security PIN"
+              />
+
               <div className="flex justify-center gap-3">
-                {Array.from({ length: teacherPin.length || 4 }).map((_, i) => (
+                {Array.from({ length: Math.max(4, lockScreenPinInput.length) }).slice(0, 6).map((_, i) => (
                   <div
                     key={i}
                     className={`w-4 h-4 rounded-full border-2 transition-all duration-150 ${
@@ -5365,8 +5474,9 @@ ${roleLabel}: ${userQuery}`;
               {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
                 <button
                   key={num}
+                  type="button"
                   onClick={() => {
-                    if (lockScreenPinInput.length < (teacherPin.length || 4)) {
+                    if (lockScreenPinInput.length < 6) {
                       setLockScreenPinInput(prev => prev + num.toString());
                       setLockScreenError('');
                     }
@@ -5377,6 +5487,7 @@ ${roleLabel}: ${userQuery}`;
                 </button>
               ))}
               <button
+                type="button"
                 onClick={() => {
                   setLockScreenPinInput('');
                   setLockScreenError('');
@@ -5386,8 +5497,9 @@ ${roleLabel}: ${userQuery}`;
                 Clear
               </button>
               <button
+                type="button"
                 onClick={() => {
-                  if (lockScreenPinInput.length < (teacherPin.length || 4)) {
+                  if (lockScreenPinInput.length < 6) {
                     setLockScreenPinInput(prev => prev + '0');
                     setLockScreenError('');
                   }
@@ -5397,10 +5509,12 @@ ${roleLabel}: ${userQuery}`;
                 0
               </button>
               <button
+                type="button"
+                disabled={isUnlocking}
                 onClick={handleUnlockWithPin}
-                className="h-14 w-14 rounded-2xl bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-xs transition-all flex items-center justify-center cursor-pointer"
+                className="h-14 w-14 rounded-2xl bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-xs transition-all flex items-center justify-center cursor-pointer shadow-lg disabled:opacity-50"
               >
-                Enter
+                {isUnlocking ? <RefreshCw className="w-4 h-4 animate-spin text-slate-950" /> : 'Enter'}
               </button>
             </div>
 
@@ -5413,15 +5527,17 @@ ${roleLabel}: ${userQuery}`;
 
       {/* 📝 Teacher PIN Setup / Modification Modal */}
       {pinSetupOpen && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-[250] animate-fadeIn">
-          <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 max-w-sm w-full mx-4 space-y-4 shadow-2xl text-slate-100">
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-[250] animate-fadeIn p-4">
+          <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 max-w-sm w-full mx-auto space-y-4 shadow-2xl text-slate-100">
             <div className="flex items-center justify-between border-b border-white/5 pb-2">
               <span className="font-bold text-sm text-indigo-400">🛡️ Classroom PIN Setup</span>
               <button
+                type="button"
                 onClick={() => {
                   setPinSetupOpen(false);
                   setNewPin('');
                   setConfirmPin('');
+                  setCurrentPinInput('');
                   setPinError('');
                 }}
                 className="text-slate-400 hover:text-white"
@@ -5432,11 +5548,33 @@ ${roleLabel}: ${userQuery}`;
 
             <div className="space-y-1.5 text-xs">
               <p className="text-slate-400">
-                Create a 4 or 6-digit PIN to securely manage presentation modes and quick locks without exposing your password.
+                {hasPinConfigured
+                  ? 'Update your 4 or 6-digit workspace PIN. Requires current PIN for security.'
+                  : 'Create a 4 or 6-digit PIN to securely lock your workspace and protect classroom privacy.'}
               </p>
             </div>
 
             <div className="space-y-3 pt-2 text-left">
+              {hasPinConfigured && (
+                <div>
+                  <label className="text-[10px] uppercase font-mono text-slate-400 font-bold">Current PIN</label>
+                  <input
+                    type="password"
+                    pattern="[0-9]*"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={currentPinInput}
+                    onChange={(e) => {
+                      const cleanVal = e.target.value.replace(/[^0-9]/g, '');
+                      setCurrentPinInput(cleanVal);
+                    }}
+                    className="w-full mt-1 px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-center text-lg tracking-widest font-black focus:border-indigo-500 outline-none"
+                    placeholder="••••"
+                    autoFocus
+                  />
+                </div>
+              )}
+
               <div>
                 <label className="text-[10px] uppercase font-mono text-slate-400 font-bold">New Security PIN</label>
                 <input
@@ -5455,7 +5593,7 @@ ${roleLabel}: ${userQuery}`;
               </div>
 
               <div>
-                <label className="text-[10px] uppercase font-mono text-slate-400 font-bold">Confirm PIN</label>
+                <label className="text-[10px] uppercase font-mono text-slate-400 font-bold">Confirm New PIN</label>
                 <input
                   type="password"
                   pattern="[0-9]*"
@@ -5478,21 +5616,25 @@ ${roleLabel}: ${userQuery}`;
 
             <div className="flex gap-2.5 pt-2">
               <button
+                type="button"
                 onClick={() => {
                   setPinSetupOpen(false);
                   setNewPin('');
                   setConfirmPin('');
+                  setCurrentPinInput('');
                   setPinError('');
                 }}
-                className="flex-1 py-2 rounded-xl bg-white/5 hover:bg-white/10 font-bold text-xs transition-all"
+                className="flex-1 py-2 rounded-xl bg-white/5 hover:bg-white/10 font-bold text-xs transition-all cursor-pointer"
               >
                 Cancel
               </button>
               <button
+                type="button"
+                disabled={isSavingPin}
                 onClick={handleSavePin}
-                className="flex-1 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-bold text-xs text-white transition-all shadow-lg"
+                className="flex-1 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-bold text-xs text-white transition-all shadow-lg cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
               >
-                Save Security PIN
+                {isSavingPin ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : (hasPinConfigured ? 'Update PIN' : 'Save PIN')}
               </button>
             </div>
           </div>
@@ -5501,11 +5643,12 @@ ${roleLabel}: ${userQuery}`;
 
       {/* 🔑 PIN Verification / Authorization Modal */}
       {pinVerifyOpen && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-[250] animate-fadeIn">
-          <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 max-w-sm w-full mx-4 space-y-4 shadow-2xl text-slate-100">
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-[250] animate-fadeIn p-4">
+          <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 max-w-sm w-full mx-auto space-y-4 shadow-2xl text-slate-100">
             <div className="flex items-center justify-between border-b border-white/5 pb-2">
               <span className="font-bold text-sm text-amber-400">🔑 Security Authorization</span>
               <button
+                type="button"
                 onClick={() => {
                   setPinVerifyOpen(false);
                   setVerifyPinInput('');
@@ -5520,7 +5663,7 @@ ${roleLabel}: ${userQuery}`;
 
             <div className="space-y-1 text-center">
               <p className="text-xs text-slate-400">
-                Please enter your teacher security PIN to authorize this sensitive action.
+                Please enter your security PIN to authorize this sensitive action.
               </p>
             </div>
 
@@ -5529,11 +5672,16 @@ ${roleLabel}: ${userQuery}`;
                 type="password"
                 pattern="[0-9]*"
                 inputMode="numeric"
-                maxLength={teacherPin.length || 4}
+                maxLength={6}
                 value={verifyPinInput}
                 onChange={(e) => {
                   const cleanVal = e.target.value.replace(/[^0-9]/g, '');
                   setVerifyPinInput(cleanVal);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleVerifyPin();
+                  }
                 }}
                 className="w-full max-w-[200px] mx-auto px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-center text-lg tracking-widest font-black focus:border-amber-500 outline-none"
                 placeholder="••••"
@@ -5547,26 +5695,70 @@ ${roleLabel}: ${userQuery}`;
 
             <div className="flex gap-2.5 pt-2">
               <button
+                type="button"
                 onClick={() => {
                   setPinVerifyOpen(false);
                   setVerifyPinInput('');
                   setPinVerifyAction(null);
                   setPinError('');
                 }}
-                className="flex-1 py-2 rounded-xl bg-white/5 hover:bg-white/10 font-bold text-xs transition-all"
+                className="flex-1 py-2 rounded-xl bg-white/5 hover:bg-white/10 font-bold text-xs transition-all cursor-pointer"
               >
                 Cancel
               </button>
               <button
+                type="button"
+                disabled={isVerifyingPin}
                 onClick={handleVerifyPin}
-                className="flex-1 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition-all shadow-lg"
+                className="flex-1 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition-all shadow-lg cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
               >
-                Authorize
+                {isVerifyingPin ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-950" /> : 'Authorize'}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* 🛡️ Classroom Security Dialog Modal (Portal-backed, Responsive) */}
+      <SecurityDialog
+        isOpen={securityMenuOpen}
+        onClose={() => setSecurityMenuOpen(false)}
+        isLocked={isLocked}
+        hasPinConfigured={hasPinConfigured}
+        isLoading={isSecurityChecking}
+        presentationMode={presentationMode}
+        onTogglePresentationMode={() => {
+          if (presentationMode) {
+            triggerPinVerification(() => {
+              setPresentationMode(false);
+              localStorage.setItem('s_os_presentation_mode', 'false');
+              showNotification('🔓 Presentation Mode disabled. Normal views restored.');
+            });
+          } else {
+            if (!hasPinConfigured) {
+              setSecurityMenuOpen(false);
+              setPinSetupOpen(true);
+            } else {
+              setPresentationMode(true);
+              localStorage.setItem('s_os_presentation_mode', 'true');
+              if (!isTabAllowedInPresentation(activeTab)) {
+                setActiveTab('whiteboard');
+              }
+              showNotification('🔒 Presentation Mode active on Smart Board.');
+            }
+          }
+        }}
+        autoLockTime={autoLockTime}
+        onChangeAutoLockTime={(minutes) => {
+          setAutoLockTime(minutes);
+          localStorage.setItem('s_os_auto_lock_time', minutes.toString());
+          showNotification(minutes > 0 ? `⏰ Screen will auto-lock after ${minutes} minutes of inactivity.` : '⏰ Auto-lock disabled.');
+        }}
+        onOpenPinSetup={() => setPinSetupOpen(true)}
+        onLockWorkspace={handleLockWorkspace}
+        isLocking={isLockingWorkspace}
+        statusError={securityStatusError}
+      />
       
       {/* Startup Screen — Quantum Neural Boot Experience */}
       {(showStartup || (!currentUser && (firebaseLoading || dataLoading))) && (
@@ -6530,7 +6722,7 @@ ${roleLabel}: ${userQuery}`;
         </div>
       )}
 
-      {currentUser && (
+      {currentUser && !isLocked && (
         <div className="flex min-h-screen relative">
           
           {/* Sidebar Overlay (Closes sidebar on outside click for Mobile/Tablet) */}
@@ -7388,162 +7580,22 @@ ${roleLabel}: ${userQuery}`;
                 
                 {/* Classroom Security Center */}
                 {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '') && (
-                  <div className="relative">
-                    <button
-                      onClick={() => setSecurityMenuOpen(!securityMenuOpen)}
-                      className={`p-1.5 sm:px-3 sm:py-2 rounded-xl border flex items-center gap-1.5 sm:gap-2 cursor-pointer transition-all min-h-[32px] sm:min-h-[38px] ${
-                        presentationMode 
-                          ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg' 
-                          : 'bg-slate-900 border-white/5 hover:bg-slate-800 text-slate-300'
-                      }`}
-                      title="Classroom Security Center"
-                    >
-                      <Lock className="w-3.5 h-3.5 shrink-0" />
-                      <span className="hidden sm:inline">Security</span>
-                      {presentationMode && (
-                        <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
-                      )}
-                    </button>
-
-                    {securityMenuOpen && (
-                      <div className="fixed sm:absolute inset-x-3 sm:inset-x-auto sm:right-0 top-16 sm:top-auto sm:mt-3 sm:w-72 max-w-[calc(100vw-1.5rem)] rounded-2xl border border-white/10 bg-slate-950 p-4 shadow-2xl z-50 space-y-3.5 animate-fadeIn text-slate-100">
-                        <div className="pb-2 border-b border-white/5 flex items-center justify-between">
-                          <span className="text-xs uppercase font-mono tracking-wider font-extrabold text-indigo-400 flex items-center gap-1.5">
-                            🔒 Classroom Panel
-                          </span>
-                          <button 
-                            onClick={() => setSecurityMenuOpen(false)}
-                            className="text-slate-400 hover:text-white"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-
-                        {/* Interactive Actions */}
-                        <div className="space-y-3">
-                          {/* 1. Presentation Mode Toggle */}
-                          <div className="flex items-center justify-between gap-2 p-2 bg-white/5 rounded-xl border border-white/5">
-                            <div className="flex flex-col text-left">
-                              <span className="text-xs font-bold">Presentation Mode</span>
-                              <span className="text-[9px] text-slate-400">Hide emails & private views</span>
-                            </div>
-                            <button
-                              onClick={() => {
-                                setSecurityMenuOpen(false);
-                                if (presentationMode) {
-                                  // Require PIN to turn off
-                                  triggerPinVerification(() => {
-                                    setPresentationMode(false);
-                                    localStorage.setItem('s_os_presentation_mode', 'false');
-                                    showNotification('🔓 Presentation Mode disabled. Normal views restored.');
-                                  });
-                                } else {
-                                  // Enable presentation mode
-                                  if (!teacherPin) {
-                                    setPinSetupOpen(true);
-                                  } else {
-                                    setPresentationMode(true);
-                                    localStorage.setItem('s_os_presentation_mode', 'true');
-                                    if (!isTabAllowedInPresentation(activeTab)) {
-                                      setActiveTab('whiteboard');
-                                    }
-                                    showNotification('🔒 Presentation Mode active on Smart Board.');
-                                  }
-                                }
-                              }}
-                              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${
-                                presentationMode 
-                                  ? 'bg-teal-500 text-slate-950' 
-                                  : 'bg-white/10 hover:bg-white/15 text-slate-300'
-                              }`}
-                            >
-                              {presentationMode ? 'Active' : 'Start'}
-                            </button>
-                          </div>
-
-                          {/* 2. Smart Board Mode Toggle */}
-                          <div className="flex items-center justify-between gap-2 p-2 bg-white/5 rounded-xl border border-white/5">
-                            <div className="flex flex-col text-left">
-                              <span className="text-xs font-bold">Smart Board Mode</span>
-                              <span className="text-[9px] text-slate-400">Large touch UI & elements</span>
-                            </div>
-                            <button
-                              onClick={() => {
-                                const newVal = !smartBoardMode;
-                                setSmartBoardMode(newVal);
-                                localStorage.setItem('s_os_smart_board_mode', newVal ? 'true' : 'false');
-                                showNotification(newVal ? '🖥️ Smart Board optimization active.' : '🖥️ Standard UI active.');
-                              }}
-                              className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${
-                                smartBoardMode 
-                                  ? 'bg-indigo-500 text-white shadow' 
-                                  : 'bg-white/10 hover:bg-white/15 text-slate-300'
-                              }`}
-                            >
-                              {smartBoardMode ? 'Active' : 'Start'}
-                            </button>
-                          </div>
-
-                        {/* 3. Quick Lock Screen Button */}
-                        <button
-                          onClick={() => {
-                            setSecurityMenuOpen(false);
-                            const activePin = currentUser?.pin || teacherPin;
-                            if (!activePin) {
-                              setPinSetupOpen(true);
-                            } else {
-                              setIsLocked(true);
-                              if (currentUser) {
-                                const updatedUser = { ...currentUser, raw_data: { ...(currentUser.raw_data || {}), isLocked: true } };
-                                setCurrentUser(updatedUser);
-                                saveSupabaseUserProfile(updatedUser).catch(console.error);
-                              }
-                              showNotification('🔒 Screen locked. PIN required to resume.');
-                            }
-                          }}
-                          className="w-full py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 hover:border-red-500/40 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
-                        >
-                            <Lock className="w-3.5 h-3.5" />
-                            Lock Workspace Now
-                          </button>
-
-                          {/* 4. PIN Management */}
-                          <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[10px] text-slate-400 font-mono">
-                            <span>PIN Secured</span>
-                            <button
-                              onClick={() => {
-                                setSecurityMenuOpen(false);
-                                setPinSetupOpen(true);
-                              }}
-                              className="text-indigo-400 hover:underline font-bold"
-                            >
-                              {teacherPin ? 'Reset PIN' : 'Create PIN'}
-                            </button>
-                          </div>
-
-                          {/* 5. Auto Lock Duration Selector */}
-                          <div className="flex items-center justify-between pt-2">
-                            <span className="text-[10px] uppercase font-mono text-slate-400">Auto Lock:</span>
-                            <select
-                              value={autoLockTime}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10);
-                                setAutoLockTime(val);
-                                localStorage.setItem('s_os_auto_lock_time', val.toString());
-                                showNotification(val > 0 ? `⏰ Screen will auto-lock after ${val} minutes of inactivity.` : '⏰ Auto-lock disabled.');
-                              }}
-                              className="bg-slate-950 border border-white/10 rounded-lg px-2 py-1 text-[10px] font-bold text-slate-300 outline-none"
-                            >
-                              <option value={0}>Disabled</option>
-                              <option value={5}>5 Min</option>
-                              <option value={10}>10 Min</option>
-                              <option value={15}>15 Min</option>
-                            </select>
-                          </div>
-                        </div>
-                      </div>
+                  <button
+                    type="button"
+                    onClick={() => setSecurityMenuOpen(true)}
+                    className={`p-1.5 sm:px-3 sm:py-2 rounded-xl border flex items-center gap-1.5 sm:gap-2 cursor-pointer transition-all min-h-[32px] sm:min-h-[38px] ${
+                      presentationMode 
+                        ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg' 
+                        : 'bg-slate-900 border-white/5 hover:bg-slate-800 text-slate-300'
+                    }`}
+                    title="Classroom Security Center"
+                  >
+                    <Lock className="w-3.5 h-3.5 shrink-0" />
+                    <span className="hidden sm:inline">Security</span>
+                    {presentationMode && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
                     )}
-                  </div>
+                  </button>
                 )}
                 
                 {/* Accessibility Toolbar panel */}

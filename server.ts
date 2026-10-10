@@ -15,6 +15,15 @@ import { generateMermaidDiagram, generateSvgDiagram, generateCanvasElements } fr
 import { detectWebSearchIntent, performControlledWebSearch, WebSearchSource } from './server/webSearchEngine';
 import { generateClassroomSvgVisual, generateEducational3DScene, sanitizeEducationalSvg } from './server/whiteboardVisualEngine';
 import webpush from 'web-push';
+import {
+  fetchAuthoritativeSecurity,
+  persistSecurityState,
+  hashPin,
+  verifyPinHash,
+  getRateLimit,
+  recordFailedAttempt,
+  resetRateLimit
+} from './server/securityService';
 
 dotenv.config();
 
@@ -2508,6 +2517,233 @@ Format beautifully in Markdown.`;
       error: 'AI is temporarily unavailable. Please try again.',
       details: err?.message || String(err)
     });
+  }
+});
+
+// ============================================================
+// Workspace Security & Authoritative Lock Endpoints
+// ============================================================
+
+// 1. Get current authoritative security status
+app.get('/api/security/status', async (req, res) => {
+  try {
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    const rateLimit = getRateLimit(clientIp);
+    const sec = await fetchAuthoritativeSecurity();
+    const isRateLimited = Date.now() < rateLimit.lockedUntil;
+    const retryAfterSeconds = isRateLimited ? Math.ceil((rateLimit.lockedUntil - Date.now()) / 1000) : 0;
+
+    return res.json({
+      success: true,
+      isLocked: sec.is_locked,
+      hasPinConfigured: Boolean(sec.pin_hash),
+      lockedAt: sec.locked_at,
+      lockedBy: sec.locked_by,
+      updatedAt: sec.updated_at,
+      isRateLimited,
+      retryAfterSeconds
+    });
+  } catch (err: any) {
+    console.error('[Security API] status error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to retrieve security status' });
+  }
+});
+
+// 2. Configure or change PIN (requires current PIN if one is already configured)
+app.post('/api/security/set-pin', async (req, res) => {
+  try {
+    const { pin, currentPin, userId } = req.body || {};
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    const rateLimit = getRateLimit(clientIp);
+
+    if (Date.now() < rateLimit.lockedUntil) {
+      const waitSec = Math.ceil((rateLimit.lockedUntil - Date.now()) / 1000);
+      return res.status(429).json({
+        success: false,
+        error: `Too many failed attempts. Please wait ${waitSec} seconds.`,
+        isRateLimited: true,
+        retryAfterSeconds: waitSec
+      });
+    }
+
+    if (!pin || (typeof pin !== 'string') || (pin.length !== 4 && pin.length !== 6) || !/^\d+$/.test(pin)) {
+      return res.status(400).json({ success: false, error: 'PIN must be exactly 4 or 6 digits.' });
+    }
+
+    const sec = await fetchAuthoritativeSecurity();
+
+    // If a PIN is already configured, current PIN must match
+    if (sec.pin_hash) {
+      if (!currentPin || typeof currentPin !== 'string') {
+        return res.status(400).json({ success: false, error: 'Current PIN is required to change security PIN.' });
+      }
+      const isMatch = verifyPinHash(currentPin, sec.pin_hash);
+      if (!isMatch) {
+        const attempt = recordFailedAttempt(clientIp);
+        return res.status(401).json({
+          success: false,
+          error: 'Current PIN is incorrect.',
+          attemptsRemaining: attempt.attemptsRemaining,
+          isRateLimited: attempt.isRateLimited,
+          retryAfterSeconds: attempt.retryAfterSeconds
+        });
+      }
+    }
+
+    resetRateLimit(clientIp);
+    const newHash = hashPin(pin);
+    const updated = await persistSecurityState({
+      pin_hash: newHash,
+      locked_by: userId || sec.locked_by
+    });
+
+    return res.json({
+      success: true,
+      message: 'Security PIN configured successfully.',
+      hasPinConfigured: true,
+      isLocked: updated.is_locked
+    });
+  } catch (err: any) {
+    console.error('[Security API] set-pin error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to save security PIN.' });
+  }
+});
+
+// 3. Lock workspace (authoritative)
+app.post('/api/security/lock', async (req, res) => {
+  try {
+    const { userId, userName } = req.body || {};
+    const now = new Date().toISOString();
+    const sec = await fetchAuthoritativeSecurity();
+
+    if (!sec.pin_hash) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot lock workspace before configuring a Security PIN.'
+      });
+    }
+
+    const updated = await persistSecurityState({
+      is_locked: true,
+      locked_at: now,
+      locked_by: userName || userId || 'User'
+    });
+
+    return res.json({
+      success: true,
+      isLocked: true,
+      lockedAt: updated.locked_at,
+      lockedBy: updated.locked_by
+    });
+  } catch (err: any) {
+    console.error('[Security API] lock error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to lock workspace.' });
+  }
+});
+
+// 4. Unlock workspace with PIN verification
+app.post('/api/security/unlock', async (req, res) => {
+  try {
+    const { pin } = req.body || {};
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    const rateLimit = getRateLimit(clientIp);
+
+    if (Date.now() < rateLimit.lockedUntil) {
+      const waitSec = Math.ceil((rateLimit.lockedUntil - Date.now()) / 1000);
+      return res.status(429).json({
+        success: false,
+        error: `Too many failed attempts. Please wait ${waitSec} seconds.`,
+        isRateLimited: true,
+        retryAfterSeconds: waitSec
+      });
+    }
+
+    if (!pin || typeof pin !== 'string') {
+      return res.status(400).json({ success: false, error: 'PIN is required to unlock workspace.' });
+    }
+
+    const sec = await fetchAuthoritativeSecurity();
+
+    if (!sec.pin_hash) {
+      const updated = await persistSecurityState({ is_locked: false });
+      return res.json({ success: true, isLocked: false, message: 'Workspace unlocked.' });
+    }
+
+    const isValid = verifyPinHash(pin, sec.pin_hash);
+
+    if (!isValid) {
+      const attempt = recordFailedAttempt(clientIp);
+      return res.status(401).json({
+        success: false,
+        error: 'Incorrect security PIN.',
+        attemptsRemaining: attempt.attemptsRemaining,
+        isRateLimited: attempt.isRateLimited,
+        retryAfterSeconds: attempt.retryAfterSeconds
+      });
+    }
+
+    resetRateLimit(clientIp);
+    const updated = await persistSecurityState({
+      is_locked: false,
+      locked_at: null,
+      locked_by: null
+    });
+
+    return res.json({
+      success: true,
+      isLocked: false,
+      message: 'Workspace unlocked successfully.'
+    });
+  } catch (err: any) {
+    console.error('[Security API] unlock error:', err);
+    return res.status(500).json({ success: false, error: 'Server error during unlock verification.' });
+  }
+});
+
+// 5. Verify PIN (for sensitive operations without changing lock state)
+app.post('/api/security/verify-pin', async (req, res) => {
+  try {
+    const { pin } = req.body || {};
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    const rateLimit = getRateLimit(clientIp);
+
+    if (Date.now() < rateLimit.lockedUntil) {
+      const waitSec = Math.ceil((rateLimit.lockedUntil - Date.now()) / 1000);
+      return res.status(429).json({
+        success: false,
+        error: `Too many failed attempts. Please wait ${waitSec} seconds.`,
+        isRateLimited: true,
+        retryAfterSeconds: waitSec
+      });
+    }
+
+    if (!pin || typeof pin !== 'string') {
+      return res.status(400).json({ success: false, error: 'PIN is required.' });
+    }
+
+    const sec = await fetchAuthoritativeSecurity();
+
+    if (!sec.pin_hash) {
+      return res.json({ success: true, verified: true });
+    }
+
+    const isValid = verifyPinHash(pin, sec.pin_hash);
+    if (!isValid) {
+      const attempt = recordFailedAttempt(clientIp);
+      return res.status(401).json({
+        success: false,
+        error: 'Incorrect security PIN.',
+        attemptsRemaining: attempt.attemptsRemaining,
+        isRateLimited: attempt.isRateLimited,
+        retryAfterSeconds: attempt.retryAfterSeconds
+      });
+    }
+
+    resetRateLimit(clientIp);
+    return res.json({ success: true, verified: true });
+  } catch (err: any) {
+    console.error('[Security API] verify-pin error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to verify PIN.' });
   }
 });
 

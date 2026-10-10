@@ -26,3 +26,16 @@ CREATE POLICY "Allow all operations on workspace_security"
 INSERT INTO public.workspace_security (id, is_locked)
 VALUES ('global_workspace', false)
 ON CONFLICT (id) DO NOTHING;
+
+-- Enable Realtime replication on workspace_security table for instant cross-device synchronization
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.workspace_security;
+    END IF;
+EXCEPTION
+    WHEN duplicate_object THEN
+        NULL;
+END $$;
