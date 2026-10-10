@@ -14,7 +14,7 @@ import {
   PenTool, Eraser, Share2, LogOut, AlertTriangle, Activity, RefreshCw,
   Heart, Bookmark, X, Bell, Zap, Gift, Smartphone, Paperclip, History, Brain, Globe,
   LayoutDashboard, Layers, Video, HelpCircle, GraduationCap, Shield, Compass,
-  PanelLeftClose, PanelLeftOpen, ClipboardList, CheckSquare, Monitor
+  PanelLeftClose, PanelLeftOpen, ClipboardList, CheckSquare, Monitor, Tv
 } from 'lucide-react';
 import { 
   UserRole, HouseType, SectionType, UserProfile, HouseStats, 
@@ -45,6 +45,10 @@ import {
 } from './lib/supabaseChat';
 import { saveSupabaseMaterial, getSupabaseMaterials, deleteSupabaseMaterial } from './lib/supabaseResources';
 import { PdfCanvasViewer } from './components/PdfCanvasViewer';
+import { InAppDocumentViewer } from './components/InAppDocumentViewer';
+import { PanelBoardSetupDialog } from './components/panel/PanelBoardSetupDialog';
+import { ClassroomPanelBoard } from './components/panel/ClassroomPanelBoard';
+import { checkPanelRegistration, PanelBoardRegistrationData } from './lib/panelBoardDetector';
 import { StudentOSJarvis } from './components/StudentOSJarvis';
 import AttendanceManager from './components/AttendanceManager';
 import AdminCenter from './components/AdminCenter';
@@ -389,12 +393,19 @@ export default function App() {
   // Handle call actions from service worker or URL parameters (e.g. Push notification Accept/Decline clicks)
   useEffect(() => {
     const handleSWMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'INCOMING_CALL_ACTION') {
-        const { action } = event.data;
+      const type = event.data?.type;
+      if (
+        type === 'INCOMING_CALL_ACTION' ||
+        type === 'STUDENTOS_CALL_ACTION' ||
+        type === 'STUDENTOS_INCOMING_CALL' ||
+        type === 'FCM_SW_INCOMING_CALL'
+      ) {
+        const action = event.data?.action;
+        const callId = event.data?.callId;
         if (action === 'accept') {
-          acceptSchoolCall();
+          acceptSchoolCall(callId, currentUser);
         } else if (action === 'decline') {
-          declineSchoolCall();
+          declineSchoolCall(callId, 'declined_via_sw', currentUser);
         }
       }
     };
@@ -405,14 +416,17 @@ export default function App() {
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const callAction = urlParams.get('callAction');
-      if (callAction === 'accept') {
-        acceptSchoolCall();
+      const autoAccept = urlParams.get('autoAccept');
+      const callId = urlParams.get('callId') || undefined;
+      if (callAction === 'accept' || autoAccept === '1') {
+        acceptSchoolCall(callId, currentUser);
       } else if (callAction === 'decline') {
-        declineSchoolCall();
+        declineSchoolCall(callId, 'declined_via_url', currentUser);
       }
-      if (urlParams.has('callAction') || urlParams.has('callId')) {
+      if (urlParams.has('callAction') || urlParams.has('callId') || urlParams.has('autoAccept')) {
         urlParams.delete('callAction');
         urlParams.delete('callId');
+        urlParams.delete('autoAccept');
         const newUrl = window.location.pathname + (urlParams.toString() ? `?${urlParams.toString()}` : '');
         window.history.replaceState(null, '', newUrl);
       }
@@ -423,7 +437,7 @@ export default function App() {
         navigator.serviceWorker.removeEventListener('message', handleSWMessage);
       }
     };
-  }, [currentUser?.uid]);
+  }, [currentUser]);
 
   const DEV_MODE = false; // Production release
   const [simulatedRole, setSimulatedRole] = useState<UserRole | null>(null);
@@ -682,6 +696,28 @@ export default function App() {
   const [lockScreenPinInput, setLockScreenPinInput] = useState<string>('');
   const [lockScreenError, setLockScreenError] = useState<string>('');
   const [useKeyMode, setUseKeyMode] = useState<boolean>(false);
+
+  // Panel Board State
+  const [isPanelBoardOpen, setIsPanelBoardOpen] = useState<boolean>(false);
+  const [showPanelSetupDialog, setShowPanelSetupDialog] = useState<boolean>(false);
+  const [panelBoardRegistration, setPanelBoardRegistration] = useState<PanelBoardRegistrationData | null>(null);
+
+  // In-App Learning Workspace Document Viewer State
+  const [inAppViewerDoc, setInAppViewerDoc] = useState<{ url: string; title?: string; fileName?: string; fileType?: string } | null>(null);
+
+  const handleOpenPanelBoard = async () => {
+    try {
+      const reg = await checkPanelRegistration();
+      if (reg && reg.status === 'active') {
+        setPanelBoardRegistration(reg);
+        setIsPanelBoardOpen(true);
+      } else {
+        setShowPanelSetupDialog(true);
+      }
+    } catch (_) {
+      setShowPanelSetupDialog(true);
+    }
+  };
 
   const isTabAllowedInPresentation = (tab: string) => {
     return ['whiteboard', 'ai_teacher', 'materials', 'assignments', 'homework', 'pomodoro', 'planner', 'tasks', 'flashcards', 'study_hub'].includes(tab);
@@ -4050,11 +4086,34 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
     }
   };
 
-  // Download material wrapper (increments download tally)
+  // Open material document inside StudentOS without external tab redirect
+  const handleOpenMaterialDocument = async (mat: MaterialResource) => {
+    const finalUrl = mat.url || mat.fileUrl || mat.file_url || mat.attachment_url;
+    if (finalUrl) {
+      setInAppViewerDoc({
+        url: finalUrl,
+        title: mat.title,
+        fileName: mat.fileName || mat.title,
+        fileType: mat.fileType || mat.type
+      });
+      incrementViewsMaterial(mat);
+    } else {
+      showNotification('Document file is not available.');
+    }
+  };
+
+  // Download material wrapper (increments download tally without window.open navigation)
   const handleDownloadMaterial = async (mat: MaterialResource) => {
     const finalUrl = mat.url || mat.fileUrl || mat.file_url || mat.attachment_url;
     if (finalUrl) {
-      window.open(finalUrl, '_blank', 'noopener,noreferrer');
+      const a = document.createElement('a');
+      a.href = finalUrl;
+      a.download = mat.fileName || mat.title || 'material';
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
       // Increment downloads
       const updatedDownloads = (mat.downloads || 0) + 1;
       const nextMat = { ...mat, downloads: updatedDownloads };
@@ -7131,6 +7190,19 @@ ${roleLabel}: ${userQuery}`;
                               >
                                 <PenTool className="w-4 h-4 shrink-0" />
                                 {sidebarOpen && <span className="truncate">Class Whiteboard</span>}
+                              </button>
+                            )}
+
+                          {(!presentationMode || isTabAllowedInPresentation('panel_board')) &&
+                            matchesFilter('Panel Board', 'smart panel display projector classroom interactive touch') && (
+                              <button
+                                type="button"
+                                onClick={handleOpenPanelBoard}
+                                className={isPanelBoardOpen ? 'group relative w-full flex items-center transition-all duration-200 rounded-xl border text-left min-w-0 cursor-pointer bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 border-indigo-500/50 gap-3 px-3 py-2.5' : getSidebarBtnClass('panel_board')}
+                                title="Panel Board Mode"
+                              >
+                                <Tv className="w-4 h-4 shrink-0 text-cyan-400" />
+                                {sidebarOpen && <span className="truncate">Panel Board</span>}
                               </button>
                             )}
 
@@ -10753,10 +10825,10 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                                 <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
                                   <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 w-full">
                                     <button 
-                                      onClick={() => handleDownloadMaterial(mat)}
-                                      className="text-[10px] font-bold text-white bg-indigo-600 hover:bg-slate-900 border border-indigo-500/20 px-2 sm:px-3 py-2 sm:py-1.5 rounded-xl transition-all flex items-center justify-center gap-1 w-full whitespace-nowrap overflow-hidden text-ellipsis shadow-sm"
+                                      onClick={() => handleOpenMaterialDocument(mat)}
+                                      className="text-[10px] font-bold text-white bg-indigo-600 hover:bg-indigo-500 border border-indigo-500/20 px-2 sm:px-3 py-2 sm:py-1.5 rounded-xl transition-all flex items-center justify-center gap-1 w-full whitespace-nowrap overflow-hidden text-ellipsis shadow-sm"
                                     >
-                                      <Download className="w-3.5 h-3.5 shrink-0" /> Open
+                                      <Eye className="w-3.5 h-3.5 shrink-0" /> Open
                                     </button>
 
                                     <button 
@@ -11319,6 +11391,20 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                             </span>
                             <h3 className="text-base font-extrabold text-white mt-1 leading-normal">{previewMaterial.title}</h3>
                             <p className="text-[11px] text-slate-400 mt-0.5">Shared by {previewMaterial.uploadedBy} • {previewMaterial.createdAt}</p>
+                            <button
+                              onClick={() => {
+                                setInAppViewerDoc({
+                                  url: previewMaterial.url,
+                                  title: previewMaterial.title,
+                                  fileName: previewMaterial.fileName,
+                                  fileType: previewMaterial.fileType
+                                });
+                                setPreviewMaterial(null);
+                              }}
+                              className="mt-2 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow"
+                            >
+                              <Eye className="w-3.5 h-3.5" /> Open in Learning Workspace Viewer
+                            </button>
                           </div>
                         </div>
 
@@ -11355,8 +11441,8 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                                   </audio>
                                 </div>
                               ) : previewMaterial.url && (previewMaterial.url.toLowerCase().includes('.pdf') || previewMaterial.type === 'pdf' || previewMaterial.fileType === 'application/pdf') ? (
-                                <div className="w-full h-[300px] rounded-xl border border-white/10 bg-slate-900 flex flex-col items-center justify-center p-0 overflow-hidden relative">
-                                  <iframe src={previewMaterial.url} className="w-full h-full border-none" />
+                                <div className="w-full h-[300px] rounded-xl border border-white/10 bg-slate-900 overflow-hidden relative">
+                                  <PdfCanvasViewer url={previewMaterial.url} title={previewMaterial.title} onDownload={() => handleDownloadMaterial(previewMaterial)} />
                                 </div>
                               ) : previewMaterial.url && (previewMaterial.url.toLowerCase().match(/\.(jpeg|jpg|gif|png|webp|svg)$/) !== null || previewMaterial.type === 'image' || previewMaterial.fileType?.startsWith('image/')) ? (
                                 <div className="w-full h-[285px] rounded-xl overflow-hidden border border-white/10 bg-slate-900 flex items-center justify-center p-2 shadow-inner">

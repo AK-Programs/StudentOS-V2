@@ -176,6 +176,11 @@ self.addEventListener('notificationclick', (event) => {
             action: 'decline',
             callId: callId
           });
+          client.postMessage({
+            type: 'INCOMING_CALL_ACTION',
+            action: 'decline',
+            callId: callId
+          });
         });
       })
     );
@@ -203,6 +208,13 @@ self.addEventListener('notificationclick', (event) => {
               action: action,
               url: targetUrl
             });
+            if (isCall) {
+              activeClient.postMessage({
+                type: 'INCOMING_CALL_ACTION',
+                action: action,
+                callId: callId
+              });
+            }
           });
         }
       }

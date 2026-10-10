@@ -290,8 +290,12 @@ export async function acceptSchoolCall(callId?: string, currentUser?: UserProfil
     }
   }
 
+  const effectiveUser = currentUser ||
+    (currentCallSession.participants.find(p => p.uid !== currentCallSession!.caller.uid) as any) ||
+    { uid: 'usr_callee', name: 'Student', role: 'student' };
+
   const updatedParticipants = currentCallSession.participants.map(p =>
-    p.uid === currentUser.uid ? { ...p, status: 'connected' as const, stream: currentLocalStream || undefined } : p
+    p.uid === effectiveUser.uid ? { ...p, status: 'connected' as const, stream: currentLocalStream || undefined } : p
   );
 
   const updatedSession: SchoolCallSession = {
@@ -306,12 +310,12 @@ export async function acceptSchoolCall(callId?: string, currentUser?: UserProfil
   // Send acceptance signal
   const acceptPayload = {
     callId,
-    responderUid: currentUser.uid,
+    responderUid: effectiveUser.uid,
     responderProfile: {
-      uid: currentUser.uid,
-      name: currentUser.name,
-      role: currentUser.role,
-      avatar: currentUser.avatar
+      uid: effectiveUser.uid,
+      name: effectiveUser.name || 'Student',
+      role: effectiveUser.role || 'student',
+      avatar: effectiveUser.avatar
     }
   };
 
@@ -694,6 +698,25 @@ export function setupGlobalCallReceiver(currentUser: UserProfile, onIncomingCall
       notifyCallState(incomingSession);
       soundService.playRingtone('incoming');
       setupCallSignaling(incomingSession.callId, currentUser.uid);
+
+      // If app is currently hidden or in background, trigger system notification
+      if (typeof document !== 'undefined' && document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+        try {
+          const title = incomingSession.type === 'video'
+            ? `📹 Incoming Video Call from ${incomingSession.caller.name}`
+            : `📞 Incoming Call from ${incomingSession.caller.name}`;
+          const n = new Notification(title, {
+            body: `${incomingSession.contextTitle || 'Classroom Call'} • Click to answer`,
+            icon: '/icons/icon-192.png',
+            tag: `call-${incomingSession.callId}`,
+            requireInteraction: true
+          });
+          n.onclick = () => {
+            window.focus();
+            acceptSchoolCall(incomingSession.callId, currentUser);
+          };
+        } catch (_) {}
+      }
 
       if (onIncomingCall) {
         onIncomingCall(incomingSession);

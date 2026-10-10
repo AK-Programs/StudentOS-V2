@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { sendNotificationToUsers } from '../firebase';
 import { uploadFileToStorage } from '../lib/storageHelper';
-import { Plus, Trash2, Edit2, Download, FileText, Image as ImageIcon, UploadCloud } from 'lucide-react';
+import { Plus, Trash2, Edit2, Download, FileText, Image as ImageIcon, UploadCloud, Eye } from 'lucide-react';
 import { AssignmentUploadForm } from './AssignmentUploadForm';
 import { getSupabaseResources, saveSupabaseResource, deleteSupabaseResource } from '../lib/supabaseResources';
 import { supabase } from '../lib/supabase';
+import { InAppDocumentViewer } from './InAppDocumentViewer';
 
 export default function SimpleResourceManager({ 
   type, title, emoji, currentUser, effectiveRole, showNotification, goBack 
@@ -13,6 +14,7 @@ export default function SimpleResourceManager({
   const [loading, setLoading] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [viewingDoc, setViewingDoc] = useState<{ url: string; title: string; fileName?: string } | null>(null);
 
   // Form State
   const [fTitle, setFTitle] = useState('');
@@ -334,21 +336,29 @@ export default function SimpleResourceManager({
                 {item.content && <p className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">{item.content}</p>}
                 
                 {item.fileData && type !== 'gallery' && (
-                  <div className="mt-3 inline-flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-white/5">
+                  <div 
+                    onClick={() => setViewingDoc({ url: item.fileData, title: item.title, fileName: item.fileName })}
+                    className="mt-3 inline-flex items-center gap-2 bg-slate-800/80 hover:bg-slate-700/80 px-3 py-1.5 rounded-lg border border-white/5 cursor-pointer transition-colors"
+                  >
                     {renderFileIcon(item.fileName)}
                     <span className="text-xs text-slate-300 truncate max-w-[200px]">{item.fileName}</span>
+                    <span className="text-[10px] text-indigo-400 font-semibold ml-1">Open in App →</span>
                   </div>
                 )}
 
                 {item.galleryUrls && item.galleryUrls.length > 0 && type === 'gallery' && (
                   <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                     {item.galleryUrls.map((gObj: any, idx: number) => (
-                      <a key={idx} href={gObj.url} target="_blank" rel="noreferrer" className="block relative aspect-square rounded-xl overflow-hidden hover:opacity-80 transition-opacity border border-white/10 group/gallery">
+                      <div
+                        key={idx}
+                        onClick={() => setViewingDoc({ url: gObj.url, title: gObj.name || item.title, fileName: gObj.name })}
+                        className="block relative aspect-square rounded-xl overflow-hidden hover:opacity-80 transition-opacity border border-white/10 group/gallery cursor-pointer"
+                      >
                         <img src={gObj.url} alt={gObj.name} className="object-cover w-full h-full" />
                         <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/gallery:opacity-100 transition-opacity flex items-center justify-center">
-                           <Download size={20} className="text-white" />
+                           <Eye size={20} className="text-white" />
                         </div>
-                      </a>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -387,9 +397,12 @@ export default function SimpleResourceManager({
               </div>
               <div className="flex md:flex-col gap-2 items-end justify-center min-w-[120px]">
                 {item.fileData && type !== 'gallery' && (
-                  <a href={item.fileData} target="_blank" rel="noopener noreferrer" className="w-full justify-center px-3 py-2 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 rounded-lg text-xs font-bold flex items-center gap-2 transition-all">
-                    <Download size={14} /> Open
-                  </a>
+                  <button
+                    onClick={() => setViewingDoc({ url: item.fileData, title: item.title, fileName: item.fileName })}
+                    className="w-full justify-center px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold flex items-center gap-2 transition-all shadow"
+                  >
+                    <Eye size={14} /> Open
+                  </button>
                 )}
                 {canEdit && (
                   <div className="flex gap-2 md:opacity-0 group-hover:opacity-100 transition-all mt-auto pt-2">
@@ -400,6 +413,18 @@ export default function SimpleResourceManager({
             </div>
           ))}
         </div>
+      )}
+
+      {/* In-App Learning Workspace Document Viewer Modal */}
+      {viewingDoc && (
+        <InAppDocumentViewer
+          url={viewingDoc.url}
+          title={viewingDoc.title}
+          fileName={viewingDoc.fileName}
+          onClose={() => setViewingDoc(null)}
+          currentUser={currentUser}
+          showNotification={showNotification}
+        />
       )}
     </div>
   );

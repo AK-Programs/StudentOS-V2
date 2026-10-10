@@ -25,6 +25,13 @@ import {
   recordFailedAttempt,
   resetRateLimit
 } from './server/securityService';
+import {
+  getPanelRegistration,
+  registerClassroomPanel,
+  reassignClassroomPanel,
+  revokeClassroomPanel,
+  getRealClassroomMetadata
+} from './server/panelBoardService';
 
 dotenv.config();
 
@@ -2753,6 +2760,109 @@ app.post('/api/security/verify-pin', async (req, res) => {
   } catch (err: any) {
     console.error('[Security API] verify-pin error:', err);
     return res.status(500).json({ success: false, error: 'Failed to verify PIN.' });
+  }
+});
+
+// ============================================================
+// Classroom Panel Board Registration & Classroom Binding APIs
+// ============================================================
+
+// 1. Get real classroom metadata (classes, sections, schools from Supabase)
+app.get('/api/panel-board/metadata', async (req, res) => {
+  try {
+    const meta = await getRealClassroomMetadata();
+    return res.json({ success: true, ...meta });
+  } catch (err: any) {
+    console.error('[PanelBoard API] metadata error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to load classroom metadata.' });
+  }
+});
+
+// 2. Lookup existing panel board registration by deviceToken or id
+app.get('/api/panel-board/registration', async (req, res) => {
+  try {
+    const token = (req.query.token as string) || (req.query.id as string) || '';
+    if (!token) {
+      return res.status(400).json({ success: false, error: 'Device token or panel ID is required.' });
+    }
+
+    const registration = await getPanelRegistration(token);
+    if (!registration) {
+      return res.status(404).json({ success: false, error: 'No active panel registration found.' });
+    }
+
+    return res.json({ success: true, registration });
+  } catch (err: any) {
+    console.error('[PanelBoard API] lookup error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to lookup panel registration.' });
+  }
+});
+
+// 3. Register a new classroom panel board
+app.post('/api/panel-board/register', async (req, res) => {
+  try {
+    const { school_id, class_id, section_id, display_name, registered_by, device_metadata } = req.body || {};
+
+    if (!class_id || !section_id) {
+      return res.status(400).json({ success: false, error: 'Class and section are required.' });
+    }
+
+    const registration = await registerClassroomPanel({
+      school_id: school_id || 'default_school',
+      class_id,
+      section_id,
+      display_name,
+      registered_by: registered_by || 'system',
+      device_metadata
+    });
+
+    return res.json({ success: true, registration, token: registration.device_token });
+  } catch (err: any) {
+    console.error('[PanelBoard API] register error:', err);
+    return res.status(500).json({ success: false, error: err.message || 'Failed to register classroom panel.' });
+  }
+});
+
+// 4. Reassign panel board to another class / section
+app.post('/api/panel-board/reassign', async (req, res) => {
+  try {
+    const { token, id, class_id, section_id, display_name, updated_by } = req.body || {};
+    const idOrToken = token || id;
+
+    if (!idOrToken) {
+      return res.status(400).json({ success: false, error: 'Panel registration token or ID is required.' });
+    }
+
+    const updated = await reassignClassroomPanel({
+      idOrToken,
+      class_id,
+      section_id,
+      display_name,
+      updated_by: updated_by || 'staff'
+    });
+
+    return res.json({ success: true, registration: updated });
+  } catch (err: any) {
+    console.error('[PanelBoard API] reassign error:', err);
+    return res.status(500).json({ success: false, error: err.message || 'Failed to reassign panel.' });
+  }
+});
+
+// 5. Revoke panel board registration
+app.post('/api/panel-board/revoke', async (req, res) => {
+  try {
+    const { token, id } = req.body || {};
+    const idOrToken = token || id;
+
+    if (!idOrToken) {
+      return res.status(400).json({ success: false, error: 'Panel registration token or ID is required.' });
+    }
+
+    const ok = await revokeClassroomPanel(idOrToken);
+    return res.json({ success: ok });
+  } catch (err: any) {
+    console.error('[PanelBoard API] revoke error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to revoke panel registration.' });
   }
 });
 
