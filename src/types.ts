@@ -831,6 +831,7 @@ export interface FlashcardReviewLog {
   date: string;
   rating: number;
   interval: number;
+  responseType?: 'know_it' | 'still_learning' | 'again' | 'hard' | 'good' | 'easy';
 }
 
 export interface Flashcard {
@@ -839,6 +840,7 @@ export interface Flashcard {
   front: string;
   back: string;
   hint?: string;
+  explanation?: string;
   tags?: string[];
   interval: number; // days
   repetition: number;
@@ -846,7 +848,30 @@ export interface Flashcard {
   nextReviewDate: string; // ISO date string
   lastReviewedDate?: string;
   state: FlashcardState;
+  reviewed?: boolean;
+  lastResponse?: 'know_it' | 'still_learning' | 'again' | 'hard' | 'good' | 'easy';
+  correctCount?: number;
+  incorrectCount?: number;
+  updatedAt?: string;
   history?: FlashcardReviewLog[];
+}
+
+export interface FlashcardStudyProgress {
+  userId: string;
+  deckId: string;
+  cardId: string;
+  reviewed: boolean;
+  lastResponse?: 'know_it' | 'still_learning' | 'again' | 'hard' | 'good' | 'easy';
+  correctCount: number;
+  incorrectCount: number;
+  interval: number;
+  repetition: number;
+  easeFactor: number;
+  state: FlashcardState;
+  lastReviewedDate?: string;
+  nextReviewDate: string;
+  history: FlashcardReviewLog[];
+  updatedAt: string;
 }
 
 export interface FlashcardDeck {
@@ -860,6 +885,7 @@ export interface FlashcardDeck {
   createdAt: string;
   updatedAt: string;
   createdBy: string;
+  schoolId?: string;
   tags?: string[];
   isFavorite?: boolean;
 }

@@ -9,6 +9,7 @@ export interface GeneratedFlashcardData {
   front: string;
   back: string;
   hint?: string;
+  explanation?: string;
   tags?: string[];
 }
 
@@ -40,11 +41,23 @@ export async function generateFlashcardsWithAI(params: {
 
   const data = await res.json();
   if (data && Array.isArray(data.cards) && data.cards.length > 0) {
-    return {
-      deckTitle: data.deckTitle || (topic ? `${topic} High-Yield Flashcards` : `${subject} Study Deck`),
-      subject: data.subject || subject,
-      cards: data.cards
-    };
+    const normalizedCards: GeneratedFlashcardData[] = data.cards
+      .map((c: any) => ({
+        front: String(c?.front ?? c?.question ?? c?.front_text ?? c?.prompt ?? '').trim(),
+        back: String(c?.back ?? c?.answer ?? c?.back_text ?? c?.definition ?? '').trim(),
+        hint: c?.hint ? String(c.hint).trim() : undefined,
+        explanation: c?.explanation ? String(c.explanation).trim() : undefined,
+        tags: Array.isArray(c?.tags) ? c.tags.map((t: any) => String(t)) : [subject]
+      }))
+      .filter((c: GeneratedFlashcardData) => c.front.length > 0 && c.back.length > 0);
+
+    if (normalizedCards.length > 0) {
+      return {
+        deckTitle: data.deckTitle || (topic ? `${topic} High-Yield Flashcards` : `${subject} Study Deck`),
+        subject: data.subject || subject,
+        cards: normalizedCards
+      };
+    }
   }
 
   throw new Error('AI was unable to generate flashcards for this topic. Please try again.');

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from './supabase';
-import { upsertDeck, upsertCard, syncDeckToSupabase, syncCardToSupabase } from './flashcardStorage';
+import { persistDeckToSupabase, persistCardsBatchToSupabase } from './flashcardStorage';
 import { Flashcard, FlashcardDeck } from '../types';
 
 export interface WebSearchSourceInfo {
@@ -619,29 +619,26 @@ export async function saveExtractedFlashcardsToStudyCenter(
     isFavorite: true
   };
 
-  upsertDeck(newDeck);
-  await syncDeckToSupabase(newDeck, userId);
+  await persistDeckToSupabase(newDeck, userId);
 
-  for (let i = 0; i < cards.length; i++) {
-    const c = cards[i];
-    const cardObj: Flashcard = {
-      id: `card-ai-${Date.now()}-${i}`,
-      deckId,
-      front: c.front,
-      back: c.back,
-      hint: c.hint,
-      tags: ['AI Buddy', subject || 'Study'],
-      interval: 0,
-      repetition: 0,
-      easeFactor: 2.5,
-      nextReviewDate: new Date().toISOString(),
-      state: 'new'
-    };
-    upsertCard(cardObj);
-    await syncCardToSupabase(cardObj, userId);
-  }
+  const nowTs = Date.now();
+  const cardBatch: Flashcard[] = cards.map((c, i) => ({
+    id: `card-ai-${nowTs}-${i}`,
+    deckId,
+    front: c.front,
+    back: c.back,
+    hint: c.hint,
+    tags: ['AI Buddy', subject || 'Study'],
+    interval: 0,
+    repetition: 0,
+    easeFactor: 2.5,
+    nextReviewDate: new Date().toISOString(),
+    state: 'new'
+  }));
 
-  return { deck: newDeck, count: cards.length };
+  await persistCardsBatchToSupabase(cardBatch, userId);
+
+  return { deck: newDeck, count: cardBatch.length };
 }
 
 /* ============================================================================
