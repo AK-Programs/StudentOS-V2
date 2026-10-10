@@ -121,7 +121,25 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
   // Notifications preferences
   const [studyReminders, setStudyReminders] = useState(rawData.notifyStudy !== false);
   const [chatSounds, setChatSounds] = useState(() => soundService.isEnabled() && rawData.notifyChat !== false);
+  const [flashcardSounds, setFlashcardSounds] = useState<boolean>(() =>
+    soundService.isFlashcardSoundEnabled() && rawData.flashcardSoundEnabled !== false
+  );
+  const [soundVolume, setSoundVolume] = useState<number>(() =>
+    typeof rawData.soundVolume === 'number' ? rawData.soundVolume : soundService.getVolume()
+  );
   const [announcementsAlert, setAnnouncementsAlert] = useState(rawData.notifyAnnounce !== false);
+
+  useEffect(() => {
+    soundService.syncWithUserProfile(currentUser);
+    const handleSoundPrefChange = () => {
+      const prefs = soundService.getPreferences();
+      setChatSounds(!prefs.muted);
+      setFlashcardSounds(!prefs.muted && prefs.flashcardSoundEnabled);
+      setSoundVolume(prefs.volume);
+    };
+    window.addEventListener('studentos-sound-pref-changed', handleSoundPrefChange);
+    return () => window.removeEventListener('studentos-sound-pref-changed', handleSoundPrefChange);
+  }, [currentUser]);
 
   // FCM Web Push state
   const [enableWebPush, setEnableWebPush] = useState<boolean>(() => {
@@ -350,6 +368,8 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
           theme: currentTheme,
           notifyStudy: studyReminders,
           notifyChat: chatSounds,
+          flashcardSoundEnabled: flashcardSounds,
+          soundVolume,
           notifyAnnounce: announcementsAlert,
           enableWebPush,
           fcmToken: fcmStatus.token || currentUser.fcmToken,
@@ -1536,6 +1556,60 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
               >
                 <span aria-hidden="true" className="uiverse-switch-thumb" />
               </button>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-slate-900/60 border border-white/5 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <span className="text-xs font-bold text-white block">Study Flashcards Sound Effects</span>
+                  <span className="text-[11px] text-slate-400">Play subtle, pleasant chimes for Reveal Answer, Know It, Still Learning, Shuffle, and Session Complete.</span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={flashcardSounds}
+                  onClick={() => {
+                    const next = !flashcardSounds;
+                    setFlashcardSounds(next);
+                    soundService.setFlashcardSoundEnabled(next);
+                    if (next) soundService.playFlashcardReveal();
+                  }}
+                  className="uiverse-switch"
+                >
+                  <span aria-hidden="true" className="uiverse-switch-thumb" />
+                </button>
+              </div>
+
+              <div className="pt-2 border-t border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center justify-between sm:justify-start gap-2">
+                  <span className="text-[11px] font-semibold text-slate-300">Sound Effects Volume</span>
+                  <span className="text-[11px] font-mono text-indigo-400 font-bold">{Math.round(soundVolume * 100)}%</span>
+                </div>
+                <div className="flex items-center gap-3 flex-1 sm:max-w-xs">
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={Math.round(soundVolume * 100)}
+                    onChange={(e) => {
+                      const nextVol = Number(e.target.value) / 100;
+                      setSoundVolume(nextVol);
+                      soundService.setVolume(nextVol);
+                    }}
+                    aria-label="Sound effects volume"
+                    className="w-full accent-indigo-500 cursor-pointer"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => soundService.playFlashcardKnowIt(4)}
+                    disabled={!flashcardSounds || soundVolume <= 0}
+                    className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-[10px] font-bold shrink-0 cursor-pointer disabled:opacity-40"
+                  >
+                    Test
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div className="p-4 rounded-2xl bg-slate-900/60 border border-white/5 flex items-center justify-between gap-3">

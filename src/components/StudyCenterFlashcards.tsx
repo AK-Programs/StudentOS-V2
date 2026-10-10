@@ -12,7 +12,7 @@ import {
   Layers, Sparkles, Brain, RotateCw, Play, CheckCircle2, Clock,
   Plus, Search, Trash2, Edit3, BookOpen, Volume2, VolumeX,
   ChevronLeft, ChevronRight, ArrowRight, RefreshCw, HelpCircle,
-  Zap, Check, X, GraduationCap, Shuffle, AlertTriangle, Eye, EyeOff
+  Zap, Check, X, GraduationCap, Shuffle, AlertTriangle, Eye, EyeOff, Sliders
 } from 'lucide-react';
 import { ProfessionalTabDropdown } from './ProfessionalTabDropdown';
 import { Flashcard, FlashcardDeck, FlashcardQuality, UserProfile, VaultNote } from '../types';
@@ -29,6 +29,8 @@ import {
 import { generateFlashcardsWithAI, GeneratedFlashcardData } from '../lib/aiFlashcards';
 import { getVaultNotes } from '../lib/supabaseNotes';
 import { awardStudentXP } from '../lib/gamification';
+import { soundService } from '../lib/soundService';
+import { saveSupabaseUserProfile } from '../lib/supabaseUsers';
 
 interface StudyCenterProps {
   currentUser?: UserProfile | null;
@@ -71,6 +73,62 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
   const [ttsEnabled, setTtsEnabled] = useState<boolean>(true);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
   const [isSavingProgress, setIsSavingProgress] = useState<boolean>(false);
+
+  // Flashcard Sound Effects & Volume Preferences (synced with StudentOS soundService & user profile)
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() => soundService.isFlashcardSoundEnabled());
+  const [soundVolume, setSoundVolume] = useState<number>(() => soundService.getVolume());
+  const [isSoundSettingsOpen, setIsSoundSettingsOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    soundService.syncWithUserProfile(currentUser);
+    const prefs = soundService.getPreferences();
+    setSoundEnabled(!prefs.muted && prefs.flashcardSoundEnabled);
+    setSoundVolume(prefs.volume);
+
+    const handlePrefChange = () => {
+      const latest = soundService.getPreferences();
+      setSoundEnabled(!latest.muted && latest.flashcardSoundEnabled);
+      setSoundVolume(latest.volume);
+    };
+    window.addEventListener('studentos-sound-pref-changed', handlePrefChange);
+    return () => window.removeEventListener('studentos-sound-pref-changed', handlePrefChange);
+  }, [currentUser]);
+
+  const persistSoundPrefsToStudentOS = useCallback(
+    (nextEnabled: boolean, nextVolume: number) => {
+      if (!currentUser) return;
+      try {
+        const updatedUser: UserProfile = {
+          ...currentUser,
+          raw_data: {
+            ...(currentUser.raw_data || {}),
+            flashcardSoundEnabled: nextEnabled,
+            soundVolume: nextVolume
+          }
+        };
+        localStorage.setItem('s_os_user', JSON.stringify(updatedUser));
+        saveSupabaseUserProfile(updatedUser).catch(() => {});
+      } catch (_) {}
+    },
+    [currentUser]
+  );
+
+  const handleToggleFlashcardSound = () => {
+    const next = !soundEnabled;
+    setSoundEnabled(next);
+    soundService.setFlashcardSoundEnabled(next);
+    if (next) {
+      soundService.playFlashcardReveal();
+    }
+    persistSoundPrefsToStudentOS(next, soundVolume);
+  };
+
+  const handleChangeSoundVolume = (nextVol: number) => {
+    const clamped = Math.max(0, Math.min(1, nextVol));
+    setSoundVolume(clamped);
+    soundService.setVolume(clamped);
+    persistSoundPrefsToStudentOS(soundEnabled, clamped);
+  };
 
   // Deck creator / editor modal state
   const [isDeckModalOpen, setIsDeckModalOpen] = useState<boolean>(false);
@@ -337,6 +395,7 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
   // Shuffle cards in the current study session while preserving exact card IDs and Q/A pairings
   const handleShuffleStudySession = () => {
     if (studyQueueIds.length <= 1) return;
+    soundService.playFlashcardShuffle();
     const shuffled = [...studyQueueIds];
     for (let i = shuffled.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -363,6 +422,16 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
     if (!currentCard || isSavingProgress) return;
     const targetCardId = currentCard.id;
     const resolvedLabel = responseLabel || (quality >= 3 ? 'know_it' : 'still_learning');
+    const willCompleteSession = currentCardIndex + 1 >= studyCards.length;
+
+    // Play immediate, non-overlapping auditory feedback on user interaction
+    if (willCompleteSession) {
+      soundService.playFlashcardSessionComplete();
+    } else if (quality >= 4 || resolvedLabel === 'know_it' || resolvedLabel === 'good' || resolvedLabel === 'easy') {
+      soundService.playFlashcardKnowIt(quality);
+    } else {
+      soundService.playFlashcardStillLearning();
+    }
 
     setIsSavingProgress(true);
     try {
@@ -383,7 +452,7 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
       { cardId: targetCardId, quality, response: resolvedLabel }
     ]);
 
-    if (currentCardIndex + 1 < studyCards.length) {
+    if (!willCompleteSession) {
       setIsFlipped(false);
       setShowHint(false);
       setCurrentCardIndex(prev => prev + 1);
@@ -404,10 +473,12 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
     }
 
     if (currentCardIndex + 1 < studyCards.length) {
+      soundService.playFlashcardNavigate('next');
       setIsFlipped(false);
       setShowHint(false);
       setCurrentCardIndex(prev => prev + 1);
     } else {
+      soundService.playFlashcardSessionComplete();
       setSessionCompleted(true);
       awardStudentXP(currentUser, 'study_flashcards', { flashcardCount: studyCards.length });
       showNotification('Deck complete! All progress has been saved to Supabase.');
@@ -417,6 +488,7 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
   // Navigate to previous card
   const handlePrevCard = () => {
     if (currentCardIndex > 0) {
+      soundService.playFlashcardNavigate('prev');
       setIsFlipped(false);
       setShowHint(false);
       setCurrentCardIndex(prev => prev - 1);
@@ -425,6 +497,7 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
 
   // Restart deck from beginning
   const handleRestartDeck = () => {
+    soundService.playFlashcardShuffle();
     setCurrentCardIndex(0);
     setIsFlipped(false);
     setShowHint(false);
@@ -455,14 +528,21 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
     if (viewMode !== 'study' || sessionCompleted || !currentCard) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat) return; // Ignore auto-repeat from held keys to prevent duplicate audio/skips
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) return;
 
       if (e.code === 'Space') {
         e.preventDefault();
-        setIsFlipped(prev => !prev);
+        setIsFlipped(prev => {
+          const next = !prev;
+          if (next) soundService.playFlashcardReveal();
+          else soundService.playFlashcardHide();
+          return next;
+        });
       } else if (e.key === 'Enter') {
         e.preventDefault();
         if (!isFlipped) {
+          soundService.playFlashcardReveal();
           setIsFlipped(true);
         } else {
           handleNextCard();
@@ -470,6 +550,7 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
       } else if (e.key === 'ArrowRight') {
         e.preventDefault();
         if (currentCardIndex + 1 < studyCards.length) {
+          soundService.playFlashcardNavigate('next');
           setIsFlipped(false);
           setShowHint(false);
           setCurrentCardIndex(prev => prev + 1);
@@ -477,12 +558,14 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
       } else if (e.key === 'ArrowLeft') {
         e.preventDefault();
         if (currentCardIndex > 0) {
+          soundService.playFlashcardNavigate('prev');
           setIsFlipped(false);
           setShowHint(false);
           setCurrentCardIndex(prev => prev - 1);
         }
       } else if (e.key === 'h' || e.key === 'H') {
         if (currentCard.hint) {
+          soundService.playFlashcardNavigate('hint');
           setShowHint(prev => !prev);
         }
       } else if (isFlipped) {
@@ -795,7 +878,7 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
           </div>
 
           {/* Session Controls */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 relative">
             <button
               type="button"
               onClick={handleShuffleStudySession}
@@ -809,15 +892,31 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
 
             <button
               type="button"
-              onClick={() => setTtsEnabled(!ttsEnabled)}
-              className={`p-2 rounded-xl border transition-all text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
-                ttsEnabled
+              onClick={handleToggleFlashcardSound}
+              aria-pressed={soundEnabled}
+              className={`px-2.5 py-2 rounded-xl border transition-all text-xs font-semibold flex items-center gap-1.5 cursor-pointer ${
+                soundEnabled
                   ? 'bg-indigo-600/20 border-indigo-500/40 text-indigo-300'
                   : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
               }`}
-              title="Toggle Read-Aloud Audio"
+              title={soundEnabled ? 'Flashcard Sound Effects: ON (Click to mute)' : 'Flashcard Sound Effects: OFF (Click to enable)'}
             >
-              {ttsEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+              {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+              <span className="hidden md:inline">{soundEnabled ? 'Sound ON' : 'Muted'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsSoundSettingsOpen(prev => !prev)}
+              aria-expanded={isSoundSettingsOpen}
+              className={`p-2 rounded-xl border transition-all text-xs font-semibold flex items-center gap-1 cursor-pointer ${
+                isSoundSettingsOpen
+                  ? 'bg-indigo-600 text-white border-indigo-500'
+                  : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+              }`}
+              title="Flashcard Sound & Voice Settings"
+            >
+              <Sliders className="w-4 h-4" />
             </button>
 
             <div className="px-3 py-1.5 bg-slate-950/80 rounded-xl border border-white/10 text-[11px] font-mono text-indigo-300 font-semibold hidden sm:flex items-center gap-1.5">
@@ -826,6 +925,9 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Collapsible Flashcard Audio & Study Settings Bar */}
+        {isSoundSettingsOpen && renderFlashcardSoundSettingsPanel()}
 
         {/* Progress Bar */}
         <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-white/5">
@@ -877,7 +979,10 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
               {currentCard.hint && (
                 <button
                   type="button"
-                  onClick={() => setShowHint(prev => !prev)}
+                  onClick={() => {
+                    soundService.playFlashcardNavigate('hint');
+                    setShowHint(prev => !prev);
+                  }}
                   className={`px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
                     showHint
                       ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
@@ -941,7 +1046,10 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
                   </div>
                   <button
                     type="button"
-                    onClick={() => setIsFlipped(false)}
+                    onClick={() => {
+                      soundService.playFlashcardHide();
+                      setIsFlipped(false);
+                    }}
                     className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white text-xs font-medium flex items-center gap-1 cursor-pointer"
                   >
                     <EyeOff className="w-3.5 h-3.5" />
@@ -998,7 +1106,10 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
             <button
               type="button"
               data-testid="reveal-answer-btn"
-              onClick={() => setIsFlipped(true)}
+              onClick={() => {
+                soundService.playFlashcardReveal();
+                setIsFlipped(true);
+              }}
               className="w-full sm:flex-1 max-w-md px-8 py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-lg shadow-indigo-600/25 transition-all active:scale-98 flex items-center justify-center gap-2.5 cursor-pointer min-h-[50px]"
             >
               <Eye className="w-5 h-5" />
@@ -1009,6 +1120,7 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
               type="button"
               onClick={() => {
                 if (currentCardIndex + 1 < studyCards.length) {
+                  soundService.playFlashcardNavigate('next');
                   setIsFlipped(false);
                   setShowHint(false);
                   setCurrentCardIndex(prev => prev + 1);
@@ -1190,7 +1302,27 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2 flex-wrap">
+            {stillLearningCount > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundService.playFlashcardShuffle();
+                  const difficultIds = sessionRatings.filter(r => r.quality < 3).map(r => r.cardId);
+                  setStudyQueueIds(difficultIds);
+                  setCurrentCardIndex(0);
+                  setIsFlipped(false);
+                  setShowHint(false);
+                  setSessionCompleted(false);
+                  setCompletedCardIds([]);
+                  setSessionRatings([]);
+                }}
+                className="w-full sm:w-auto px-6 py-3.5 rounded-2xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-2 min-h-[46px]"
+              >
+                <RotateCw className="w-4 h-4" />
+                <span>Review Still Learning ({stillLearningCount})</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={handleRestartDeck}
@@ -1202,6 +1334,7 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
             <button
               type="button"
               onClick={() => {
+                soundService.playFlashcardNavigate('prev');
                 setViewMode('decks');
                 setActiveDeckId(null);
               }}
@@ -1437,6 +1570,112 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
 
         {/* Ensure Card Modal & AI Modal also render while in `manage_deck` view! */}
         {renderModals()}
+      </div>
+    );
+  }
+
+  function renderFlashcardSoundSettingsPanel() {
+    return (
+      <div className="p-4 sm:p-5 rounded-2xl bg-slate-900/95 border border-indigo-500/30 shadow-xl space-y-4 animate-fadeIn">
+        <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+          <div className="flex items-center gap-2">
+            <Sliders className="w-4 h-4 text-indigo-400" />
+            <h4 className="text-xs sm:text-sm font-bold text-white">Flashcard Sound & Audio Preferences</h4>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsSoundSettingsOpen(false)}
+            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 cursor-pointer"
+            aria-label="Close sound settings"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Toggle 1: Flashcard Sound Effects */}
+          <div className="p-3.5 rounded-xl bg-slate-950/70 border border-white/5 flex items-center justify-between gap-3">
+            <div>
+              <span className="text-xs font-bold text-white block">Study Sound Effects</span>
+              <span className="text-[11px] text-slate-400">
+                Subtle chimes for Reveal, Know It, Still Learning, Shuffle & Complete.
+              </span>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={soundEnabled}
+              onClick={handleToggleFlashcardSound}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer shrink-0 ${
+                soundEnabled
+                  ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm'
+                  : 'bg-white/5 text-slate-400 border-white/10 hover:text-white'
+              }`}
+            >
+              {soundEnabled ? 'ON' : 'OFF'}
+            </button>
+          </div>
+
+          {/* Control 2: Volume Slider + Preview */}
+          <div className="p-3.5 rounded-xl bg-slate-950/70 border border-white/5 flex flex-col justify-between gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-white">Effect Volume</span>
+              <span className="text-xs font-mono font-bold text-indigo-400">{Math.round(soundVolume * 100)}%</span>
+            </div>
+            <div className="flex items-center gap-2.5">
+              <VolumeX className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                value={Math.round(soundVolume * 100)}
+                onChange={e => handleChangeSoundVolume(Number(e.target.value) / 100)}
+                aria-label="Flashcard sound effects volume"
+                className="w-full accent-indigo-500 cursor-pointer"
+              />
+              <Volume2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <button
+                type="button"
+                onClick={() => soundService.playFlashcardKnowIt(4)}
+                disabled={!soundEnabled || soundVolume <= 0}
+                className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-200 text-[11px] font-semibold border border-white/10 cursor-pointer disabled:opacity-40 shrink-0"
+              >
+                Test
+              </button>
+            </div>
+          </div>
+
+          {/* Toggle 3: Read-Aloud Speech Synthesis */}
+          <div className="p-3.5 rounded-xl bg-slate-950/70 border border-white/5 flex items-center justify-between gap-3">
+            <div>
+              <span className="text-xs font-bold text-white block">Read-Aloud Voice (TTS)</span>
+              <span className="text-[11px] text-slate-400">
+                Show button to speak questions and answers aloud.
+              </span>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={ttsEnabled}
+              onClick={() => {
+                const next = !ttsEnabled;
+                setTtsEnabled(next);
+                if (!next && 'speechSynthesis' in window) {
+                  window.speechSynthesis.cancel();
+                  setIsSpeaking(false);
+                }
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer shrink-0 ${
+                ttsEnabled
+                  ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm'
+                  : 'bg-white/5 text-slate-400 border-white/10 hover:text-white'
+              }`}
+            >
+              {ttsEnabled ? 'ON' : 'OFF'}
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -1942,9 +2181,26 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
               <Plus className="w-4 h-4" />
               <span>New Deck</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => setIsSoundSettingsOpen(prev => !prev)}
+              aria-expanded={isSoundSettingsOpen}
+              className={`px-3.5 py-3 rounded-2xl border font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                soundEnabled
+                  ? 'bg-white/5 hover:bg-white/10 text-indigo-300 border-indigo-500/30'
+                  : 'bg-white/5 hover:bg-white/10 text-slate-400 border-white/10'
+              }`}
+              title="Flashcard Sound Effects & Volume Settings"
+            >
+              {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+              <span className="hidden sm:inline">{soundEnabled ? 'Sound' : 'Muted'}</span>
+            </button>
           </div>
         </div>
       </div>
+
+      {isSoundSettingsOpen && renderFlashcardSoundSettingsPanel()}
 
       {/* Global Learning Metrics */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
