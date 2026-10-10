@@ -20,6 +20,19 @@ body {
   overflow-x: hidden;
 }
 
+.message-bubble {
+  -webkit-touch-callout: none !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.chat-input, input, textarea, [contenteditable="true"] {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+
 .font-display {
   font-family: var(--font-display);
 }

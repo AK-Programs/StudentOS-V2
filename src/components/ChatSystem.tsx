@@ -696,6 +696,20 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
     };
   }, [activeCall?.mode]);
 
+  // Prevent native context menu on message bubbles while keeping inputs selectable
+  useEffect(() => {
+    const handleContextMenu = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target && target.closest('.message-bubble')) {
+        e.preventDefault();
+      }
+    };
+    document.addEventListener('contextmenu', handleContextMenu, { passive: false });
+    return () => {
+      document.removeEventListener('contextmenu', handleContextMenu);
+    };
+  }, []);
+
   // Message interaction states
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
@@ -1655,10 +1669,16 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
 
                     {/* Main Bubble */}
                     <div
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setMobileSelectedMsg(msg);
+                        return false;
+                      }}
                       onTouchStart={() => handleTouchStart(msg)}
                       onTouchEnd={handleTouchEnd}
                       onTouchMove={handleTouchEnd}
-                      className={`p-3 rounded-2xl text-xs relative group ${isMine ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-slate-950 border border-white/10 text-slate-200 rounded-tl-none'}`}
+                      className={`message-bubble p-3 rounded-2xl text-xs relative group ${isMine ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-slate-950 border border-white/10 text-slate-200 rounded-tl-none'}`}
                     >
                       
                       {/* Flagged warning badge */}
