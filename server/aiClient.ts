@@ -124,6 +124,25 @@ function resolveGroqModel(modelOverride?: string): string {
   return getNextGroqModel();
 }
 
+function isShortPrompt(prompt: string): boolean {
+  const clean = (prompt || '').trim();
+  const words = clean.split(/\s+/).filter(Boolean);
+  if (words.length <= 20 && clean.length < 200) {
+    const lower = clean.toLowerCase();
+    const longAndComplexPatterns = [
+      /\b(revision\s*guide|study\s*guide|complete\s*guide|comprehensive\s*guide|exam\s*prep|masterclass)\b/i,
+      /\b(essay|long\s*answer|long\s*reasoning|long\s*class|long\s*explanation|long\s*note|in\s+detail|detailed|in[\s-]*depth|deep\s*dive|comprehensive|thorough|thoroughly|elaborate|full\s*explanation|step[\s-]*by[\s-]*step|walk\s+me\s+through|breakdown|break\s+down)\b/i,
+      /\b(analysis|analyze|analyse|critically|evaluate|compare\s+and\s+contrast|comparative\s+analysis|correlate|regression|root\s+cause|detailed\s+academic\s+report|school-wide\s+analytics)\b/i,
+      /\b(multi[\s-]*chapter|chapters?|units?|modules?|syllabus|curriculum)\b/i,
+      /\b(\d+\s*(chapters?|topics?|units?|lessons?|modules?))\b/i,
+      /\b(two|three|four|five|six|multiple|all|entire|full|whole)\s+(chapters?|topics?|units?|lessons?|modules?)\b/i,
+      /\b(prove|proof|derive|derivation|theorem|calculus|integral|differential|eigenvalue|matrix|trigonometric\s+identity|quadratic\s+formula\s+proof|quantum|thermodynamics|stoichiometry|electrochemistry|organic\s+synthesis|system\s+of\s+equations|simultaneous\s+equations|vector\s+calculus)\b/i
+    ];
+    return !longAndComplexPatterns.some((regex) => regex.test(lower));
+  }
+  return false;
+}
+
 export function isLongOrComplexPrompt(
   prompt: string,
   ctx?: ModelRoutingContext
@@ -133,7 +152,6 @@ export function isLongOrComplexPrompt(
   const taskType = (ctx?.taskType || '').toLowerCase();
   const mode = (ctx?.mode || '').toLowerCase();
   const override = (ctx?.modelOverride || '').trim().toLowerCase();
-  const contextLength = Number(ctx?.contextLength) || 0;
 
   if (
     override.includes('nara') ||
@@ -162,11 +180,15 @@ export function isLongOrComplexPrompt(
     return false;
   }
 
-  if (taskType === 'complex') {
-    return true;
+  if (isShortPrompt(clean)) {
+    return false;
   }
 
-  if (contextLength > 2500 || clean.length > 2500) {
+  if (taskType === 'complex') {
+    return !isShortPrompt(clean);
+  }
+
+  if (clean.length > 2500) {
     return true;
   }
 
@@ -228,7 +250,9 @@ export function classifyTaskComplexity(
 
   // 2. Explicit taskType overrides
   if (taskType === 'complex') {
-    return { provider: 'nara_router', model: getNaraRouterModel(ctx?.modelOverride), tier: 'complex' };
+    if (!isShortPrompt(cleanPrompt)) {
+      return { provider: 'nara_router', model: getNaraRouterModel(ctx?.modelOverride), tier: 'complex' };
+    }
   }
   if (taskType === 'short') {
     return { provider: 'groq', model: resolveGroqModel(ctx?.modelOverride), tier: 'short' };
