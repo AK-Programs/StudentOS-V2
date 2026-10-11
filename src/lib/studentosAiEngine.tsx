@@ -1080,6 +1080,7 @@ export async function streamAIChatClient(
     ragContext?: string;
     userId?: string;
     userRole?: string;
+    modelOverride?: string;
     webSearchMode?: 'auto' | 'always' | 'force' | 'off';
   },
   options: {

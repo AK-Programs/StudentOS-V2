@@ -1130,6 +1130,7 @@ export default function App() {
   const [aiActiveModelLabel, setAiActiveModelLabel] = useState<string>('');
   const [aiGroundedInData, setAiGroundedInData] = useState<boolean>(false);
   const [aiWebSearchMode, setAiWebSearchMode] = useState<'auto' | 'force' | 'off'>('auto');
+  const [aiModelOverride, setAiModelOverride] = useState<string>('');
   const [aiStatusMessage, setAiStatusMessage] = useState<string>('');
   const aiAbortControllerRef = useRef<AbortController | null>(null);
 
@@ -5328,6 +5329,7 @@ ${roleLabel}: ${userQuery}`;
           ragContext: ragContext || undefined,
           userId: userIdKey,
           userRole: userRoleKey,
+          modelOverride: aiModelOverride || undefined,
           webSearchMode: aiWebSearchMode
         },
         {
