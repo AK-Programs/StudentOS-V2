@@ -12370,7 +12370,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                                   )}
                                   {isLatestAssistant && aiActiveModelLabel && (
                                     <span className="text-[8px] px-1.5 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 font-mono">
-                                      ⚡ {aiActiveModelLabel.split('/').pop()}
+                                      ⚡ {aiActiveModelLabel === 'combo/free' ? 'combo/free' : aiActiveModelLabel.split('/').pop()}
                                     </span>
                                   )}
                                 </div>

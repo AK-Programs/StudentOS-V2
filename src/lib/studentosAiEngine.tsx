@@ -15,7 +15,7 @@ export interface WebSearchSourceInfo {
 export interface AIStreamTelemetry {
   requestId?: string;
   modelUsed?: string;
-  complexityTier?: 'fast' | 'general' | 'complex';
+  complexityTier?: 'short' | 'fast' | 'general' | 'complex' | 'tool';
   requestStart: number;
   firstTokenLatencyMs: number | null;
   totalGenerationTimeMs: number;
@@ -344,7 +344,7 @@ export async function streamStudentOSAI(
     }) => void;
     onMeta?: (meta: {
       model: string;
-      tier: 'fast' | 'general' | 'complex';
+      tier: 'short' | 'fast' | 'general' | 'complex' | 'tool';
       requestId: string;
       webSearchUsed?: boolean;
       webSources?: WebSearchSourceInfo[];
@@ -404,8 +404,8 @@ export async function streamStudentOSAI(
     let buffer = '';
     let accumulated = '';
     let firstTokenMs: number | null = null;
-    let modelUsed = 'nvidia/nemotron-3-super-120b-a12b';
-    let complexityTier: 'fast' | 'general' | 'complex' = 'general';
+    let modelUsed = 'ministral-8b-2410';
+    let complexityTier: 'short' | 'fast' | 'general' | 'complex' | 'tool' = 'general';
     let requestId = '';
     let usageData: any = undefined;
     let webSearchUsed = false;
@@ -518,7 +518,7 @@ export async function streamStudentOSAI(
 
   const telemetry: AIStreamTelemetry = {
     requestId: parsedRes.requestId,
-    modelUsed: parsedRes.telemetry?.modelUsed || 'nvidia/nemotron-3-super-120b-a12b',
+    modelUsed: parsedRes.telemetry?.modelUsed || 'ministral-8b-2410',
     complexityTier: parsedRes.telemetry?.complexityTier || 'general',
     requestStart,
     firstTokenLatencyMs: elapsed,
@@ -1092,7 +1092,7 @@ export async function streamAIChatClient(
     }) => void;
     onStart?: (meta: {
       model: string;
-      tier: 'fast' | 'general' | 'complex';
+      tier: 'short' | 'fast' | 'general' | 'complex' | 'tool';
       requestId: string;
       webSearchUsed?: boolean;
       webSources?: WebSearchSourceInfo[];
