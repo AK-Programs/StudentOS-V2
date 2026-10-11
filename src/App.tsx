@@ -98,6 +98,7 @@ import {
 } from './lib/securityService';
 import { MajorReleaseBanner } from './components/MajorReleaseBanner';
 import { StudyCenterFlashcards } from './components/StudyCenterFlashcards';
+import { ParentalPortal } from './components/ParentalPortal';
 import { ProfessionalTabDropdown } from './components/ProfessionalTabDropdown';
 import { getStoredCards } from './lib/flashcardStorage';
 import { isCardDue } from './lib/sm2Algorithm';
@@ -7436,6 +7437,18 @@ ${roleLabel}: ${userQuery}`;
                               </button>
                             )}
 
+                            {matchesFilter('Parental Portal', 'parent guardian monitoring reports') && (
+                              <button
+                                type="button"
+                                onClick={() => handleTabSelect('parent_portal')}
+                                className={getSidebarBtnClass('parent_portal')}
+                                title="Parental Portal"
+                              >
+                                <Shield className="w-4 h-4 shrink-0 text-violet-400" />
+                                {sidebarOpen && <span className="truncate">Parental Portal</span>}
+                              </button>
+                            )}
+
                             {matchesFilter("What's New", 'updates changelog releases') && (
                               <button
                                 type="button"
@@ -7508,6 +7521,40 @@ ${roleLabel}: ${userQuery}`;
 
             {/* Sidebar Footer User Detail & Actions */}
             <div className="shrink-0 pt-3 border-t border-white/10 space-y-2.5">
+              {/* Sidebar Profile Switcher */}
+              {sidebarOpen && (
+                <div className="bg-slate-900/80 border border-white/5 rounded-2xl p-2 space-y-1.5">
+                  <div className="flex items-center justify-between px-1.5">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Switch Role / Profile</span>
+                    <span className="text-[9px] font-mono text-indigo-400 font-bold uppercase">{effectiveRole}</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {[
+                      { r: 'student', label: '🎓', title: 'Student' },
+                      { r: 'parent', label: '🛡️', title: 'Parent' },
+                      { r: 'teacher', label: '🔬', title: 'Teacher' },
+                      { r: 'admin', label: '⚡', title: 'Admin' }
+                    ].map(item => (
+                      <button
+                        key={item.r}
+                        type="button"
+                        onClick={() => {
+                          setCurrentUser(prev => ({ ...prev, role: item.r as any }));
+                          if (item.r === 'parent') {
+                            setActiveTab('parent_portal');
+                          }
+                          showNotification(`Switched role to: ${item.title}`);
+                        }}
+                        className={`py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center ${effectiveRole === item.r ? 'bg-indigo-600 text-white shadow-sm' : 'bg-white/5 hover:bg-white/10 text-slate-300'}`}
+                        title={`Switch to ${item.title}`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {sidebarOpen ? (
                 <button
                   type="button"
@@ -9824,6 +9871,11 @@ ${activeNote.content}`);
                   </>
                   )}
                 </div>
+              )}
+
+              {/* Tab: Parental Portal */}
+              {activeTab === 'parent_portal' && (
+                <ParentalPortal currentUser={currentUser} showNotification={showNotification} />
               )}
 
               {/* Tab: Blogs View */}

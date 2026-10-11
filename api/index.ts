@@ -527,7 +527,7 @@ async function callNaraCompletion(
 
   const start = Date.now();
   const messages = buildChatMessages(systemPrompt, history, prompt);
-  const initialMaxTokens = Math.max(options?.maxTokens || 0, 12288);
+  const initialMaxTokens = Math.max(options?.maxTokens || 0, 16384);
 
   async function executeNaraRequest(maxTokensToUse: number): Promise<{
     httpStatus: number;

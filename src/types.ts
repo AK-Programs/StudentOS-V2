@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type UserRole = 'student' | 'teacher' | 'coordinator' | 'admin' | 'super_admin';
+export type UserRole = 'student' | 'parent' | 'teacher' | 'coordinator' | 'admin' | 'super_admin';
 
 export type HouseType = 'Ruby' | 'Emerald' | 'Sapphire' | 'Topaz';
 export type SectionType = 'Astra' | 'Elara' | 'Solara' | 'Vega';

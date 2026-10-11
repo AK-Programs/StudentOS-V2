@@ -333,14 +333,20 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
   }, [strokes, currentStroke, currentPage, scale, isPenMode]);
 
   // Drawing Handlers
-  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement> | React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isPenMode) return;
+    e.preventDefault();
+    e.stopPropagation();
     const canvas = drawingCanvasRef.current;
     if (!canvas) return;
 
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {}
+
     const rect = canvas.getBoundingClientRect();
-    const clientX = 'clientX' in e ? e.clientX : (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
-    const clientY = 'clientY' in e ? e.clientY : (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+    const clientX = e.clientX;
+    const clientY = e.clientY;
 
     const x = (clientX - rect.left) / rect.width;
     const y = (clientY - rect.top) / rect.height;
@@ -354,14 +360,16 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
     }
   };
 
-  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement> | React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isPenMode || !isDrawing) return;
+    e.preventDefault();
+    e.stopPropagation();
     const canvas = drawingCanvasRef.current;
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
-    const clientX = 'clientX' in e ? e.clientX : (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
-    const clientY = 'clientY' in e ? e.clientY : (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+    const clientX = e.clientX;
+    const clientY = e.clientY;
 
     const x = (clientX - rect.left) / rect.width;
     const y = (clientY - rect.top) / rect.height;
@@ -373,9 +381,17 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
     }
   };
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isPenMode || !isDrawing) return;
+    e.preventDefault();
+    e.stopPropagation();
     setIsDrawing(false);
+
+    try {
+      if (drawingCanvasRef.current && e.pointerId !== undefined) {
+        drawingCanvasRef.current.releasePointerCapture(e.pointerId);
+      }
+    } catch {}
 
     if (!isEraser && currentStroke && currentStroke.length > 0) {
       const newStroke: Stroke = {
@@ -678,7 +694,7 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
       </header>
 
       {/* Main Document Canvas Viewport */}
-      <main className="flex-1 relative overflow-auto flex items-center justify-center p-4 sm:p-8 bg-slate-950">
+      <main className={`flex-1 relative ${isPenMode ? 'overflow-hidden' : 'overflow-auto'} flex items-center justify-center p-4 sm:p-8 bg-slate-950`}>
         
         {/* Saving Indicator Overlay */}
         {isSavingAnnotations && (
@@ -723,12 +739,12 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
               {/* Drawing / Eraser Canvas Overlay */}
               <canvas
                 ref={drawingCanvasRef}
-                onMouseDown={handlePointerDown}
-                onMouseMove={handlePointerMove}
-                onMouseUp={handlePointerUp}
-                onTouchStart={handlePointerDown}
-                onTouchMove={handlePointerMove}
-                onTouchEnd={handlePointerUp}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerUp}
+                onLostPointerCapture={handlePointerUp}
+                style={{ touchAction: 'none' }}
                 className={`absolute inset-0 z-10 w-full h-full rounded-xl ${isPenMode ? (isEraser ? 'cursor-cell' : 'cursor-crosshair') : 'pointer-events-none'}`}
               />
             </div>
@@ -747,12 +763,12 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
               />
               <canvas
                 ref={drawingCanvasRef}
-                onMouseDown={handlePointerDown}
-                onMouseMove={handlePointerMove}
-                onMouseUp={handlePointerUp}
-                onTouchStart={handlePointerDown}
-                onTouchMove={handlePointerMove}
-                onTouchEnd={handlePointerUp}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerUp}
+                onLostPointerCapture={handlePointerUp}
+                style={{ touchAction: 'none' }}
                 className={`absolute inset-0 z-10 w-full h-full rounded-2xl ${isPenMode ? (isEraser ? 'cursor-cell' : 'cursor-crosshair') : 'pointer-events-none'}`}
               />
             </div>

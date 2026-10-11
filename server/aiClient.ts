@@ -499,7 +499,7 @@ export async function generateAICompletionWithTelemetry(
   const messages = buildMessagesArray(systemInstruction, prompt, history);
   const isNaraOrComplex = routing.tier === 'complex' || provider === 'nara_router';
   const effectiveMaxTokens = isNaraOrComplex
-    ? Math.max(maxTokens || 0, 12288)
+    ? Math.max(maxTokens || 0, 16384)
     : maxTokens
     ? Math.max(maxTokens, 300)
     : routing.tier === 'short' || routing.tier === 'fast'
