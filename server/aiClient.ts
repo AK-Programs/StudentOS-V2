@@ -9,7 +9,7 @@
  *   - General questions/messages -> Ministral (ministral-8b-2410)
  *   (Tier 1 fallback order if a Tier 1 provider is unavailable: APInex -> Ministral -> Groq)
  * - Long Reasoning & Multi-Chapter / Deep Explanations:
- *   - Nara Router ONLY (https://router.bynara.id/v1 with model: combo/free)
+ *   - Nara Router ONLY (https://router.bynara.id/v1 with model: nemotron-3-ultra-free)
  */
 
 import dotenv from 'dotenv';
@@ -77,11 +77,11 @@ export function getNaraRouterApiKey(): string {
 
 export function getNaraRouterBaseUrl(): string {
   const raw = (process.env.NARA_ROUTER_BASE_URL || 'https://router.bynara.id/v1').trim().replace(/\/+$/, '');
-  return raw.replace(/\/chat\/completions$/i, '').replace(/\/combo\/free$/i, '');
+  return raw.replace(/\/chat\/completions$/i, '').replace(/\/combo\/free$/i, '').replace(/\/nemotron-3-ultra-free$/i, '');
 }
 
 export function getNaraRouterModel(): string {
-  return (process.env.NARA_ROUTER_MODEL || 'combo/free').trim() || 'combo/free';
+  return (process.env.NARA_ROUTER_MODEL || 'nemotron-3-ultra-free').trim() || 'nemotron-3-ultra-free';
 }
 
 // Groq Model Rotation Manager (single key rotating: llama-3.1-8b-instant, gpt-oss-120b, qwen3.8-27b)
@@ -95,7 +95,7 @@ export function getNextGroqModel(): string {
 
 /**
  * Auto-Routing Classifier:
- * - Long reasoning / multi-chapter / deep explanations -> Nara Router ONLY (model: combo/free)
+ * - Long reasoning / multi-chapter / deep explanations -> Nara Router ONLY (model: nemotron-3-ultra-free)
  * - Fast requests -> APInex (free/gpt-6-luna)
  * - Short requests -> Groq (with model rotation: llama-3.1-8b-instant, gpt-oss-120b, qwen3.8-27b)
  * - General requests -> Ministral (ministral-8b-2410)
@@ -113,13 +113,13 @@ export function classifyTaskComplexity(
   // 1. Explicit model overrides
   if (
     override.includes('nara') ||
-    override.includes('combo/free') ||
+    override.includes('nemotron') ||
+    override.includes('ultra') ||
     override.includes('combo') ||
     override.includes('nvidia') ||
-    override.includes('lightning') ||
-    override.includes('ultra')
+    override.includes('lightning')
   ) {
-    return { provider: 'nara_router', model: 'combo/free', tier: 'complex' };
+    return { provider: 'nara_router', model: getNaraRouterModel(), tier: 'complex' };
   }
   if (override.includes('groq') || override.includes('llama') || override.includes('qwen') || override.includes('gpt-oss')) {
     return { provider: 'groq', model: getNextGroqModel(), tier: 'short' };
@@ -133,7 +133,7 @@ export function classifyTaskComplexity(
 
   // 2. Explicit taskType overrides (e.g. internal tool/command endpoints)
   if (taskType === 'complex') {
-    return { provider: 'nara_router', model: 'combo/free', tier: 'complex' };
+    return { provider: 'nara_router', model: getNaraRouterModel(), tier: 'complex' };
   }
   if (taskType === 'fast' || taskType === 'tool' || (taskType as string) === 'orion_command') {
     return { provider: 'apinex', model: 'free/gpt-6-luna', tier: 'fast' };
@@ -145,7 +145,7 @@ export function classifyTaskComplexity(
     return { provider: 'ministral', model: 'ministral-8b-2410', tier: 'general' };
   }
 
-  // 3. Long Reasoning & Multi-Chapter / Deep Explanations -> Nara Router ONLY (model: combo/free)
+  // 3. Long Reasoning & Multi-Chapter / Deep Explanations -> Nara Router ONLY (model: nemotron-3-ultra-free)
   const longReasoningPatterns = [
     // Multi-chapter, chapter explanations, units, full syllabus
     /\b(chapters?|units?|modules?|syllabus|curriculum)\b/i,
@@ -174,7 +174,7 @@ export function classifyTaskComplexity(
   if (isLongReasoning) {
     return {
       provider: 'nara_router',
-      model: 'combo/free',
+      model: getNaraRouterModel(),
       tier: 'complex'
     };
   }
@@ -344,7 +344,7 @@ function getProviderEndpointAndKey(provider: 'apinex' | 'groq' | 'ministral' | '
       apiKey: getGroqApiKey()
     };
   }
-  // nara_router: https://router.bynara.id/v1/chat/completions with model: combo/free
+  // nara_router: https://router.bynara.id/v1/chat/completions with model: nemotron-3-ultra-free
   return {
     apiUrl: `${getNaraRouterBaseUrl()}/chat/completions`,
     apiKey: getNaraRouterApiKey()
@@ -419,7 +419,7 @@ export async function generateAICompletionWithTelemetry(
       const { apiUrl: defaultUrl, apiKey } = getProviderEndpointAndKey(p);
       const targetUrl = customUrl || defaultUrl;
 
-      // Require API key for Tier 1 providers; for Nara Router combo/free allow with or without key
+      // Require API key for Tier 1 providers; for Nara Router allow with or without key
       if (p !== 'nara_router' && !apiKey) {
         return null;
       }
@@ -450,9 +450,8 @@ export async function generateAICompletionWithTelemetry(
       } else {
         const errBody = await resp.text().catch(() => '');
         console.warn(`[AI Provider ${p} (${m}) HTTP ${resp.status}]: ${errBody.slice(0, 200)}`);
-        // If Nara Router /v1/chat/completions returned 404/400, try /v1/combo/free/chat/completions as well
         if (p === 'nara_router' && !customUrl && (resp.status === 404 || resp.status === 400)) {
-          const altUrl = `${getNaraRouterBaseUrl()}/combo/free/chat/completions`;
+          const altUrl = `${getNaraRouterBaseUrl()}/chat/completions`;
           return await callProviderOnce(p, m, altUrl);
         }
       }
@@ -464,20 +463,19 @@ export async function generateAICompletionWithTelemetry(
 
   let text: string | null = null;
 
-  // CASE 1: Long Reasoning -> Nara Router ONLY (model: combo/free)
+  // CASE 1: Long Reasoning -> Nara Router ONLY (model: nemotron-3-ultra-free)
   if (routing.tier === 'complex' || provider === 'nara_router') {
     provider = 'nara_router';
-    model = 'combo/free';
-    text = await callProviderOnce('nara_router', 'combo/free');
+    model = getNaraRouterModel();
+    text = await callProviderOnce('nara_router', model);
     if (!text) {
       throw new Error(
-        '[NARA ROUTER ERROR] Nara Router (https://router.bynara.id/v1, model: combo/free) could not complete this long-reasoning request. Please verify NARA_ROUTER_API_KEY.'
+        `[NARA ROUTER ERROR] Nara Router (${getNaraRouterBaseUrl()}, model: ${model}) could not complete this long-reasoning request. Please verify NARA_ROUTER_API_KEY.`
       );
     }
   } else {
     // CASE 2: Tier 1 Auto-Routing (fast -> apinex, short -> groq with model rotation, general -> ministral)
     if (provider === 'groq') {
-      // Try rotated Groq models on the single GROQ_API_KEY
       for (let i = 0; i < groqModels.length; i++) {
         const candidateModel = i === 0 ? model : getNextGroqModel();
         text = await callProviderOnce('groq', candidateModel);
@@ -491,7 +489,6 @@ export async function generateAICompletionWithTelemetry(
       text = await callProviderOnce(provider, model);
     }
 
-    // If the auto-routed Tier 1 provider failed or its key is unconfigured, fallback across Tier 1: APInex -> Ministral -> Groq
     if (!text) {
       fallbackTriggered = true;
       const tier1Chain: Array<{ p: 'apinex' | 'ministral' | 'groq'; getM: () => string }> = [
@@ -644,7 +641,7 @@ export async function streamAICompletion(
       const errBody = await response.text().catch(() => '');
       console.warn(`[AI Stream ${p} (${m}) HTTP ${response.status}]: ${errBody.slice(0, 200)}`);
       if (p === 'nara_router' && !customUrl && (response.status === 404 || response.status === 400)) {
-        const altUrl = `${getNaraRouterBaseUrl()}/combo/free/chat/completions`;
+        const altUrl = `${getNaraRouterBaseUrl()}/chat/completions`;
         return await tryStreamFromProvider(p, m, altUrl);
       }
       return null;
@@ -654,7 +651,6 @@ export async function streamAICompletion(
     callbacks.onMeta?.({ requestId, provider: p, model: m, tier: routing.tier });
 
     const contentType = (response.headers.get('content-type') || '').toLowerCase();
-    // Handle case where provider returns standard JSON despite stream: true
     if (contentType.includes('application/json') && !contentType.includes('text/event-stream')) {
       const data = await response.json();
       const text = extractTextFromChoice(data.choices?.[0]);
@@ -715,14 +711,14 @@ export async function streamAICompletion(
   try {
     let streamResult: { fullText: string; firstTokenLatencyMs: number | null } | null = null;
 
-    // CASE 1: Long Reasoning -> Nara Router ONLY (model: combo/free)
+    // CASE 1: Long Reasoning -> Nara Router ONLY (model: nemotron-3-ultra-free)
     if (routing.tier === 'complex' || activeProvider === 'nara_router') {
       activeProvider = 'nara_router';
-      activeModel = 'combo/free';
-      streamResult = await tryStreamFromProvider('nara_router', 'combo/free');
+      activeModel = getNaraRouterModel();
+      streamResult = await tryStreamFromProvider('nara_router', activeModel);
       if (!streamResult) {
         throw new Error(
-          '[NARA ROUTER ERROR] Nara Router (https://router.bynara.id/v1, model: combo/free) could not complete this long-reasoning request. Please verify NARA_ROUTER_API_KEY.'
+          `[NARA ROUTER ERROR] Nara Router (${getNaraRouterBaseUrl()}, model: ${activeModel}) could not complete this long-reasoning request. Please verify NARA_ROUTER_API_KEY.`
         );
       }
     } else {
@@ -741,7 +737,6 @@ export async function streamAICompletion(
         streamResult = await tryStreamFromProvider(activeProvider, activeModel);
       }
 
-      // Tier 1 Fallback if the primary Tier 1 provider is unavailable: APInex -> Ministral -> Groq
       if (!streamResult) {
         fallbackTriggered = true;
         const tier1Chain: Array<{ p: 'apinex' | 'ministral' | 'groq'; getM: () => string }> = [
