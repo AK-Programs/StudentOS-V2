@@ -81,7 +81,7 @@ export function getNaraRouterBaseUrl(): string {
 }
 
 export function getNaraRouterModel(): string {
-  return (process.env.NARA_ROUTER_MODEL || 'nemotron-3-ultra-free').trim() || 'nemotron-3-ultra-free';
+  return (process.env.NARA_ROUTER_MODEL || 'combo/free').trim().replace(/^["']|["']$/g, '') || 'combo/free';
 }
 
 // Groq Model Rotation Manager (single key rotating: llama-3.1-8b-instant, gpt-oss-120b, qwen3.8-27b)
@@ -220,17 +220,17 @@ export function classifyTaskComplexity(
   };
 }
 
-export function extractTextFromChoice(choice: any): string {
-  if (!choice) return '';
-  const msg = choice.message || choice.delta || choice;
+export function extractTextFromChoice(choice: any, rootData?: any): string {
+  if (!choice && !rootData) return '';
+  const msg = choice?.message || choice?.delta || choice || {};
 
-  if (msg && msg.content) {
+  if (msg && msg.content !== undefined && msg.content !== null) {
     if (typeof msg.content === 'string' && msg.content.trim()) {
       return msg.content.trim();
     }
     if (Array.isArray(msg.content)) {
       const textParts = msg.content
-        .map((part: any) => (typeof part === 'string' ? part : part?.text || part?.content || ''))
+        .map((part: any) => (typeof part === 'string' ? part : part?.text || part?.content || part?.output_text || ''))
         .filter(Boolean);
       const joined = textParts.join('').trim();
       if (joined) return joined;
@@ -246,7 +246,13 @@ export function extractTextFromChoice(choice: any): string {
   if (msg && typeof msg.output_text === 'string' && msg.output_text.trim()) {
     return msg.output_text.trim();
   }
-  if (typeof choice.text === 'string' && choice.text.trim()) {
+  if (typeof choice?.output_text === 'string' && choice.output_text.trim()) {
+    return choice.output_text.trim();
+  }
+  if (typeof rootData?.output_text === 'string' && rootData.output_text.trim()) {
+    return rootData.output_text.trim();
+  }
+  if (typeof choice?.text === 'string' && choice.text.trim()) {
     return choice.text.trim();
   }
   return '';
@@ -257,24 +263,30 @@ export function extractStreamingToken(choice: any): string {
   const delta = choice.delta || choice.message || choice;
   if (!delta) return '';
 
-  if (typeof delta.content === 'string') {
+  if (typeof delta.content === 'string' && delta.content.length > 0) {
     return delta.content;
   }
   if (Array.isArray(delta.content)) {
-    return delta.content
+    const joined = delta.content
       .map((part: any) => (typeof part === 'string' ? part : part?.text || part?.content || ''))
       .join('');
+    if (joined.length > 0) {
+      return joined;
+    }
   }
-  if (typeof delta.reasoning_content === 'string') {
+  if (typeof delta.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
     return delta.reasoning_content;
   }
-  if (typeof delta.reasoning === 'string') {
+  if (typeof delta.reasoning === 'string' && delta.reasoning.length > 0) {
     return delta.reasoning;
   }
-  if (typeof delta.output_text === 'string') {
+  if (typeof delta.output_text === 'string' && delta.output_text.length > 0) {
     return delta.output_text;
   }
-  if (typeof choice.text === 'string') {
+  if (typeof choice.output_text === 'string' && choice.output_text.length > 0) {
+    return choice.output_text;
+  }
+  if (typeof choice.text === 'string' && choice.text.length > 0) {
     return choice.text;
   }
   return '';
@@ -402,13 +414,79 @@ export async function generateAICompletionWithTelemetry(
   let retries = 0;
 
   const messages = buildMessagesArray(systemInstruction, prompt, history);
-  const effectiveMaxTokens = maxTokens
+  const isNaraOrComplex = routing.tier === 'complex' || provider === 'nara_router';
+  const effectiveMaxTokens = isNaraOrComplex
+    ? Math.max(maxTokens || 0, 6000)
+    : maxTokens
     ? Math.max(maxTokens, 300)
     : routing.tier === 'short' || routing.tier === 'fast'
     ? 1200
     : 2500;
 
   console.log(`[AI_ROUTER] tier=${routing.tier} provider=${provider} model=${model} requestId=${requestId}`);
+
+  async function callNaraDirect(m: string): Promise<string> {
+    const { apiUrl, apiKey } = getProviderEndpointAndKey('nara_router');
+    if (!apiKey) {
+      const err: any = new Error('NARA_ROUTER_API_KEY environment variable is not configured on the server.');
+      err.status = 500;
+      err.providerUsed = 'nara_router';
+      err.modelUsed = m;
+      throw err;
+    }
+
+    async function doRequest(tokensToUse: number) {
+      const resp = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          model: m,
+          messages,
+          temperature,
+          max_tokens: tokensToUse,
+          ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
+        })
+      });
+
+      if (!resp.ok) {
+        const errBody = await resp.text().catch(() => '');
+        const err: any = new Error(`Nara Router HTTP ${resp.status}: ${errBody || resp.statusText || 'Request failed'}`);
+        err.status = resp.status;
+        err.providerUsed = 'nara_router';
+        err.modelUsed = m;
+        throw err;
+      }
+
+      const data = await resp.json();
+      const choice = data?.choices?.[0];
+      const extracted = extractTextFromChoice(choice, data);
+      const finishReason = String(choice?.finish_reason || data?.finish_reason || '').toLowerCase();
+      return { extracted, finishReason, choice, data };
+    }
+
+    let res1 = await doRequest(effectiveMaxTokens);
+    if (!res1.extracted && res1.finishReason === 'length') {
+      retries++;
+      res1 = await doRequest(8000);
+    }
+
+    if (!res1.extracted) {
+      const rawDump = JSON.stringify(res1.choice || res1.data || {}).slice(0, 300);
+      const err: any = new Error(
+        `Nara Router HTTP 200 returned empty content (finish_reason=${res1.finishReason || 'unknown'}). Response: ${rawDump}`
+      );
+      err.status = 502;
+      err.providerUsed = 'nara_router';
+      err.modelUsed = m;
+      throw err;
+    }
+
+    return res1.extracted;
+  }
 
   async function callProviderOnce(
     p: 'apinex' | 'groq' | 'ministral' | 'nara_router',
@@ -419,17 +497,14 @@ export async function generateAICompletionWithTelemetry(
       const { apiUrl: defaultUrl, apiKey } = getProviderEndpointAndKey(p);
       const targetUrl = customUrl || defaultUrl;
 
-      // Require API key for Tier 1 providers; for Nara Router allow with or without key
-      if (p !== 'nara_router' && !apiKey) {
+      if (!apiKey) {
         return null;
       }
 
       const headers: Record<string, string> = {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
       };
-      if (apiKey) {
-        headers['Authorization'] = `Bearer ${apiKey}`;
-      }
 
       const resp = await fetch(targetUrl, {
         method: 'POST',
@@ -445,15 +520,11 @@ export async function generateAICompletionWithTelemetry(
 
       if (resp.ok) {
         const data = await resp.json();
-        const text = extractTextFromChoice(data.choices?.[0]);
+        const text = extractTextFromChoice(data.choices?.[0], data);
         if (text) return text;
       } else {
         const errBody = await resp.text().catch(() => '');
         console.warn(`[AI Provider ${p} (${m}) HTTP ${resp.status}]: ${errBody.slice(0, 200)}`);
-        if (p === 'nara_router' && !customUrl && (resp.status === 404 || resp.status === 400)) {
-          const altUrl = `${getNaraRouterBaseUrl()}/chat/completions`;
-          return await callProviderOnce(p, m, altUrl);
-        }
       }
     } catch (err) {
       console.warn(`[AI Provider ${p} (${m}) error]:`, err);
@@ -463,16 +534,11 @@ export async function generateAICompletionWithTelemetry(
 
   let text: string | null = null;
 
-  // CASE 1: Long Reasoning -> Nara Router ONLY (model: nemotron-3-ultra-free)
-  if (routing.tier === 'complex' || provider === 'nara_router') {
+  // CASE 1: Long Reasoning -> Nara Router ONLY (model: NARA_ROUTER_MODEL, default combo/free)
+  if (isNaraOrComplex) {
     provider = 'nara_router';
     model = getNaraRouterModel();
-    text = await callProviderOnce('nara_router', model);
-    if (!text) {
-      throw new Error(
-        `[NARA ROUTER ERROR] Nara Router (${getNaraRouterBaseUrl()}, model: ${model}) could not complete this long-reasoning request. Please verify NARA_ROUTER_API_KEY.`
-      );
-    }
+    text = await callNaraDirect(model);
   } else {
     // CASE 2: Tier 1 Auto-Routing (fast -> apinex, short -> groq with model rotation, general -> ministral)
     if (provider === 'groq') {
@@ -594,7 +660,10 @@ export async function streamAICompletion(
   let retries = 0;
 
   const messages = buildMessagesArray(systemInstruction, prompt, history);
-  const effectiveMaxTokens = maxTokens
+  const isNaraOrComplexStream = routing.tier === 'complex' || activeProvider === 'nara_router';
+  const effectiveMaxTokens = isNaraOrComplexStream
+    ? Math.max(maxTokens || 0, 6000)
+    : maxTokens
     ? Math.max(maxTokens, 300)
     : routing.tier === 'short' || routing.tier === 'fast'
     ? 1200
@@ -607,22 +676,26 @@ export async function streamAICompletion(
   async function tryStreamFromProvider(
     p: 'apinex' | 'groq' | 'ministral' | 'nara_router',
     m: string,
-    customUrl?: string
-  ): Promise<{ fullText: string; firstTokenLatencyMs: number | null } | null> {
-    const { apiUrl: defaultUrl, apiKey } = getProviderEndpointAndKey(p);
-    const targetUrl = customUrl || defaultUrl;
+    customMaxTokens?: number
+  ): Promise<{ fullText: string; firstTokenLatencyMs: number | null; finishReason?: string } | null> {
+    const { apiUrl: targetUrl, apiKey } = getProviderEndpointAndKey(p);
 
-    if (p !== 'nara_router' && !apiKey) {
+    if (!apiKey) {
+      if (p === 'nara_router') {
+        const err: any = new Error('NARA_ROUTER_API_KEY environment variable is not configured on the server.');
+        err.status = 500;
+        err.providerUsed = 'nara_router';
+        err.modelUsed = m;
+        throw err;
+      }
       return null;
     }
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Accept': 'text/event-stream, application/json'
+      'Accept': 'text/event-stream, application/json',
+      'Authorization': `Bearer ${apiKey}`
     };
-    if (apiKey) {
-      headers['Authorization'] = `Bearer ${apiKey}`;
-    }
 
     const response = await fetch(targetUrl, {
       method: 'POST',
@@ -631,7 +704,7 @@ export async function streamAICompletion(
         model: m,
         messages,
         temperature,
-        max_tokens: effectiveMaxTokens,
+        max_tokens: customMaxTokens || effectiveMaxTokens,
         stream: true
       }),
       signal: abortSignal
@@ -640,24 +713,31 @@ export async function streamAICompletion(
     if (!response.ok || !response.body) {
       const errBody = await response.text().catch(() => '');
       console.warn(`[AI Stream ${p} (${m}) HTTP ${response.status}]: ${errBody.slice(0, 200)}`);
-      if (p === 'nara_router' && !customUrl && (response.status === 404 || response.status === 400)) {
-        const altUrl = `${getNaraRouterBaseUrl()}/chat/completions`;
-        return await tryStreamFromProvider(p, m, altUrl);
+      if (p === 'nara_router') {
+        const err: any = new Error(`Nara Router HTTP ${response.status}: ${errBody || response.statusText || 'Stream request failed'}`);
+        err.status = response.status;
+        err.providerUsed = 'nara_router';
+        err.modelUsed = m;
+        throw err;
       }
       return null;
     }
 
     // Notify metadata once the connection succeeds
-    callbacks.onMeta?.({ requestId, provider: p, model: m, tier: routing.tier });
+    if (!customMaxTokens) {
+      callbacks.onMeta?.({ requestId, provider: p, model: m, tier: routing.tier });
+    }
 
     const contentType = (response.headers.get('content-type') || '').toLowerCase();
     if (contentType.includes('application/json') && !contentType.includes('text/event-stream')) {
       const data = await response.json();
-      const text = extractTextFromChoice(data.choices?.[0]);
-      if (!text) return null;
+      const choice = data.choices?.[0];
+      const text = extractTextFromChoice(choice, data);
+      const finishReason = String(choice?.finish_reason || data?.finish_reason || '').toLowerCase();
+      if (!text) return { fullText: '', firstTokenLatencyMs: null, finishReason };
       const firstTokenLatencyMs = Date.now() - requestStart;
       callbacks.onToken(text, firstTokenLatencyMs);
-      return { fullText: text, firstTokenLatencyMs };
+      return { fullText: text, firstTokenLatencyMs, finishReason };
     }
 
     const reader = response.body.getReader();
@@ -665,6 +745,7 @@ export async function streamAICompletion(
     let buffer = '';
     let fullText = '';
     let firstTokenLatencyMs: number | null = null;
+    let lastChoice: any = null;
 
     while (true) {
       if (abortSignal?.aborted) {
@@ -688,9 +769,10 @@ export async function streamAICompletion(
         try {
           const parsed = JSON.parse(payload);
           const choice = parsed.choices?.[0];
+          if (choice) lastChoice = choice;
           const token = extractStreamingToken(choice);
 
-          if (token) {
+          if (token.length > 0) {
             if (firstTokenLatencyMs === null) {
               firstTokenLatencyMs = Date.now() - requestStart;
             }
@@ -701,25 +783,34 @@ export async function streamAICompletion(
       }
     }
 
+    const finishReason = String(lastChoice?.finish_reason || '').toLowerCase();
     if (!fullText.trim()) {
-      return null;
+      return { fullText: '', firstTokenLatencyMs: null, finishReason };
     }
 
-    return { fullText, firstTokenLatencyMs };
+    return { fullText, firstTokenLatencyMs, finishReason };
   }
 
   try {
-    let streamResult: { fullText: string; firstTokenLatencyMs: number | null } | null = null;
+    let streamResult: { fullText: string; firstTokenLatencyMs: number | null; finishReason?: string } | null = null;
 
-    // CASE 1: Long Reasoning -> Nara Router ONLY (model: nemotron-3-ultra-free)
-    if (routing.tier === 'complex' || activeProvider === 'nara_router') {
+    // CASE 1: Long Reasoning -> Nara Router ONLY (model: NARA_ROUTER_MODEL, default combo/free)
+    if (isNaraOrComplexStream) {
       activeProvider = 'nara_router';
       activeModel = getNaraRouterModel();
       streamResult = await tryStreamFromProvider('nara_router', activeModel);
-      if (!streamResult) {
-        throw new Error(
-          `[NARA ROUTER ERROR] Nara Router (${getNaraRouterBaseUrl()}, model: ${activeModel}) could not complete this long-reasoning request. Please verify NARA_ROUTER_API_KEY.`
+      if (streamResult && !streamResult.fullText.trim() && streamResult.finishReason === 'length') {
+        retries++;
+        streamResult = await tryStreamFromProvider('nara_router', activeModel, 8000);
+      }
+      if (!streamResult || !streamResult.fullText.trim()) {
+        const err: any = new Error(
+          `Nara Router HTTP 200 returned empty stream content (finish_reason=${streamResult?.finishReason || 'unknown'}).`
         );
+        err.status = 502;
+        err.providerUsed = 'nara_router';
+        err.modelUsed = activeModel;
+        throw err;
       }
     } else {
       // CASE 2: Tier 1 Auto-Routing (fast -> apinex, short -> groq with model rotation, general -> ministral)
@@ -792,6 +883,6 @@ export async function streamAICompletion(
     return { text: streamResult.fullText, telemetry };
   } catch (err: any) {
     if (abortSignal?.aborted) throw err;
-    throw new Error(err?.message || 'Stream completion failed.');
+    throw err;
   }
 }
