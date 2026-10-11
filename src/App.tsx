@@ -14,7 +14,7 @@ import {
   PenTool, Eraser, Share2, LogOut, AlertTriangle, Activity, RefreshCw,
   Heart, Bookmark, X, Bell, Zap, Gift, Smartphone, Paperclip, History, Brain, Globe,
   LayoutDashboard, Layers, Video, HelpCircle, GraduationCap, Shield, Compass,
-  PanelLeftClose, PanelLeftOpen, ClipboardList, CheckSquare, Monitor, Tv
+  PanelLeftClose, PanelLeftOpen, ClipboardList, CheckSquare, Monitor, Tv, Cpu
 } from 'lucide-react';
 import { 
   UserRole, HouseType, SectionType, UserProfile, HouseStats, 
@@ -6960,27 +6960,80 @@ ${roleLabel}: ${userQuery}`;
                 )}
               </div>
 
-              {/* Quick Module Search Filter (when expanded) */}
+              {/* Quick Module Search Filter & Top Drop-down Profile Switcher (when expanded) */}
               {sidebarOpen && (
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  <input
-                    type="text"
-                    value={sidebarSearchQuery}
-                    onChange={e => setSidebarSearchQuery(e.target.value)}
-                    placeholder="Filter navigation..."
-                    className="w-full pl-8 pr-7 py-1.5 bg-slate-950/90 rounded-xl border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
-                  />
-                  {sidebarSearchQuery && (
-                    <button
-                      type="button"
-                      onClick={() => setSidebarSearchQuery('')}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white cursor-pointer"
-                      aria-label="Clear filter"
+                <div className="space-y-2">
+                  <div className="relative">
+                    <select
+                      value={currentUser.email || currentUser.uid || 'current'}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const accounts = [
+                          { uid: currentUser.uid || 'current', name: currentUser.name || 'Current User', role: effectiveRole, email: currentUser.email || 'user@studentos.edu', house: currentUser.house },
+                          { uid: 'demo-student-uid', name: 'Naitik Kashyap (Student)', role: 'student', email: 'naitik.kashyap0015@gmail.com', house: 'Ruby' },
+                          { uid: 'demo-teacher-uid', name: 'Physics Teacher', role: 'teacher', email: 'physics.teacher@school.edu' },
+                          { uid: 'demo-parent-uid', name: 'Parent Portal Account', role: 'parent', email: 'parent@school.edu' },
+                          { uid: 'demo-admin-uid', name: 'School Administrator', role: 'admin', email: 'admin@school.edu' },
+                          { uid: 'demo-super-admin-uid', name: 'Super Admin', role: 'super_admin', email: 'superadmin@studentos.edu' }
+                        ];
+                        const matched = accounts.find(a => a.email === val || a.uid === val);
+                        if (matched) {
+                          const updated = {
+                            ...currentUser,
+                            uid: matched.uid,
+                            name: matched.name.replace(/\s+\(.*?\)/, ''),
+                            email: matched.email,
+                            role: matched.role as any,
+                            house: (matched as any).house || currentUser.house,
+                            accountStatus: 'approved' as const
+                          };
+                          setCurrentUser(updated);
+                          localStorage.setItem('s_os_user', JSON.stringify(updated));
+                          if (matched.role === 'parent') {
+                            setActiveTab('parent_portal');
+                          }
+                          showNotification(`Switched profile to: ${matched.name} (${matched.role})`);
+                        }
+                      }}
+                      className="w-full bg-slate-900 border border-white/10 hover:border-indigo-500/50 rounded-xl px-2.5 py-1.5 text-xs font-bold text-white focus:outline-none cursor-pointer appearance-none transition-all shadow-inner truncate pr-7"
+                      title="Switch active profile account"
                     >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  )}
+                      {[
+                        { uid: currentUser.uid || 'current', name: currentUser.name || 'Current User', role: effectiveRole, email: currentUser.email || 'user@studentos.edu', house: currentUser.house },
+                        { uid: 'demo-student-uid', name: 'Naitik Kashyap (Student)', role: 'student', email: 'naitik.kashyap0015@gmail.com', house: 'Ruby' },
+                        { uid: 'demo-teacher-uid', name: 'Physics Teacher', role: 'teacher', email: 'physics.teacher@school.edu' },
+                        { uid: 'demo-parent-uid', name: 'Parent Portal Account', role: 'parent', email: 'parent@school.edu' },
+                        { uid: 'demo-admin-uid', name: 'School Administrator', role: 'admin', email: 'admin@school.edu' },
+                        { uid: 'demo-super-admin-uid', name: 'Super Admin', role: 'super_admin', email: 'superadmin@studentos.edu' }
+                      ].filter((acc, idx, arr) => arr.findIndex(a => a.email === acc.email || a.uid === acc.uid) === idx).map(acc => (
+                        <option key={acc.uid || acc.email} value={acc.email} className="bg-slate-900 text-white font-medium py-1">
+                          {acc.role === 'student' ? '🎓' : acc.role === 'teacher' ? '🔬' : acc.role === 'parent' ? '🛡️' : acc.role === 'super_admin' ? '👑' : '⚡'} {acc.name} ({acc.role})
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={sidebarSearchQuery}
+                      onChange={e => setSidebarSearchQuery(e.target.value)}
+                      placeholder="Filter navigation..."
+                      className="w-full pl-8 pr-7 py-1.5 bg-slate-950/90 rounded-xl border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                    />
+                    {sidebarSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSidebarSearchQuery('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white cursor-pointer"
+                        aria-label="Clear filter"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -7521,58 +7574,6 @@ ${roleLabel}: ${userQuery}`;
 
             {/* Sidebar Footer User Detail & Actions */}
             <div className="shrink-0 pt-3 border-t border-white/10 space-y-2.5">
-              {/* Sidebar Recent Accounts Profile Switcher */}
-              {sidebarOpen && (
-                <div className="bg-slate-900/80 border border-white/5 rounded-2xl p-2.5 space-y-2">
-                  <div className="flex items-center justify-between px-1">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Switch Recent Accounts</span>
-                    <span className="text-[9px] font-mono text-indigo-400 font-bold uppercase truncate max-w-[100px]">{currentUser.name || currentUser.email}</span>
-                  </div>
-                  <div className="space-y-1 max-h-[140px] overflow-y-auto pr-1">
-                    {[
-                      { uid: currentUser.uid || 'current', name: currentUser.name || 'Current User', role: effectiveRole, email: currentUser.email || 'user@studentos.edu', house: currentUser.house },
-                      { uid: 'demo-student-uid', name: 'Naitik Kashyap (Student)', role: 'student', email: 'naitik.kashyap0015@gmail.com', house: 'Ruby' },
-                      { uid: 'demo-teacher-uid', name: 'Physics Teacher', role: 'teacher', email: 'physics.teacher@school.edu' },
-                      { uid: 'demo-parent-uid', name: 'Parent Portal Account', role: 'parent', email: 'parent@school.edu' },
-                      { uid: 'demo-admin-uid', name: 'School Administrator', role: 'admin', email: 'admin@school.edu' },
-                      { uid: 'demo-super-admin-uid', name: 'Super Admin', role: 'super_admin', email: 'superadmin@studentos.edu' }
-                    ].filter((acc, idx, arr) => arr.findIndex(a => a.email === acc.email || a.uid === acc.uid) === idx).map(acc => (
-                      <button
-                        key={acc.uid || acc.email}
-                        type="button"
-                        onClick={() => {
-                          const updated = {
-                            ...currentUser,
-                            uid: acc.uid,
-                            name: acc.name.replace(/\s+\(.*?\)/, ''),
-                            email: acc.email,
-                            role: acc.role as any,
-                            house: (acc as any).house || currentUser.house,
-                            accountStatus: 'approved' as const
-                          };
-                          setCurrentUser(updated);
-                          localStorage.setItem('s_os_user', JSON.stringify(updated));
-                          if (acc.role === 'parent') {
-                            setActiveTab('parent_portal');
-                          }
-                          showNotification(`Switched profile to: ${acc.name} (${acc.role})`);
-                        }}
-                        className={`w-full text-left px-2 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center justify-between gap-2 ${currentUser.email === acc.email || currentUser.role === acc.role ? 'bg-indigo-600 text-white shadow-sm' : 'bg-white/5 hover:bg-white/10 text-slate-300'}`}
-                        title={`Switch to ${acc.name}`}
-                      >
-                        <div className="flex items-center gap-2 truncate">
-                          <span className="w-5 h-5 rounded-lg bg-white/10 flex items-center justify-center text-[10px] font-bold shrink-0">
-                            {acc.role === 'student' ? '🎓' : acc.role === 'teacher' ? '🔬' : acc.role === 'parent' ? '🛡️' : acc.role === 'super_admin' ? '👑' : '⚡'}
-                          </span>
-                          <span className="truncate">{acc.name}</span>
-                        </div>
-                        <span className="text-[9px] uppercase opacity-75 font-mono">{acc.role}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               {sidebarOpen ? (
                 <button
                   type="button"
