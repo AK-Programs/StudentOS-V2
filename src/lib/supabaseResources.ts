@@ -100,17 +100,133 @@ function mapRowToMaterial(row: any): MaterialResource {
 
 const LOCAL_MATERIALS_KEY = 's_os_materials';
 
+const DEFAULT_SEEDED_MATERIALS: MaterialResource[] = [
+  {
+    id: 'mat-teacher-1',
+    title: '📖 AP Physics Mechanics & Rotational Dynamics Compendium',
+    subject: 'Physics',
+    type: 'pdf',
+    description: 'Calculus-based derivations for rotational motion, translational mechanics, and torque systems.',
+    uploadedBy: 'Physics Teacher',
+    uploaderUid: 'demo-teacher-uid',
+    uploaderHouse: 'Emerald',
+    uploaderSection: 'Solara',
+    createdAt: '2026-06-07',
+    created_at: 1749254400000,
+    isPublic: true,
+    visibility: 'student',
+    downloads: 42,
+    likes: 18,
+    views: 95,
+    isVerified: true,
+    comments: []
+  },
+  {
+    id: 'mat-teacher-vault-1',
+    title: '🔒 Faculty Grading Rubric & Lab Safety Solutions (Staff Vault)',
+    subject: 'Physics',
+    type: 'notes',
+    description: 'Internal faculty evaluation rubrics, practical exam answer keys, and lab apparatus checklist.',
+    uploadedBy: 'Physics Teacher',
+    uploaderUid: 'demo-teacher-uid',
+    createdAt: '2026-06-08',
+    created_at: 1749340800000,
+    isPublic: false,
+    visibility: 'teacher',
+    downloads: 19,
+    likes: 9,
+    views: 34,
+    isVerified: true,
+    comments: []
+  },
+  {
+    id: 'mat-student-1',
+    title: '💻 Balanced BST & AVL Tree Rotations Revision Sheet',
+    subject: 'Computer Science',
+    type: 'notes',
+    description: 'Complete student revision notes covering C++ & TypeScript AVL tree rotations, height invariants, and traversal complexity.',
+    uploadedBy: 'Naitik Kashyap',
+    uploaderUid: 'demo-student-uid',
+    uploaderHouse: 'Ruby',
+    uploaderSection: 'Ruby',
+    createdAt: '2026-06-09',
+    created_at: 1749427200000,
+    isPublic: true,
+    visibility: 'student',
+    downloads: 27,
+    likes: 14,
+    views: 61,
+    isVerified: true,
+    comments: []
+  },
+  {
+    id: 'mat-admin-1',
+    title: '🏛️ Term 1 Examination Blueprint & Academic Guidelines 2026',
+    subject: 'General',
+    type: 'question-paper',
+    questionPaperYear: '2026',
+    description: 'Official school administration examination schedule, marking weightage, and syllabus distribution across Grades 9–12.',
+    uploadedBy: 'School Administrator',
+    uploaderUid: 'demo-admin-uid',
+    createdAt: '2026-06-06',
+    created_at: 1749168000000,
+    isPublic: true,
+    visibility: 'student',
+    downloads: 84,
+    likes: 31,
+    views: 180,
+    isVerified: true,
+    comments: []
+  },
+  {
+    id: 'mat-superadmin-1',
+    title: '⚡ StudentOS AI & Smart Board Architecture Reference',
+    subject: 'Computer Science',
+    type: 'formula-sheet',
+    description: 'Super Admin reference manual for campus AI study workflows, SM-2 spaced repetition, and digital classroom tools.',
+    uploadedBy: 'Super Admin',
+    uploaderUid: 'demo-super-admin-uid',
+    createdAt: '2026-06-10',
+    created_at: 1749513600000,
+    isPublic: true,
+    visibility: 'student',
+    downloads: 53,
+    likes: 25,
+    views: 112,
+    isVerified: true,
+    comments: []
+  }
+];
 
+function getLocalMaterials(): MaterialResource[] {
+  try {
+    const raw = localStorage.getItem(LOCAL_MATERIALS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn('[SUPABASE-RESOURCES] Failed to read local materials:', e);
+  }
+  return DEFAULT_SEEDED_MATERIALS;
+}
 
-
-
-
+function saveLocalMaterialsList(list: MaterialResource[]): void {
+  try {
+    localStorage.setItem(LOCAL_MATERIALS_KEY, JSON.stringify(list));
+  } catch (e) {
+    console.warn('[SUPABASE-RESOURCES] Failed to write local materials:', e);
+  }
+}
 
 /**
  * ---------------- MATERIALS OPERATIONS ----------------
  */
 
 export async function getSupabaseMaterials(): Promise<MaterialResource[]> {
+  const local = getLocalMaterials();
   try {
     const { data, error } = await supabase
       .from('materials')
@@ -120,15 +236,13 @@ export async function getSupabaseMaterials(): Promise<MaterialResource[]> {
     if (error) {
       if (error.code === '42P01') {
         console.warn('[SUPABASE-RESOURCES] Table "materials" does not exist — using localStorage backup.');
-        return [];
+        return local;
       }
       throw error;
     }
 
     if (data && data.length > 0) {
       const remoteList = data.map(mapRowToMaterial);
-      // Merge with local-only items (uploaded but not yet synced)
-      const local = [];
       const remoteIds = new Set(remoteList.map(m => m.id));
       const localOnly = local.filter(m => !remoteIds.has(m.id));
       const merged = [...localOnly, ...remoteList].sort((a, b) => {
@@ -136,24 +250,30 @@ export async function getSupabaseMaterials(): Promise<MaterialResource[]> {
         const tB = typeof b.created_at === 'number' ? b.created_at : 0;
         return tB - tA;
       });
+      saveLocalMaterialsList(merged);
       console.log(`[SUPABASE-RESOURCES] Loaded ${remoteList.length} from Supabase + ${localOnly.length} local-only materials.`);
       return merged;
     }
-    // Supabase returned 0 rows (table may exist but be empty or blocked by RLS)
-    const local = [];
     if (local.length > 0) {
       console.log(`[SUPABASE-RESOURCES] Supabase returned 0 rows — serving ${local.length} materials from localStorage.`);
     }
     return local;
   } catch (err) {
     console.error('[SUPABASE-RESOURCES] Failed to fetch materials — falling back to localStorage:', err);
-    return [];
+    return local;
   }
 }
 
 export async function saveSupabaseMaterial(mat: MaterialResource): Promise<void> {
   // Always save locally first so materials survive even without Supabase tables
-  
+  const currentLocal = getLocalMaterials();
+  const existingIdx = currentLocal.findIndex(m => m.id === mat.id);
+  if (existingIdx >= 0) {
+    currentLocal[existingIdx] = mat;
+  } else {
+    currentLocal.unshift(mat);
+  }
+  saveLocalMaterialsList(currentLocal);
 
   const row = mapMaterialToRow(mat);
   try {
@@ -177,7 +297,8 @@ export async function saveSupabaseMaterial(mat: MaterialResource): Promise<void>
 }
 
 export async function deleteSupabaseMaterial(id: string): Promise<void> {
-  
+  const currentLocal = getLocalMaterials().filter(m => m.id !== id);
+  saveLocalMaterialsList(currentLocal);
   try {
     const { error } = await supabase
       .from('materials')

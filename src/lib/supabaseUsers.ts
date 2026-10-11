@@ -80,9 +80,189 @@ function isValidUUID(str: string): boolean {
 const profileCache = new Map<string, { profile: UserProfile; timestamp: number }>();
 const CACHE_TTL_MS = 30000; // 30 seconds
 
+function getLocalProfileKey(uidOrEmail: string): string {
+  return `s_os_profile_store_${(uidOrEmail || '').toLowerCase()}`;
+}
+
+export function getDefaultProfileForAccount(uid?: string, email?: string): UserProfile | null {
+  const key = (uid || email || '').toLowerCase();
+  if (key === 'demo-student-uid' || key === 'student@demo.com' || key === 'aarav.sharma@studentos.edu') {
+    return {
+      uid: 'demo-student-uid',
+      name: 'Aarav Sharma',
+      email: 'student@demo.com',
+      role: 'student',
+      grade: 'Grade 10',
+      section: 'A',
+      house: 'Ruby',
+      bio: 'Grade 10 Physics & Computer Science enthusiast. Building robotics & mastering competitive algorithms.',
+      customStatus: 'Studying Rotational Mechanics ⚛️',
+      studyHours: 18,
+      quizzesTaken: 7,
+      streakDays: 9,
+      accountStatus: 'approved',
+      raw_data: {
+        savedMaterialIds: ['mat-teacher-1', 'mat-student-1'],
+        tasks: [
+          { id: 'task-stu-1', title: 'Complete AP Physics Rotational Torque problem set', completed: false, category: 'Physics', dueDate: 'Tomorrow', subject: 'Physics' },
+          { id: 'task-stu-2', title: 'Implement AVL Tree rotations in C++', completed: true, category: 'Computer Science', dueDate: 'Friday', subject: 'Computer Science' },
+          { id: 'task-stu-3', title: 'Review Organic Chemistry Reaction Mechanisms', completed: false, category: 'Chemistry', dueDate: 'Next Monday', subject: 'Chemistry' }
+        ],
+        schedules: [
+          { id: 'sch-stu-1', day: 'Monday', time: '08:30 AM - 09:30 AM', subject: 'AP Physics', room: 'Lab 204' },
+          { id: 'sch-stu-2', day: 'Tuesday', time: '10:00 AM - 11:00 AM', subject: 'Computer Science', room: 'CS Studio 1' },
+          { id: 'sch-stu-3', day: 'Wednesday', time: '11:30 AM - 12:30 PM', subject: 'Calculus', room: 'Room 108' }
+        ]
+      }
+    };
+  }
+  if (key === 'demo-teacher-uid' || key === 'teacher@demo.com' || key === 'physics.teacher@school.edu') {
+    return {
+      uid: 'demo-teacher-uid',
+      name: 'Prof. Elara Vance',
+      email: 'teacher@demo.com',
+      role: 'teacher',
+      department: 'Science & Engineering',
+      specialtySubject: 'Physics',
+      subjects: ['Physics', 'Mathematics'],
+      designation: 'Senior Physics Faculty',
+      house: 'Sapphire',
+      bio: 'Senior AP Physics & Applied Mechanics Educator. Guiding Grade 10 & 11 scholars through rigorous inquiry.',
+      customStatus: 'Grading Lab Reports & Office Hours 🔬',
+      studyHours: 42,
+      quizzesTaken: 15,
+      streakDays: 21,
+      accountStatus: 'approved',
+      raw_data: {
+        savedMaterialIds: ['mat-teacher-1', 'mat-teacher-2'],
+        tasks: [
+          { id: 'task-tea-1', title: 'Publish Grade 10 Rotational Dynamics Lab Rubric', completed: true, category: 'Physics', dueDate: 'Today', subject: 'Physics' },
+          { id: 'task-tea-2', title: 'Grade Section A & B Kinematics Quizzes (28 submissions)', completed: false, category: 'Physics', dueDate: 'Tomorrow', subject: 'Physics' },
+          { id: 'task-tea-3', title: 'Prepare Inter-House Science Olympiad question bank', completed: false, category: 'Science', dueDate: 'Thursday', subject: 'Physics' }
+        ],
+        schedules: [
+          { id: 'sch-tea-1', day: 'Monday', time: '08:30 AM - 09:30 AM', subject: 'Grade 10A AP Physics Lecture', room: 'Lab 204' },
+          { id: 'sch-tea-2', day: 'Wednesday', time: '01:00 PM - 02:30 PM', subject: 'Grade 11B Electromagnetism Lab', room: 'Main Physics Lab' },
+          { id: 'sch-tea-3', day: 'Friday', time: '03:00 PM - 04:00 PM', subject: 'Faculty STEM Curriculum Sync', room: 'Conference Hall B' }
+        ]
+      }
+    };
+  }
+  if (key === 'demo-parent-uid' || key === 'parent@demo.com' || key === 'parent@school.edu') {
+    return {
+      uid: 'demo-parent-uid',
+      name: 'Rajesh Kashyap',
+      email: 'parent@demo.com',
+      role: 'parent',
+      house: 'Ruby',
+      bio: 'Parent of Naitik Kashyap (Grade 10 - Ruby House). Active member of the Parent-Faculty Advisory Council.',
+      customStatus: 'Reviewing Weekly Progress Report 🛡️',
+      studyHours: 6,
+      quizzesTaken: 2,
+      streakDays: 4,
+      accountStatus: 'approved',
+      raw_data: {
+        savedMaterialIds: ['mat-teacher-1'],
+        tasks: [
+          { id: 'task-par-1', title: 'Review Naitik\'s Q3 Physics & Calculus progress card', completed: true, category: 'General', dueDate: 'Today', subject: 'General' },
+          { id: 'task-par-2', title: 'Confirm RSVP for Parent-Teacher Conference on Friday', completed: false, category: 'General', dueDate: 'Friday', subject: 'General' }
+        ],
+        schedules: [
+          { id: 'sch-par-1', day: 'Friday', time: '04:00 PM - 05:00 PM', subject: 'Parent-Teacher Meeting with Prof. Elara', room: 'Room 102 / Online' }
+        ]
+      }
+    };
+  }
+  if (key === 'demo-admin-uid' || key === 'admin@demo.com' || key === 'admin@school.edu') {
+    return {
+      uid: 'demo-admin-uid',
+      name: 'Principal Arthur Vance',
+      email: 'admin@demo.com',
+      role: 'admin',
+      designation: 'School Principal & Institutional Administrator',
+      house: 'Emerald',
+      bio: 'Overseeing academic excellence, faculty operations, and campus-wide digital transformation.',
+      customStatus: 'Campus Operations & Academic Audit ⚡',
+      studyHours: 30,
+      quizzesTaken: 10,
+      streakDays: 14,
+      accountStatus: 'approved',
+      raw_data: {
+        savedMaterialIds: ['mat-admin-1', 'mat-teacher-1'],
+        tasks: [
+          { id: 'task-adm-1', title: 'Approve Q3 Institutional Examination Timetable', completed: true, category: 'General', dueDate: 'Today', subject: 'General' },
+          { id: 'task-adm-2', title: 'Review pending faculty & student role verifications', completed: false, category: 'General', dueDate: 'Tomorrow', subject: 'General' },
+          { id: 'task-adm-3', title: 'Finalize Annual Athletics & Robotics Symposium budget', completed: false, category: 'General', dueDate: 'Friday', subject: 'General' }
+        ],
+        schedules: [
+          { id: 'sch-adm-1', day: 'Monday', time: '09:00 AM - 10:00 AM', subject: 'All-Department Heads Briefing', room: 'Principal Boardroom' },
+          { id: 'sch-adm-2', day: 'Thursday', time: '02:00 PM - 03:30 PM', subject: 'Campus Safety & Infrastructure Audit', room: 'Admin Wing' }
+        ]
+      }
+    };
+  }
+  if (key === 'demo-super' || key === 'demo-super-admin-uid' || key === 'naitik.kashyap0015@gmail.com' || key === 'superadmin@studentos.edu') {
+    return {
+      uid: 'demo-super',
+      name: 'Naitik Kashyap',
+      email: 'naitik.kashyap0015@gmail.com',
+      role: 'super_admin',
+      grade: 'Grade 10',
+      section: 'A',
+      house: 'Ruby',
+      designation: 'Founder & Super Admin',
+      bio: 'System Architect & Super Admin of StudentOS. Full clearance across AI engines, curriculum hubs, and institutional analytics.',
+      customStatus: 'Building & Orchestrating StudentOS 👑',
+      studyHours: 64,
+      quizzesTaken: 24,
+      streakDays: 30,
+      accountStatus: 'approved',
+      raw_data: {
+        savedMaterialIds: ['mat-super-1', 'mat-teacher-1', 'mat-student-1'],
+        tasks: [
+          { id: 'task-sup-1', title: 'Audit Orion AI multi-model routing & telemetry', completed: true, category: 'Computer Science', dueDate: 'Today', subject: 'Computer Science' },
+          { id: 'task-sup-2', title: 'Complete AP Physics Mechanics & Calculus problem sets', completed: false, category: 'Physics', dueDate: 'Tomorrow', subject: 'Physics' },
+          { id: 'task-sup-3', title: 'Review House Cup leaderboard standings & award badges', completed: false, category: 'General', dueDate: 'Friday', subject: 'General' }
+        ],
+        schedules: [
+          { id: 'sch-sup-1', day: 'Monday', time: '08:30 AM - 09:30 AM', subject: 'AP Physics Mechanics', room: 'Lab 204' },
+          { id: 'sch-sup-2', day: 'Tuesday', time: '11:00 AM - 12:00 PM', subject: 'Advanced Data Structures & AI', room: 'Innovation Lab' },
+          { id: 'sch-sup-3', day: 'Thursday', time: '03:30 PM - 04:30 PM', subject: 'StudentOS Architecture Sync', room: 'Command Center' }
+        ]
+      }
+    };
+  }
+  return null;
+}
+
+function getLocalSavedProfile(uid?: string, email?: string): UserProfile | null {
+  try {
+    if (uid) {
+      const raw = localStorage.getItem(getLocalProfileKey(uid));
+      if (raw) return JSON.parse(raw);
+    }
+    if (email) {
+      const raw = localStorage.getItem(getLocalProfileKey(email));
+      if (raw) return JSON.parse(raw);
+    }
+  } catch (_) {}
+  return getDefaultProfileForAccount(uid, email);
+}
+
+export function saveLocalProfileBackup(profile: UserProfile): void {
+  try {
+    if (profile.uid) {
+      localStorage.setItem(getLocalProfileKey(profile.uid), JSON.stringify(profile));
+    }
+    if (profile.email) {
+      localStorage.setItem(getLocalProfileKey(profile.email), JSON.stringify(profile));
+    }
+  } catch (_) {}
+}
+
 /**
  * Fetches a user profile from Supabase user_profiles table.
- * If not found, falls back to old `users` table for legacy compatibility.
+ * If not found, falls back to old `users` table or local account store.
  */
 export async function getSupabaseUserProfile(uid: string, email?: string, forceRefresh = false): Promise<UserProfile | null> {
   const cacheKey = uid || email || '';
@@ -95,6 +275,7 @@ export async function getSupabaseUserProfile(uid: string, email?: string, forceR
   }
 
   console.log('[SUPABASE-USERS] Fetching profile for uid:', uid, 'email:', email);
+  const localFallback = getLocalSavedProfile(uid, email);
   let data: any = null;
 
   // 1. Try querying by id or uid in user_profiles
@@ -151,12 +332,31 @@ export async function getSupabaseUserProfile(uid: string, email?: string, forceR
     } catch (e) {}
   }
 
-  if (!data) return null;
+  if (!data) {
+    if (localFallback) {
+      saveLocalProfileBackup(localFallback);
+      if (localFallback.uid) profileCache.set(localFallback.uid, { profile: localFallback, timestamp: Date.now() });
+      if (localFallback.email) profileCache.set(localFallback.email.toLowerCase(), { profile: localFallback, timestamp: Date.now() });
+      return localFallback;
+    }
+    return null;
+  }
 
   const profile = mapSupabaseUserToProfile(data);
 
   if (uid) {
     profile.uid = uid;
+  }
+
+  // Merge rich default/local raw_data if remote raw_data is missing tasks/schedules
+  if (localFallback) {
+    profile.raw_data = {
+      ...(localFallback.raw_data || {}),
+      ...(profile.raw_data || {}),
+      tasks: profile.raw_data?.tasks?.length ? profile.raw_data.tasks : (localFallback.raw_data?.tasks || []),
+      schedules: profile.raw_data?.schedules?.length ? profile.raw_data.schedules : (localFallback.raw_data?.schedules || []),
+      savedMaterialIds: profile.raw_data?.savedMaterialIds?.length ? profile.raw_data.savedMaterialIds : (localFallback.raw_data?.savedMaterialIds || [])
+    };
   }
 
   // Backfill to new table
@@ -165,6 +365,7 @@ export async function getSupabaseUserProfile(uid: string, email?: string, forceR
     saveSupabaseUserProfile(profile).catch(err => console.error("Failed to migrate legacy profile", err));
   }
 
+  saveLocalProfileBackup(profile);
   if (profile.uid) profileCache.set(profile.uid, { profile, timestamp: Date.now() });
   if (profile.email) profileCache.set(profile.email.toLowerCase(), { profile, timestamp: Date.now() });
 
@@ -249,12 +450,17 @@ export async function saveSupabaseUserProfile(profile: UserProfile): Promise<Use
     }
     
     const savedProfile = mapSupabaseUserToProfile(data || upsertData);
+    saveLocalProfileBackup(savedProfile);
     if (savedProfile.uid) profileCache.set(savedProfile.uid, { profile: savedProfile, timestamp: Date.now() });
     if (savedProfile.email) profileCache.set(savedProfile.email.toLowerCase(), { profile: savedProfile, timestamp: Date.now() });
     return savedProfile;
   } catch (error) {
-    console.error('[SUPABASE-USERS] Failed to save user profile:', error);
-    throw error;
+    console.warn('[SUPABASE-USERS] Supabase save notice, persisted to local profile backup:', error);
+    const localSaved = mapSupabaseUserToProfile(upsertData);
+    saveLocalProfileBackup(localSaved);
+    if (localSaved.uid) profileCache.set(localSaved.uid, { profile: localSaved, timestamp: Date.now() });
+    if (localSaved.email) profileCache.set(localSaved.email.toLowerCase(), { profile: localSaved, timestamp: Date.now() });
+    return localSaved;
   }
 }
 

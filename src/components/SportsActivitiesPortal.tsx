@@ -62,73 +62,107 @@ export const SportsActivitiesPortal = ({ currentUser, showNotification }: any) =
   const [compDraft, setCompDraft] = useState<Partial<Competition>>({ status: 'Scheduled' });
   const [achDraft, setAchDraft] = useState<Partial<Achievement>>({ level: 'Inter-School' });
 
-  // Load state from Supabase
+  // Load state from per-user localStorage + Supabase
   useEffect(() => {
-    const uid = currentUser?.uid;
-    if (!uid) return;
+    const uid = currentUser?.uid || currentUser?.email || 'guest';
+    const localKey = `s_os_sports_activities_${uid}`;
+
+    const applyParsed = (parsed: any) => {
+      if (parsed.participations) setParticipations(parsed.participations);
+      if (parsed.events) setEvents(parsed.events);
+      if (parsed.competitions) setCompetitions(parsed.competitions);
+      if (parsed.achievements) setAchievements(parsed.achievements);
+    };
 
     const loadFromSupabase = async () => {
       try {
+        const localRaw = localStorage.getItem(localKey);
+        if (localRaw) {
+          applyParsed(JSON.parse(localRaw));
+        }
+      } catch (_) {}
+
+      try {
         const { data, error } = await supabase.from('sports_activities').select('data').eq('id', `sports_${uid}`).maybeSingle();
-        if (error) throw error;
-        if (data && data.data) {
+        if (!error && data && data.data) {
           const parsed = JSON.parse(data.data);
-          if (parsed.participations) setParticipations(parsed.participations);
-          if (parsed.events) setEvents(parsed.events);
-          if (parsed.competitions) setCompetitions(parsed.competitions);
-          if (parsed.achievements) setAchievements(parsed.achievements);
+          applyParsed(parsed);
+          try { localStorage.setItem(localKey, JSON.stringify(parsed)); } catch (_) {}
           return;
         }
       } catch (e) {
-        console.warn('Supabase load failed, using defaults:', e);
+        console.warn('Supabase load notice, using local/defaults:', e);
       }
-      
-      // Defaults
-      setParticipations([
-        { id: 'p-1', studentName: 'Aarav Sharma', grade: 'Grade 10', activity: 'Football', role: 'Striker', status: 'Active', hoursLogged: 12 },
-        { id: 'p-2', studentName: 'Diya Patel', grade: 'Grade 9', activity: 'Basketball', role: 'Point Guard', status: 'Active', hoursLogged: 15 },
-        { id: 'p-3', studentName: 'Kabir Mehta', grade: 'Grade 11', activity: 'Athletics', role: 'Sprinter', status: 'Injured', hoursLogged: 8 }
-      ]);
-      setEvents([
-        { id: 'e-1', title: 'Annual Inter-House Sports Day', date: '2026-10-15', time: '08:00 - 16:00', venue: 'Main Ground', type: 'Inter-House', status: 'Upcoming' },
-        { id: 'e-2', title: 'Friendly Match vs St. Xavier Hockey Club', date: '2026-07-28', time: '15:30 - 17:00', venue: 'North Turf', type: 'Friendly', status: 'Upcoming' }
-      ]);
-      setCompetitions([
-        { id: 'c-1', name: 'District Basketball Tournament', opponent: 'DPS Falcons', sport: 'Basketball', date: '2026-06-12', score: '56 - 48', status: 'Won' },
-        { id: 'c-2', name: 'Regional Football League', opponent: 'Navy Children School', sport: 'Football', date: '2026-07-20', score: '0 - 0', status: 'Scheduled' }
-      ]);
-      setAchievements([
-        { id: 'a-1', studentName: 'Diya Patel', sportActivity: 'Basketball', awardName: 'Most Valuable Player', level: 'District', date: '2026-06-12' },
-        { id: 'a-2', studentName: 'Aarav Sharma', sportActivity: 'Football', awardName: 'Top Scorer Cup', level: 'Inter-School', date: '2026-05-30' }
-      ]);
+
+      try {
+        if (localStorage.getItem(localKey)) return;
+      } catch (_) {}
+
+      const userName = currentUser?.name || 'Aarav Sharma';
+      const userGrade = currentUser?.grade || 'Grade 10';
+      const defaultData = {
+        participations: [
+          { id: `p-${uid}-1`, studentName: userName, grade: userGrade, activity: uid.includes('teacher') ? 'Physics & Robotics Club Faculty Advisor' : 'Varsity Football & Robotics Club', role: uid.includes('teacher') ? 'Lead Coach & Mentor' : 'Team Captain', status: 'Active' as const, hoursLogged: uid.includes('teacher') ? 28 : 16 },
+          { id: 'p-2', studentName: 'Aarav Sharma', grade: 'Grade 10', activity: 'Football', role: 'Striker', status: 'Active' as const, hoursLogged: 12 },
+          { id: 'p-3', studentName: 'Diya Patel', grade: 'Grade 9', activity: 'Basketball', role: 'Point Guard', status: 'Active' as const, hoursLogged: 15 }
+        ],
+        events: [
+          { id: 'e-1', title: 'Annual Inter-House Sports & Athletics Meet', date: '2026-10-15', time: '08:00 - 16:00', venue: 'Main Stadium Ground', type: 'Inter-House', status: 'Upcoming' as const },
+          { id: 'e-2', title: 'Inter-School Robotics & STEM Scrimmage', date: '2026-10-22', time: '14:00 - 17:00', venue: 'Innovation Arena', type: 'Inter-School', status: 'Upcoming' as const }
+        ],
+        competitions: [
+          { id: 'c-1', name: 'District Basketball Championship', opponent: 'DPS Falcons', sport: 'Basketball', date: '2026-09-12', score: '56 - 48', status: 'Won' as const },
+          { id: 'c-2', name: 'Regional Inter-School Football League', opponent: 'St. Xavier Academy', sport: 'Football', date: '2026-10-20', score: 'Scheduled', status: 'Scheduled' as const }
+        ],
+        achievements: [
+          { id: `a-${uid}-1`, studentName: userName, sportActivity: uid.includes('teacher') ? 'STEM Coaching Excellence' : 'Inter-School Athletics & Science Cup', awardName: uid.includes('teacher') ? 'Distinguished Faculty Mentor Trophy' : 'Gold Medal & MVP Honors', level: 'Regional', date: '2026-09-18' },
+          { id: 'a-2', studentName: 'Diya Patel', sportActivity: 'Basketball', awardName: 'Most Valuable Player', level: 'District', date: '2026-06-12' }
+        ]
+      };
+      applyParsed(defaultData);
+      try { localStorage.setItem(localKey, JSON.stringify(defaultData)); } catch (_) {}
     };
     
     loadFromSupabase();
-  }, [currentUser]);
+  }, [currentUser?.uid, currentUser?.email]);
 
   // Save states helper
   const saveState = (key: string, data: any) => {
-    // handled by effect
+    const uid = currentUser?.uid || currentUser?.email || 'guest';
+    const localKey = `s_os_sports_activities_${uid}`;
+    const payload = {
+      participations: key === 'part' ? data : participations,
+      events: key === 'ev' ? data : events,
+      competitions: key === 'comp' ? data : competitions,
+      achievements: key === 'ach' ? data : achievements
+    };
+    try {
+      localStorage.setItem(localKey, JSON.stringify(payload));
+    } catch (_) {}
   };
 
   useEffect(() => {
-    if (!currentUser?.uid) return;
-    const uid = currentUser.uid;
-    const saveToSupabase = async () => {
-      try {
-        await supabase.from('sports_activities').upsert({
-          id: `sports_${uid}`,
-          user_id: uid,
-          data: JSON.stringify({ participations, events, competitions, achievements }),
-          updated_at: new Date().toISOString()
-        });
-      } catch (e) {}
-    };
+    const uid = currentUser?.uid || currentUser?.email;
+    if (!uid) return;
+    const localKey = `s_os_sports_activities_${uid}`;
+    const payload = { participations, events, competitions, achievements };
     if (participations.length > 0 || events.length > 0 || competitions.length > 0 || achievements.length > 0) {
-      const timer = setTimeout(saveToSupabase, 1000);
+      try {
+        localStorage.setItem(localKey, JSON.stringify(payload));
+      } catch (_) {}
+      const timer = setTimeout(async () => {
+        try {
+          await supabase.from('sports_activities').upsert({
+            id: `sports_${uid}`,
+            user_id: uid,
+            data: JSON.stringify(payload),
+            updated_at: new Date().toISOString()
+          });
+        } catch (e) {}
+      }, 800);
       return () => clearTimeout(timer);
     }
-  }, [participations, events, competitions, achievements, currentUser]);
+  }, [participations, events, competitions, achievements, currentUser?.uid]);
 
   const handleAddParticipation = () => {
     if (!partDraft.studentName || !partDraft.activity || !partDraft.role) {

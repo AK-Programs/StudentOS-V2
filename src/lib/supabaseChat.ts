@@ -73,8 +73,117 @@ export interface AiBuddyThread {
   createdAt: number;
 }
 
+function getLocalAiBuddyKey(userId: string): string {
+  return `s_os_ai_buddy_chats_${userId || 'guest'}`;
+}
+
+function getDefaultAiThreadsForUser(userId: string): AiBuddyThread[] {
+  const now = Date.now();
+  if (userId === 'demo-teacher-uid' || userId.includes('teacher')) {
+    return [
+      {
+        id: `ai-thread-teacher-1`,
+        title: 'AP Physics Lab Rubric & Lesson Plan',
+        personaId: 'elara',
+        mode: 'explanatory',
+        messages: [
+          { role: 'assistant', content: 'Welcome back, Professor Elara! I have prepared the rotational inertia lab grading rubric and differentiated problem sets for Grade 10 Sections A & B. Would you like to generate a formative quiz next?' },
+          { role: 'user', content: 'Generate 3 conceptual questions on conservation of angular momentum for tomorrow\'s warmup.' },
+          { role: 'assistant', content: 'Here are 3 conceptual warmup questions for Grade 10:\n\n1. **Ice Skater Spin**: Why does pulling arms inward increase angular velocity while angular momentum $L = I\\omega$ remains constant?\n2. **Neutron Star Collapse**: If a star\'s radius shrinks by a factor of $10$, by what factor does its rotational kinetic energy change?\n3. **Bicycle Wheel Gyroscope**: When holding a spinning wheel and inverting it on a rotating stool, what determines the direction of the stool\'s rotation?' }
+        ],
+        attachedFiles: [],
+        userId,
+        createdAt: now - 3600000
+      }
+    ];
+  }
+  if (userId === 'demo-admin-uid' || userId.includes('admin') && !userId.includes('super')) {
+    return [
+      {
+        id: `ai-thread-admin-1`,
+        title: 'Q3 Institutional Attendance & Schedule Audit',
+        personaId: 'study_buddy',
+        mode: 'explanatory',
+        messages: [
+          { role: 'assistant', content: 'Hello Principal Vance! Here is your administrative AI briefing. Campus attendance is at 96.4% this week, and 4 new resources were published by faculty.' }
+        ],
+        attachedFiles: [],
+        userId,
+        createdAt: now - 5400000
+      }
+    ];
+  }
+  if (userId === 'demo-parent-uid' || userId.includes('parent')) {
+    return [
+      {
+        id: `ai-thread-parent-1`,
+        title: 'Naitik\'s Weekly Academic Progress Summary',
+        personaId: 'study_buddy',
+        mode: 'explanatory',
+        messages: [
+          { role: 'assistant', content: 'Welcome, Rajesh! Naitik has completed 14 study hours this week with an 8-day streak and scored 94% on the latest Physics kinematics assessment. How can I help you support his learning goals?' }
+        ],
+        attachedFiles: [],
+        userId,
+        createdAt: now - 7200000
+      }
+    ];
+  }
+  if (userId === 'demo-super' || userId === 'demo-super-admin-uid' || userId.includes('super')) {
+    return [
+      {
+        id: `ai-thread-super-1`,
+        title: 'Orion Neural Engine Diagnostics & Curriculum Synthesis',
+        personaId: 'study_buddy',
+        mode: 'explanatory',
+        messages: [
+          { role: 'assistant', content: 'Welcome, Naitik (Super Admin)! All multi-provider LLM routers (Groq, Ministral, APInex, Nara) and Supabase realtime channels are operational. What would you like to build or analyze today?' }
+        ],
+        attachedFiles: [],
+        userId,
+        createdAt: now - 1800000
+      }
+    ];
+  }
+  return [
+    {
+      id: `ai-thread-${userId}-1`,
+      title: 'Kinematics & Binary Search Trees Review',
+      personaId: 'study_buddy',
+      mode: 'explanatory',
+      messages: [
+        { role: 'assistant', content: 'Hey! 🚀 Welcome to your personal AI Buddy workspace. Your study threads, uploaded files, and Socratic sessions are synced specifically to your profile account.\n\nWhat topic should we tackle today?' }
+      ],
+      attachedFiles: [],
+      userId,
+      createdAt: now - 3600000
+    }
+  ];
+}
+
+function getLocalAiBuddyChats(userId: string): AiBuddyThread[] {
+  try {
+    const raw = localStorage.getItem(getLocalAiBuddyKey(userId));
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (_) {}
+  const seeded = getDefaultAiThreadsForUser(userId);
+  try {
+    localStorage.setItem(getLocalAiBuddyKey(userId), JSON.stringify(seeded));
+  } catch (_) {}
+  return seeded;
+}
+
+function saveLocalAiBuddyChats(userId: string, threads: AiBuddyThread[]): void {
+  try {
+    localStorage.setItem(getLocalAiBuddyKey(userId), JSON.stringify(threads));
+  } catch (_) {}
+}
+
 /**
- * Robust helper to fetch AI Buddy Chats from Supabase (ai_buddy_chats table & notes backup).
+ * Robust helper to fetch AI Buddy Chats from Supabase (ai_buddy_chats table & local backup).
  * Securely filters by userId to prevent exposure of other users' chats.
  * Syncs seamlessly across devices and browsers.
  */
@@ -83,6 +192,12 @@ export async function getAiBuddyChats(userId: string): Promise<AiBuddyThread[]> 
   console.log('[SUPABASE-CHAT] Fetching ai_buddy_chats from Supabase for userId:', userId);
   
   const mergedMap = new Map<string, AiBuddyThread>();
+  const localThreads = getLocalAiBuddyChats(userId);
+  for (const t of localThreads) {
+    if (!t.userId || t.userId === userId) {
+      mergedMap.set(t.id, { ...t, userId });
+    }
+  }
 
   try {
     const { data, error } = await supabase
@@ -135,7 +250,9 @@ export async function getAiBuddyChats(userId: string): Promise<AiBuddyThread[]> 
     console.warn('[SUPABASE-CHAT] Error querying ai_buddy_chats table:', err);
   }
 
-  return Array.from(mergedMap.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const finalThreads = Array.from(mergedMap.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  saveLocalAiBuddyChats(userId, finalThreads);
+  return finalThreads;
 }
 
 /**
@@ -159,6 +276,16 @@ export async function saveAiBuddyChat(thread: AiBuddyThread): Promise<void> {
       });
     }
   }
+
+  // Save immediately to per-user localStorage
+  const existingLocal = getLocalAiBuddyChats(thread.userId);
+  const updatedThread: AiBuddyThread = {
+    ...thread,
+    messages: cleanMessages,
+    createdAt: thread.createdAt || Date.now()
+  };
+  const nextLocal = [updatedThread, ...existingLocal.filter(t => t.id !== thread.id)];
+  saveLocalAiBuddyChats(thread.userId, nextLocal);
 
   const payloadString = JSON.stringify({
     messages: cleanMessages,
@@ -209,6 +336,10 @@ export async function saveAiBuddyChat(thread: AiBuddyThread): Promise<void> {
  */
 export async function deleteAiBuddyChat(threadId: string, userId: string): Promise<void> {
   console.log('[SUPABASE-CHAT] Deleting ai_buddy_chat:', threadId);
+  if (userId) {
+    const existing = getLocalAiBuddyChats(userId).filter(t => t.id !== threadId);
+    saveLocalAiBuddyChats(userId, existing);
+  }
 
   try {
     await supabase.from('ai_buddy_messages').delete().eq('thread_id', threadId);
@@ -222,6 +353,82 @@ export async function deleteAiBuddyChat(threadId: string, userId: string): Promi
   }
 }
 
+const LOCAL_PEER_MESSAGES_KEY = 's_os_peer_messages_v2';
+const LOCAL_CHAT_ROOMS_KEY = 's_os_chat_rooms_v2';
+
+const DEFAULT_PEER_MESSAGES: ChatMessage[] = [
+  {
+    id: 'msg-seed-1',
+    name: 'Prof. Elara Vance',
+    role: 'teacher',
+    house: 'Sapphire',
+    message: 'Welcome everyone to the General Lounge! Remember that the AP Physics Rotational Dynamics packet is now live in the Materials Hub.',
+    createdAt: new Date(Date.now() - 7200000).toISOString(),
+    targetId: 'group-all',
+    ownerUid: 'demo-teacher-uid'
+  },
+  {
+    id: 'msg-seed-2',
+    name: 'Aarav Sharma',
+    role: 'student',
+    house: 'Ruby',
+    message: 'Thank you Professor Elara! Just bookmarked the packet and started working on the torque problems.',
+    createdAt: new Date(Date.now() - 5400000).toISOString(),
+    targetId: 'group-all',
+    ownerUid: 'demo-student-uid'
+  },
+  {
+    id: 'msg-seed-3',
+    name: 'Principal Arthur Vance',
+    role: 'admin',
+    house: 'Emerald',
+    message: 'Reminder: Inter-House Science & Robotics Exhibition registration closes this Friday at 5:00 PM.',
+    createdAt: new Date(Date.now() - 3600000).toISOString(),
+    targetId: 'group-all',
+    ownerUid: 'demo-admin-uid'
+  },
+  {
+    id: 'msg-seed-dm-1',
+    name: 'Prof. Elara Vance',
+    role: 'teacher',
+    house: 'Sapphire',
+    message: 'Hi Aarav, great job on your kinematics lab submission! Let me know if you have questions on angular momentum.',
+    createdAt: new Date(Date.now() - 3000000).toISOString(),
+    targetId: 'dm_demo-student-uid_demo-teacher-uid',
+    ownerUid: 'demo-teacher-uid'
+  },
+  {
+    id: 'msg-seed-dm-2',
+    name: 'Aarav Sharma',
+    role: 'student',
+    house: 'Ruby',
+    message: 'Thanks Professor! I will review the moment of inertia derivations before tomorrow\'s class.',
+    createdAt: new Date(Date.now() - 2400000).toISOString(),
+    targetId: 'dm_demo-student-uid_demo-teacher-uid',
+    ownerUid: 'demo-student-uid'
+  }
+];
+
+function getLocalPeerMessages(): ChatMessage[] {
+  try {
+    const raw = localStorage.getItem(LOCAL_PEER_MESSAGES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (_) {}
+  try {
+    localStorage.setItem(LOCAL_PEER_MESSAGES_KEY, JSON.stringify(DEFAULT_PEER_MESSAGES));
+  } catch (_) {}
+  return [...DEFAULT_PEER_MESSAGES];
+}
+
+function saveLocalPeerMessages(msgs: ChatMessage[]): void {
+  try {
+    localStorage.setItem(LOCAL_PEER_MESSAGES_KEY, JSON.stringify(msgs));
+  } catch (_) {}
+}
+
 let peerMessagesPromise: Promise<ChatMessage[]> | null = null;
 let lastPeerMessagesFetch = 0;
 let cachedPeerMessages: ChatMessage[] = [];
@@ -233,10 +440,11 @@ let cachedRoomsMap = new Map<string, ChatRoom[]>();
 export function clearChatCache() {
   lastPeerMessagesFetch = 0;
   lastRoomsFetchTime.clear();
+  cachedRoomsMap.clear();
 }
 
 /**
- * Robust helper to fetch Peer/Group Messages from Supabase chat_room_messages table
+ * Robust helper to fetch Peer/Group Messages from Supabase chat_room_messages table + local backup
  */
 export async function getPeerMessages(force = false): Promise<ChatMessage[]> {
   const now = Date.now();
@@ -250,6 +458,9 @@ export async function getPeerMessages(force = false): Promise<ChatMessage[]> {
   peerMessagesPromise = (async () => {
     console.log('[SUPABASE-CHAT] Fetching room/peer messages from Supabase...');
     const msgMap = new Map<string, ChatMessage>();
+    for (const m of getLocalPeerMessages()) {
+      msgMap.set(m.id, m);
+    }
 
     const parseMessagePayload = (rawMsg: string): { text: string; meta: Partial<ChatMessage> } => {
       if (typeof rawMsg === 'string' && rawMsg.startsWith('__EXTENDED_CHAT__::')) {
@@ -311,6 +522,7 @@ export async function getPeerMessages(force = false): Promise<ChatMessage[]> {
     }
 
     const result = Array.from(msgMap.values()).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    saveLocalPeerMessages(result);
     cachedPeerMessages = result;
     lastPeerMessagesFetch = Date.now();
     return result;
@@ -326,6 +538,17 @@ export async function getPeerMessages(force = false): Promise<ChatMessage[]> {
  */
 export async function savePeerMessage(message: ChatMessage): Promise<void> {
   console.log('[SUPABASE-CHAT] Saving message to Supabase chat_room_messages:', message.id);
+
+  // Save to localStorage immediately
+  const existing = getLocalPeerMessages();
+  const idx = existing.findIndex(m => m.id === message.id);
+  if (idx >= 0) {
+    existing[idx] = { ...existing[idx], ...message };
+  } else {
+    existing.push(message);
+  }
+  saveLocalPeerMessages(existing);
+  cachedPeerMessages = existing;
 
   const hasExtra = !!(
     message.replyToId ||
@@ -402,6 +625,8 @@ export async function savePeerMessage(message: ChatMessage): Promise<void> {
 export async function renameAiBuddyChat(threadId: string, title: string, userId: string): Promise<void> {
   if (!userId || !threadId) return;
   console.log('[SUPABASE-CHAT] Renaming ai_buddy_chat:', threadId, 'to:', title);
+  const existing = getLocalAiBuddyChats(userId).map(t => t.id === threadId ? { ...t, title } : t);
+  saveLocalAiBuddyChats(userId, existing);
   try {
     await supabase
       .from('ai_buddy_chats')
@@ -418,6 +643,9 @@ export async function renameAiBuddyChat(threadId: string, title: string, userId:
  */
 export async function deletePeerMessage(messageId: string): Promise<void> {
   console.log('[SUPABASE-CHAT] Deleting message:', messageId);
+  const next = getLocalPeerMessages().filter(m => m.id !== messageId);
+  saveLocalPeerMessages(next);
+  cachedPeerMessages = next;
   try {
     await supabase.from('chat_room_messages').delete().eq('id', messageId);
   } catch (err) {

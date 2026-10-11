@@ -24,7 +24,7 @@ import {
 } from './types';
 import { supabase } from './lib/supabase';
 import { getVaultNotes, saveVaultNoteToSupabase, deleteVaultNoteFromSupabase } from './lib/supabaseNotes';
-import { getSupabaseUserProfile, saveSupabaseUserProfile } from './lib/supabaseUsers';
+import { getSupabaseUserProfile, saveSupabaseUserProfile, getDefaultProfileForAccount, saveLocalProfileBackup } from './lib/supabaseUsers';
 import { getSupabaseHomework, saveSupabaseHomework, deleteSupabaseHomework } from './lib/supabaseHomework';
 import { getAppNotifications, saveAppNotification, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification, generateUUID, registerPushSubscription, getDeviceId, triggerBrowserPushNotification, isUserEligibleForNotification, triggerNotificationSound } from './lib/notifications';
 import { requestFCMPermission, setupFCMForegroundListener } from './lib/fcmNotifications';
@@ -41,7 +41,8 @@ import { GamificationRewardToast, DashboardGamificationCard } from './components
 import { 
   getAiBuddyChats, saveAiBuddyChat, deleteAiBuddyChat, renameAiBuddyChat,
   getPeerMessages, savePeerMessage, deletePeerMessage,
-  getChatRooms, saveChatRoom, joinChatRoom, leaveChatRoom, deleteChatRoom
+  getChatRooms, saveChatRoom, joinChatRoom, leaveChatRoom, deleteChatRoom,
+  clearChatCache
 } from './lib/supabaseChat';
 import { saveSupabaseMaterial, getSupabaseMaterials, deleteSupabaseMaterial } from './lib/supabaseResources';
 import { PdfCanvasViewer } from './components/PdfCanvasViewer';
@@ -2066,12 +2067,36 @@ export default function App() {
 
   // Load Schedules
   useEffect(() => {
-    if (currentUser && currentUser.raw_data && currentUser.raw_data.schedules) {
-      setSchedules(currentUser.raw_data.schedules);
-    } else {
+    if (!currentUser) {
       setSchedules([]);
+      return;
     }
-  }, [currentUser]);
+    const fallbackProfile = getDefaultProfileForAccount(currentUser.uid, currentUser.email);
+    const userSchedules = currentUser.raw_data?.schedules || fallbackProfile?.raw_data?.schedules || [];
+    setSchedules(userSchedules);
+  }, [currentUser?.uid, currentUser?.email]);
+
+  // Saved Material Bookmarks Sync per User
+  useEffect(() => {
+    if (!currentUser) {
+      setSavedMaterialIds([]);
+      return;
+    }
+    const uid = currentUser.uid || currentUser.email || 'guest';
+    try {
+      const localSaved = localStorage.getItem(`s_os_saved_materials_${uid}`);
+      if (localSaved) {
+        const parsed = JSON.parse(localSaved);
+        if (Array.isArray(parsed)) {
+          setSavedMaterialIds(parsed);
+          return;
+        }
+      }
+    } catch (_) {}
+    const fallbackProfile = getDefaultProfileForAccount(currentUser.uid, currentUser.email);
+    const initialSaved = currentUser.raw_data?.savedMaterialIds || fallbackProfile?.raw_data?.savedMaterialIds || [];
+    setSavedMaterialIds(initialSaved);
+  }, [currentUser?.uid, currentUser?.email]);
 
   // System Diagnostics Logging (CHAT_INIT, ROOMS_INIT, CURRENT_USER, CURRENT_ROLE)
   useEffect(() => {
@@ -2094,35 +2119,37 @@ export default function App() {
 
   // Tasks Sync
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser) {
+      setTasks([]);
+      return;
+    }
     try {
       const rd = currentUser.raw_data || {};
-      if (rd.tasks) {
-        setTasks(rd.tasks);
-      } else {
-        setTasks([]);
-      }
+      const fallbackProfile = getDefaultProfileForAccount(currentUser.uid, currentUser.email);
+      const userTasks = rd.tasks || fallbackProfile?.raw_data?.tasks || [];
+      setTasks(userTasks);
     } catch (err) {
       console.error('[Sync] Failed to load tasks:', err);
       setTasks([]);
     }
-  }, [currentUser]);
+  }, [currentUser?.uid, currentUser?.email]);
 
   // Personal Notes Sync
   useEffect(() => {
     if (!currentUser) return;
     const loadNotes = async () => {
       try {
-        const uid = currentUser.uid;
-        const dbNotes = await getVaultNotes(uid || 'guest');
+        const uid = currentUser.uid || currentUser.email || 'guest';
+        const dbNotes = await getVaultNotes(uid);
         setVaultNotes(dbNotes);
+        setSelectedNoteId(dbNotes[0]?.id || null);
       } catch (err) {
         console.error('[Sync] Failed to parse notes:', err);
         setVaultNotes([]);
       }
     };
     loadNotes();
-  }, [currentUser]);
+  }, [currentUser?.uid, currentUser?.email]);
 
   // Homework Persistence Sync
   const isHomeworkLoaded = useRef<boolean>(false);
@@ -2299,16 +2326,16 @@ What can I clarify today?` }
     });
   }, [currentUser]); // Load when user logs in — not gated on tab so chats survive refresh
 
-  // Educational Materials Hub Sync
+  // Educational Materials Hub Sync — loads for all tabs and re-syncs on user switch
   useEffect(() => {
-    if (!currentUser || activeTab !== 'materials') return;
-    console.log("[SUPABASE] Fetching materials for materials hub tab");
+    if (!currentUser) return;
+    console.log("[SUPABASE] Fetching materials for user:", currentUser.uid);
     getSupabaseMaterials().then(list => {
       setMaterials(list);
     }).catch(err => {
       console.error('Failed to load materials from Supabase:', err);
     });
-  }, [currentUser, activeTab]);
+  }, [currentUser?.uid, activeTab === 'materials']);
 
   // Feedback Sync
   useEffect(() => {
@@ -4188,14 +4215,222 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
     }
   };
 
-  // Save Bookmarks
+  // Save Bookmarks per user
   const toggleBookmarkMaterial = (id: string) => {
     setSavedMaterialIds(prev => {
       const exists = prev.includes(id);
       const next = exists ? prev.filter(mId => mId !== id) : [...prev, id];
+      if (currentUser) {
+        const uid = currentUser.uid || currentUser.email || 'guest';
+        try {
+          localStorage.setItem(`s_os_saved_materials_${uid}`, JSON.stringify(next));
+        } catch (_) {}
+        const updatedUser = {
+          ...currentUser,
+          raw_data: {
+            ...(currentUser.raw_data || {}),
+            savedMaterialIds: next
+          }
+        };
+        setCurrentUser(updatedUser);
+        localStorage.setItem('s_os_user', JSON.stringify(updatedUser));
+        saveSupabaseUserProfile(updatedUser).catch(() => {});
+      }
       showNotification(exists ? 'Material removed from bookmarks.' : 'Material saved to private bookmarks desk!');
       return next;
     });
+  };
+
+  // Comprehensive Profile Account Switcher — switches active user account & syncs all per-user data
+  const SWITCHABLE_PROFILE_ACCOUNTS: Array<{
+    uid: string;
+    name: string;
+    role: UserRole;
+    email: string;
+    house?: HouseType;
+    grade?: string;
+    section?: SectionType;
+  }> = [
+    { uid: 'demo-super', name: 'Naitik Kashyap', role: 'super_admin', email: 'naitik.kashyap0015@gmail.com', house: 'Ruby', grade: 'Grade 10', section: 'A' },
+    { uid: 'demo-student-uid', name: 'Aarav Sharma', role: 'student', email: 'student@demo.com', house: 'Ruby', grade: 'Grade 10', section: 'A' },
+    { uid: 'demo-teacher-uid', name: 'Prof. Elara Vance', role: 'teacher', email: 'teacher@demo.com', house: 'Sapphire' },
+    { uid: 'demo-parent-uid', name: 'Rajesh Kashyap', role: 'parent', email: 'parent@demo.com', house: 'Ruby' },
+    { uid: 'demo-admin-uid', name: 'Principal Arthur Vance', role: 'admin', email: 'admin@demo.com', house: 'Emerald' }
+  ];
+
+  const getAvailableSwitchAccounts = () => {
+    const map = new Map<string, { uid: string; name: string; role: UserRole; email: string; house?: HouseType; grade?: string; section?: SectionType }>();
+    for (const acc of SWITCHABLE_PROFILE_ACCOUNTS) {
+      map.set(acc.uid, acc);
+    }
+    for (const rec of recentAccounts) {
+      if (!rec.uid) continue;
+      // Avoid duplicating built-in demo accounts with different UIDs
+      const existingByEmail = Array.from(map.values()).find(a => a.email.toLowerCase() === (rec.email || '').toLowerCase() && a.role === rec.role);
+      if (!existingByEmail && !map.has(rec.uid)) {
+        map.set(rec.uid, {
+          uid: rec.uid,
+          name: rec.name || 'StudentOS User',
+          role: (rec.role as UserRole) || 'student',
+          email: rec.email || `${rec.uid}@studentos.edu`,
+          house: rec.house,
+          grade: rec.grade
+        });
+      }
+    }
+    if (currentUser?.uid && !map.has(currentUser.uid)) {
+      const existingByEmail = Array.from(map.values()).find(a => a.email.toLowerCase() === (currentUser.email || '').toLowerCase() && a.role === currentUser.role);
+      if (!existingByEmail) {
+        map.set(currentUser.uid, {
+          uid: currentUser.uid,
+          name: currentUser.name || 'Current User',
+          role: currentUser.role || 'student',
+          email: currentUser.email || 'user@studentos.edu',
+          house: currentUser.house,
+          grade: currentUser.grade,
+          section: currentUser.section
+        });
+      }
+    }
+    return Array.from(map.values());
+  };
+
+  const handleSwitchProfileAccount = async (targetUidOrEmail: string) => {
+    const allAccounts = getAvailableSwitchAccounts();
+    const matched = allAccounts.find(a => a.uid === targetUidOrEmail || a.email.toLowerCase() === targetUidOrEmail.toLowerCase());
+    if (!matched) return;
+
+    // 1. Save outgoing user's latest state before switching
+    if (currentUser && currentUser.uid) {
+      const outgoingProfile: UserProfile = {
+        ...currentUser,
+        raw_data: {
+          ...(currentUser.raw_data || {}),
+          tasks,
+          schedules,
+          savedMaterialIds
+        }
+      };
+      saveLocalProfileBackup(outgoingProfile);
+      saveSupabaseUserProfile(outgoingProfile).catch(() => {});
+    }
+
+    // 2. Clear role simulation overrides & chat/AI caches so new user's data loads cleanly
+    setSimulatedRole(null);
+    setIsSuperAdmin(matched.role === 'super_admin');
+    aiChatsSyncingFor.current = null;
+    clearChatCache();
+    setActiveChatTargetId('group-all');
+    setSelectedMaterialForAi(null);
+    setPreviewMaterial(null);
+
+    // 3. Build immediate profile from local backup or canonical account default (never copying outgoing user's raw_data)
+    const defaultAcctProfile = getDefaultProfileForAccount(matched.uid, matched.email);
+    let nextProfile: UserProfile = defaultAcctProfile || {
+      uid: matched.uid,
+      name: matched.name,
+      email: matched.email,
+      role: matched.role,
+      house: matched.house || 'Ruby',
+      grade: matched.grade || (matched.role === 'student' ? 'Grade 10' : ''),
+      section: (matched.section as SectionType) || (matched.role === 'student' ? 'A' as any : undefined),
+      accountStatus: 'approved',
+      studyHours: 12,
+      quizzesTaken: 4,
+      streakDays: 5,
+      raw_data: {
+        tasks: [],
+        schedules: [],
+        savedMaterialIds: []
+      }
+    };
+
+    try {
+      const storedRaw = localStorage.getItem(`s_os_profile_store_${matched.uid.toLowerCase()}`) ||
+                        localStorage.getItem(`s_os_profile_store_${matched.email.toLowerCase()}`);
+      if (storedRaw) {
+        const parsedStored = JSON.parse(storedRaw);
+        nextProfile = {
+          ...nextProfile,
+          ...parsedStored,
+          uid: matched.uid,
+          role: matched.role,
+          raw_data: {
+            ...(nextProfile.raw_data || {}),
+            ...(parsedStored.raw_data || {})
+          }
+        };
+      }
+    } catch (_) {}
+
+    // 4. Immediately activate the new profile & sync per-user states
+    setCurrentUser(nextProfile);
+    localStorage.setItem('s_os_user', JSON.stringify(nextProfile));
+    saveLocalProfileBackup(nextProfile);
+    updateRecentAccounts(nextProfile);
+
+    setTasks(nextProfile.raw_data?.tasks || []);
+    setSchedules(nextProfile.raw_data?.schedules || []);
+    setSavedMaterialIds(nextProfile.raw_data?.savedMaterialIds || []);
+
+    // 5. Adjust activeTab if needed for the new account's role
+    if (matched.role === 'parent') {
+      setActiveTab('parent_portal');
+    } else if (activeTab === 'parent_portal' && matched.role !== 'parent') {
+      setActiveTab('dashboard');
+    } else if (activeTab === 'faculty' && matched.role !== 'teacher') {
+      setActiveTab('dashboard');
+    } else if (activeTab === 'admin' && matched.role !== 'admin' && matched.role !== 'super_admin') {
+      setActiveTab('dashboard');
+    }
+
+    showNotification(`✓ Switched account to ${nextProfile.name} (${matched.role.replace('_', ' ')}) — synced materials, chats & workspace`);
+
+    // 6. Reload per-user Notes, AI Buddy Chats, Materials, Peer Messages, Chat Rooms, and Notifications
+    const targetUid = nextProfile.uid;
+    getSupabaseMaterials().then(list => setMaterials(list)).catch(() => {});
+    getVaultNotes(targetUid).then(notes => {
+      setVaultNotes(notes);
+      setSelectedNoteId(notes[0]?.id || null);
+    }).catch(() => {});
+    getAiBuddyChats(targetUid).then(threads => {
+      if (threads && threads.length > 0) {
+        setAiThreads(threads as any);
+        setActiveThreadId(threads[0].id);
+      }
+    }).catch(() => {});
+    getPeerMessages(true).then(msgs => {
+      if (msgs) setChats(msgs);
+    }).catch(() => {});
+    getChatRooms(targetUid, true).then(rooms => {
+      if (rooms) setChatRooms(rooms);
+    }).catch(() => {});
+    getAppNotifications(targetUid, nextProfile.grade, nextProfile.section, nextProfile.role).then(list => {
+      if (list) setNotifications(list);
+    }).catch(() => {});
+
+    // 7. Also sync from remote Supabase user_profiles in background
+    try {
+      const remoteProfile = await getSupabaseUserProfile(matched.uid, matched.email, true);
+      if (remoteProfile) {
+        const mergedProfile: UserProfile = {
+          ...nextProfile,
+          ...remoteProfile,
+          uid: matched.uid,
+          role: matched.role,
+          raw_data: {
+            ...(nextProfile.raw_data || {}),
+            ...(remoteProfile.raw_data || {})
+          }
+        };
+        setCurrentUser(mergedProfile);
+        localStorage.setItem('s_os_user', JSON.stringify(mergedProfile));
+        saveLocalProfileBackup(mergedProfile);
+        if (mergedProfile.raw_data?.tasks) setTasks(mergedProfile.raw_data.tasks);
+        if (mergedProfile.raw_data?.schedules) setSchedules(mergedProfile.raw_data.schedules);
+        if (mergedProfile.raw_data?.savedMaterialIds) setSavedMaterialIds(mergedProfile.raw_data.savedMaterialIds);
+      }
+    } catch (_) {}
   };
 
   // Trigger AI analysis with raw content context
@@ -6967,49 +7202,26 @@ ${roleLabel}: ${userQuery}`;
                 <div className="space-y-2">
                   <div className="relative">
                     <select
-                      value={currentUser.email || currentUser.uid || 'current'}
+                      value={
+                        (() => {
+                          const list = getAvailableSwitchAccounts();
+                          const byUid = list.find(a => a.uid === currentUser.uid);
+                          if (byUid) return byUid.uid;
+                          const byEmailAndRole = list.find(a => a.email.toLowerCase() === (currentUser.email || '').toLowerCase() && a.role === currentUser.role);
+                          if (byEmailAndRole) return byEmailAndRole.uid;
+                          const byRole = list.find(a => a.role === currentUser.role);
+                          return byRole ? byRole.uid : (currentUser.uid || 'demo-super');
+                        })()
+                      }
                       onChange={(e) => {
-                        const val = e.target.value;
-                        const accounts = [
-                          { uid: currentUser.uid || 'current', name: currentUser.name || 'Current User', role: effectiveRole, email: currentUser.email || 'user@studentos.edu', house: currentUser.house },
-                          { uid: 'demo-student-uid', name: 'Naitik Kashyap (Student)', role: 'student', email: 'naitik.kashyap0015@gmail.com', house: 'Ruby' },
-                          { uid: 'demo-teacher-uid', name: 'Physics Teacher', role: 'teacher', email: 'physics.teacher@school.edu' },
-                          { uid: 'demo-parent-uid', name: 'Parent Portal Account', role: 'parent', email: 'parent@school.edu' },
-                          { uid: 'demo-admin-uid', name: 'School Administrator', role: 'admin', email: 'admin@school.edu' },
-                          { uid: 'demo-super-admin-uid', name: 'Super Admin', role: 'super_admin', email: 'superadmin@studentos.edu' }
-                        ];
-                        const matched = accounts.find(a => a.email === val || a.uid === val);
-                        if (matched) {
-                          const updated = {
-                            ...currentUser,
-                            uid: matched.uid,
-                            name: matched.name.replace(/\s+\(.*?\)/, ''),
-                            email: matched.email,
-                            role: matched.role as any,
-                            house: (matched as any).house || currentUser.house,
-                            accountStatus: 'approved' as const
-                          };
-                          setCurrentUser(updated);
-                          localStorage.setItem('s_os_user', JSON.stringify(updated));
-                          if (matched.role === 'parent') {
-                            setActiveTab('parent_portal');
-                          }
-                          showNotification(`Switched profile to: ${matched.name} (${matched.role})`);
-                        }
+                        handleSwitchProfileAccount(e.target.value);
                       }}
                       className="w-full bg-slate-900 border border-white/10 hover:border-indigo-500/50 rounded-xl px-2.5 py-1.5 text-xs font-bold text-white focus:outline-none cursor-pointer appearance-none transition-all shadow-inner truncate pr-7"
-                      title="Switch active profile account"
+                      title="Switch active profile account & sync user data"
                     >
-                      {[
-                        { uid: currentUser.uid || 'current', name: currentUser.name || 'Current User', role: effectiveRole, email: currentUser.email || 'user@studentos.edu', house: currentUser.house },
-                        { uid: 'demo-student-uid', name: 'Naitik Kashyap (Student)', role: 'student', email: 'naitik.kashyap0015@gmail.com', house: 'Ruby' },
-                        { uid: 'demo-teacher-uid', name: 'Physics Teacher', role: 'teacher', email: 'physics.teacher@school.edu' },
-                        { uid: 'demo-parent-uid', name: 'Parent Portal Account', role: 'parent', email: 'parent@school.edu' },
-                        { uid: 'demo-admin-uid', name: 'School Administrator', role: 'admin', email: 'admin@school.edu' },
-                        { uid: 'demo-super-admin-uid', name: 'Super Admin', role: 'super_admin', email: 'superadmin@studentos.edu' }
-                      ].filter((acc, idx, arr) => arr.findIndex(a => a.email === acc.email || a.uid === acc.uid) === idx).map(acc => (
-                        <option key={acc.uid || acc.email} value={acc.email} className="bg-slate-900 text-white font-medium py-1">
-                          {acc.role === 'student' ? '🎓' : acc.role === 'teacher' ? '🔬' : acc.role === 'parent' ? '🛡️' : acc.role === 'super_admin' ? '👑' : '⚡'} {acc.name} ({acc.role})
+                      {getAvailableSwitchAccounts().map(acc => (
+                        <option key={acc.uid} value={acc.uid} className="bg-slate-900 text-white font-medium py-1">
+                          {acc.role === 'student' ? '🎓' : acc.role === 'teacher' ? '🔬' : acc.role === 'parent' ? '🛡️' : acc.role === 'super_admin' ? '👑' : '⚡'} {acc.name} ({acc.role.replace('_', ' ')})
                         </option>
                       ))}
                     </select>
@@ -7691,66 +7903,20 @@ ${roleLabel}: ${userQuery}`;
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="text-[9px] uppercase font-black text-white/70 tracking-wider">Switch Profile:</span>
                   <button
-                    onClick={() => {
-                      const demoStudent = {
-                        uid: 'demo-student-uid',
-                        name: 'Naitik Kashyap',
-                        email: 'naitik.kashyap0015@gmail.com',
-                        role: 'student' as const,
-                        grade: 'Grade 10',
-                        section: 'Ruby' as any,
-                        house: 'Ruby' as any,
-                        studyHours: 14,
-                        quizzesTaken: 5,
-                        streakDays: 8,
-                        accountStatus: 'approved' as const
-                      };
-                      setCurrentUser(demoStudent);
-                      localStorage.setItem('s_os_user', JSON.stringify(demoStudent));
-                      saveSupabaseUserProfile(demoStudent).catch(console.error);
-                      showNotification('Swapped workspace context to: Student Demo (Naitik Kashyap)');
-                    }}
-                    className={`text-[9px] font-extrabold py-0.5 px-2 rounded transition-all ${currentUser?.role === 'student' ? 'bg-white text-slate-900 border border-white font-black shadow-sm scale-105' : 'bg-black/25 text-white border border-white/10 hover:bg-black/45'}`}
+                    onClick={() => handleSwitchProfileAccount('demo-student-uid')}
+                    className={`text-[9px] font-extrabold py-0.5 px-2 rounded transition-all ${currentUser?.uid === 'demo-student-uid' ? 'bg-white text-slate-900 border border-white font-black shadow-sm scale-105' : 'bg-black/25 text-white border border-white/10 hover:bg-black/45'}`}
                   >
-                    🎓 Naitik (Student)
+                    🎓 Aarav (Student)
                   </button>
                   <button
-                    onClick={() => {
-                      const demoTeacher = {
-                        uid: 'demo-teacher-uid',
-                        name: 'Physics Teacher',
-                        email: 'physics.teacher@school.edu',
-                        role: 'teacher' as const,
-                        specialtySubject: 'Physics',
-                        assignedGrades: ['Grade 10', 'Grade 11', 'Grade 12'],
-                        assignedSections: ['Ruby', 'Astra', 'Vega'],
-                        assignedClasses: ['10_Ruby', '11_Astra', '12_Vega'],
-                        accountStatus: 'approved' as const
-                      };
-                      setCurrentUser(demoTeacher);
-                      localStorage.setItem('s_os_user', JSON.stringify(demoTeacher));
-                      saveSupabaseUserProfile(demoTeacher).catch(console.error);
-                      showNotification('Swapped workspace context to: Physics Faculty');
-                    }}
-                    className={`text-[9px] font-extrabold py-0.5 px-2 rounded transition-all ${currentUser?.role === 'teacher' ? 'bg-white text-slate-900 border border-white font-black shadow-sm scale-105' : 'bg-black/25 text-white border border-white/10 hover:bg-black/45'}`}
+                    onClick={() => handleSwitchProfileAccount('demo-teacher-uid')}
+                    className={`text-[9px] font-extrabold py-0.5 px-2 rounded transition-all ${currentUser?.uid === 'demo-teacher-uid' ? 'bg-white text-slate-900 border border-white font-black shadow-sm scale-105' : 'bg-black/25 text-white border border-white/10 hover:bg-black/45'}`}
                   >
-                    🔬 Physics (Teacher)
+                    🔬 Prof. Elara (Teacher)
                   </button>
                   <button
-                    onClick={() => {
-                      const demoAdmin = {
-                        uid: 'demo-admin-uid',
-                        name: 'School Administrator',
-                        email: 'admin@school.edu',
-                        role: 'admin' as const,
-                        accountStatus: 'approved' as const
-                      };
-                      setCurrentUser(demoAdmin);
-                      localStorage.setItem('s_os_user', JSON.stringify(demoAdmin));
-                      saveSupabaseUserProfile(demoAdmin).catch(console.error);
-                      showNotification('Swapped workspace context to: School Administrator');
-                    }}
-                    className={`text-[9px] font-extrabold py-0.5 px-2 rounded transition-all ${currentUser?.role === 'admin' ? 'bg-white text-slate-900 border border-white font-black shadow-sm scale-105' : 'bg-black/25 text-white border border-white/10 hover:bg-black/45'}`}
+                    onClick={() => handleSwitchProfileAccount('demo-admin-uid')}
+                    className={`text-[9px] font-extrabold py-0.5 px-2 rounded transition-all ${currentUser?.uid === 'demo-admin-uid' ? 'bg-white text-slate-900 border border-white font-black shadow-sm scale-105' : 'bg-black/25 text-white border border-white/10 hover:bg-black/45'}`}
                   >
                     🛡️ Admin
                   </button>
@@ -8676,6 +8842,7 @@ ${roleLabel}: ${userQuery}`;
                   {/* Sub-tab 1: Flashcards & Spaced Repetition Study Center */}
                   {studyHubSubTab === 'flashcards' && (
                     <StudyCenterFlashcards 
+                      key={currentUser?.uid || currentUser?.email || 'flashcards'}
                       currentUser={currentUser} 
                       showNotification={showNotification}
                       onNavigateTab={handleTabSelect}
@@ -8878,7 +9045,7 @@ ${roleLabel}: ${userQuery}`;
                   </div>
 
                   {notesViewMode === 'collaborative' ? (
-                    <CollaborativeLectureNotes currentUser={currentUser} />
+                    <CollaborativeLectureNotes key={currentUser?.uid || currentUser?.email || 'collab-notes'} currentUser={currentUser} />
                   ) : (
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                     
@@ -9444,6 +9611,7 @@ ${activeNote.content}`);
               {/* Tab: Performance Analytics (Unified Overview, Gradebook, Report Cards, and Attendance) */}
               {(activeTab === 'analytics' || activeTab === 'gradebook' || activeTab === 'report_cards') && (
                 <PerformanceAnalytics 
+                  key={currentUser?.uid || currentUser?.email || 'analytics'}
                   currentUser={currentUser} 
                   effectiveRole={effectiveRole} 
                   initialSubTab={activeTab === 'gradebook' ? 'gradebook' : activeTab === 'report_cards' ? 'report_cards' : 'overview'}
@@ -9910,6 +10078,7 @@ ${activeNote.content}`);
               {/* Tab: Sports & Activities View */}
               {activeTab === 'sports_activities' && (
                 <SportsActivitiesPortal 
+                  key={currentUser?.uid || currentUser?.email || 'sports'}
                   currentUser={currentUser} 
                   showNotification={showNotification} 
                 />
@@ -12775,6 +12944,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
 
               {/* Tab 8: Peer global chat matrix */}
               <ChatSystem
+                key={currentUser?.uid || currentUser?.email || 'chat'}
                 currentUser={currentUser}
                 effectiveRole={effectiveRole as any}
                 chatRooms={chatRooms}
