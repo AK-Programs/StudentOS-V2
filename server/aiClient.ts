@@ -3,9 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * StudentOS Multi-Provider AI Routing Engine
- * Supports:
- * 1. Fast & General: APInex (gpt-6-luna), Ministral (8B, Medium, Large), Groq (Llama Scout, GPT OSS, Qwen, Whisper) with 3-key rotation.
- * 2. Long Reasoning & Large Context: Nara Router / NVIDIA models (NVIDIA 3.5 Lightning, NVIDIA 3 Ultra).
+ * Fallback Chain: APInex -> Ministral -> Groq (with model rotation: llama-3.1-8b-instant, gpt-oss-120b, qwen3.8-27b)
+ * Long Reasoning & Large Context: Nara Router / NVIDIA models.
  */
 
 import dotenv from 'dotenv';
@@ -54,7 +53,7 @@ export interface AICompletionOptions {
   contextLength?: number;
 }
 
-// Key Management & Rotation
+// API Key Getters
 export function getApinexApiKey(): string {
   return (process.env.APINEX_API_KEY || process.env.VITE_APINEX_API_KEY || '').trim().replace(/^["']|["']$/g, '');
 }
@@ -63,28 +62,21 @@ export function getMinistralApiKey(): string {
   return (process.env.MINISTRAL_API_KEY || process.env.MISTRAL_API_KEY || '').trim().replace(/^["']|["']$/g, '');
 }
 
+export function getGroqApiKey(): string {
+  return (process.env.GROQ_API_KEY || '').trim().replace(/^["']|["']$/g, '');
+}
+
 export function getNaraRouterApiKey(): string {
   return (process.env.NARA_ROUTER_API_KEY || process.env.NVIDIA_API_KEY || '').trim().replace(/^["']|["']$/g, '');
 }
 
-// Groq 3-Key Rotation Manager
-let groqKeyIndex = 0;
-export function getGroqApiKey(): { key: string; index: number } {
-  const keys = [
-    process.env.GROQ_API_KEY_1,
-    process.env.GROQ_API_KEY_2,
-    process.env.GROQ_API_KEY_3,
-    process.env.GROQ_API_KEY
-  ].filter(Boolean).map(k => String(k).trim().replace(/^["']|["']$/g, ''));
-
-  if (keys.length === 0) return { key: '', index: 0 };
-  const idx = groqKeyIndex % keys.length;
-  groqKeyIndex = (groqKeyIndex + 1) % keys.length;
-  return { key: keys[idx], index: idx + 1 };
-}
-
-export function rotateGroqKey(): void {
-  groqKeyIndex++;
+// Groq Model Rotation Manager (llama-3.1-8b-instant, gpt-oss-120b, qwen3.8-27b)
+const groqModels = ['llama-3.1-8b-instant', 'gpt-oss-120b', 'qwen3.8-27b'];
+let groqModelIndex = 0;
+export function getNextGroqModel(): string {
+  const model = groqModels[groqModelIndex % groqModels.length];
+  groqModelIndex++;
+  return model;
 }
 
 // Task Complexity & Provider Routing Policy
@@ -98,25 +90,21 @@ export function classifyTaskComplexity(
   const taskType = ctx?.taskType;
   const override = (ctx?.modelOverride || '').trim().toLowerCase();
 
-  // If model override is specified and valid, route accordingly
   if (override.includes('nara') || override.includes('nvidia') || override.includes('lightning') || override.includes('ultra')) {
     const model = override.includes('ultra') ? 'nvidia/nemotron-3-ultra-550b-a55b' : 'nvidia/nemotron-3-super-120b-a12b';
     return { provider: 'nara_router', model, tier: 'complex' };
   }
   if (override.includes('groq') || override.includes('llama') || override.includes('qwen') || override.includes('gpt-oss')) {
-    const model = override.includes('qwen') ? 'qwen-2.5-72b-instruct' : override.includes('gpt-oss') ? 'openai/gpt-oss-20b' : 'llama-3.1-8b-instant';
-    return { provider: 'groq', model, tier: 'fast' };
+    return { provider: 'groq', model: getNextGroqModel(), tier: 'fast' };
   }
   if (override.includes('ministral')) {
-    const model = override.includes('large') ? 'ministral-large-2410' : override.includes('medium') ? 'ministral-medium-2410' : 'ministral-8b-2410';
-    return { provider: 'ministral', model, tier: 'general' };
+    return { provider: 'ministral', model: 'ministral-8b-2410', tier: 'general' };
   }
 
-  // Complex reasoning / STEM proof / Calculus / Large Context -> Nara Router (NVIDIA models)
+  // Complex reasoning -> Nara Router if key present
   const complexPatterns = [
-    /\b(prove|proof|derive|derivation|theorem|calculus|integral|differential|eigenvalue|matrix|trigonometric identity|quantum|thermodynamics|stoichiometry|electrochemistry|organic synthesis)\b/i,
-    /\b(multi-step|comprehensive analysis|school-wide analytics|deep analysis|detailed academic report|correlate|regression|comparative analysis|root cause)\b/i,
-    /\b(solve step by step|system of equations|simultaneous equations|polynomial|logarithm|vector calculus|complex number)\b/i
+    /\b(prove|proof|derive|derivation|theorem|calculus|integral|differential|eigenvalue|matrix|trigonometric identity|quantum|thermodynamics|stoichiometry)\b/i,
+    /\b(multi-step|comprehensive analysis|school-wide analytics|deep analysis|detailed academic report)\b/i
   ];
 
   const isComplex =
@@ -132,30 +120,7 @@ export function classifyTaskComplexity(
     };
   }
 
-  // Tool / JSON / Diagram -> APInex or Groq
-  if (
-    taskType === 'tool' ||
-    endpoint.includes('json') ||
-    endpoint.includes('diagram') ||
-    endpoint.includes('mermaid') ||
-    endpoint.includes('3d') ||
-    endpoint.includes('flashcard') ||
-    lower.includes('json')
-  ) {
-    return { provider: 'apinex', model: 'free/glm-5.3-flash', tier: 'tool' };
-  }
-
-  // Fast / Short -> APInex free/gpt-6-luna or Groq Llama Scout
-  const isFast =
-    taskType === 'fast' ||
-    cleanPrompt.split(/\s+/).length <= 15 ||
-    /^(hi|hello|hey|good morning|thanks|thank you|ok|okay|who are you|help)\b/i.test(lower);
-
-  if (isFast) {
-    return { provider: 'apinex', model: 'free/gpt-6-luna', tier: 'fast' };
-  }
-
-  // Default General -> APInex free/gpt-6-luna
+  // Default Primary: APInex
   return { provider: 'apinex', model: 'free/gpt-6-luna', tier: 'general' };
 }
 
@@ -261,7 +226,7 @@ function buildMessagesArray(
   return messages;
 }
 
-// Core execution with multi-provider fallback & Groq 3-key rotation
+// Fallback Chain: APInex -> Ministral -> Groq (with model rotation)
 export async function generateAICompletionWithTelemetry(
   param1: string | AICompletionOptions,
   param2?: string,
@@ -307,110 +272,99 @@ export async function generateAICompletionWithTelemetry(
   const messages = buildMessagesArray(systemInstruction, prompt, history);
   const effectiveMaxTokens = maxTokens ? Math.max(maxTokens, 300) : (routing.tier === 'fast' ? 1200 : 2048);
 
-  console.log(`[AI_REQUEST] provider=${provider} model=${model} requestId=${requestId}`);
+  console.log(`[AI_REQUEST] initial_provider=${provider} model=${model} requestId=${requestId}`);
 
-  // Execution helper with Groq key rotation & fallback
-  async function executeCall(): Promise<string> {
-    if (provider === 'nara_router' || provider === 'ministral' || provider === 'groq') {
-      try {
-        let apiUrl = 'https://api.apinex.bond/v1/chat/completions';
-        let apiKey = '';
+  async function callProvider(p: string, m: string): Promise<string | null> {
+    try {
+      let apiUrl = '';
+      let apiKey = '';
 
-        if (provider === 'nara_router') {
-          apiUrl = `${process.env.NARA_ROUTER_BASE_URL || 'https://integrate.api.nvidia.com/v1'}/chat/completions`;
-          apiKey = getNaraRouterApiKey();
-        } else if (provider === 'ministral') {
-          apiUrl = 'https://api.mistral.ai/v1/chat/completions';
-          apiKey = getMinistralApiKey();
-        } else if (provider === 'groq') {
-          apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
-          const { key } = getGroqApiKey();
-          apiKey = key;
-        }
-
-        if (apiKey) {
-          const resp = await fetch(apiUrl, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${apiKey}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              model,
-              messages,
-              temperature,
-              max_tokens: effectiveMaxTokens,
-              ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
-            })
-          });
-
-          if (resp.ok) {
-            const data = await resp.json();
-            const text = extractTextFromChoice(data.choices?.[0]);
-            if (text) return text;
-          } else if (resp.status === 429 && provider === 'groq') {
-            // Groq rate limit / quota exceeded -> rotate key and retry once
-            retries++;
-            rotateGroqKey();
-            const { key: nextKey } = getGroqApiKey();
-            if (nextKey && retries <= 2) {
-              const retryResp = await fetch(apiUrl, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${nextKey}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model, messages, temperature, max_tokens: effectiveMaxTokens })
-              });
-              if (retryResp.ok) {
-                const retryData = await retryResp.json();
-                const retryText = extractTextFromChoice(retryData.choices?.[0]);
-                if (retryText) return retryText;
-              }
-            }
-          }
-        }
-      } catch (err) {
-        console.warn(`[AI Provider ${provider} failed, falling back to APInex]:`, err);
+      if (p === 'apinex') {
+        apiUrl = 'https://api.apinex.bond/v1/chat/completions';
+        apiKey = getApinexApiKey();
+      } else if (p === 'ministral') {
+        apiUrl = 'https://api.mistral.ai/v1/chat/completions';
+        apiKey = getMinistralApiKey();
+      } else if (p === 'groq') {
+        apiUrl = 'https://api.groq.com/openai/v1/chat/completions';
+        apiKey = getGroqApiKey();
+      } else if (p === 'nara_router') {
+        apiUrl = `${process.env.NARA_ROUTER_BASE_URL || 'https://router.bynara.id/v1/combo/free'}/chat/completions`;
+        apiKey = getNaraRouterApiKey();
       }
+
+      if (!apiKey) return null;
+
+      const resp = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: m,
+          messages,
+          temperature,
+          max_tokens: effectiveMaxTokens,
+          ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
+        })
+      });
+
+      if (resp.ok) {
+        const data = await resp.json();
+        const text = extractTextFromChoice(data.choices?.[0]);
+        if (text) return text;
+      }
+    } catch (err) {
+      console.warn(`[AI Provider ${p} (${m}) failed]:`, err);
     }
-
-    // Fallback or Primary APInex
-    fallbackTriggered = provider !== 'apinex';
-    provider = 'apinex';
-    model = 'free/gpt-6-luna';
-
-    const apinexKey = getApinexApiKey();
-    if (!apinexKey) {
-      throw new Error('[APINEX CONFIG ERROR] APINEX_API_KEY environment variable is not configured on the server.');
-    }
-
-    const resp = await fetch('https://api.apinex.bond/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apinexKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        temperature,
-        max_tokens: effectiveMaxTokens,
-        ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
-      })
-    });
-
-    if (!resp.ok) {
-      const errBody = await resp.text().catch(() => '');
-      throw new Error(`[APINEX HTTP ${resp.status} ERROR] ${errBody.slice(0, 180)}`);
-    }
-
-    const data = await resp.json();
-    const text = extractTextFromChoice(data.choices?.[0]);
-    if (!text) {
-      throw new Error('[APINEX RESPONSE ERROR] Response text was empty.');
-    }
-    return text;
+    return null;
   }
 
-  const text = await executeCall();
+  let text: string | null = null;
+
+  // 1. Try Primary Routing (APInex or Nara Router if complex)
+  text = await callProvider(provider, model);
+
+  // 2. Fallback Chain: APInex -> Ministral -> Groq (with model rotation)
+  if (!text) {
+    fallbackTriggered = true;
+    console.log(`[AI_FALLBACK] Primary provider ${provider} failed or unavailable. Trying First Fallback: Ministral...`);
+    
+    // Try Ministral
+    text = await callProvider('ministral', 'ministral-8b-2410');
+    if (text) {
+      provider = 'ministral';
+      model = 'ministral-8b-2410';
+    }
+  }
+
+  if (!text) {
+    console.log(`[AI_FALLBACK] Ministral unavailable. Trying Second Fallback: Groq with model rotation...`);
+    // Try Groq with model rotation across llama-3.1-8b-instant, gpt-oss-120b, qwen3.8-27b
+    for (let i = 0; i < groqModels.length; i++) {
+      const groqModel = getNextGroqModel();
+      text = await callProvider('groq', groqModel);
+      if (text) {
+        provider = 'groq';
+        model = groqModel;
+        break;
+      }
+    }
+  }
+
+  if (!text) {
+    // Ultimate fallback to APInex default
+    console.log(`[AI_FALLBACK] All fallbacks exhausted. Final fallback to APInex gpt-6-luna...`);
+    provider = 'apinex';
+    model = 'free/gpt-6-luna';
+    text = await callProvider('apinex', model);
+  }
+
+  if (!text) {
+    throw new Error('[AI ERROR] All AI providers (APInex, Ministral, Groq, Nara Router) failed to return a valid response.');
+  }
+
   const telemetry: AIPerformanceTelemetry = {
     requestId,
     providerUsed: provider as any,
@@ -464,10 +418,8 @@ export async function streamAICompletion(
   const requestStart = Date.now();
   const routing = classifyTaskComplexity(prompt, { endpointName, taskType, modelOverride, userRole, mode, persona, contextLength });
 
-  let provider = routing.provider;
-  let model = routing.model;
-  let fallbackTriggered = false;
-  let retries = 0;
+  const provider = routing.provider;
+  const model = routing.model;
 
   const messages = buildMessagesArray(systemInstruction, prompt, history);
   const effectiveMaxTokens = maxTokens ? Math.max(maxTokens, 300) : 2048;
@@ -477,7 +429,6 @@ export async function streamAICompletion(
     throw new Error('[APINEX CONFIG ERROR] APINEX_API_KEY is not configured.');
   }
 
-  // Stream execution using APInex (or primary provider stream)
   try {
     callbacks.onMeta?.({ requestId, provider, model, tier: routing.tier });
 
@@ -551,8 +502,8 @@ export async function streamAICompletion(
       requestStart,
       firstTokenLatencyMs: firstTokenLatencyMs ?? (Date.now() - requestStart),
       totalGenerationTimeMs: Date.now() - requestStart,
-      retries,
-      fallbackTriggered,
+      retries: 0,
+      fallbackTriggered: false,
       streamed: true
     };
 
