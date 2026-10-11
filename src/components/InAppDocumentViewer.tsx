@@ -214,10 +214,16 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
           const data = base64ToUint8Array(url);
           loadingTask = pdfjsLib.getDocument({ data });
         } else {
-          loadingTask = pdfjsLib.getDocument({
-            url: url,
-            withCredentials: false
-          });
+          try {
+            const resp = await fetch(url);
+            const arrayBuffer = await resp.arrayBuffer();
+            loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
+          } catch (fetchErr) {
+            loadingTask = pdfjsLib.getDocument({
+              url: url,
+              withCredentials: false
+            });
+          }
         }
 
         const pdf = await loadingTask.promise;

@@ -7521,34 +7521,52 @@ ${roleLabel}: ${userQuery}`;
 
             {/* Sidebar Footer User Detail & Actions */}
             <div className="shrink-0 pt-3 border-t border-white/10 space-y-2.5">
-              {/* Sidebar Profile Switcher */}
+              {/* Sidebar Recent Accounts Profile Switcher */}
               {sidebarOpen && (
-                <div className="bg-slate-900/80 border border-white/5 rounded-2xl p-2 space-y-1.5">
-                  <div className="flex items-center justify-between px-1.5">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Switch Role / Profile</span>
-                    <span className="text-[9px] font-mono text-indigo-400 font-bold uppercase">{effectiveRole}</span>
+                <div className="bg-slate-900/80 border border-white/5 rounded-2xl p-2.5 space-y-2">
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Switch Recent Accounts</span>
+                    <span className="text-[9px] font-mono text-indigo-400 font-bold uppercase truncate max-w-[100px]">{currentUser.name || currentUser.email}</span>
                   </div>
-                  <div className="grid grid-cols-4 gap-1">
+                  <div className="space-y-1 max-h-[140px] overflow-y-auto pr-1">
                     {[
-                      { r: 'student', label: '🎓', title: 'Student' },
-                      { r: 'parent', label: '🛡️', title: 'Parent' },
-                      { r: 'teacher', label: '🔬', title: 'Teacher' },
-                      { r: 'admin', label: '⚡', title: 'Admin' }
-                    ].map(item => (
+                      { uid: currentUser.uid || 'current', name: currentUser.name || 'Current User', role: effectiveRole, email: currentUser.email || 'user@studentos.edu', house: currentUser.house },
+                      { uid: 'demo-student-uid', name: 'Naitik Kashyap (Student)', role: 'student', email: 'naitik.kashyap0015@gmail.com', house: 'Ruby' },
+                      { uid: 'demo-teacher-uid', name: 'Physics Teacher', role: 'teacher', email: 'physics.teacher@school.edu' },
+                      { uid: 'demo-parent-uid', name: 'Parent Portal Account', role: 'parent', email: 'parent@school.edu' },
+                      { uid: 'demo-admin-uid', name: 'School Administrator', role: 'admin', email: 'admin@school.edu' },
+                      { uid: 'demo-super-admin-uid', name: 'Super Admin', role: 'super_admin', email: 'superadmin@studentos.edu' }
+                    ].filter((acc, idx, arr) => arr.findIndex(a => a.email === acc.email || a.uid === acc.uid) === idx).map(acc => (
                       <button
-                        key={item.r}
+                        key={acc.uid || acc.email}
                         type="button"
                         onClick={() => {
-                          setCurrentUser(prev => ({ ...prev, role: item.r as any }));
-                          if (item.r === 'parent') {
+                          const updated = {
+                            ...currentUser,
+                            uid: acc.uid,
+                            name: acc.name.replace(/\s+\(.*?\)/, ''),
+                            email: acc.email,
+                            role: acc.role as any,
+                            house: (acc as any).house || currentUser.house,
+                            accountStatus: 'approved' as const
+                          };
+                          setCurrentUser(updated);
+                          localStorage.setItem('s_os_user', JSON.stringify(updated));
+                          if (acc.role === 'parent') {
                             setActiveTab('parent_portal');
                           }
-                          showNotification(`Switched role to: ${item.title}`);
+                          showNotification(`Switched profile to: ${acc.name} (${acc.role})`);
                         }}
-                        className={`py-1.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center ${effectiveRole === item.r ? 'bg-indigo-600 text-white shadow-sm' : 'bg-white/5 hover:bg-white/10 text-slate-300'}`}
-                        title={`Switch to ${item.title}`}
+                        className={`w-full text-left px-2 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center justify-between gap-2 ${currentUser.email === acc.email || currentUser.role === acc.role ? 'bg-indigo-600 text-white shadow-sm' : 'bg-white/5 hover:bg-white/10 text-slate-300'}`}
+                        title={`Switch to ${acc.name}`}
                       >
-                        {item.label}
+                        <div className="flex items-center gap-2 truncate">
+                          <span className="w-5 h-5 rounded-lg bg-white/10 flex items-center justify-center text-[10px] font-bold shrink-0">
+                            {acc.role === 'student' ? '🎓' : acc.role === 'teacher' ? '🔬' : acc.role === 'parent' ? '🛡️' : acc.role === 'super_admin' ? '👑' : '⚡'}
+                          </span>
+                          <span className="truncate">{acc.name}</span>
+                        </div>
+                        <span className="text-[9px] uppercase opacity-75 font-mono">{acc.role}</span>
                       </button>
                     ))}
                   </div>
@@ -12334,6 +12352,25 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                             <option value="off" className="bg-slate-900 text-white">⚡ Web: Offline Fast</option>
                           </select>
                         </div>
+
+                        {/* Super Admin Model Provider Switcher */}
+                        {(currentUser?.role === 'super_admin' || effectiveRole === 'super_admin') && (
+                          <div className="flex items-center gap-1.5 bg-slate-900 border border-purple-500/35 rounded-xl px-2.5 py-1 shadow-inner">
+                            <Cpu className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                            <select
+                              value={aiModelOverride || 'auto'}
+                              onChange={(e) => setAiModelOverride(e.target.value === 'auto' ? '' : e.target.value)}
+                              className="bg-transparent text-purple-300 text-[10px] font-bold focus:outline-none cursor-pointer uppercase tracking-wider"
+                              title="Super Admin AI Model Testing Override"
+                            >
+                              <option value="auto" className="bg-slate-900 text-white">🤖 AI: Auto Router</option>
+                              <option value="apinex" className="bg-slate-900 text-white">⚡ Provider: APInex</option>
+                              <option value="ministral" className="bg-slate-900 text-white">🌊 Provider: Ministral</option>
+                              <option value="groq" className="bg-slate-900 text-white">🚀 Provider: Groq</option>
+                              <option value="nara_router" className="bg-slate-900 text-white">🎯 Provider: Nara Router</option>
+                            </select>
+                          </div>
+                        )}
                       </div>
 
                       {/* Right Actions: Clear Chat */}
