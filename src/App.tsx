@@ -14,7 +14,7 @@ import {
   PenTool, Eraser, Share2, LogOut, AlertTriangle, Activity, RefreshCw,
   Heart, Bookmark, X, Bell, Zap, Gift, Smartphone, Paperclip, History, Brain, Globe,
   LayoutDashboard, Layers, Video, HelpCircle, GraduationCap, Shield, Compass,
-  PanelLeftClose, PanelLeftOpen, ClipboardList, CheckSquare, Monitor, Tv, Cpu
+  PanelLeftClose, PanelLeftOpen, ClipboardList, CheckSquare, Monitor, Tv, Cpu, Trophy, Swords
 } from 'lucide-react';
 import { 
   UserRole, HouseType, SectionType, UserProfile, HouseStats, 
@@ -100,6 +100,7 @@ import {
 import { MajorReleaseBanner } from './components/MajorReleaseBanner';
 import { StudyCenterFlashcards } from './components/StudyCenterFlashcards';
 import { ParentalPortal } from './components/ParentalPortal';
+import { BrainBattleArena } from './components/BrainBattleArena';
 import { ProfessionalTabDropdown } from './components/ProfessionalTabDropdown';
 import { getStoredCards } from './lib/flashcardStorage';
 import { isCardDue } from './lib/sm2Algorithm';
@@ -729,6 +730,8 @@ export default function App() {
     const isActive =
       tab === 'study_hub'
         ? ['study_hub', 'tasks', 'planner', 'flashcards'].includes(activeTab)
+        : tab === 'brain_battle' || tab === 'quiz'
+        ? ['brain_battle', 'quiz'].includes(activeTab)
         : activeTab === tab;
     let base = `group relative w-full flex items-center transition-all duration-200 rounded-xl border text-left min-w-0 cursor-pointer ${
       sidebarOpen ? 'gap-3 px-3 py-2.5' : 'md:justify-center md:px-0 md:py-2.5 gap-3 px-3 py-2.5'
@@ -7515,15 +7518,15 @@ ${roleLabel}: ${userQuery}`;
                               </button>
                             )}
 
-                          {!presentationMode && matchesFilter('Interactive Quiz', 'practice tests questions') && (
+                          {!presentationMode && matchesFilter('Brain Battle', 'quiz game arena daily challenge multiplayer leaderboard xp') && (
                             <button
                               type="button"
-                              onClick={() => handleTabSelect('quiz')}
-                              className={getSidebarBtnClass('quiz')}
-                              title="Interactive Quiz"
+                              onClick={() => handleTabSelect('brain_battle')}
+                              className={getSidebarBtnClass('brain_battle')}
+                              title="Brain Battle"
                             >
-                              <HelpCircle className="w-4 h-4 shrink-0" />
-                              {sidebarOpen && <span className="truncate">Interactive Quiz</span>}
+                              <Trophy className="w-4 h-4 shrink-0 text-amber-400" />
+                              {sidebarOpen && <span className="truncate">Brain Battle</span>}
                             </button>
                           )}
 
@@ -7949,7 +7952,7 @@ ${roleLabel}: ${userQuery}`;
                     {activeTab === 'materials' && 'Class Files & Materials'}
                     {activeTab === 'assignments' && 'Assignment Center'}
                     {activeTab === 'homework' && 'My Homework'}
-                    {activeTab === 'quiz' && 'Practice Quizzes'}
+                    {(activeTab === 'brain_battle' || activeTab === 'quiz') && 'Brain Battle Arena'}
                     {activeTab === 'feedback' && 'Feedback Box'}
                     {activeTab === 'ai_teacher' && 'My AI Tutor'}
                     {activeTab === 'peer_chat' && 'Class Chat Room'}
@@ -8329,11 +8332,11 @@ ${roleLabel}: ${userQuery}`;
                             <span className="text-xs font-bold text-white whitespace-nowrap">Homework Hub</span>
                           </button>
                           <button
-                            onClick={() => handleTabSelect('quiz')}
+                            onClick={() => handleTabSelect('brain_battle')}
                             className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-xl">🧠</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Practice Quiz</span>
+                            <span className="text-xl">⚔️</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Brain Battle</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('study_hub')}
@@ -8533,17 +8536,17 @@ ${roleLabel}: ${userQuery}`;
                     </div>
 
                     <div
-                      onClick={() => handleTabSelect('quiz')}
+                      onClick={() => handleTabSelect('brain_battle')}
                       className="bento-card p-4 sm:p-5 rounded-2xl flex items-center justify-between cursor-pointer"
                     >
                       <div className="space-y-1">
-                        <span className="text-xs font-semibold text-slate-400">Quizzes Completed</span>
+                        <span className="text-xs font-semibold text-slate-400">Brain Battles</span>
                         <h3 className="text-xl sm:text-2xl font-black font-mono tabular-nums text-white">
                           {currentUser.quizzesTaken || 3}
                         </h3>
                       </div>
                       <div className="h-9 w-9 bg-emerald-500/15 rounded-xl flex items-center justify-center text-emerald-400">
-                        <Award className="w-4 h-4" />
+                        <Trophy className="w-4 h-4" />
                       </div>
                     </div>
 
@@ -12285,149 +12288,13 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                 </div>
               )}
 
-              {/* Tab 5: Interactive Quiz */}
-              {activeTab === 'quiz' && (
-                <div className="max-w-2xl mx-auto space-y-6 animate-fadeIn">
-                  
-                  {/* Quiz starter screen */}
-                  {!quizStarted ? (
-                    <div className="smart-glass p-5 sm:p-8 rounded-3xl space-y-6 text-center shadow-lg">
-                      <div className="h-14 w-14 rounded-3xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center text-3xl mx-auto border border-indigo-500/20">🧠</div>
-                      <div className="space-y-1.5">
-                        <h3 className="text-xl sm:text-2xl font-black font-display text-white">Section Aptitude Evaluation Node</h3>
-                        <p className="text-xs text-slate-400 max-w-sm mx-auto">Evaluate your comprehensive subject mastery. Scoring above critical thresholds earns substantial house credit standings!</p>
-                      </div>
-
-                      {effectiveRole === 'student' ? (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                          {Object.keys(MOCK_QUIZZES).map(subject => (
-                            <button 
-                              key={subject}
-                              onClick={() => handleStartQuiz(subject)}
-                              className="p-5 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-white/5 hover:border-white/10 text-sm font-extrabold text-white transition-all hover:scale-[1.02] active:scale-95 text-left flex justify-between items-center"
-                            >
-                              <span>📚 {subject}</span>
-                              <ChevronRight className="w-4 h-4 text-slate-500" />
-                            </button>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="pt-4 space-y-4">
-                          <p className="text-xs font-bold text-amber-500 uppercase tracking-widest bg-amber-500/10 inline-block px-3 py-1 rounded-full border border-amber-500/20">Teacher / Administrator Layout</p>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-left">
-                            <button onClick={() => showNotification("Teacher Quiz view under construction")} className="p-4 rounded-xl bg-slate-900 border border-white/5 hover:border-white/10 transition-all">
-                              <span className="block text-indigo-400 text-[10px] font-black uppercase mb-1">Module Access</span>
-                              <span className="font-bold text-white text-sm">View Active Quizzes</span>
-                            </button>
-                            <button onClick={() => showNotification("Quiz Reports under development")} className="p-4 rounded-xl bg-slate-900 border border-white/5 hover:border-white/10 transition-all">
-                              <span className="block text-emerald-400 text-[10px] font-black uppercase mb-1">Metrics</span>
-                              <span className="font-bold text-white text-sm">Examine Reports</span>
-                            </button>
-                            <button onClick={() => showNotification("Quiz Configuration restricted")} className="p-4 rounded-xl bg-slate-900 border border-white/5 hover:border-white/10 transition-all">
-                              <span className="block text-amber-400 text-[10px] font-black uppercase mb-1">Configuration</span>
-                              <span className="font-bold text-white text-sm">Author / Edit Quiz</span>
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    /* Active quiz gameplay */
-                    (() => {
-                      const questions = MOCK_QUIZZES[quizSubject] || [];
-                      const question = questions[quizCurrentIndex];
-                      
-                      return (
-                        <div className="smart-glass p-4 sm:p-6 md:p-8 rounded-3xl space-y-6 border border-indigo-500/20 shadow-xl animate-fadeIn">
-                          
-                          {/* Quiz status indicators */}
-                          <div className="flex items-center justify-between flex-wrap gap-2 text-xs">
-                            <span className="bg-indigo-600 text-white font-extrabold uppercase px-2.5 py-1 rounded-xl">
-                              {quizSubject} Evaluation
-                            </span>
-                            <div className="flex items-center gap-3 font-mono">
-                              <span className="text-slate-400">Question {quizCurrentIndex + 1}/{questions.length}</span>
-                              <span className={`px-2.5 py-1 rounded-lg font-bold font-mono ${quizTimer <= 4 ? 'bg-red-500/20 text-red-400 animate-pulse' : 'bg-slate-900 text-indigo-400'}`}>
-                                ⏱️ {quizTimer}s
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                            <div 
-                              className="bg-indigo-500 h-full transition-all duration-300"
-                              style={{ width: `${((quizCurrentIndex) / questions.length) * 100}%` }}
-                            />
-                          </div>
-
-                          {/* Question details */}
-                          <div className="space-y-2">
-                            <span className="text-[10px] font-extrabold tracking-widest text-indigo-400 uppercase">Aptitude core query</span>
-                            <h4 className="font-bold text-lg text-white leading-relaxed">{question.question}</h4>
-                          </div>
-
-                          {/* Options list */}
-                          <div className="grid grid-cols-1 gap-2.5">
-                            {question.options.map((option, idx) => {
-                              let optionBg = 'bg-slate-900 border-white/5 hover:bg-slate-800 text-slate-300';
-                              if (quizSubmitted) {
-                                if (idx === question.correctOptionIndex) {
-                                  optionBg = 'bg-emerald-500/10 border-emerald-500 text-emerald-400 font-bold';
-                                } else if (quizSelectedOption === idx) {
-                                  optionBg = 'bg-red-500/10 border-red-500 text-red-400';
-                                } else {
-                                  optionBg = 'bg-slate-950/40 border-white/5 text-slate-500';
-                                }
-                              } else if (quizSelectedOption === idx) {
-                                optionBg = 'bg-indigo-500/10 border-indigo-500 text-indigo-400';
-                              }
-
-                              return (
-                                <button 
-                                  key={idx}
-                                  disabled={quizSubmitted}
-                                  onClick={() => setQuizSelectedOption(idx)}
-                                  className={`w-full text-left p-4 rounded-xl text-xs font-semibold border transition-all ${optionBg}`}
-                                >
-                                  {option}
-                                </button>
-                              );
-                            })}
-                          </div>
-
-                          {/* Explanation summary block on submission */}
-                          {quizSubmitted && (
-                            <div className="p-4 bg-slate-900/80 rounded-2xl border border-white/5 text-[11px] leading-relaxed space-y-1.5 animate-fadeIn">
-                              <p className="font-extrabold text-amber-500 uppercase tracking-widest">Mastery insight Explanation</p>
-                              <p className="text-slate-300">{question.explanation}</p>
-                            </div>
-                          )}
-
-                          {/* Control actions */}
-                          <div className="flex gap-2 justify-end">
-                            {!quizSubmitted ? (
-                              <button 
-                                onClick={() => handleQuizSubmit()}
-                                className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase px-6 py-3 rounded-xl shadow-md transition-all"
-                              >
-                                Commit Answer
-                              </button>
-                            ) : (
-                              <button 
-                                onClick={handleNextQuizQuestion}
-                                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase px-6 py-3 rounded-xl shadow-md transition-all"
-                              >
-                                {quizCurrentIndex + 1 < questions.length ? 'Next Question' : 'Wrap Session'}
-                              </button>
-                            )}
-                          </div>
-
-                        </div>
-                      );
-                    })()
-                  )}
-
-                </div>
+              {/* Tab 5: StudentOS Brain Battle Mini-Game (replaces Interactive Quiz with backward route compatibility) */}
+              {(activeTab === 'brain_battle' || activeTab === 'quiz') && (
+                <BrainBattleArena
+                  currentUser={currentUser}
+                  effectiveRole={(effectiveRole as UserRole) || 'student'}
+                  showNotification={showNotification}
+                />
               )}
 
               {/* Tab 6: Collaborative Feedback Portal */}

@@ -714,6 +714,444 @@ app.post('/api/gamification/award', async (req, res) => {
   return res.json({ status: 'ok', profile });
 });
 
+// ========================================================================
+// STUDENTOS BRAIN BATTLE API & AUTHORITATIVE MULTIPLAYER ENGINE
+// ========================================================================
+interface BrainBattleQuestion {
+  id: string;
+  subject: string;
+  question: string;
+  options: string[];
+  correctOptionIndex: number;
+  explanation: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  grade?: string;
+  createdBy?: string;
+  createdByName?: string;
+}
+
+interface BrainBattleHistoryItem {
+  id: string;
+  userId: string;
+  userName: string;
+  userRole: string;
+  house?: string;
+  grade?: string;
+  mode: 'quick_play' | 'daily_challenge' | 'multiplayer' | 'custom_practice';
+  subject: string;
+  score: number;
+  correctCount: number;
+  totalQuestions: number;
+  accuracyPercent: number;
+  xpEarned: number;
+  streakPeak: number;
+  durationSec: number;
+  roomCode?: string;
+  rankInMatch?: number;
+  timestamp: string;
+}
+
+interface BrainBattlePlayerState {
+  userId: string;
+  name: string;
+  role: string;
+  house?: string;
+  grade?: string;
+  avatar?: string;
+  score: number;
+  correctCount: number;
+  streak: number;
+  answeredCurrentIndex: number;
+  lastAnswerCorrect?: boolean;
+  joinedAt: number;
+}
+
+interface BrainBattleRoomState {
+  code: string;
+  hostId: string;
+  hostName: string;
+  subject: string;
+  difficulty: 'all' | 'easy' | 'medium' | 'hard';
+  questionCount: number;
+  timePerQuestion: number;
+  status: 'lobby' | 'active' | 'completed';
+  currentQuestionIndex: number;
+  questionStartedAt: number;
+  questions: BrainBattleQuestion[];
+  players: Record<string, BrainBattlePlayerState>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+const memoryBrainBattleQuestions: Record<string, BrainBattleQuestion[]> = {};
+const memoryBrainBattleHistory: Record<string, BrainBattleHistoryItem[]> = {};
+const memoryBrainBattleRooms: Record<string, BrainBattleRoomState> = {};
+
+function broadcastToAllWs(payload: any) {
+  if (!globalWss) return;
+  const serialized = JSON.stringify(payload);
+  globalWss.clients.forEach((client: any) => {
+    if (client.readyState === WSWebSocket.OPEN) {
+      try {
+        client.send(serialized);
+      } catch (_) {}
+    }
+  });
+}
+
+app.get('/api/brain-battle/state', async (req, res) => {
+  const schoolId = String(req.query.schoolId || 'default_school');
+  const userId = String(req.query.userId || '');
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+
+  let customQuestions: BrainBattleQuestion[] = memoryBrainBattleQuestions[schoolId] || [];
+  let allHistory: BrainBattleHistoryItem[] = memoryBrainBattleHistory[schoolId] || [];
+
+  try {
+    const qDocId = `__studentos_brain_battle_questions_${schoolId}__`;
+    const hDocId = `__studentos_brain_battle_history_${schoolId}__`;
+    const gRes = await fetch(
+      `${supabaseUrl}/rest/v1/global_data?id=in.(${encodeURIComponent(qDocId)},${encodeURIComponent(hDocId)})&select=*`,
+      { headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` } }
+    );
+    if (gRes.ok) {
+      const rows = await gRes.json();
+      if (Array.isArray(rows)) {
+        for (const r of rows) {
+          if (r.id === qDocId && r.content) {
+            const parsedQ = JSON.parse(r.content);
+            if (Array.isArray(parsedQ)) {
+              customQuestions = parsedQ;
+              memoryBrainBattleQuestions[schoolId] = parsedQ;
+            }
+          }
+          if (r.id === hDocId && r.content) {
+            const parsedH = JSON.parse(r.content);
+            if (Array.isArray(parsedH)) {
+              allHistory = parsedH;
+              memoryBrainBattleHistory[schoolId] = parsedH;
+            }
+          }
+        }
+      }
+    }
+  } catch (_) {}
+
+  const userHistory = userId
+    ? allHistory.filter(h => h.userId === userId).slice(0, 20)
+    : allHistory.slice(0, 20);
+
+  const activeRooms = Object.values(memoryBrainBattleRooms)
+    .filter(r => Date.now() - r.updatedAt < 30 * 60 * 1000)
+    .map(r => ({
+      code: r.code,
+      hostId: r.hostId,
+      hostName: r.hostName,
+      subject: r.subject,
+      difficulty: r.difficulty,
+      questionCount: r.questionCount,
+      status: r.status,
+      playerCount: Object.keys(r.players).length,
+      players: Object.values(r.players)
+    }));
+
+  return res.json({
+    status: 'ok',
+    customQuestions,
+    history: userHistory,
+    recentCampusMatches: allHistory.slice(0, 15),
+    activeRooms
+  });
+});
+
+app.post('/api/brain-battle/questions', async (req, res) => {
+  const { schoolId = 'default_school', question, userRole } = req.body || {};
+  if (!question || !question.question || !Array.isArray(question.options) || question.options.length < 2) {
+    return res.status(400).json({ error: 'Valid question and options are required.' });
+  }
+  if (!['teacher', 'coordinator', 'admin', 'super_admin'].includes(String(userRole || ''))) {
+    return res.status(403).json({ error: 'Only faculty and administrators can add custom questions to the campus bank.' });
+  }
+
+  const list = memoryBrainBattleQuestions[schoolId] || [];
+  const newQ: BrainBattleQuestion = {
+    id: question.id || `bbq_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    subject: question.subject || 'General Knowledge',
+    question: String(question.question).trim(),
+    options: question.options.map((o: any) => String(o).trim()),
+    correctOptionIndex: Number(question.correctOptionIndex) || 0,
+    explanation: String(question.explanation || 'Verified campus explanation.').trim(),
+    difficulty: ['easy', 'medium', 'hard'].includes(question.difficulty) ? question.difficulty : 'medium',
+    grade: question.grade || 'All Grades',
+    createdBy: question.createdBy || '',
+    createdByName: question.createdByName || 'Faculty'
+  };
+
+  const updated = [newQ, ...list.filter(q => q.id !== newQ.id)].slice(0, 200);
+  memoryBrainBattleQuestions[schoolId] = updated;
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+  const qDocId = `__studentos_brain_battle_questions_${schoolId}__`;
+
+  try {
+    await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
+      method: 'POST',
+      headers: {
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({
+        id: qDocId,
+        title: 'StudentOS Brain Battle Question Bank',
+        subject: schoolId,
+        content: JSON.stringify(updated),
+        created_at: new Date().toISOString()
+      })
+    });
+  } catch (_) {}
+
+  return res.json({ status: 'ok', question: newQ, customQuestions: updated });
+});
+
+app.post('/api/brain-battle/complete', async (req, res) => {
+  const { schoolId = 'default_school', matchResult } = req.body || {};
+  if (!matchResult || !matchResult.id || !matchResult.userId) {
+    return res.status(400).json({ error: 'matchResult with id and userId is required.' });
+  }
+
+  const list = memoryBrainBattleHistory[schoolId] || [];
+  if (list.some(item => item.id === matchResult.id)) {
+    return res.json({ status: 'ok', duplicate: true, history: list.filter(i => i.userId === matchResult.userId).slice(0, 20) });
+  }
+
+  // Server-side validation of score & XP bounds to prevent manipulation
+  const totalQ = Math.max(1, Math.min(30, Number(matchResult.totalQuestions) || 5));
+  const correctQ = Math.max(0, Math.min(totalQ, Number(matchResult.correctCount) || 0));
+  const accuracy = Math.round((correctQ / totalQ) * 100);
+  const clampedXp = Math.max(5, Math.min(180, Number(matchResult.xpEarned) || 35));
+
+  const validatedItem: BrainBattleHistoryItem = {
+    id: String(matchResult.id),
+    userId: String(matchResult.userId),
+    userName: String(matchResult.userName || 'Scholar'),
+    userRole: String(matchResult.userRole || 'student'),
+    house: matchResult.house || '',
+    grade: matchResult.grade || '',
+    mode: matchResult.mode || 'quick_play',
+    subject: String(matchResult.subject || 'Mixed Arena'),
+    score: Math.max(0, Math.min(totalQ * 300, Number(matchResult.score) || correctQ * 100)),
+    correctCount: correctQ,
+    totalQuestions: totalQ,
+    accuracyPercent: accuracy,
+    xpEarned: clampedXp,
+    streakPeak: Math.max(0, Math.min(totalQ, Number(matchResult.streakPeak) || 0)),
+    durationSec: Math.max(1, Number(matchResult.durationSec) || 30),
+    roomCode: matchResult.roomCode,
+    rankInMatch: matchResult.rankInMatch,
+    timestamp: new Date().toISOString()
+  };
+
+  const updated = [validatedItem, ...list].slice(0, 250);
+  memoryBrainBattleHistory[schoolId] = updated;
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+  const hDocId = `__studentos_brain_battle_history_${schoolId}__`;
+
+  try {
+    await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
+      method: 'POST',
+      headers: {
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({
+        id: hDocId,
+        title: 'StudentOS Brain Battle Match History',
+        subject: schoolId,
+        content: JSON.stringify(updated),
+        created_at: new Date().toISOString()
+      })
+    });
+  } catch (_) {}
+
+  return res.json({
+    status: 'ok',
+    matchResult: validatedItem,
+    history: updated.filter(i => i.userId === validatedItem.userId).slice(0, 20),
+    recentCampusMatches: updated.slice(0, 15)
+  });
+});
+
+// Authoritative Live Multiplayer Room Endpoints
+app.post('/api/brain-battle/rooms/create', (req, res) => {
+  const { host, subject = 'Mixed Arena', difficulty = 'all', questionCount = 5, timePerQuestion = 15, questions = [] } = req.body || {};
+  if (!host || !host.userId) {
+    return res.status(400).json({ error: 'Authenticated host is required to create a room.' });
+  }
+
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+
+  const now = Date.now();
+  const room: BrainBattleRoomState = {
+    code,
+    hostId: host.userId,
+    hostName: host.name || 'Host Scholar',
+    subject,
+    difficulty,
+    questionCount: Math.min(15, Math.max(3, Number(questionCount) || 5)),
+    timePerQuestion: Math.min(45, Math.max(10, Number(timePerQuestion) || 15)),
+    status: 'lobby',
+    currentQuestionIndex: 0,
+    questionStartedAt: 0,
+    questions: Array.isArray(questions) ? questions : [],
+    players: {
+      [host.userId]: {
+        userId: host.userId,
+        name: host.name || 'Host Scholar',
+        role: host.role || 'student',
+        house: host.house || 'Sapphire',
+        grade: host.grade || '',
+        avatar: host.avatar || '',
+        score: 0,
+        correctCount: 0,
+        streak: 0,
+        answeredCurrentIndex: -1,
+        joinedAt: now
+      }
+    },
+    createdAt: now,
+    updatedAt: now
+  };
+
+  memoryBrainBattleRooms[code] = room;
+  broadcastToAllWs({
+    type: 'realtime:relay',
+    channel: `brain_battle_room_${code}`,
+    event: 'room:state',
+    data: room,
+    envelopeId: `srv_${Date.now()}`
+  });
+
+  return res.json({ status: 'ok', room });
+});
+
+app.get('/api/brain-battle/rooms/:code', (req, res) => {
+  const code = String(req.params.code || '').toUpperCase().trim();
+  const room = memoryBrainBattleRooms[code];
+  if (!room) {
+    return res.status(404).json({ error: 'Battle Room not found or expired.' });
+  }
+  return res.json({ status: 'ok', room });
+});
+
+app.post('/api/brain-battle/rooms/join', (req, res) => {
+  const { code: rawCode, player } = req.body || {};
+  const code = String(rawCode || '').toUpperCase().trim();
+  const room = memoryBrainBattleRooms[code];
+  if (!room) {
+    return res.status(404).json({ error: 'Battle Room not found. Verify the 6-character code.' });
+  }
+  if (!player || !player.userId) {
+    return res.status(400).json({ error: 'Valid player profile is required.' });
+  }
+
+  if (!room.players[player.userId]) {
+    room.players[player.userId] = {
+      userId: player.userId,
+      name: player.name || 'Challenger',
+      role: player.role || 'student',
+      house: player.house || 'Emerald',
+      grade: player.grade || '',
+      avatar: player.avatar || '',
+      score: 0,
+      correctCount: 0,
+      streak: 0,
+      answeredCurrentIndex: -1,
+      joinedAt: Date.now()
+    };
+  }
+  room.updatedAt = Date.now();
+
+  broadcastToAllWs({
+    type: 'realtime:relay',
+    channel: `brain_battle_room_${code}`,
+    event: 'room:state',
+    data: room,
+    envelopeId: `srv_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+  });
+
+  return res.json({ status: 'ok', room });
+});
+
+app.post('/api/brain-battle/rooms/action', (req, res) => {
+  const { code: rawCode, action, userId, optionIndex, timeLeftSec } = req.body || {};
+  const code = String(rawCode || '').toUpperCase().trim();
+  const room = memoryBrainBattleRooms[code];
+  if (!room) {
+    return res.status(404).json({ error: 'Battle Room not found.' });
+  }
+
+  const now = Date.now();
+  if (action === 'start' && userId === room.hostId) {
+    room.status = 'active';
+    room.currentQuestionIndex = 0;
+    room.questionStartedAt = now;
+    Object.values(room.players).forEach(p => {
+      p.score = 0;
+      p.correctCount = 0;
+      p.streak = 0;
+      p.answeredCurrentIndex = -1;
+      p.lastAnswerCorrect = undefined;
+    });
+  } else if (action === 'answer') {
+    const p = room.players[userId];
+    const currentQ = room.questions[room.currentQuestionIndex];
+    if (p && currentQ && p.answeredCurrentIndex !== room.currentQuestionIndex) {
+      p.answeredCurrentIndex = room.currentQuestionIndex;
+      const isCorrect = Number(optionIndex) === Number(currentQ.correctOptionIndex);
+      p.lastAnswerCorrect = isCorrect;
+      if (isCorrect) {
+        p.correctCount += 1;
+        p.streak += 1;
+        const speedBonus = Math.max(0, Math.min(50, Math.round((Number(timeLeftSec) || 0) * 3)));
+        const streakBonus = Math.min(60, (p.streak - 1) * 15);
+        p.score += 100 + speedBonus + streakBonus;
+      } else {
+        p.streak = 0;
+      }
+    }
+  } else if (action === 'next') {
+    if (room.currentQuestionIndex + 1 < room.questions.length) {
+      room.currentQuestionIndex += 1;
+      room.questionStartedAt = now;
+    } else {
+      room.status = 'completed';
+    }
+  }
+
+  room.updatedAt = now;
+  broadcastToAllWs({
+    type: 'realtime:relay',
+    channel: `brain_battle_room_${code}`,
+    event: 'room:state',
+    data: room,
+    envelopeId: `srv_${now}_${Math.random().toString(36).slice(2, 6)}`
+  });
+
+  return res.json({ status: 'ok', room });
+});
+
 // Removed shared setup, moved to aiClient.ts
 
 function sanitizeHistory(history: any[] = []): { role: 'user' | 'assistant'; content: string }[] {

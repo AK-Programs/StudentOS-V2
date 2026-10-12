@@ -411,6 +411,14 @@ export const StudentGamificationHub: React.FC<{
         return { current: Math.min(10, profile.counts.aiStudyUses), max: 10 };
       case 'top_10_scholar':
         return { current: myRank <= 10 && profile.xp >= 50 ? 1 : 0, max: 1 };
+      case 'brain_battle_debut':
+        return { current: Math.min(1, (profile.counts.brainBattlesPlayed || 0) + profile.counts.quizzesCompleted), max: 1 };
+      case 'flawless_tactician':
+        return { current: Math.min(1, profile.counts.brainBattlePerfects || 0), max: 1 };
+      case 'daily_conqueror':
+        return { current: Math.min(1, profile.counts.dailyChallengesCompleted || 0), max: 1 };
+      case 'arena_victor':
+        return { current: Math.min(1, profile.counts.multiplayerWins || 0), max: 1 };
       default:
         return { current: 0, max: 1 };
     }

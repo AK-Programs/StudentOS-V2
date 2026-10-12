@@ -18,7 +18,11 @@ export type GamificationActionType =
   | 'quiz_high_score'
   | 'create_note'
   | 'use_ai_study'
-  | 'read_notice';
+  | 'read_notice'
+  | 'brain_battle_round'
+  | 'brain_battle_perfect'
+  | 'brain_battle_daily'
+  | 'brain_battle_multiplayer_win';
 
 export interface LevelDefinition {
   level: number;
@@ -95,7 +99,7 @@ export const GAMIFICATION_BADGES: BadgeDefinition[] = [
     id: 'quiz_champion',
     name: 'Quiz Champion',
     description: 'Demonstrated subject mastery under test conditions.',
-    unlockRequirement: 'Score 80%+ in a quiz',
+    unlockRequirement: 'Score 80%+ in a quiz or Brain Battle',
     icon: '🏆',
     category: 'academic'
   },
@@ -122,6 +126,38 @@ export const GAMIFICATION_BADGES: BadgeDefinition[] = [
     unlockRequirement: 'Reach Top 10 in Class or School Leaderboard',
     icon: '👑',
     category: 'leaderboard'
+  },
+  {
+    id: 'brain_battle_debut',
+    name: 'Arena Challenger',
+    description: 'Completed your first official Brain Battle match.',
+    unlockRequirement: 'Finish 1 Brain Battle match',
+    icon: '⚔️',
+    category: 'milestone'
+  },
+  {
+    id: 'flawless_tactician',
+    name: 'Flawless Tactician',
+    description: 'Answered every question in a Brain Battle round with 100% accuracy.',
+    unlockRequirement: 'Achieve 100% accuracy in a Brain Battle',
+    icon: '🎯',
+    category: 'academic'
+  },
+  {
+    id: 'daily_conqueror',
+    name: 'Daily Conqueror',
+    description: 'Completed the official Campus Daily Challenge.',
+    unlockRequirement: 'Finish a Brain Battle Daily Challenge',
+    icon: '🌅',
+    category: 'streak'
+  },
+  {
+    id: 'arena_victor',
+    name: 'Arena Victor',
+    description: 'Triumphant in a live Multiplayer Brain Battle duel.',
+    unlockRequirement: 'Win 1 Multiplayer Brain Battle',
+    icon: '🛡️',
+    category: 'leaderboard'
   }
 ];
 
@@ -129,6 +165,7 @@ export interface StudentGamificationStats {
   userId: string;
   name: string;
   avatar?: string;
+  role?: string;
   grade: string;
   section: string;
   house?: string;
@@ -149,12 +186,17 @@ export interface StudentGamificationStats {
     notesCreated: number;
     aiStudyUses: number;
     noticesRead: number;
+    brainBattlesPlayed?: number;
+    brainBattlePerfects?: number;
+    dailyChallengesCompleted?: number;
+    multiplayerWins?: number;
   };
   dailyTrackers: {
     date: string; // YYYY-MM-DD
     loginClaimed: boolean;
     aiUsesToday: number;
     xpEarnedToday: number;
+    dailyChallengeClaimed?: boolean;
   };
   completedActionKeys: string[]; // Prevents duplicate XP for same item ID
   recentXpHistory: Array<{
@@ -171,11 +213,15 @@ export const XP_REWARDS: Record<GamificationActionType, { xp: number; label: str
   daily_login: { xp: 10, label: 'Daily Study Check-In' },
   complete_homework: { xp: 25, label: 'Homework Completed' },
   study_flashcards: { xp: 15, label: 'Flashcard Study Session' },
-  complete_quiz: { xp: 30, label: 'Practice Quiz Completed' },
-  quiz_high_score: { xp: 20, label: '80%+ Quiz Mastery Bonus' },
+  complete_quiz: { xp: 30, label: 'Brain Battle Completed' },
+  quiz_high_score: { xp: 20, label: '80%+ Mastery Bonus' },
   create_note: { xp: 15, label: 'Study Note Created' },
   use_ai_study: { xp: 10, label: 'AI Tutor Study Session' },
-  read_notice: { xp: 5, label: 'Official Notice Reviewed' }
+  read_notice: { xp: 5, label: 'Official Notice Reviewed' },
+  brain_battle_round: { xp: 35, label: 'Brain Battle Round Completed' },
+  brain_battle_perfect: { xp: 25, label: '100% Flawless Round Bonus' },
+  brain_battle_daily: { xp: 50, label: 'Daily Brain Battle Challenge' },
+  brain_battle_multiplayer_win: { xp: 45, label: 'Multiplayer Arena Victory' }
 };
 
 export function getTodayDateString(): string {
@@ -389,6 +435,10 @@ function evaluateBadges(
   checkAndUnlock('note_taker', profile.counts.notesCreated >= 5);
   checkAndUnlock('ai_explorer', profile.counts.aiStudyUses >= 10);
   checkAndUnlock('top_10_scholar', isTop10OnLeaderboard && profile.xp >= 50);
+  checkAndUnlock('brain_battle_debut', (profile.counts.brainBattlesPlayed || 0) >= 1 || profile.counts.quizzesCompleted >= 1);
+  checkAndUnlock('flawless_tactician', (profile.counts.brainBattlePerfects || 0) >= 1);
+  checkAndUnlock('daily_conqueror', (profile.counts.dailyChallengesCompleted || 0) >= 1);
+  checkAndUnlock('arena_victor', (profile.counts.multiplayerWins || 0) >= 1);
 
   return newlyUnlocked;
 }
@@ -413,6 +463,7 @@ export async function awardStudentXP(
     uniqueItemId?: string;
     flashcardCount?: number;
     quizScorePercent?: number;
+    customXpAmount?: number;
     customLabel?: string;
     silent?: boolean;
   }
@@ -429,6 +480,7 @@ export async function awardStudentXP(
   }
 
   const profile = getLocalGamificationProfile(user);
+  if (user.role) profile.role = user.role;
   const today = getTodayDateString();
   const yesterday = getYesterdayDateString();
 
@@ -438,7 +490,8 @@ export async function awardStudentXP(
       date: today,
       loginClaimed: false,
       aiUsesToday: 0,
-      xpEarnedToday: 0
+      xpEarnedToday: 0,
+      dailyChallengeClaimed: false
     };
   }
 
@@ -462,6 +515,13 @@ export async function awardStudentXP(
     profile.dailyTrackers.loginClaimed = true;
   }
 
+  if (action === 'brain_battle_daily') {
+    if (profile.dailyTrackers.dailyChallengeClaimed) {
+      return { awarded: false, xpAdded: 0, leveledUp: false, newBadges: [], profile };
+    }
+    profile.dailyTrackers.dailyChallengeClaimed = true;
+  }
+
   if (action === 'use_ai_study') {
     if (profile.dailyTrackers.aiUsesToday >= 5) {
       // Capped at 5 AI study XP awards per day
@@ -482,7 +542,9 @@ export async function awardStudentXP(
   }
 
   // 3. Calculate XP & update counters
-  let xpToAdd = XP_REWARDS[action].xp;
+  let xpToAdd = typeof options?.customXpAmount === 'number' && options.customXpAmount > 0
+    ? Math.min(200, Math.round(options.customXpAmount))
+    : XP_REWARDS[action].xp;
   let rewardLabel = options?.customLabel || XP_REWARDS[action].label;
 
   profile.counts.totalActions += 1;
@@ -495,10 +557,39 @@ export async function awardStudentXP(
       profile.counts.flashcardsStudied += options?.flashcardCount || 10;
       break;
     case 'complete_quiz':
+    case 'brain_battle_round':
       profile.counts.quizzesCompleted += 1;
+      profile.counts.brainBattlesPlayed = (profile.counts.brainBattlesPlayed || 0) + 1;
       if ((options?.quizScorePercent ?? 0) >= 80) {
-        xpToAdd += XP_REWARDS.quiz_high_score.xp;
-        rewardLabel = `Quiz Completed (${options?.quizScorePercent}% Mastery Bonus!)`;
+        if (typeof options?.customXpAmount !== 'number') {
+          xpToAdd += XP_REWARDS.quiz_high_score.xp;
+        }
+        profile.counts.highScoreQuizzes += 1;
+      }
+      if ((options?.quizScorePercent ?? 0) === 100) {
+        profile.counts.brainBattlePerfects = (profile.counts.brainBattlePerfects || 0) + 1;
+      }
+      break;
+    case 'brain_battle_perfect':
+      profile.counts.brainBattlePerfects = (profile.counts.brainBattlePerfects || 0) + 1;
+      profile.counts.highScoreQuizzes += 1;
+      break;
+    case 'brain_battle_daily':
+      profile.counts.quizzesCompleted += 1;
+      profile.counts.brainBattlesPlayed = (profile.counts.brainBattlesPlayed || 0) + 1;
+      profile.counts.dailyChallengesCompleted = (profile.counts.dailyChallengesCompleted || 0) + 1;
+      if ((options?.quizScorePercent ?? 0) >= 80) {
+        profile.counts.highScoreQuizzes += 1;
+      }
+      if ((options?.quizScorePercent ?? 0) === 100) {
+        profile.counts.brainBattlePerfects = (profile.counts.brainBattlePerfects || 0) + 1;
+      }
+      break;
+    case 'brain_battle_multiplayer_win':
+      profile.counts.quizzesCompleted += 1;
+      profile.counts.brainBattlesPlayed = (profile.counts.brainBattlesPlayed || 0) + 1;
+      profile.counts.multiplayerWins = (profile.counts.multiplayerWins || 0) + 1;
+      if ((options?.quizScorePercent ?? 0) >= 80) {
         profile.counts.highScoreQuizzes += 1;
       }
       break;
