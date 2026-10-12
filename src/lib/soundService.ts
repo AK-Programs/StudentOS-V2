@@ -14,15 +14,169 @@
  * - Prevents overlapping flashcard sounds, debounces rapid repeated events, and cleans up all nodes
  */
 
+export interface SoundCategoryPreferences {
+  ui: boolean;            // Button Click (Pixabay #289742)
+  progression: boolean;   // Level Up (Pixabay #402152)
+  chat: boolean;          // Message Ping (Pixabay #351298)
+  notifications: boolean; // New Notification (Pixabay #7062)
+  achievements: boolean;  // Achievement Unlocked (Pixabay #203875)
+  gameplay: boolean;      // Correct Answer (Pixabay #6033)
+  timer: boolean;         // Short Digital Alert (Pixabay #242596)
+  appear: boolean;        // Appear Sound (Pixabay #8367)
+}
+
 export interface SoundPreferencesSnapshot {
   muted: boolean;
   flashcardSoundEnabled: boolean;
   volume: number; // 0.0 to 1.0
+  categories: SoundCategoryPreferences;
 }
+
+export interface PixabaySoundMeta {
+  id: string;
+  name: string;
+  category: keyof SoundCategoryPreferences;
+  sourcePage: string;
+  fileUrl: string;
+  fallbackFileUrl: string;
+  license: string;
+  description: string;
+  recommendedUse: string[];
+}
+
+export const PIXABAY_SOUND_CATALOG: Record<string, PixabaySoundMeta> = {
+  buttonClick: {
+    id: 'button-click-289742',
+    name: 'Button Click',
+    category: 'ui',
+    sourcePage: 'https://pixabay.com/sound-effects/film-special-effects-button-click-289742/',
+    fileUrl: '/sounds/button-click-289742.mp3',
+    fallbackFileUrl: '/sounds/button-click.mp3',
+    license: 'Pixabay Content License (Free for commercial/non-commercial use)',
+    description: 'Subtle mechanical button click for primary action buttons, Quick Play, and key UI interactions.',
+    recommendedUse: [
+      'Primary action buttons',
+      'Play Now and Quick Play buttons in Brain Battle',
+      'Opening a game mode or starting a new activity',
+      'Confirming a lightweight UI selection'
+    ]
+  },
+  levelUp: {
+    id: 'level-up-08-402152',
+    name: 'Level Up',
+    category: 'progression',
+    sourcePage: 'https://pixabay.com/sound-effects/film-special-effects-level-up-08-402152/',
+    fileUrl: '/sounds/level-up-08-402152.wav',
+    fallbackFileUrl: '/sounds/level-up.wav',
+    license: 'Pixabay Content License (Free for commercial/non-commercial use)',
+    description: 'Triumphant ascending fanfare for verified student level increases and major XP milestones.',
+    recommendedUse: [
+      'Student level increases',
+      'Successful level-up celebrations',
+      'Major XP milestones triggering level change',
+      'Brain Battle results when player level advances'
+    ]
+  },
+  messagePing: {
+    id: 'message-ping-351298',
+    name: 'Message Ping',
+    category: 'chat',
+    sourcePage: 'https://pixabay.com/sound-effects/film-special-effects-message-ping-351298/',
+    fileUrl: '/sounds/message-ping-351298.wav',
+    fallbackFileUrl: '/sounds/message-ping.wav',
+    license: 'Pixabay Content License (Free for commercial/non-commercial use)',
+    description: 'Crystal sine chime for incoming direct messages, background chat, and floating notifications.',
+    recommendedUse: [
+      'New incoming direct messages',
+      'New chat messages in background tabs/rooms',
+      'Floating chat notification indicators'
+    ]
+  },
+  newNotification: {
+    id: 'notification-sound-7062',
+    name: 'New Notification',
+    category: 'notifications',
+    sourcePage: 'https://pixabay.com/sound-effects/notification-sound-7062/',
+    fileUrl: '/sounds/notification-sound-7062.mp3',
+    fallbackFileUrl: '/sounds/notification-sound.mp3',
+    license: 'Pixabay Content License (Free for commercial/non-commercial use)',
+    description: 'Polished alert tone for urgent announcements, grade updates, and deadline reminders.',
+    recommendedUse: [
+      'System alerts and high-priority broadcasts',
+      'Grade published updates',
+      'Attendance warnings',
+      'Assignment deadline reminders'
+    ]
+  },
+  achievementUnlocked: {
+    id: 'game-elements-achievement-unlocked-2-203875',
+    name: 'Achievement Unlocked',
+    category: 'achievements',
+    sourcePage: 'https://pixabay.com/sound-effects/game-elements-achievement-unlocked-2-203875/',
+    fileUrl: '/sounds/achievement-unlocked-2-203875.wav',
+    fallbackFileUrl: '/sounds/achievement-unlocked.wav',
+    license: 'Pixabay Content License (Free for commercial/non-commercial use)',
+    description: 'Golden chord flourish for badge rewards, House cup point celebrations, and streak achievements.',
+    recommendedUse: [
+      'Badges earned in StudentOS Gamification Hub',
+      'House cup points awarded',
+      'Brain Battle achievements unlocked',
+      'Major study streaks achieved'
+    ]
+  },
+  correctAnswer: {
+    id: 'game-elements-correct-6033',
+    name: 'Correct Answer',
+    category: 'gameplay',
+    sourcePage: 'https://pixabay.com/sound-effects/game-elements-correct-6033/',
+    fileUrl: '/sounds/game-elements-correct-6033.wav',
+    fallbackFileUrl: '/sounds/correct-answer.wav',
+    license: 'Pixabay Content License (Free for commercial/non-commercial use)',
+    description: 'Crisp upbeat affirmative chime for correct questions in Brain Battle and interactive quizzes.',
+    recommendedUse: [
+      'Correct answers in Brain Battle',
+      'Success state in flashcards and study checks',
+      'Positive validation on practice questions'
+    ]
+  },
+  shortDigitalAlert: {
+    id: 'notification-sound-short-digital-notification-alert-242596',
+    name: 'Short Digital Notification Alert',
+    category: 'timer',
+    sourcePage: 'https://pixabay.com/sound-effects/notification-sound-short-digital-notification-alert-242596/',
+    fileUrl: '/sounds/notification-sound-short-digital-notification-alert-242596.wav',
+    fallbackFileUrl: '/sounds/short-digital-alert.wav',
+    license: 'Pixabay Content License (Free for commercial/non-commercial use)',
+    description: 'Two crisp micro-pulses for Focus Timer transitions and non-critical system toasts.',
+    recommendedUse: [
+      'Focus Timer transitions (session start/complete, break start/end)',
+      'Status updates and brief alerts',
+      'Non-critical system confirmations',
+      'Quick action completion toasts'
+    ]
+  },
+  appearSound: {
+    id: 'transitions-appear-sound-effect-short-8367',
+    name: 'Appear Sound',
+    category: 'appear',
+    sourcePage: 'https://pixabay.com/sound-effects/transitions-appear-sound-effect-short-8367/',
+    fileUrl: '/sounds/transitions-appear-sound-effect-short-8367.wav',
+    fallbackFileUrl: '/sounds/appear-sound.wav',
+    license: 'Pixabay Content License (Free for commercial/non-commercial use)',
+    description: 'Smooth aerodynamic whoosh pop for modal dialogs, drawers, and card reveal animations.',
+    recommendedUse: [
+      'Modal dialogs opening',
+      'Flyout panels and drawer opens',
+      'Brain Battle match-found or opponent reveal',
+      'New card appearing in a deck or feed'
+    ]
+  }
+};
 
 const STORAGE_KEY_MUTED = 'studentos_sound_muted';
 const STORAGE_KEY_FLASHCARD_ENABLED = 'studentos_flashcard_sound_enabled';
 const STORAGE_KEY_VOLUME = 'studentos_sound_volume';
+const STORAGE_KEY_CATEGORIES = 'studentos_sound_categories';
 
 interface ActiveAudioNodeEntry {
   osc: OscillatorNode;
@@ -34,6 +188,17 @@ class SoundService {
   private isMuted: boolean = false;
   private flashcardSoundEnabled: boolean = true;
   private volume: number = 0.75;
+  private categories: SoundCategoryPreferences = {
+    ui: true,
+    progression: true,
+    chat: true,
+    notifications: true,
+    achievements: true,
+    gameplay: true,
+    timer: true,
+    appear: true
+  };
+  private audioElements: Map<string, HTMLAudioElement> = new Map();
   private hasUserInteracted: boolean = false;
   private reducedMotionQuery: MediaQueryList | null = null;
   private lastPlayedAt: Map<string, number> = new Map();
@@ -77,6 +242,16 @@ class SoundService {
         if (Number.isFinite(parsedVol)) {
           this.volume = Math.max(0, Math.min(1, parsedVol));
         }
+      }
+
+      const savedCategories = localStorage.getItem(STORAGE_KEY_CATEGORIES);
+      if (savedCategories !== null) {
+        try {
+          const parsed = JSON.parse(savedCategories);
+          if (parsed && typeof parsed === 'object') {
+            this.categories = { ...this.categories, ...parsed };
+          }
+        } catch (_) {}
       }
 
       // Also inspect cached StudentOS user profile if present
@@ -143,8 +318,21 @@ class SoundService {
     return {
       muted: this.isMuted,
       flashcardSoundEnabled: this.flashcardSoundEnabled,
-      volume: this.volume
+      volume: this.volume,
+      categories: { ...this.categories }
     };
+  }
+
+  public setCategoryEnabled(cat: keyof SoundCategoryPreferences, enabled: boolean) {
+    this.categories[cat] = enabled;
+    try {
+      localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(this.categories));
+    } catch (_) {}
+    this.emitPreferenceChange();
+  }
+
+  public isCategoryEnabled(cat: keyof SoundCategoryPreferences): boolean {
+    return !this.isMuted && this.volume > 0.001 && Boolean(this.categories[cat]);
   }
 
   public prefersReducedMotion(): boolean {
@@ -800,6 +988,311 @@ class SoundService {
         });
       });
     } catch (_) {}
+  }
+
+  // ========================================================================
+  // 8 OFFICIAL PIXABAY SOUND EFFECTS INTEGRATION (AUDIO + SYNTH DUAL-LAYER)
+  // ========================================================================
+
+  /**
+   * Helper that attempts HTML5 Audio playback of the hosted sound asset,
+   * falling back automatically to high-precision Web Audio synthesis if blocked by browser policy.
+   */
+  private playPixabayAsset(
+    catalogKey: keyof typeof PIXABAY_SOUND_CATALOG,
+    throttleMs: number,
+    synthFallback: () => void
+  ) {
+    const meta = PIXABAY_SOUND_CATALOG[catalogKey];
+    if (!meta) return;
+    if (this.isMuted || this.volume <= 0.001) return;
+    if (!this.categories[meta.category]) return;
+    if (!this.shouldAllowPlay(`px_${meta.id}`, throttleMs)) return;
+
+    if (typeof window === 'undefined') return;
+
+    try {
+      let audio = this.audioElements.get(meta.id);
+      if (!audio) {
+        audio = new Audio(meta.fileUrl);
+        audio.preload = 'auto';
+        this.audioElements.set(meta.id, audio);
+      }
+
+      audio.volume = Math.max(0, Math.min(1, this.volume));
+      audio.currentTime = 0;
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((_err) => {
+          // Playback blocked or file missing: fallback to Web Audio synthesis!
+          synthFallback();
+        });
+      }
+    } catch (_) {
+      synthFallback();
+    }
+  }
+
+  /**
+   * 1. Button Click
+   * Source: https://pixabay.com/sound-effects/film-special-effects-button-click-289742/
+   * Use for: Primary action buttons, Quick Play, mode selections, and key navigation.
+   */
+  public playButtonClick() {
+    this.playPixabayAsset('buttonClick', 60, () => {
+      this.playToggleSound(true);
+    });
+  }
+  public playPixabayButtonClick() {
+    this.playButtonClick();
+  }
+
+  /**
+   * 2. Level Up
+   * Source: https://pixabay.com/sound-effects/film-special-effects-level-up-08-402152/
+   * Use for: Confirmed student level increases and major XP milestones.
+   */
+  public playLevelUp() {
+    this.playPixabayAsset('levelUp', 300, () => {
+      const ctx = this.getContext(false);
+      if (!ctx) return;
+      try {
+        const now = ctx.currentTime;
+        const notes = [523.25, 659.25, 783.99, 1046.50, 1318.51];
+        notes.forEach((freq, idx) => {
+          this.scheduleTone(ctx, {
+            type: 'sine',
+            startFreq: freq,
+            startTime: now + idx * 0.08,
+            duration: 0.35,
+            peakGain: 0.1
+          });
+        });
+      } catch (_) {}
+    });
+  }
+  public playPixabayLevelUp() {
+    this.playLevelUp();
+  }
+
+  /**
+   * 3. Message Ping
+   * Source: https://pixabay.com/sound-effects/film-special-effects-message-ping-351298/
+   * Use for: Incoming direct messages, active chat rooms, floating indicators.
+   */
+  public playMessagePing() {
+    this.playPixabayAsset('messagePing', 100, () => {
+      const ctx = this.getContext(false);
+      if (!ctx) return;
+      try {
+        const now = ctx.currentTime;
+        this.scheduleTone(ctx, {
+          type: 'sine',
+          startFreq: 880,
+          endFreq: 1320,
+          startTime: now,
+          duration: 0.22,
+          peakGain: 0.09
+        });
+      } catch (_) {}
+    });
+  }
+  public playPixabayMessagePing() {
+    this.playMessagePing();
+  }
+
+  /**
+   * 4. New Notification
+   * Source: https://pixabay.com/sound-effects/notification-sound-7062/
+   * Use for: System alerts, broadcasts, grade updates, and deadline reminders.
+   */
+  public playNewNotification() {
+    this.playPixabayAsset('newNotification', 150, () => {
+      const ctx = this.getContext(false);
+      if (!ctx) return;
+      try {
+        const now = ctx.currentTime;
+        this.scheduleTone(ctx, {
+          type: 'sine',
+          startFreq: 783.99,
+          startTime: now,
+          duration: 0.16,
+          peakGain: 0.1
+        });
+        this.scheduleTone(ctx, {
+          type: 'sine',
+          startFreq: 1046.5,
+          startTime: now + 0.07,
+          duration: 0.25,
+          peakGain: 0.11
+        });
+      } catch (_) {}
+    });
+  }
+  public playPixabayNewNotification() {
+    this.playNewNotification();
+  }
+
+  /**
+   * 5. Achievement Unlocked
+   * Source: https://pixabay.com/sound-effects/game-elements-achievement-unlocked-2-203875/
+   * Use for: Badges earned, House Cup points awarded, and streak milestones.
+   */
+  public playAchievementUnlocked() {
+    this.playPixabayAsset('achievementUnlocked', 250, () => {
+      const ctx = this.getContext(false);
+      if (!ctx) return;
+      try {
+        const now = ctx.currentTime;
+        const notes = [587.33, 739.99, 880.0, 1174.66];
+        notes.forEach((freq, idx) => {
+          this.scheduleTone(ctx, {
+            type: 'sine',
+            startFreq: freq,
+            startTime: now + idx * 0.07,
+            duration: 0.28,
+            peakGain: 0.095
+          });
+        });
+      } catch (_) {}
+    });
+  }
+  public playPixabayAchievementUnlocked() {
+    this.playAchievementUnlocked();
+  }
+
+  /**
+   * 6. Correct Answer
+   * Source: https://pixabay.com/sound-effects/game-elements-correct-6033/
+   * Use for: Correct question answers in Brain Battle and interactive study checks.
+   */
+  public playCorrectAnswer() {
+    this.playPixabayAsset('correctAnswer', 80, () => {
+      const ctx = this.getContext(false);
+      if (!ctx) return;
+      try {
+        const now = ctx.currentTime;
+        this.scheduleTone(ctx, {
+          type: 'sine',
+          startFreq: 783.99,
+          startTime: now,
+          duration: 0.14,
+          peakGain: 0.09
+        });
+        this.scheduleTone(ctx, {
+          type: 'sine',
+          startFreq: 1046.50,
+          startTime: now + 0.065,
+          duration: 0.22,
+          peakGain: 0.1
+        });
+      } catch (_) {}
+    });
+  }
+  public playPixabayCorrectAnswer() {
+    this.playCorrectAnswer();
+  }
+
+  /**
+   * 7. Short Digital Notification Alert
+   * Source: https://pixabay.com/sound-effects/notification-sound-short-digital-notification-alert-242596/
+   * Use for: Focus Timer transitions (session start/complete, break start/end) and toasts.
+   */
+  public playShortDigitalAlert() {
+    this.playPixabayAsset('shortDigitalAlert', 100, () => {
+      const ctx = this.getContext(false);
+      if (!ctx) return;
+      try {
+        const now = ctx.currentTime;
+        this.scheduleTone(ctx, {
+          type: 'triangle',
+          startFreq: 1040,
+          startTime: now,
+          duration: 0.045,
+          peakGain: 0.08
+        });
+        this.scheduleTone(ctx, {
+          type: 'triangle',
+          startFreq: 1040,
+          startTime: now + 0.06,
+          duration: 0.06,
+          peakGain: 0.09
+        });
+      } catch (_) {}
+    });
+  }
+  public playPixabayTimerAlert() {
+    this.playShortDigitalAlert();
+  }
+
+  /**
+   * 8. Appear Sound
+   * Source: https://pixabay.com/sound-effects/transitions-appear-sound-effect-short-8367/
+   * Use for: Modal dialogs opening, flyout panels, drawer opens, and card reveals.
+   */
+  public playAppearSound() {
+    this.playPixabayAsset('appearSound', 70, () => {
+      const ctx = this.getContext(false);
+      if (!ctx) return;
+      try {
+        const now = ctx.currentTime;
+        this.scheduleTone(ctx, {
+          type: 'sine',
+          startFreq: 320,
+          endFreq: 680,
+          startTime: now,
+          duration: 0.14,
+          peakGain: 0.075
+        });
+      } catch (_) {}
+    });
+  }
+  public playPixabayAppearSound() {
+    this.playAppearSound();
+  }
+
+  /**
+   * Interactive test function to preview any of the 8 Pixabay sounds in settings
+   */
+  public testSound(soundKey: string) {
+    this.unlockFromUserGesture();
+    switch (soundKey) {
+      case 'buttonClick':
+      case 'button-click-289742':
+        this.playButtonClick();
+        break;
+      case 'levelUp':
+      case 'level-up-08-402152':
+        this.playLevelUp();
+        break;
+      case 'messagePing':
+      case 'message-ping-351298':
+        this.playMessagePing();
+        break;
+      case 'newNotification':
+      case 'notification-sound-7062':
+        this.playNewNotification();
+        break;
+      case 'achievementUnlocked':
+      case 'game-elements-achievement-unlocked-2-203875':
+        this.playAchievementUnlocked();
+        break;
+      case 'correctAnswer':
+      case 'game-elements-correct-6033':
+        this.playCorrectAnswer();
+        break;
+      case 'shortDigitalAlert':
+      case 'notification-sound-short-digital-notification-alert-242596':
+        this.playShortDigitalAlert();
+        break;
+      case 'appearSound':
+      case 'transitions-appear-sound-effect-short-8367':
+        this.playAppearSound();
+        break;
+      default:
+        this.playButtonClick();
+        break;
+    }
   }
 }
 

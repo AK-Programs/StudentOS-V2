@@ -574,17 +574,17 @@ export async function deleteNotification(notifId: string, userId?: string): Prom
 }
 
 /**
- * Trigger sound based on notification type
+ * Trigger sound based on notification type using official Pixabay sound effects
  */
 export function triggerNotificationSound(type: string) {
-  if (type === 'announcement') {
-    soundService.playAnnouncementSound();
+  if (type === 'announcement' || type === 'grade' || type === 'attendance' || type === 'system') {
+    soundService.playNewNotification();
   } else if (type === 'mention') {
     soundService.playMentionSound();
   } else if (type === 'homework' || type === 'assignment') {
-    soundService.playHomeworkSound();
+    soundService.playNewNotification();
   } else {
-    soundService.playMessageSound();
+    soundService.playNewNotification();
   }
 }
 

@@ -16,6 +16,13 @@ import {
   markUpdateAsRead, 
   markAllUpdatesAsRead 
 } from '../lib/supabaseUpdates';
+import { soundService } from '../lib/soundService';
+import {
+  BorderBeam,
+  CardSpotlight,
+  NumberTicker,
+  ShimmerButton
+} from './ui/animatedComponents';
 
 interface WhatsNewPortalProps {
   currentUser: UserProfile | null;
@@ -210,6 +217,7 @@ export function WhatsNewPortal({
   };
 
   const handleMarkAllAsRead = async () => {
+    soundService.playAchievementUnlocked();
     const unreadIds = updates.filter(u => !readIds.has(u.id)).map(u => u.id);
     if (unreadIds.length === 0) return;
     const nextSet = new Set(readIds);
@@ -219,6 +227,7 @@ export function WhatsNewPortal({
   };
 
   const toggleExpand = (id: string) => {
+    soundService.playAppearSound();
     setExpandedIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -321,7 +330,9 @@ export function WhatsNewPortal({
             {unreadCount > 0 && (
               <>
                 <span aria-hidden="true">·</span>
-                <span className="text-rose-400 font-semibold">{unreadCount} unread</span>
+                <span className="text-rose-400 font-semibold flex items-center gap-1">
+                  <NumberTicker value={unreadCount} /> unread
+                </span>
               </>
             )}
           </div>
@@ -336,13 +347,13 @@ export function WhatsNewPortal({
 
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
           {unreadCount > 0 && (
-            <button
+            <ShimmerButton
               onClick={handleMarkAllAsRead}
-              className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 border border-white/10 text-xs font-semibold transition-colors flex items-center gap-2 cursor-pointer"
+              className="px-4 py-2 text-xs font-semibold"
             >
-              <CheckCheck className="w-4 h-4 text-emerald-400" />
+              <CheckCheck className="w-4 h-4 text-emerald-300" />
               <span>Mark All as Read</span>
-            </button>
+            </ShimmerButton>
           )}
 
           {isSuperAdmin && onOpenAdminManager && (

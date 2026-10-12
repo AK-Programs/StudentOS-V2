@@ -106,6 +106,15 @@ import { getStoredCards } from './lib/flashcardStorage';
 import { isCardDue } from './lib/sm2Algorithm';
 import { getPublishedUpdates, getUserReadUpdateIds } from './lib/supabaseUpdates';
 import { soundService } from './lib/soundService';
+import { SoundSettingsModal } from './components/SoundSettingsModal';
+import {
+  NumberTicker,
+  BorderBeam,
+  ShimmerButton,
+  CardSpotlight,
+  BackgroundBeams,
+  SplitTextReveal
+} from './components/ui/animatedComponents';
 import { 
   AIUsageState, 
   getLocalUsageState, 
@@ -466,6 +475,7 @@ export default function App() {
 
 
   const [isInstallAppModalOpen, setIsInstallAppModalOpen] = useState<boolean>(false);
+  const [isSoundSettingsModalOpen, setIsSoundSettingsModalOpen] = useState<boolean>(false);
   const [isApkInstalled, setIsApkInstalled] = useState<boolean>(() => isApkInstalledOnDevice());
 
   useEffect(() => {
@@ -883,6 +893,7 @@ export default function App() {
   };
 
   const handleTabSelect = (tab: string) => {
+    soundService.playButtonClick();
     if (presentationMode && !isTabAllowedInPresentation(tab)) {
       showNotification('🔒 This tab is hidden in Presentation Mode for classroom safety.');
       return;
@@ -1583,10 +1594,10 @@ export default function App() {
     }
   }, [pomodoroRunning, pomodoroMode, customPomodoro, currentUser, pomodoroCompletedCount, pomodoroJustCompleted]);
 
-  // System Notification Handler
+  // System Notification Handler (Quick Action Completion Toasts & Alerts)
   const safePlayNotificationSound = () => {
     try {
-      soundService.playMessageSound();
+      soundService.playShortDigitalAlert();
     } catch (_) {}
   };
 
@@ -6480,8 +6491,10 @@ ${roleLabel}: ${userQuery}`;
 
       {/* Onboarding Authentication Modal Gate — Compact Single-Viewport Layout */}
       {!currentUser && !firebaseLoading && !dataLoading && (
-        <div id="onboarding-gate-modal" className="fixed inset-0 bg-slate-950/95 backdrop-blur-2xl z-50 overflow-y-auto flex items-center justify-center p-3 sm:p-5 safe-area-pt safe-area-pb">
-          <div className="bento-card max-w-md w-full rounded-3xl border border-white/10 shadow-2xl p-5 sm:p-6 space-y-4 relative overflow-hidden">
+        <div id="onboarding-gate-modal" className="fixed inset-0 bg-slate-950/95 backdrop-blur-2xl z-50 overflow-y-auto flex items-center justify-center p-3 sm:p-5 safe-area-pt safe-area-pb relative">
+          <BackgroundBeams />
+          <div className="bento-card max-w-md w-full rounded-3xl border border-white/10 shadow-2xl p-5 sm:p-6 space-y-4 relative overflow-hidden z-10">
+            <BorderBeam size={220} duration={12} colorFrom="#6366f1" colorTo="#38bdf8" />
             {/* Compact Brand Header */}
             <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-3.5">
               <div className="flex items-center gap-3 min-w-0">
@@ -6503,7 +6516,10 @@ ${roleLabel}: ${userQuery}`;
 
               <button
                 type="button"
-                onClick={() => setIsInstallAppModalOpen(true)}
+                onClick={() => {
+                  soundService.playButtonClick();
+                  setIsInstallAppModalOpen(true);
+                }}
                 className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-[11px] font-semibold text-emerald-400 flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors"
                 title="Install StudentOS App"
               >
@@ -6516,7 +6532,10 @@ ${roleLabel}: ${userQuery}`;
             <div className="grid grid-cols-2 p-1 rounded-xl bg-slate-900/90 border border-white/10">
               <button
                 type="button"
-                onClick={() => setRegStep('login')}
+                onClick={() => {
+                  soundService.playButtonClick();
+                  setRegStep('login');
+                }}
                 className={`py-2 px-3 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                   regStep === 'login'
                     ? 'bg-indigo-600 text-white shadow-sm'
@@ -6529,6 +6548,7 @@ ${roleLabel}: ${userQuery}`;
                 id="start-signup-flow-btn"
                 type="button"
                 onClick={() => {
+                  soundService.playButtonClick();
                   if (regStep === 'login') {
                     setRegStep('role');
                     setIsGoogleLinked(false);
@@ -8018,6 +8038,26 @@ ${roleLabel}: ${userQuery}`;
                   >
                     {ttsEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
                   </button>
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      soundService.playButtonClick();
+                      setIsSoundSettingsModalOpen(true);
+                    }}
+                    className={`p-1.5 rounded-lg flex items-center gap-1 transition-colors cursor-pointer ${
+                      soundService.getPreferences().muted 
+                        ? 'bg-rose-500/20 text-rose-400 hover:bg-rose-500/30' 
+                        : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                    }`}
+                    title="Sound Effects & Audio Settings (8 Pixabay FX)"
+                  >
+                    {soundService.getPreferences().muted ? (
+                      <VolumeX className="w-3.5 h-3.5" />
+                    ) : (
+                      <Volume2 className="w-3.5 h-3.5 text-indigo-400" />
+                    )}
+                    <span className="hidden xl:inline text-[10px] font-bold font-mono">Audio</span>
+                  </button>
                 </div>
 
                 <div className="hidden md:flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 border border-white/5 font-mono text-indigo-400 shadow-sm">
@@ -8028,7 +8068,10 @@ ${roleLabel}: ${userQuery}`;
                 {/* Install App / Download APK Button */}
                 <button
                   type="button"
-                  onClick={() => setIsInstallAppModalOpen(true)}
+                  onClick={() => {
+                    soundService.playAppearSound();
+                    setIsInstallAppModalOpen(true);
+                  }}
                   className={`p-1.5 sm:px-3 sm:py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-md border transition-all active:scale-95 cursor-pointer min-h-[32px] sm:min-h-[38px] ${
                     isApkInstalled
                       ? 'bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-300 border-emerald-500/40 shadow-emerald-500/10'
@@ -8048,7 +8091,10 @@ ${roleLabel}: ${userQuery}`;
                 {/* Broadcast Action Button */}
                 {['super_admin', 'admin', 'teacher', 'coordinator'].includes(effectiveRole) && (
                   <button
-                    onClick={() => setIsBroadcastModalOpen(true)}
+                    onClick={() => {
+                      soundService.playAppearSound();
+                      setIsBroadcastModalOpen(true);
+                    }}
                     className="p-1.5 sm:px-3 sm:py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-indigo-600/20 transition-all active:scale-95 min-h-[32px] sm:min-h-[38px]"
                     title="Send School/Class Broadcast Announcement"
                   >
@@ -8060,7 +8106,10 @@ ${roleLabel}: ${userQuery}`;
                 {/* Notification Center */}
                 <div className="relative">
                   <button
-                    onClick={() => setShowNotifCenter(!showNotifCenter)}
+                    onClick={() => {
+                      soundService.playAppearSound();
+                      setShowNotifCenter(!showNotifCenter);
+                    }}
                     className="relative p-1.5 sm:p-2 rounded-xl bg-slate-900 border border-white/5 hover:bg-slate-800 hover:text-white text-slate-300 transition-all flex items-center justify-center cursor-pointer min-h-[32px] min-w-[32px] sm:min-h-[38px] sm:min-w-[38px]"
                     title="Academic Notification Hub"
                   >
@@ -8264,6 +8313,7 @@ ${roleLabel}: ${userQuery}`;
                         : 'bg-gradient-to-r from-indigo-950/40 to-slate-900 border-white/10'
                     }`}
                   >
+                    <BorderBeam size={220} duration={14} colorFrom="#6366f1" colorTo="#ec4899" />
                     <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-6">
                       <div className="space-y-1.5">
                         <div className="flex items-center gap-2 text-xs text-indigo-400 font-semibold">
@@ -8278,7 +8328,7 @@ ${roleLabel}: ${userQuery}`;
                           )}
                         </div>
                         <h1 className="text-xl sm:text-3xl font-black font-display text-white tracking-tight">
-                          Welcome back, {currentUser.name}
+                          <SplitTextReveal text={`Welcome back, ${currentUser.name}`} />
                         </h1>
                         <p className="text-slate-300 max-w-xl text-xs sm:text-sm leading-relaxed">
                           {effectiveRole === 'student'
@@ -8292,7 +8342,7 @@ ${roleLabel}: ${userQuery}`;
                         <Flame className="w-7 h-7 text-orange-400 shrink-0" />
                         <div>
                           <p className="text-base sm:text-lg font-black font-mono tabular-nums text-white">
-                            {currentUser.streakDays || 5} Days
+                            <NumberTicker value={currentUser.streakDays || 5} suffix=" Days" />
                           </p>
                           <p className="text-[11px] text-slate-400">Active learning streak</p>
                         </div>
@@ -9571,6 +9621,7 @@ ${activeNote.content}`);
                 const isAtStart = pomodoroSeconds === customPomodoro;
 
                 const applyPreset = (mode: 'focus' | 'short_break' | 'long_break', seconds: number) => {
+                  soundService.playButtonClick();
                   if (pomodoroRunning) setPomodoroRunning(false);
                   setPomodoroMode(mode);
                   setCustomPomodoro(seconds);
@@ -9584,10 +9635,11 @@ ${activeNote.content}`);
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.25 }}
-                    className="bento-card p-6 sm:p-8 rounded-3xl space-y-6 max-w-2xl mx-auto text-center"
+                    className="bento-card p-6 sm:p-8 rounded-3xl space-y-6 max-w-2xl mx-auto text-center relative overflow-hidden"
                   >
+                    <BorderBeam size={220} duration={12} colorFrom="#6366f1" colorTo="#14b8a6" />
                     {/* Top Header & Today's Session Counter */}
-                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 border-b border-white/10 pb-4 text-left">
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 border-b border-white/10 pb-4 text-left relative z-10">
                       <div>
                         <div className="flex items-center gap-2 text-xs text-indigo-400 font-semibold">
                           <Clock className="w-3.5 h-3.5" />
@@ -9603,7 +9655,7 @@ ${activeNote.content}`);
                       </div>
 
                       <div className="flex items-center gap-3 text-xs text-slate-300 bg-slate-950/80 px-3.5 py-2 rounded-xl border border-white/10 shrink-0">
-                        <span>Sessions today: <strong className="text-white font-mono tabular-nums">{pomodoroCompletedCount}</strong></span>
+                        <span>Sessions today: <strong className="text-white font-mono tabular-nums"><NumberTicker value={pomodoroCompletedCount} /></strong></span>
                         <span aria-hidden="true" className="text-slate-600">·</span>
                         <span className="text-emerald-400 font-semibold">+50 XP / focus</span>
                       </div>
@@ -9826,6 +9878,8 @@ ${activeNote.content}`);
                         <button
                           type="button"
                           onClick={() => {
+                            soundService.playButtonClick();
+                            soundService.playShortDigitalAlert();
                             if (pomodoroSeconds <= 0) {
                               setPomodoroSeconds(customPomodoro);
                             }
@@ -9841,6 +9895,7 @@ ${activeNote.content}`);
                         <button
                           type="button"
                           onClick={() => {
+                            soundService.playButtonClick();
                             setPomodoroRunning(false);
                           }}
                           className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-8 py-3 rounded-xl text-xs sm:text-sm transition-colors cursor-pointer min-w-[140px]"
@@ -9852,6 +9907,7 @@ ${activeNote.content}`);
                       <button
                         type="button"
                         onClick={() => {
+                          soundService.playButtonClick();
                           setPomodoroRunning(false);
                           pomodoroEndTimeRef.current = null;
                           setPomodoroSeconds(customPomodoro);
@@ -13122,8 +13178,9 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                     className="space-y-6 max-w-6xl mx-auto pb-12"
                   >
                     {/* Header: Faculty Center Title, Contextual Greeting & Academic Context */}
-                    <div className="bento-card rounded-3xl p-6 sm:p-8 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-                      <div className="space-y-2">
+                    <div className="bento-card rounded-3xl p-6 sm:p-8 flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative overflow-hidden">
+                      <BorderBeam size={220} duration={12} colorFrom="#6366f1" colorTo="#a855f7" />
+                      <div className="space-y-2 relative z-10">
                         <div className="flex items-center gap-2 text-xs text-indigo-400 font-semibold flex-wrap">
                           <span>Faculty Center</span>
                           <span aria-hidden="true">·</span>
@@ -13132,7 +13189,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                           <span className="text-slate-400 font-mono">Term 1 Academic Period</span>
                         </div>
                         <h1 className="text-2xl sm:text-3xl font-black font-display text-white tracking-tight">
-                          Good day, {currentUser.name}
+                          <SplitTextReveal text={`Good day, ${currentUser.name}`} />
                         </h1>
                         <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
                           Overview of your assigned classes ({assignedGradesList.join(', ')} · {assignedSectionsList.join(', ')}), pending assignment reviews, upcoming lessons, and gradebook records.
@@ -13140,18 +13197,23 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                       </div>
 
                       {/* Primary Quick Actions */}
-                      <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => handleTabSelect('whiteboard')}
-                          className="uiverse-btn-primary px-4 py-2.5 rounded-xl text-xs font-bold text-white flex items-center gap-2 cursor-pointer"
+                      <div className="flex flex-wrap items-center gap-2.5 shrink-0 relative z-10">
+                        <ShimmerButton
+                          onClick={() => {
+                            soundService.playButtonClick();
+                            handleTabSelect('whiteboard');
+                          }}
+                          className="px-4 py-2 text-xs font-bold"
                         >
                           <Monitor className="w-4 h-4" />
                           <span>Open Smartboard Class</span>
-                        </button>
+                        </ShimmerButton>
                         <button
                           type="button"
-                          onClick={() => handleTabSelect('attendance_manager')}
+                          onClick={() => {
+                            soundService.playButtonClick();
+                            handleTabSelect('attendance_manager');
+                          }}
                           className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 border border-white/10 text-xs font-semibold transition-colors cursor-pointer"
                         >
                           Take Attendance
@@ -13169,17 +13231,19 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                         { label: 'School Calendar', icon: '📅', action: () => handleTabSelect('calendar') },
                         { label: 'Teaching Materials', icon: '📂', action: () => handleTabSelect('materials') }
                       ].map((item) => (
-                        <button
+                        <CardSpotlight
                           key={item.label}
-                          type="button"
-                          onClick={item.action}
-                          className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer group"
+                          onClick={() => {
+                            soundService.playButtonClick();
+                            item.action();
+                          }}
+                          className="p-4 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer group"
                         >
                           <span className="text-xl">{item.icon}</span>
                           <span className="text-xs font-bold text-white group-hover:text-indigo-300 transition-colors whitespace-nowrap">
                             {item.label}
                           </span>
-                        </button>
+                        </CardSpotlight>
                       ))}
                     </div>
 
@@ -13771,6 +13835,13 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
           isSuperAdmin={Boolean(isSuperAdmin || effectiveRole === 'super_admin' || currentUser?.role === 'super_admin')}
           effectiveRole={effectiveRole || currentUser?.role || 'student'}
           currentUserName={currentUser?.name || currentUser?.email || 'Super Admin'}
+        />
+      )}
+
+      {isSoundSettingsModalOpen && (
+        <SoundSettingsModal
+          isOpen={isSoundSettingsModalOpen}
+          onClose={() => setIsSoundSettingsModalOpen(false)}
         />
       )}
 

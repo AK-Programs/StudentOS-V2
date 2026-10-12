@@ -3,6 +3,13 @@ import { motion } from 'motion/react';
 import { AssignmentUploadForm } from './AssignmentUploadForm';
 import { ResourceCategory } from '../types';
 import { Sparkles, FileCheck, HelpCircle, Loader2, Upload, BookOpen, Calendar, FileText, Image as ImageIcon } from 'lucide-react';
+import { soundService } from '../lib/soundService';
+import {
+  FloatingTabs,
+  CardSpotlight,
+  ShimmerButton,
+  BorderBeam
+} from './ui/animatedComponents';
 
 export const AssignmentCenter: React.FC = () => {
   const [activeUploadType, setActiveUploadType] = useState<ResourceCategory>('assignment');
@@ -22,6 +29,7 @@ export const AssignmentCenter: React.FC = () => {
   const [hwLoading, setHwLoading] = useState(false);
 
   const handleGenerateQuestions = async () => {
+    soundService.playButtonClick();
     setQLoading(true);
     setQResult('');
     try {
@@ -37,6 +45,7 @@ export const AssignmentCenter: React.FC = () => {
       });
       const data = await response.json();
       setQResult(data.text || 'Questions generated successfully.');
+      soundService.playCorrectAnswer();
     } catch (err: any) {
       setQResult('Error generating questions: ' + err.message);
     } finally {
@@ -46,6 +55,7 @@ export const AssignmentCenter: React.FC = () => {
 
   const handleCheckHomework = async () => {
     if (!hwSubmission.trim()) return;
+    soundService.playButtonClick();
     setHwLoading(true);
     setHwResult('');
     try {
@@ -60,6 +70,7 @@ export const AssignmentCenter: React.FC = () => {
       });
       const data = await response.json();
       setHwResult(data.text || 'Review complete.');
+      soundService.playCorrectAnswer();
     } catch (err: any) {
       setHwResult('Error reviewing homework: ' + err.message);
     } finally {
@@ -72,6 +83,12 @@ export const AssignmentCenter: React.FC = () => {
     { id: 'worksheet', label: 'Worksheet', icon: <FileText className="w-4 h-4" />, desc: 'Practice problem sets & revision sheets' },
     { id: 'timetable', label: 'Timetable', icon: <Calendar className="w-4 h-4" />, desc: 'Section schedules & exam datesheets' },
     { id: 'gallery', label: 'Photo Gallery', icon: <ImageIcon className="w-4 h-4" />, desc: 'Campus events & classroom highlights' }
+  ];
+
+  const tabsConfig = [
+    { id: 'upload', label: 'Upload Center', icon: <Upload className="w-3.5 h-3.5" /> },
+    { id: 'qgen', label: 'Question Generator', icon: <HelpCircle className="w-3.5 h-3.5 text-teal-400" /> },
+    { id: 'checker', label: 'Homework Checker', icon: <FileCheck className="w-3.5 h-3.5 text-amber-400" /> }
   ];
 
   return (
@@ -96,44 +113,11 @@ export const AssignmentCenter: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-1 bg-slate-950/90 p-1 rounded-xl border border-white/10 overflow-x-auto scrollbar-none w-full md:w-auto">
-          <button
-            type="button"
-            onClick={() => setActiveTab('upload')}
-            className={`px-3.5 py-2 rounded-lg font-bold text-xs whitespace-nowrap shrink-0 transition-colors flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'upload'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Upload className="w-3.5 h-3.5" />
-            <span>Upload Center</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('qgen')}
-            className={`px-3.5 py-2 rounded-lg font-bold text-xs whitespace-nowrap shrink-0 transition-colors flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'qgen'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <HelpCircle className="w-3.5 h-3.5 text-teal-400" />
-            <span>Question Generator</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('checker')}
-            className={`px-3.5 py-2 rounded-lg font-bold text-xs whitespace-nowrap shrink-0 transition-colors flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'checker'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <FileCheck className="w-3.5 h-3.5 text-amber-400" />
-            <span>Homework Checker</span>
-          </button>
-        </div>
+        <FloatingTabs
+          tabs={tabsConfig}
+          activeTab={activeTab}
+          onTabChange={(id) => setActiveTab(id as any)}
+        />
       </div>
 
       {activeTab === 'upload' && (
@@ -142,13 +126,15 @@ export const AssignmentCenter: React.FC = () => {
             {uploadTypes.map((item) => {
               const selected = activeUploadType === item.id;
               return (
-                <button
+                <CardSpotlight
                   key={item.id}
-                  type="button"
-                  onClick={() => setActiveUploadType(item.id)}
-                  className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
+                  onClick={() => {
+                    soundService.playButtonClick();
+                    setActiveUploadType(item.id);
+                  }}
+                  className={`p-3.5 rounded-2xl border text-left cursor-pointer transition-all ${
                     selected
-                      ? 'bg-indigo-600/15 border-indigo-500/50 text-white shadow-sm'
+                      ? 'bg-indigo-600/15 border-indigo-500/50 text-white shadow-md'
                       : 'bg-slate-900/70 border-white/10 text-slate-300 hover:border-white/20 hover:text-white'
                   }`}
                 >
@@ -157,12 +143,12 @@ export const AssignmentCenter: React.FC = () => {
                     <span>{item.label}</span>
                   </div>
                   <p className="text-[11px] text-slate-400 mt-1 line-clamp-1">{item.desc}</p>
-                </button>
+                </CardSpotlight>
               );
             })}
           </div>
 
-          <div className="bento-card p-5 sm:p-6 rounded-3xl">
+          <div className="bento-card p-5 sm:p-6 rounded-3xl relative overflow-hidden">
             <div className="mb-4 pb-3 border-b border-white/10">
               <h3 className="text-base sm:text-lg text-white font-bold capitalize">
                 Upload {activeUploadType}
@@ -227,18 +213,18 @@ export const AssignmentCenter: React.FC = () => {
               Generates a structured test paper with MCQs, short-answer, long-answer, case study questions, and a complete marking scheme.
             </p>
 
-            <button
-              type="button"
+            <ShimmerButton
               onClick={handleGenerateQuestions}
               disabled={qLoading}
-              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full py-2.5 text-xs font-bold"
             >
               {qLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              <span>Generate Question Paper</span>
-            </button>
+              <span>{qLoading ? 'Generating Questions...' : 'Generate Question Paper'}</span>
+            </ShimmerButton>
           </div>
 
-          <div className="lg:col-span-2 bento-card p-5 rounded-3xl flex flex-col min-h-[360px]">
+          <div className="lg:col-span-2 bento-card p-5 rounded-3xl flex flex-col min-h-[360px] relative overflow-hidden">
+            {qLoading && <BorderBeam size={160} duration={8} colorFrom="#14b8a6" colorTo="#6366f1" />}
             <h4 className="text-sm font-bold text-white mb-3 border-b border-white/10 pb-3">
               Generated Test Paper & Answer Key
             </h4>
@@ -292,18 +278,19 @@ export const AssignmentCenter: React.FC = () => {
               />
             </div>
 
-            <button
-              type="button"
+            <ShimmerButton
               onClick={handleCheckHomework}
               disabled={hwLoading || !hwSubmission.trim()}
-              className="w-full py-2.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              background="rgba(217, 119, 6, 0.95)"
+              className="w-full py-2.5 text-xs font-bold"
             >
               {hwLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              <span>Evaluate Submission</span>
-            </button>
+              <span>{hwLoading ? 'Evaluating Submission...' : 'Evaluate Submission'}</span>
+            </ShimmerButton>
           </div>
 
-          <div className="bento-card p-5 rounded-3xl flex flex-col min-h-[360px]">
+          <div className="lg:col-span-1 bento-card p-5 rounded-3xl flex flex-col min-h-[360px] relative overflow-hidden">
+            {hwLoading && <BorderBeam size={160} duration={8} colorFrom="#f59e0b" colorTo="#ef4444" />}
             <h4 className="text-sm font-bold text-white mb-3 border-b border-white/10 pb-3">
               Evaluation & Rubric Report
             </h4>

@@ -19,6 +19,12 @@ import { UserProfile, Homework, GradebookEntry, AttendanceRecord } from '../type
 import { supabase } from '../lib/supabase';
 import { getSupabaseHomework } from '../lib/supabaseHomework';
 import { getSupabaseResources } from '../lib/supabaseResources';
+import { soundService } from '../lib/soundService';
+import {
+  NumberTicker,
+  CardSpotlight,
+  ShimmerButton
+} from './ui/animatedComponents';
 
 interface ParentalPortalProps {
   currentUser: UserProfile;
@@ -373,7 +379,10 @@ export const ParentalPortal: React.FC<ParentalPortalProps> = ({ currentUser, sho
 
             <button
               type="button"
-              onClick={() => setShowLinkDrawer(prev => !prev)}
+              onClick={() => {
+                soundService.playAppearSound();
+                setShowLinkDrawer(prev => !prev);
+              }}
               className="px-3.5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 border border-white/10 text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5 text-indigo-400" />
@@ -382,7 +391,10 @@ export const ParentalPortal: React.FC<ParentalPortalProps> = ({ currentUser, sho
 
             <button
               type="button"
-              onClick={fetchStudentData}
+              onClick={() => {
+                soundService.playButtonClick();
+                fetchStudentData();
+              }}
               disabled={loadingData}
               title="Refresh student records"
               className="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-white/10 transition-colors cursor-pointer disabled:opacity-50"
@@ -492,7 +504,7 @@ export const ParentalPortal: React.FC<ParentalPortalProps> = ({ currentUser, sho
                 <p className="text-xs font-semibold text-slate-400">Attendance Summary</p>
                 {attendanceSummary.rate !== null ? (
                   <h2 className="text-2xl sm:text-3xl font-black text-white font-mono tabular-nums mt-1">
-                    {attendanceSummary.rate}%
+                    <NumberTicker value={attendanceSummary.rate} suffix="%" />
                   </h2>
                 ) : (
                   <h2 className="text-base font-bold text-slate-200 mt-1.5">

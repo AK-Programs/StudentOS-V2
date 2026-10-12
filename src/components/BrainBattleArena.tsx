@@ -922,6 +922,7 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
     setLastXpAwarded(0);
     setLastLeveledUp(false);
     setLastUnlockedBadges([]);
+    soundService.playAppearSound();
     setActiveView('playing');
   };
 
@@ -1021,7 +1022,13 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
       });
     } catch (_) {}
 
-    soundService.playAchievementSound();
+    if (xpResult.leveledUp) {
+      soundService.playLevelUp();
+    } else if ((xpResult.newBadges || []).length > 0) {
+      soundService.playAchievementUnlocked();
+    } else {
+      soundService.playAchievementUnlocked();
+    }
     refreshArenaData();
     setActiveView('results');
   };
@@ -1051,7 +1058,7 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
         const speedBonus = Math.max(0, Math.round(timeLeft * 3));
         const streakBonus = Math.min(60, (nextStreak - 1) * 15);
         pointsEarned = 100 + speedBonus + streakBonus;
-        soundService.playSuccessSound();
+        soundService.playCorrectAnswer();
       } else {
         nextStreak = 0;
       }

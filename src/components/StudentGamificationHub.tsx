@@ -40,6 +40,7 @@ import {
   awardStudentXP
 } from '../lib/gamification';
 import { UserProfile } from '../types';
+import { soundService } from '../lib/soundService';
 
 interface ToastEventDetail {
   xpAdded: number;
@@ -63,6 +64,16 @@ export const GamificationRewardToast: React.FC = () => {
       const detail = (e as CustomEvent<ToastEventDetail>).detail;
       if (!detail) return;
       setToast(detail);
+
+      // Trigger official Pixabay sound effects
+      if (detail.leveledUp) {
+        soundService.playLevelUp(); // Official Pixabay #402152
+      } else if (detail.newBadges && detail.newBadges.length > 0) {
+        soundService.playAchievementUnlocked(); // Official Pixabay #203875
+      } else {
+        soundService.playShortDigitalAlert(); // Official Pixabay #242596
+      }
+
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         setToast(null);
