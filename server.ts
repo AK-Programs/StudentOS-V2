@@ -989,8 +989,81 @@ app.post('/api/brain-battle/complete', async (req, res) => {
   });
 });
 
-// Authoritative Live Multiplayer Room Endpoints
-app.post('/api/brain-battle/rooms/create', (req, res) => {
+// Authoritative Live Multiplayer Room Endpoints backed by Supabase persistence
+async function fetchBrainBattleRoomFromSupabase(code: string): Promise<BrainBattleRoomState | null> {
+  const cleanCode = String(code || '').toUpperCase().trim();
+  if (memoryBrainBattleRooms[cleanCode]) {
+    return memoryBrainBattleRooms[cleanCode];
+  }
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+
+  try {
+    const res = await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.__bb_room_${encodeURIComponent(cleanCode)}__&select=*`, {
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+    });
+    if (res.ok) {
+      const rows = await res.json();
+      if (Array.isArray(rows) && rows[0]?.content) {
+        const parsed = JSON.parse(rows[0].content);
+        if (parsed && parsed.code) {
+          memoryBrainBattleRooms[cleanCode] = parsed;
+          return parsed;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[BrainBattle Server] Supabase room lookup warning for ${cleanCode}:`, err);
+  }
+
+  return null;
+}
+
+async function persistBrainBattleRoomToSupabase(room: BrainBattleRoomState) {
+  if (!room || !room.code) return;
+  memoryBrainBattleRooms[room.code] = room;
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+
+  try {
+    await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
+      method: 'POST',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({
+        id: `__bb_room_${room.code}__`,
+        title: `Brain Battle Room ${room.code}`,
+        subject: room.subject || 'Multiplayer Arena',
+        content: JSON.stringify(room)
+      })
+    });
+  } catch (err) {
+    console.warn(`[BrainBattle Server] Supabase room persistence warning:`, err);
+  }
+}
+
+app.get('/api/brain-battle/rooms/active', async (req, res) => {
+  const activeRooms = Object.values(memoryBrainBattleRooms)
+    .filter(r => r.status === 'lobby' || r.status === 'active')
+    .map(r => ({
+      code: r.code,
+      hostName: r.hostName,
+      subject: r.subject,
+      difficulty: r.difficulty,
+      playerCount: Object.keys(r.players || {}).length,
+      status: r.status,
+      createdAt: r.createdAt
+    }));
+  return res.json({ status: 'ok', rooms: activeRooms });
+});
+
+app.post('/api/brain-battle/rooms/create', async (req, res) => {
   const { host, subject = 'Mixed Arena', difficulty = 'all', questionCount = 5, timePerQuestion = 15, questions = [] } = req.body || {};
   if (!host || !host.userId) {
     return res.status(400).json({ error: 'Authenticated host is required to create a room.' });
@@ -1034,7 +1107,8 @@ app.post('/api/brain-battle/rooms/create', (req, res) => {
     updatedAt: now
   };
 
-  memoryBrainBattleRooms[code] = room;
+  await persistBrainBattleRoomToSupabase(room);
+
   broadcastToAllWs({
     type: 'realtime:relay',
     channel: `brain_battle_room_${code}`,
@@ -1046,24 +1120,35 @@ app.post('/api/brain-battle/rooms/create', (req, res) => {
   return res.json({ status: 'ok', room });
 });
 
-app.get('/api/brain-battle/rooms/:code', (req, res) => {
+app.get('/api/brain-battle/rooms/:code', async (req, res) => {
   const code = String(req.params.code || '').toUpperCase().trim();
-  const room = memoryBrainBattleRooms[code];
+  const room = await fetchBrainBattleRoomFromSupabase(code);
   if (!room) {
-    return res.status(404).json({ error: 'Battle Room not found or expired.' });
+    return res.status(404).json({ error: 'Battle Room not found or expired. Verify the 6-character code.' });
   }
   return res.json({ status: 'ok', room });
 });
 
-app.post('/api/brain-battle/rooms/join', (req, res) => {
+app.post('/api/brain-battle/rooms/join', async (req, res) => {
   const { code: rawCode, player } = req.body || {};
   const code = String(rawCode || '').toUpperCase().trim();
-  const room = memoryBrainBattleRooms[code];
+  let room = await fetchBrainBattleRoomFromSupabase(code);
   if (!room) {
-    return res.status(404).json({ error: 'Battle Room not found. Verify the 6-character code.' });
+    return res.status(404).json({ error: 'Battle Room not found. Check the code and try again.' });
   }
   if (!player || !player.userId) {
-    return res.status(400).json({ error: 'Valid player profile is required.' });
+    return res.status(400).json({ error: 'Valid player profile is required to join.' });
+  }
+
+  // Prevent joins on completed rooms
+  if (room.status === 'completed') {
+    return res.status(400).json({ error: 'This battle has already completed.' });
+  }
+
+  // Enforce room capacity limit (max 8 players per room)
+  const currentCount = Object.keys(room.players || {}).length;
+  if (!room.players[player.userId] && currentCount >= 8) {
+    return res.status(400).json({ error: 'Room is at maximum capacity (8 players).' });
   }
 
   if (!room.players[player.userId]) {
@@ -1083,6 +1168,8 @@ app.post('/api/brain-battle/rooms/join', (req, res) => {
   }
   room.updatedAt = Date.now();
 
+  await persistBrainBattleRoomToSupabase(room);
+
   broadcastToAllWs({
     type: 'realtime:relay',
     channel: `brain_battle_room_${code}`,
@@ -1094,10 +1181,10 @@ app.post('/api/brain-battle/rooms/join', (req, res) => {
   return res.json({ status: 'ok', room });
 });
 
-app.post('/api/brain-battle/rooms/action', (req, res) => {
+app.post('/api/brain-battle/rooms/action', async (req, res) => {
   const { code: rawCode, action, userId, optionIndex, timeLeftSec } = req.body || {};
   const code = String(rawCode || '').toUpperCase().trim();
-  const room = memoryBrainBattleRooms[code];
+  let room = await fetchBrainBattleRoomFromSupabase(code);
   if (!room) {
     return res.status(404).json({ error: 'Battle Room not found.' });
   }
@@ -1141,6 +1228,8 @@ app.post('/api/brain-battle/rooms/action', (req, res) => {
   }
 
   room.updatedAt = now;
+  await persistBrainBattleRoomToSupabase(room);
+
   broadcastToAllWs({
     type: 'realtime:relay',
     channel: `brain_battle_room_${code}`,
@@ -1150,6 +1239,114 @@ app.post('/api/brain-battle/rooms/action', (req, res) => {
   });
 
   return res.json({ status: 'ok', room });
+});
+
+// ============================================================================
+// OFFICIAL SYLLABUS, TIMETABLES & STUDY SESSIONS SERVER ENDPOINTS
+// Backed by Supabase global_data cloud persistence
+// ============================================================================
+
+app.get('/api/syllabus', async (req, res) => {
+  const schoolId = String(req.query.schoolId || 'default_school');
+  const grade = String(req.query.grade || '');
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+
+  try {
+    const r = await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.__studentos_syllabus_${encodeURIComponent(schoolId)}__&select=*`, {
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+    });
+    if (r.ok) {
+      const rows = await r.json();
+      if (Array.isArray(rows) && rows[0]?.content) {
+        let parsed = JSON.parse(rows[0].content);
+        if (Array.isArray(parsed)) {
+          if (grade) parsed = parsed.filter((s: any) => s.grade?.toLowerCase() === grade.toLowerCase());
+          return res.json({ status: 'ok', syllabuses: parsed });
+        }
+      }
+    }
+  } catch (_) {}
+
+  return res.json({ status: 'ok', syllabuses: [] });
+});
+
+app.post('/api/syllabus', async (req, res) => {
+  const { schoolId = 'default_school', syllabuses = [] } = req.body || {};
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+
+  try {
+    await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
+      method: 'POST',
+      headers: {
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({
+        id: `__studentos_syllabus_${schoolId}__`,
+        title: `Official Syllabus — ${schoolId}`,
+        subject: 'Curriculum Management',
+        content: JSON.stringify(syllabuses)
+      })
+    });
+    return res.json({ status: 'ok', count: Array.isArray(syllabuses) ? syllabuses.length : 0 });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to persist syllabus.' });
+  }
+});
+
+app.get('/api/timetables', async (req, res) => {
+  const schoolId = String(req.query.schoolId || 'default_school');
+  const grade = String(req.query.grade || 'Grade 10');
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+
+  try {
+    const r = await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.__studentos_timetable_${encodeURIComponent(schoolId)}_${encodeURIComponent(grade)}__&select=*`, {
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+    });
+    if (r.ok) {
+      const rows = await r.json();
+      if (Array.isArray(rows) && rows[0]?.content) {
+        const parsed = JSON.parse(rows[0].content);
+        return res.json({ status: 'ok', timetable: parsed });
+      }
+    }
+  } catch (_) {}
+
+  return res.json({ status: 'ok', timetable: null });
+});
+
+app.post('/api/timetables', async (req, res) => {
+  const { schoolId = 'default_school', grade = 'Grade 10', timetable } = req.body || {};
+  if (!timetable) return res.status(400).json({ error: 'Timetable data is required.' });
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+
+  try {
+    await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
+      method: 'POST',
+      headers: {
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({
+        id: `__studentos_timetable_${schoolId}_${grade}__`,
+        title: `Official School Timetable — ${grade} (${schoolId})`,
+        subject: 'Official Timetable',
+        content: JSON.stringify(timetable)
+      })
+    });
+    return res.json({ status: 'ok', timetable });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Failed to save timetable.' });
+  }
 });
 
 // Removed shared setup, moved to aiClient.ts

@@ -63,6 +63,7 @@ import {
 } from '../lib/gamification';
 import { subscribeRealtimeEvents, sendRealtimeEvent } from '../lib/wsHelper';
 import { soundService } from '../lib/soundService';
+import { BrainBattleExamPrep } from './BrainBattleExamPrep';
 
 export interface BrainBattleQuestion {
   id: string;
@@ -655,7 +656,7 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
 
   // Navigation sub-screens inside Brain Battle
   const [activeView, setActiveView] = useState<
-    'home' | 'playing' | 'results' | 'multiplayer_lobby' | 'leaderboard' | 'question_bank'
+    'home' | 'playing' | 'results' | 'multiplayer_lobby' | 'leaderboard' | 'question_bank' | 'exam_prep'
   >('home');
 
   // Gamification & Leaderboard State
@@ -844,7 +845,53 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
         }
       }
     });
-    return () => unsub();
+
+    // 1.5s Active Room Heartbeat Polling Fallback (ensures 100% sync reliability across all networks/devices)
+    const pollTimer = setInterval(async () => {
+      try {
+        const resp = await fetch(`/api/brain-battle/rooms/${activeRoom.code}`);
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data?.room) {
+            setActiveRoom(prev => {
+              if (JSON.stringify(prev) !== JSON.stringify(data.room)) {
+                return data.room;
+              }
+              return prev;
+            });
+            if (data.room.status === 'active' && activeView === 'multiplayer_lobby') {
+              setMatchMode('multiplayer');
+              setActiveQuestions(data.room.questions);
+              setCurrentIndex(data.room.currentQuestionIndex || 0);
+              setSelectedOption(null);
+              setIsSubmitted(false);
+              setTimePerQuestion(data.room.timePerQuestion || 15);
+              setTimeLeft(data.room.timePerQuestion || 15);
+              setMatchScore(data.room.players[userId]?.score || 0);
+              setCorrectCount(data.room.players[userId]?.correctCount || 0);
+              setCurrentStreak(data.room.players[userId]?.streak || 0);
+              setPeakStreak(0);
+              setQuestionResults([]);
+              setMatchStartedAt(Date.now());
+              setMatchSessionId(`mp_${data.room.code}_${data.room.createdAt}_${userId}`);
+              setActiveView('playing');
+            } else if (data.room.status === 'completed' && activeView === 'playing') {
+              finishMatchNow(
+                data.room.players[userId]?.score ?? matchScore,
+                data.room.players[userId]?.correctCount ?? correctCount,
+                peakStreak,
+                data.room
+              );
+            }
+          }
+        }
+      } catch (_) {}
+    }, 1500);
+
+    return () => {
+      unsub();
+      clearInterval(pollTimer);
+    };
   }, [activeRoom?.code, activeView, currentIndex, userId]);
 
   // Deterministic Daily Challenge Question Selector
@@ -1272,7 +1319,7 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
           code: cleanCode,
           player: {
             userId,
-            name: currentUser.name,
+            name: currentUser.name || 'Scholar',
             role: effectiveRole,
             house: currentUser.house,
             grade: currentUser.grade,
@@ -1284,12 +1331,13 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
       if (resp.ok && data.room) {
         setActiveRoom(data.room);
         sendRealtimeEvent(`brain_battle_room_${cleanCode}`, 'room:state', data.room);
+        soundService.playAppearSound();
         setActiveView('multiplayer_lobby');
       } else {
-        setRoomError(data.error || 'Battle Room not found.');
+        setRoomError(data.error || 'Battle Room not found. Verify the code.');
       }
     } catch (_) {
-      setRoomError('Unable to join battle room.');
+      setRoomError('Unable to join battle room. Check network connection.');
     }
   };
 
@@ -2235,6 +2283,27 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
   }
 
   // ============================================================================
+  // RENDER: EXAM PREPARATION SUB-SCREEN
+  // ============================================================================
+  if (activeView === 'exam_prep') {
+    return (
+      <BrainBattleExamPrep
+        currentUser={currentUser}
+        effectiveRole={effectiveRole}
+        onGoBack={() => setActiveView('home')}
+        showNotification={showNotification}
+        onStartExamMatch={({ subject, chapters, isMockExam, questionCount, difficulty }) => {
+          setSelectedSubject(subject);
+          setSelectedDifficulty(difficulty);
+          setSelectedQuestionCount(questionCount);
+          setTimePerQuestion(isMockExam ? 25 : 15);
+          startMatch('custom_practice', subject);
+        }}
+      />
+    );
+  }
+
+  // ============================================================================
   // RENDER: BRAIN BATTLE HOME SCREEN (MAIN HUB)
   // ============================================================================
   return (
@@ -2282,6 +2351,17 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
               >
                 <Flame className="w-4 h-4" />
                 <span>{isDailyCompletedToday ? 'Replay Daily Challenge' : 'Daily Challenge (+50 XP)'}</span>
+              </UIversePushableButton>
+
+              <UIversePushableButton
+                variant="indigo"
+                onClick={() => {
+                  soundService.playButtonClick();
+                  setActiveView('exam_prep');
+                }}
+              >
+                <BookOpen className="w-4 h-4 text-purple-300" />
+                <span>Exam Preparation</span>
               </UIversePushableButton>
 
               <button

@@ -101,6 +101,9 @@ import { MajorReleaseBanner } from './components/MajorReleaseBanner';
 import { StudyCenterFlashcards } from './components/StudyCenterFlashcards';
 import { ParentalPortal } from './components/ParentalPortal';
 import { BrainBattleArena } from './components/BrainBattleArena';
+import { SyllabusStudyPlanner } from './components/SyllabusStudyPlanner';
+import { OfficialTimetableViewer } from './components/OfficialTimetableViewer';
+import { ReminderService } from './lib/reminderService';
 import { ProfessionalTabDropdown } from './components/ProfessionalTabDropdown';
 import { getStoredCards } from './lib/flashcardStorage';
 import { isCardDue } from './lib/sm2Algorithm';
@@ -2286,6 +2289,8 @@ export default function App() {
             return list;
           });
         }
+        // Intelligent learning reminders check
+        ReminderService.checkAndDispatchLearningReminders(currentUser.uid, currentUser.name).catch(() => {});
       } catch (e) {
         console.warn('[App] Error refreshing notifications:', e);
       }
@@ -9007,92 +9012,16 @@ ${roleLabel}: ${userQuery}`;
                     </div>
                   )}
 
-                  {/* Sub-tab 3: Study Planner View */}
+                  {/* Sub-tab 3: Syllabus Planner & Study Sessions View */}
                   {studyHubSubTab === 'planner' && (
-                    <div className="smart-glass p-4 sm:p-6 md:p-8 rounded-3xl space-y-6 max-w-4xl mx-auto animate-fadeIn">
-                      <div className="space-y-2">
-                        <h3 className="text-2xl font-black font-display text-white">Target Study Time Planner</h3>
-                        <p className="text-xs text-slate-400">Map targeted times against core disciplines and organize class exam sequences.</p>
-                      </div>
-
-                      <form onSubmit={handleAddSchedule} className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-white/5 p-5 rounded-2xl border border-white/5 shadow-inner">
-                        <div className="space-y-1">
-                          <label className="text-[10px] uppercase font-bold text-slate-400">Focus Subject</label>
-                          <input 
-                            type="text"
-                            value={schSubject}
-                            onChange={e => setSchSubject(e.target.value)}
-                            placeholder="Subject Focus Title" 
-                            className="w-full text-xs px-3.5 py-3 rounded-xl bg-slate-900 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            required
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] uppercase font-bold text-slate-400">Target Window</label>
-                          <input 
-                            type="text"
-                            value={schTime}
-                            onChange={e => setSchTime(e.target.value)}
-                            placeholder="e.g. 14:00 - 16:30" 
-                            className="w-full text-xs px-3.5 py-3 rounded-xl bg-slate-900 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            required
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[10px] uppercase font-bold text-slate-400">Schedule Day</label>
-                          <select 
-                            value={schDay}
-                            onChange={e => setSchDay(e.target.value)}
-                            className="w-full text-xs px-3.5 py-3 rounded-xl bg-slate-900 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                          >
-                            <option>Monday</option>
-                            <option>Tuesday</option>
-                            <option>Wednesday</option>
-                            <option>Thursday</option>
-                            <option>Friday</option>
-                            <option>Saturday</option>
-                            <option>Sunday</option>
-                          </select>
-                        </div>
-                        <div className="flex items-end">
-                          <button 
-                            type="submit"
-                            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3.5 px-4 rounded-xl text-xs uppercase tracking-wider transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5"
-                          >
-                            <Plus className="w-4 h-4" /> Add Schedule
-                          </button>
-                        </div>
-                      </form>
-
-                      <div className="space-y-4 pt-4 border-t border-white/5">
-                        <h4 className="text-sm font-bold text-indigo-400">Current Schedule Blocks</h4>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          {schedules.map(sch => (
-                            <div key={sch.id} className="p-4 rounded-xl bg-white/5 border border-white/5 hover:border-indigo-500/20 hover:bg-indigo-500/5 transition-all duration-300 flex items-center justify-between group shadow-sm">
-                              <div className="space-y-1">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs font-extrabold uppercase tracking-widest text-indigo-400">📚 {sch.subject}</span>
-                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 font-bold">{sch.day}</span>
-                                </div>
-                                <p className="text-xs font-mono text-slate-300">⏱️ {sch.time}</p>
-                              </div>
-                              <button 
-                                onClick={() => handleDeleteSchedule(sch.id)}
-                                className="text-red-400 hover:bg-red-500/10 p-2 rounded-lg opacity-80 group-hover:opacity-100 transition-all active:scale-95"
-                                title="Delete Interval"
-                              >
-                                <Trash className="w-4 h-4" />
-                              </button>
-                            </div>
-                          ))}
-
-                          {schedules.length === 0 && (
-                            <div className="col-span-1 sm:col-span-2 text-center py-8 text-slate-500 border border-dashed border-white/5 rounded-2xl">
-                              No study schedules saved. Map your day above!
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                    <div className="smart-glass p-4 sm:p-6 md:p-8 rounded-3xl space-y-6 max-w-5xl mx-auto animate-fadeIn">
+                      <SyllabusStudyPlanner
+                        currentUser={currentUser}
+                        effectiveRole={effectiveRole}
+                        showNotification={showNotification}
+                        onNavigateToTab={handleTabSelect}
+                        legacySchedules={schedules}
+                      />
                     </div>
                   )}
                 </div>
@@ -10538,11 +10467,14 @@ ${activeNote.content}`);
               )}
 
               {activeTab === 'timetable_viewer' && (
-                <SimpleResourceManager 
-                  type="timetable" title="Timetables" emoji="📅" 
-                  currentUser={currentUser} effectiveRole={effectiveRole} showNotification={showNotification} 
-                  goBack={() => handleTabSelect('assignments')} 
-                />
+                <div className="space-y-6">
+                  <OfficialTimetableViewer 
+                    currentUser={currentUser} 
+                    effectiveRole={effectiveRole} 
+                    showNotification={showNotification} 
+                    goBack={() => handleTabSelect('assignments')} 
+                  />
+                </div>
               )}
 
               {activeTab === 'worksheet_viewer' && (
