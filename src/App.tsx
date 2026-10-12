@@ -1338,11 +1338,22 @@ export default function App() {
   const [pomodoroSeconds, setPomodoroSeconds] = useState<number>(1500); // 25:00
   const [customPomodoro, setCustomPomodoro] = useState<number>(1500); // 25:00
   const [pomodoroRunning, setPomodoroRunning] = useState<boolean>(false);
+  const [pomodoroMode, setPomodoroMode] = useState<'focus' | 'short_break' | 'long_break'>('focus');
+  const [pomodoroCompletedCount, setPomodoroCompletedCount] = useState<number>(() => {
+    return Number(localStorage.getItem('s_os_pomodoro_sessions_today') || 0);
+  });
+  const [pomodoroJustCompleted, setPomodoroJustCompleted] = useState<boolean>(false);
   const [showPomodoroSettings, setShowPomodoroSettings] = useState<boolean>(false);
   const [timerH, setTimerH] = useState<number>(0);
   const [timerM, setTimerM] = useState<number>(25);
   const [timerS, setTimerS] = useState<number>(0);
   const pomodoroIntervalRef = useRef<any>(null);
+  const pomodoroEndTimeRef = useRef<number | null>(null);
+  const pomodoroCompletionGuardRef = useRef<boolean>(false);
+
+  // Auth & Assignment Filter UI States
+  const [showLoginPassword, setShowLoginPassword] = useState<boolean>(false);
+  const [hwStatusFilter, setHwStatusFilter] = useState<'all' | 'pending' | 'completed'>('all');
 
   // Study Planner States
   const [schSubject, setSchSubject] = useState<string>('');
@@ -1458,41 +1469,116 @@ export default function App() {
     return () => clearInterval(tInterval);
   }, []);
 
-  // Effect to handle Pomodoro countdown ticks
+  // Restore persisted Pomodoro state on mount or PWA reopen
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('s_os_pomodoro_active_state');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.mode) setPomodoroMode(parsed.mode);
+        if (parsed.customPomodoro) setCustomPomodoro(parsed.customPomodoro);
+        if (parsed.running && parsed.endTime) {
+          const remaining = Math.max(0, Math.ceil((parsed.endTime - Date.now()) / 1000));
+          if (remaining > 0) {
+            pomodoroEndTimeRef.current = parsed.endTime;
+            setPomodoroSeconds(remaining);
+            setPomodoroRunning(true);
+          } else {
+            setPomodoroSeconds(0);
+            setPomodoroRunning(false);
+            setPomodoroJustCompleted(true);
+            localStorage.removeItem('s_os_pomodoro_active_state');
+          }
+        } else if (typeof parsed.remainingSeconds === 'number' && parsed.remainingSeconds > 0) {
+          setPomodoroSeconds(parsed.remainingSeconds);
+        }
+      }
+    } catch (_) {}
+  }, []);
+
+  // Effect to handle Pomodoro countdown ticks with timestamp accuracy (immune to background tab throttling)
   useEffect(() => {
     if (pomodoroRunning) {
-      pomodoroIntervalRef.current = setInterval(() => {
-        setPomodoroSeconds(prev => {
-          if (prev <= 1) {
-            clearInterval(pomodoroIntervalRef.current);
-            setPomodoroRunning(false);
+      pomodoroCompletionGuardRef.current = false;
+      if (!pomodoroEndTimeRef.current) {
+        pomodoroEndTimeRef.current = Date.now() + pomodoroSeconds * 1000;
+      }
+      localStorage.setItem('s_os_pomodoro_active_state', JSON.stringify({
+        running: true,
+        endTime: pomodoroEndTimeRef.current,
+        mode: pomodoroMode,
+        customPomodoro,
+        remainingSeconds: pomodoroSeconds
+      }));
 
-            if (currentUser) {
-              const updated = {
-                ...currentUser,
-                studyHours: (currentUser.studyHours || 12) + 1
-              };
-              setCurrentUser(updated);
-              localStorage.setItem('s_os_user', JSON.stringify(updated));
+      const syncRemaining = () => {
+        if (!pomodoroEndTimeRef.current) return;
+        const remaining = Math.max(0, Math.ceil((pomodoroEndTimeRef.current - Date.now()) / 1000));
+        if (remaining <= 0) {
+          if (pomodoroIntervalRef.current) clearInterval(pomodoroIntervalRef.current);
+          pomodoroEndTimeRef.current = null;
+          setPomodoroRunning(false);
+          setPomodoroSeconds(0);
+          setPomodoroJustCompleted(true);
+          localStorage.removeItem('s_os_pomodoro_active_state');
+
+          if (!pomodoroCompletionGuardRef.current) {
+            pomodoroCompletionGuardRef.current = true;
+            if (pomodoroMode === 'focus') {
+              const nextCount = pomodoroCompletedCount + 1;
+              setPomodoroCompletedCount(nextCount);
+              localStorage.setItem('s_os_pomodoro_sessions_today', String(nextCount));
+              if (currentUser?.house) {
+                setHousePoints(prev => ({
+                  ...prev,
+                  [currentUser.house!]: (prev[currentUser.house!] || 700) + 50
+                }));
+              }
+              if (currentUser) {
+                const updated = {
+                  ...currentUser,
+                  studyHours: (currentUser.studyHours || 12) + 1
+                };
+                setCurrentUser(updated);
+                localStorage.setItem('s_os_user', JSON.stringify(updated));
+              }
+              showNotification('Focus session completed! +50 House Points & +1h study time logged.');
+            } else {
+              showNotification('Break finished! Ready for your next focus session.');
             }
             soundService.playTimerAlarm();
-            showNotification('🍅 Focus interval completed! Your study hours have been logged.');
-            return 1500; // Reset focus length
           }
-          return prev - 1;
-        });
-      }, 1000);
+        } else {
+          setPomodoroSeconds(remaining);
+        }
+      };
+
+      pomodoroIntervalRef.current = setInterval(syncRemaining, 500);
+      const handleVisibility = () => {
+        if (document.visibilityState === 'visible') syncRemaining();
+      };
+      document.addEventListener('visibilitychange', handleVisibility);
+
+      return () => {
+        if (pomodoroIntervalRef.current) clearInterval(pomodoroIntervalRef.current);
+        document.removeEventListener('visibilitychange', handleVisibility);
+      };
     } else {
+      pomodoroEndTimeRef.current = null;
       if (pomodoroIntervalRef.current) {
         clearInterval(pomodoroIntervalRef.current);
+      }
+      if (!pomodoroJustCompleted) {
+        localStorage.setItem('s_os_pomodoro_active_state', JSON.stringify({
+          running: false,
+          endTime: null,
+          mode: pomodoroMode,
+          customPomodoro,
+          remainingSeconds: pomodoroSeconds
+        }));
       }
     }
-    return () => {
-      if (pomodoroIntervalRef.current) {
-        clearInterval(pomodoroIntervalRef.current);
-      }
-    };
-  }, [pomodoroRunning, currentUser]);
+  }, [pomodoroRunning, pomodoroMode, customPomodoro, currentUser, pomodoroCompletedCount, pomodoroJustCompleted]);
 
   // System Notification Handler
   const safePlayNotificationSound = () => {
@@ -4251,8 +4337,8 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
     grade?: string;
     section?: SectionType;
   }> = [
-    { uid: 'demo-super', name: 'Naitik Kashyap', role: 'super_admin', email: 'naitik.kashyap0015@gmail.com', house: 'Ruby', grade: 'Grade 10', section: 'A' },
-    { uid: 'demo-student-uid', name: 'Aarav Sharma', role: 'student', email: 'student@demo.com', house: 'Ruby', grade: 'Grade 10', section: 'A' },
+    { uid: 'demo-super', name: 'Naitik Kashyap', role: 'super_admin', email: 'naitik.kashyap0015@gmail.com', house: 'Ruby', grade: 'Grade 10', section: 'Astra' },
+    { uid: 'demo-student-uid', name: 'Aarav Sharma', role: 'student', email: 'student@demo.com', house: 'Ruby', grade: 'Grade 10', section: 'Astra' },
     { uid: 'demo-teacher-uid', name: 'Prof. Elara Vance', role: 'teacher', email: 'teacher@demo.com', house: 'Sapphire' },
     { uid: 'demo-parent-uid', name: 'Rajesh Kashyap', role: 'parent', email: 'parent@demo.com', house: 'Ruby' },
     { uid: 'demo-admin-uid', name: 'Principal Arthur Vance', role: 'admin', email: 'admin@demo.com', house: 'Emerald' }
@@ -4273,8 +4359,8 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
           name: rec.name || 'StudentOS User',
           role: (rec.role as UserRole) || 'student',
           email: rec.email || `${rec.uid}@studentos.edu`,
-          house: rec.house,
-          grade: rec.grade
+          house: (rec as any).house,
+          grade: (rec as any).grade
         });
       }
     }
@@ -4333,7 +4419,7 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
       role: matched.role,
       house: matched.house || 'Ruby',
       grade: matched.grade || (matched.role === 'student' ? 'Grade 10' : ''),
-      section: (matched.section as SectionType) || (matched.role === 'student' ? 'A' as any : undefined),
+      section: matched.section || (matched.role === 'student' ? 'Astra' : undefined),
       accountStatus: 'approved',
       studyHours: 12,
       quizzesTaken: 4,
@@ -4376,7 +4462,7 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
     // 5. Adjust activeTab if needed for the new account's role
     if (matched.role === 'parent') {
       setActiveTab('parent_portal');
-    } else if (activeTab === 'parent_portal' && matched.role !== 'parent') {
+    } else if (activeTab === 'parent_portal') {
       setActiveTab('dashboard');
     } else if (activeTab === 'faculty' && matched.role !== 'teacher') {
       setActiveTab('dashboard');
@@ -6389,729 +6475,642 @@ ${roleLabel}: ${userQuery}`;
         ))}
       </div>
 
-      {/* Onboarding Authentication Modal Gate */}
+      {/* Onboarding Authentication Modal Gate — Compact Single-Viewport Layout */}
       {!currentUser && !firebaseLoading && !dataLoading && (
-        <div id="onboarding-gate-modal" className="fixed inset-0 bg-slate-950/95 backdrop-blur-xl z-50 overflow-y-auto flex items-start sm:items-center justify-center p-3 sm:p-4">
-          <div className="absolute top-1/4 left-1/4 w-[500px] h-[500px] bg-indigo-600/20 rounded-full blur-[120px] pointer-events-none animate-pulse" style={{ animationDuration: '4s' }} />
-          <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-emerald-600/10 rounded-full blur-[100px] pointer-events-none animate-pulse" style={{ animationDuration: '5s' }} />
-          
-          <div className="smart-glass max-w-xl w-full p-5 sm:p-8 md:p-10 my-auto rounded-3xl sm:rounded-[2.5rem] border border-white/10 shadow-2xl shadow-indigo-900/20 relative overflow-hidden space-y-6 sm:space-y-8 animate-fadeIn" style={{ animationDuration: '0.8s' }}>
-            <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 via-transparent to-violet-500/5 pointer-events-none" />
-            
-            <div className="text-center space-y-4 relative z-10">
-              <div className="inline-flex h-20 w-20 rounded-[2rem] bg-gradient-to-br from-indigo-500 to-violet-600 p-[2px] shadow-xl shadow-indigo-500/25">
-                <div className="w-full h-full bg-slate-950 rounded-[30px] flex items-center justify-center text-4xl shadow-inner relative overflow-hidden">
-                   <div className="absolute inset-0 bg-gradient-to-b from-white/10 to-transparent" />
-                   🎓
+        <div id="onboarding-gate-modal" className="fixed inset-0 bg-slate-950/95 backdrop-blur-2xl z-50 overflow-y-auto flex items-center justify-center p-3 sm:p-5 safe-area-pt safe-area-pb">
+          <div className="bento-card max-w-md w-full rounded-3xl border border-white/10 shadow-2xl p-5 sm:p-6 space-y-4 relative overflow-hidden">
+            {/* Compact Brand Header */}
+            <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-3.5">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="h-10 w-10 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-xl shrink-0">
+                  🎓
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-lg sm:text-xl font-black font-display tracking-tight text-white truncate">
+                      StudentOS
+                    </h1>
+                    <span className="text-[11px] font-mono text-slate-400">v{APP_VERSION}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 truncate">
+                    Academic & Institutional Workspace
+                  </p>
                 </div>
               </div>
-              <div className="space-y-1">
-                <h1 className="text-4xl font-black font-display tracking-tight bg-gradient-to-br from-white to-slate-400 bg-clip-text text-transparent">StudentOS</h1>
-                <p className="text-sm text-slate-400 font-medium max-w-sm mx-auto">Next-generation collaborative academic dashboard and neural identity node.</p>
-              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsInstallAppModalOpen(true)}
+                className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-[11px] font-semibold text-emerald-400 flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors"
+                title="Install StudentOS App"
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                <span>Get App</span>
+              </button>
             </div>
 
-            <div className="space-y-6 relative z-10">
-              <AnimatePresence mode="wait">
-                {regStep === 'login' && (
-                  <motion.div
-                    key="login"
-                    initial={{ opacity: 0, y: 15 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -15 }}
-                    transition={{ duration: 0.25, ease: "easeInOut" }}
-                    id="reg-step-login"
-                    className="space-y-6"
-                  >
-                    {/* Google Sign-In Actions */}
-                    <div className="space-y-3">
-                      <button
-                        id="google-signin-btn"
-                        type="button"
-                        onClick={handleGoogleSignIn}
-                        className="w-full flex items-center justify-center gap-3 py-3.5 px-4 rounded-2xl bg-white text-slate-900 font-extrabold text-xs uppercase tracking-wider hover:bg-slate-100 transition-all shadow-lg hover:shadow-indigo-500/10 active:scale-98"
-                      >
-                        <svg className="w-4 h-4" viewBox="0 0 24 24">
-                          <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v3.92h6.6a5.64 5.64 0 0 1-2.45 3.7v2.51h3.95c2.31-2.13 3.64-5.26 3.64-9.06Z" />
-                          <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.95-2.51a7.21 7.21 0 0 1-11.02-3.8H.92v2.59A12 12 0 0 0 12 24Z" />
-                          <path fill="#FBBC05" d="M4.96 14.78A7.16 7.16 0 0 1 4.5 12c0-.98.17-1.92.46-2.78V6.63H.92A12 12 0 0 0 .92 17.37l4.04-2.59Z" />
-                          <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.43-3.43A12.012 12.012 0 0 0 .92 6.63l4.04 2.59a7.2 7.2 0 0 1 7.04-4.47Z" />
-                        </svg>
-                        Continue with Google
-                      </button>
+            {/* Sign In / Create Account Segmented Switcher */}
+            <div className="grid grid-cols-2 p-1 rounded-xl bg-slate-900/90 border border-white/10">
+              <button
+                type="button"
+                onClick={() => setRegStep('login')}
+                className={`py-2 px-3 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                  regStep === 'login'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Sign In
+              </button>
+              <button
+                id="start-signup-flow-btn"
+                type="button"
+                onClick={() => {
+                  if (regStep === 'login') {
+                    setRegStep('role');
+                    setIsGoogleLinked(false);
+                    setLinkedGoogleUid(null);
+                    setLinkedGooglePhoto(null);
+                    setRegName('');
+                    setRegEmail('');
+                  }
+                }}
+                className={`py-2 px-3 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                  regStep !== 'login'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Create Account
+              </button>
+            </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {/* Compact Step Indicator for Sign-Up */}
+            {regStep !== 'login' && (
+              <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
+                {[
+                  { key: 'role', step: 1, label: '1. Role' },
+                  { key: 'profile', step: 2, label: '2. Details' },
+                  { key: 'submit', step: 3, label: '3. Confirm' }
+                ].map((s, idx) => {
+                  const currentIdx = regStep === 'role' ? 1 : regStep === 'profile' ? 2 : 3;
+                  const isDone = currentIdx > s.step;
+                  const isCurrent = currentIdx === s.step;
+                  return (
+                    <React.Fragment key={s.key}>
+                      <span
+                        className={`font-semibold ${
+                          isCurrent ? 'text-indigo-400 font-bold' : isDone ? 'text-emerald-400' : 'text-slate-500'
+                        }`}
+                      >
+                        {isDone ? `✓ ${s.label}` : s.label}
+                      </span>
+                      {idx < 2 && <span className="text-slate-700">·</span>}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+            )}
+
+            <AnimatePresence mode="wait">
+              {regStep === 'login' && (
+                <motion.div
+                  key="login"
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.16 }}
+                  id="reg-step-login"
+                  className="space-y-3.5"
+                >
+                  {/* Google Sign-In */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      id="google-signin-btn"
+                      type="button"
+                      onClick={handleGoogleSignIn}
+                      className="flex-1 flex items-center justify-center gap-2.5 py-2.5 px-4 rounded-xl bg-white hover:bg-slate-100 text-slate-950 font-bold text-xs transition-colors shadow-sm cursor-pointer"
+                    >
+                      <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                        <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v3.92h6.6a5.64 5.64 0 0 1-2.45 3.7v2.51h3.95c2.31-2.13 3.64-5.26 3.64-9.06Z" />
+                        <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.95-2.51a7.21 7.21 0 0 1-11.02-3.8H.92v2.59A12 12 0 0 0 12 24Z" />
+                        <path fill="#FBBC05" d="M4.96 14.78A7.16 7.16 0 0 1 4.5 12c0-.98.17-1.92.46-2.78V6.63H.92A12 12 0 0 0 .92 17.37l4.04-2.59Z" />
+                        <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.43-3.43A12.012 12.012 0 0 0 .92 6.63l4.04 2.59a7.2 7.2 0 0 1 7.04-4.47Z" />
+                      </svg>
+                      <span>Continue with Google</span>
+                    </button>
+                    <button
+                      id="google-signin-select-btn"
+                      type="button"
+                      onClick={handleGoogleSignInWithSelect}
+                      className="py-2.5 px-3 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl border border-white/10 transition-colors shrink-0 cursor-pointer"
+                      title="Choose another Google account"
+                    >
+                      Switch
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 h-px bg-white/10" />
+                    <span className="text-[11px] text-slate-500 font-medium">or sign in with email</span>
+                    <div className="flex-1 h-px bg-white/10" />
+                  </div>
+
+                  {/* Email & Password Form */}
+                  <form onSubmit={handleEmailSignIn} className="space-y-3 text-left">
+                    <div>
+                      <label htmlFor="login-email-input" className="block text-xs font-semibold text-slate-300 mb-1">
+                        School Email
+                      </label>
+                      <input
+                        id="login-email-input"
+                        type="email"
+                        required
+                        value={loginEmail}
+                        onChange={(e) => setLoginEmail(e.target.value)}
+                        placeholder="scholar@academy.edu"
+                        className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl bg-slate-900/90 border border-white/10 focus:outline-none focus:border-indigo-500 text-white placeholder-slate-500"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label htmlFor="login-password-input" className="text-xs font-semibold text-slate-300">
+                          Password
+                        </label>
                         <button
-                          id="google-signin-select-btn"
                           type="button"
-                          onClick={handleGoogleSignInWithSelect}
-                          className="py-2.5 px-3 text-[10px] font-black uppercase tracking-wider bg-slate-900/60 hover:bg-slate-800 text-slate-300 rounded-xl transition-all border border-white/5 hover:border-white/10"
+                          onClick={() => {
+                            if (!loginEmail.trim()) {
+                              showNotification('Enter your school email above first, or use Continue with Google.');
+                            } else {
+                              showNotification(`Password reset instructions requested for ${loginEmail.trim()}. Contact your school admin if you use an institutional key.`);
+                            }
+                          }}
+                          className="text-[11px] font-semibold text-indigo-400 hover:text-indigo-300 cursor-pointer"
                         >
-                          🔄 Switch Google
+                          Forgot password?
                         </button>
+                      </div>
+                      <div className="relative">
+                        <input
+                          id="login-password-input"
+                          type={showLoginPassword ? 'text' : 'password'}
+                          required
+                          value={loginPassword}
+                          onChange={(e) => setLoginPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full text-xs sm:text-sm pl-3.5 pr-16 py-2.5 rounded-xl bg-slate-900/90 border border-white/10 focus:outline-none focus:border-indigo-500 text-white placeholder-slate-500"
+                        />
                         <button
-                          id="google-use-another-btn"
                           type="button"
-                          onClick={handleGoogleSignInWithSelect}
-                          className="py-2.5 px-3 text-[10px] font-black uppercase tracking-wider bg-slate-900/60 hover:bg-slate-800 text-slate-300 rounded-xl transition-all border border-white/5 hover:border-white/10"
+                          onClick={() => setShowLoginPassword((prev) => !prev)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-slate-400 hover:text-white px-1.5 py-0.5 rounded cursor-pointer"
                         >
-                          🔑 Use Another Account
+                          {showLoginPassword ? 'Hide' : 'Show'}
                         </button>
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-4">
-                      <div className="flex-1 h-px bg-white/5"></div>
-                      <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">or email & password</span>
-                      <div className="flex-1 h-px bg-white/5"></div>
-                    </div>
-
-                    <form onSubmit={handleEmailSignIn} className="space-y-4">
-                      <div className="space-y-3.5">
-                        <div className="space-y-1.5 text-left">
-                          <label className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Email Address</label>
-                          <input
-                            type="email"
-                            required
-                            value={loginEmail}
-                            onChange={(e) => setLoginEmail(e.target.value)}
-                            placeholder="e.g. naitik.kashyap0015@gmail.com"
-                            className="w-full text-sm px-4 py-3 rounded-xl bg-slate-900/60 border border-white/10 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-white font-mono placeholder-slate-600 transition-all"
-                          />
-                        </div>
-                        <div className="space-y-1.5 text-left">
-                          <label className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Password</label>
-                          <input
-                            type="password"
-                            required
-                            value={loginPassword}
-                            onChange={(e) => setLoginPassword(e.target.value)}
-                            placeholder="Enter security key"
-                            className="w-full text-sm px-4 py-3 rounded-xl bg-slate-900/60 border border-white/10 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-white font-mono placeholder-slate-600 transition-all"
-                          />
-                        </div>
-                      </div>
-                      <button
-                        type="submit"
-                        disabled={firebaseLoading}
-                        className="w-full py-3.5 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs uppercase tracking-wider transition-all shadow-lg shadow-indigo-500/25 active:scale-98 disabled:opacity-50"
-                      >
-                        {firebaseLoading ? 'Signing In...' : 'Sign In with Email'}
-                      </button>
-                    </form>
 
                     {authError && (
-                      <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-left space-y-3 animate-fadeIn">
-                        <div className="flex gap-2.5 items-start">
-                          <span className="text-lg">⚠️</span>
-                          <div>
-                            <h4 className="text-xs font-extrabold text-rose-400 uppercase tracking-wide">Sign-In Error</h4>
-                            <p className="text-[11px] text-slate-300 mt-1 leading-relaxed">
-                              {authError.message}
-                            </p>
-                          </div>
-                        </div>
+                      <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-left flex items-start gap-2">
+                        <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                        <p className="text-xs text-rose-200 leading-snug">{authError.message}</p>
                       </div>
                     )}
 
-                    {/* RECENT ACCOUNTS */}
-                    {recentAccounts.length > 0 && (
-                      <div id="recent-accounts-section" className="space-y-3.5 pt-4 border-t border-white/5">
-                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest block text-left">
-                          🔑 Recent Profiles on this Node
-                        </label>
-                        <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                          {recentAccounts.slice(0, 5).map((acc) => {
-                            const initials = acc.name ? acc.name.split(',').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase() : '?';
-                            return (
-                              <div
-                                key={acc.uid || acc.email}
-                                className="p-3 rounded-2xl bg-slate-900/40 border border-white/5 hover:border-white/10 flex items-center justify-between gap-3 transition-all"
+                    <button
+                      type="submit"
+                      disabled={firebaseLoading}
+                      className="uiverse-btn-primary w-full py-2.5 px-4 rounded-xl text-white font-bold text-xs transition-all disabled:opacity-50 cursor-pointer"
+                    >
+                      {firebaseLoading ? 'Signing in...' : 'Sign In'}
+                    </button>
+                  </form>
+
+                  {/* Compact Saved Profiles Strip */}
+                  {recentAccounts.length > 0 && (
+                    <div id="recent-accounts-section" className="pt-2.5 border-t border-white/10 space-y-1.5">
+                      <span className="text-[11px] font-semibold text-slate-400 block text-left">
+                        Saved accounts on this device
+                      </span>
+                      <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
+                        {recentAccounts.slice(0, 3).map((acc) => (
+                          <div
+                            key={acc.uid || acc.email}
+                            className="p-2 rounded-xl bg-slate-900/70 border border-white/5 flex items-center justify-between gap-2"
+                          >
+                            <div className="min-w-0 text-left">
+                              <p className="text-xs font-bold text-white truncate">
+                                {acc.name} <span className="text-[10px] font-normal text-indigo-300">· {acc.role}</span>
+                              </p>
+                              <p className="text-[10px] text-slate-400 font-mono truncate">{acc.email}</p>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleContinueRecentAccount(acc)}
+                                className="py-1 px-2.5 text-[11px] font-bold bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500 hover:text-slate-950 rounded-lg transition-colors cursor-pointer"
                               >
-                                <div className="flex items-center gap-3">
-                                  {acc.photoURL ? (
-                                    <img
-                                      src={acc.photoURL}
-                                      referrerPolicy="no-referrer"
-                                      alt={acc.name}
-                                      className="w-10 h-10 rounded-xl object-cover border border-white/10"
-                                    />
-                                  ) : (
-                                    <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center font-black font-mono text-indigo-400 text-xs">
-                                      {initials}
-                                    </div>
-                                  )}
-                                  <div className="space-y-0.5 text-left">
-                                    <div className="text-xs font-bold text-white flex items-center gap-1.5 flex-wrap">
-                                      {acc.name}
-                                      <span className="text-[8px] px-1.5 py-0.5 rounded bg-white/5 border border-white/10 uppercase font-mono text-slate-400">
-                                        {acc.role}
-                                      </span>
-                                    </div>
-                                    <div className="text-[10px] text-slate-400 font-mono truncate max-w-[150px] sm:max-w-[200px]">{acc.email}</div>
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleContinueRecentAccount(acc)}
-                                    className="py-1.5 px-3 text-[10px] font-black uppercase tracking-wider bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500 hover:text-white rounded-lg transition-all border border-emerald-500/20"
-                                  >
-                                    Continue
-                                  </button>
-                                  <button
-                                    type="button"
-                                    title="Remove profile reference"
-                                    onClick={() => handleRemoveRecentAccount(acc.email)}
-                                    className="p-1.5 text-slate-400 hover:text-red-400 rounded-lg transition-all hover:bg-white/5"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Redesigned Sign Up Button */}
-                    <div className="pt-4 border-t border-white/5 text-center space-y-3">
-                      <p className="text-xs text-slate-400">Don't have an account or want to register a new role?</p>
-                      <button
-                        id="start-signup-flow-btn"
-                        type="button"
-                        onClick={() => {
-                          setRegStep('role');
-                          setIsGoogleLinked(false);
-                          setLinkedGoogleUid(null);
-                          setLinkedGooglePhoto(null);
-                          setRegName('');
-                          setRegEmail('');
-                        }}
-                        className="w-full py-3.5 px-4 rounded-2xl bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 font-extrabold text-xs uppercase tracking-wider hover:bg-indigo-600 hover:text-white transition-all active:scale-98 shadow-md"
-                      >
-                        Create Profile & Sign Up →
-                      </button>
-
-                      {/* Mobile App / Install APK promotion on login screen */}
-                      <div className="pt-2">
-                        <button
-                          type="button"
-                          onClick={() => setIsInstallAppModalOpen(true)}
-                          className="w-full py-2.5 px-3 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/10 hover:border-emerald-500/30 text-slate-300 hover:text-white text-xs font-semibold flex flex-wrap items-center justify-center gap-2 transition-all cursor-pointer group"
-                        >
-                          <Smartphone className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform shrink-0" />
-                          <span>Prefer mobile? <strong>Download StudentOS APK</strong></span>
-                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">v{APP_VERSION}</span>
-                        </button>
+                                Resume
+                              </button>
+                              <button
+                                type="button"
+                                title="Remove saved account"
+                                onClick={() => handleRemoveRecentAccount(acc.email)}
+                                className="p-1 text-slate-500 hover:text-rose-400 rounded-lg transition-colors cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
-                  </motion.div>
-                )}
+                  )}
+                </motion.div>
+              )}
 
-                {/* STEP 1: ROLE SELECTION */}
-                {regStep === 'role' && (
-                  <motion.div
-                    key="role"
-                    initial={{ opacity: 0, y: 15 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -15 }}
-                    transition={{ duration: 0.25, ease: "easeInOut" }}
-                    id="reg-step-role"
-                    className="space-y-5"
-                  >
-                    <div className="space-y-1 text-center">
-                      <span className="text-[10px] uppercase font-black tracking-widest text-indigo-400 bg-indigo-500/10 px-2.5 py-1 rounded-full border border-indigo-500/20">Step 1 of 3</span>
-                      <h2 className="text-xl font-bold text-white mt-3">Choose Account Type</h2>
-                      <p className="text-xs text-slate-400">Select the primary profile identity you want to request.</p>
-                    </div>
+              {/* STEP 1: ROLE SELECTION */}
+              {regStep === 'role' && (
+                <motion.div
+                  key="role"
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.16 }}
+                  id="reg-step-role"
+                  className="space-y-3"
+                >
+                  <p className="text-xs text-slate-300 text-left">
+                    Select your primary role in the school workspace:
+                  </p>
 
-                    <div className="grid grid-cols-1 gap-2.5">
-                      {[
-                        { type: 'student', label: '🎓 Student Identity', desc: 'Immediate workspace exploration access' },
-                        { type: 'teacher', label: '👩‍🏫 Teacher Request', desc: 'Upload materials and assign worksheets (approval required)' },
-                        { type: 'coordinator', label: '🧭 Coordinator Request', desc: 'Authorize content and manage schedule nodes (approval required)' },
-                        { type: 'admin', label: '⚙️ Admin Request', desc: 'Supervise entire institution clearance and logs (approval required)' }
-                      ].map((item) => (
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {[
+                      { type: 'student', icon: '🎓', label: 'Student', desc: 'Classes, AI Tutor & Homework' },
+                      { type: 'teacher', icon: '👩‍🏫', label: 'Teacher', desc: 'Classes, Grading & Smartboard' },
+                      { type: 'coordinator', icon: '🧭', label: 'Coordinator', desc: 'Schedules & Department Wing' },
+                      { type: 'admin', icon: '⚙️', label: 'Admin', desc: 'School Management & Approvals' }
+                    ].map((item) => {
+                      const selected = regRole === item.type;
+                      return (
                         <button
                           key={item.type}
                           type="button"
-                          onClick={() => {
-                            setRegRole(item.type as any);
-                          }}
-                          className={`p-4 rounded-2xl text-left border transition-all flex flex-col gap-1 active:scale-99 ${
-                            regRole === item.type
-                              ? 'bg-indigo-600/15 border-indigo-500 text-white shadow-lg shadow-indigo-500/10 ring-1 ring-indigo-500/20'
-                              : 'bg-slate-900/40 border-white/5 text-slate-300 hover:border-white/10 hover:bg-slate-900/60'
+                          onClick={() => setRegRole(item.type as any)}
+                          className={`p-3 rounded-xl text-left border transition-all cursor-pointer ${
+                            selected
+                              ? 'bg-indigo-600/20 border-indigo-400 text-white shadow-sm'
+                              : 'bg-slate-900/60 border-white/10 text-slate-300 hover:border-white/20'
                           }`}
                         >
-                          <div className="font-extrabold text-sm">{item.label}</div>
-                          <div className="text-xs text-slate-400 leading-relaxed">{item.desc}</div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-lg">{item.icon}</span>
+                            {selected && <Check className="w-3.5 h-3.5 text-indigo-400" />}
+                          </div>
+                          <div className="font-bold text-xs text-white mt-1.5">{item.label}</div>
+                          <div className="text-[10px] text-slate-400 leading-snug mt-0.5">{item.desc}</div>
                         </button>
-                      ))}
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => setRegStep('login')}
+                      className="px-3 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white cursor-pointer"
+                    >
+                      ← Sign In
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRegStep('profile')}
+                      className="uiverse-btn-primary px-5 py-2.5 rounded-xl text-white text-xs font-bold cursor-pointer"
+                    >
+                      Continue as {regRole.charAt(0).toUpperCase() + regRole.slice(1)} →
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* STEP 2: COMPACT PROFILE FORM */}
+              {regStep === 'profile' && (
+                <motion.form
+                  key="profile"
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.16 }}
+                  id="reg-step-profile"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (
+                      regNameError ||
+                      regPhoneError ||
+                      regBirthdateError ||
+                      !regName ||
+                      !regPhone ||
+                      !regBirthdate ||
+                      !regEmail
+                    ) {
+                      return;
+                    }
+                    setRegStep('submit');
+                  }}
+                  className="space-y-3 text-left"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-white capitalize">{regRole} Profile Details</span>
+                    <button
+                      type="button"
+                      onClick={handleLinkGoogle}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors cursor-pointer ${
+                        isGoogleLinked
+                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                          : 'bg-white text-slate-950 hover:bg-slate-100 border-white'
+                      }`}
+                    >
+                      {isGoogleLinked ? '✓ Google Linked' : 'Auto-Fill with Google'}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-300 mb-0.5">Full Name *</label>
+                      <input
+                        type="text"
+                        required
+                        value={regName}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setRegName(val);
+                          if (val && !/^[A-Za-z\s]+$/.test(val)) {
+                            setRegNameError('Letters and spaces only');
+                          } else {
+                            setRegNameError('');
+                          }
+                        }}
+                        placeholder="Aryan Sharma"
+                        className={`w-full text-xs px-3 py-2 rounded-xl bg-slate-900 border ${
+                          regNameError ? 'border-rose-500' : 'border-white/10 focus:border-indigo-500'
+                        } focus:outline-none text-white`}
+                      />
+                      {regNameError && <p className="text-rose-400 text-[10px] mt-0.5">{regNameError}</p>}
                     </div>
 
-                    <div className="flex justify-center items-center pt-4 border-t border-white/5">
-                      <button
-                        type="button"
-                        onClick={() => setRegStep('profile')}
-                        className="w-full px-6 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-extrabold uppercase tracking-wider transition-all shadow-md active:scale-98"
-                      >
-                        Next Step →
-                      </button>
-                    </div>
-                    <div className="pt-4 border-t border-white/5 text-center space-y-3">
-                      <p className="text-xs text-slate-400">Already have an account?</p>
-                      <button
-                        type="button"
-                        onClick={() => setRegStep('login')}
-                        className="w-full py-3.5 px-4 rounded-2xl bg-slate-900/40 border border-white/5 text-white font-extrabold text-xs uppercase tracking-wider hover:bg-slate-800 hover:border-white/10 transition-all active:scale-98 shadow-md"
-                      >
-                        Log In Here →
-                      </button>
-                    </div>
-                  </motion.div>
-                )}
-
-                {/* STEP 2: PROFILE INFORMATION FORM */}
-                {regStep === 'profile' && (
-                  <motion.form
-                    key="profile"
-                    initial={{ opacity: 0, y: 15 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -15 }}
-                    transition={{ duration: 0.25, ease: "easeInOut" }}
-                    id="reg-step-profile"
-                    onSubmit={(e) => { 
-                      e.preventDefault(); 
-                      if (regNameError || regPhoneError || regBirthdateError || !regName || !regPhone || !regBirthdate || !regEmail) {
-                        return;
-                      }
-                      setRegStep('submit'); 
-                    }}
-                    className="space-y-5"
-                  >
-                    <div className="space-y-1 text-center">
-                      <span className="text-[10px] uppercase font-black tracking-widest text-indigo-400 bg-indigo-500/10 px-2.5 py-1 rounded-full border border-indigo-500/20">Step 2 of 3</span>
-                      <h2 className="text-xl font-bold text-white mt-3">Profile Information</h2>
-                      <p className="text-xs text-slate-400">Provide registration credentials for verification.</p>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-300 mb-0.5">School Email *</label>
+                      <input
+                        type="email"
+                        required
+                        value={regEmail}
+                        onChange={(e) => setRegEmail(e.target.value)}
+                        placeholder="scholar@academy.edu"
+                        className="w-full text-xs px-3 py-2 rounded-xl bg-slate-900 border border-white/10 focus:outline-none focus:border-indigo-500 text-white"
+                      />
                     </div>
 
-                    {/* EMAIL HANDLING SELECTOR */}
-                    <div className="p-4 rounded-2xl bg-indigo-500/5 border border-indigo-500/10 space-y-3 text-left">
-                      <p className="text-xs font-bold text-indigo-300">Choose Registration Method:</p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <div className="p-2.5 rounded-xl bg-slate-900/60 border border-white/5 text-left space-y-1">
-                          <span className="text-[9px] uppercase font-black text-slate-500 tracking-wide block">Option A</span>
-                          <p className="text-xs font-bold text-white">Manual Credentials</p>
-                          <p className="text-[10px] text-slate-500">Enter custom name and secure password.</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={handleLinkGoogle}
-                          className={`p-2.5 rounded-xl text-left space-y-1 border transition-all active:scale-98 ${
-                            isGoogleLinked
-                              ? 'bg-indigo-500/15 border-indigo-500/50 text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.1)]'
-                              : 'bg-slate-900/60 border-white/5 hover:border-white/10'
-                          }`}
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-300 mb-0.5">Phone *</label>
+                      <input
+                        type="tel"
+                        required
+                        value={regPhone}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setRegPhone(val);
+                          if (val && !/^[+0-9\-\s()]+$/.test(val)) {
+                            setRegPhoneError('Invalid phone format');
+                          } else {
+                            setRegPhoneError('');
+                          }
+                        }}
+                        placeholder="+91 98765 43210"
+                        className={`w-full text-xs px-3 py-2 rounded-xl bg-slate-900 border ${
+                          regPhoneError ? 'border-rose-500' : 'border-white/10 focus:border-indigo-500'
+                        } focus:outline-none text-white`}
+                      />
+                      {regPhoneError && <p className="text-rose-400 text-[10px] mt-0.5">{regPhoneError}</p>}
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-300 mb-0.5">Birthdate *</label>
+                      <input
+                        type="date"
+                        required
+                        value={regBirthdate}
+                        onChange={(e) => {
+                          setRegBirthdate(e.target.value);
+                          if (e.target.value && new Date(e.target.value) > new Date()) {
+                            setRegBirthdateError('Cannot be in the future');
+                          } else {
+                            setRegBirthdateError('');
+                          }
+                        }}
+                        className={`w-full text-xs px-3 py-2 rounded-xl bg-slate-900 border ${
+                          regBirthdateError ? 'border-rose-500' : 'border-white/10 focus:border-indigo-500'
+                        } focus:outline-none text-white`}
+                      />
+                      {regBirthdateError && <p className="text-rose-400 text-[10px] mt-0.5">{regBirthdateError}</p>}
+                    </div>
+                  </div>
+
+                  {!isGoogleLinked && (
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-300 mb-0.5">
+                        Password * (Min 6 characters)
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        value={regPassword}
+                        onChange={(e) => setRegPassword(e.target.value)}
+                        placeholder="Create a strong password"
+                        className="w-full text-xs px-3 py-2 rounded-xl bg-slate-900 border border-white/10 focus:outline-none focus:border-indigo-500 text-white"
+                      />
+                    </div>
+                  )}
+
+                  {regRole === 'student' && (
+                    <div className="grid grid-cols-3 gap-2 pt-1">
+                      <div>
+                        <label className="block text-[10px] font-semibold text-slate-400 mb-0.5">Grade</label>
+                        <select
+                          value={regGrade}
+                          onChange={(e) => setRegGrade(e.target.value)}
+                          className="w-full text-xs px-2.5 py-2 rounded-xl bg-slate-900 border border-white/10 text-white"
                         >
-                          <span className="text-[9px] uppercase font-black text-indigo-400 tracking-wide block">Option B</span>
-                          <p className="text-xs font-bold text-white flex items-center gap-1.5">
-                            {isGoogleLinked ? '✓ Google Linked' : '🔗 Link Google Account'}
-                          </p>
-                          <p className="text-[10px] text-slate-400">Pre-fill details instantly from Google session.</p>
-                        </button>
+                          {Array.from({ length: 12 }, (_, i) => `Grade ${i + 1}`).map((g) => (
+                            <option key={g} value={g}>{g}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-slate-400 mb-0.5">Section</label>
+                        <select
+                          value={regSection}
+                          onChange={(e) => setRegSection(e.target.value)}
+                          className="w-full text-xs px-2.5 py-2 rounded-xl bg-slate-900 border border-white/10 text-white"
+                        >
+                          <option value="Astra">Astra</option>
+                          <option value="Elara">Elara</option>
+                          <option value="Solara">Solara</option>
+                          <option value="Vega">Vega</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-slate-400 mb-0.5">House</label>
+                        <select
+                          value={regHouse}
+                          onChange={(e) => setRegHouse(e.target.value)}
+                          className="w-full text-xs px-2.5 py-2 rounded-xl bg-slate-900 border border-white/10 text-white"
+                        >
+                          <option value="Ruby">Ruby</option>
+                          <option value="Emerald">Emerald</option>
+                          <option value="Sapphire">Sapphire</option>
+                          <option value="Topaz">Topaz</option>
+                        </select>
                       </div>
                     </div>
+                  )}
 
-                    <div className="space-y-4 text-left">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div className="space-y-1.5">
-                              <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Primary Grade</label>
-                              <select
-                                value={regGrade}
-                                onChange={(e) => setRegGrade(e.target.value)}
-                                className="w-full text-xs px-3 py-2.5 rounded-xl bg-slate-950 border border-white/10 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white"
-                              >
-                                <option value="Grade 9">Grade 9</option>
-                                <option value="Grade 10">Grade 10</option>
-                                <option value="Grade 11">Grade 11</option>
-                                <option value="Grade 12">Grade 12</option>
-                              </select>
-                            </div>
-                            <div className="space-y-1.5">
-                              <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Primary Section</label>
-                              <select
-                                value={regSection}
-                                onChange={(e) => setRegSection(e.target.value)}
-                                className="w-full text-xs px-3 py-2.5 rounded-xl bg-slate-950 border border-white/10 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white"
-                              >
-                                <option value="Astra">Astra (Alpha)</option>
-                                <option value="Elara">Elara (Beta)</option>
-                                <option value="Solara">Solara (Gamma)</option>
-                                <option value="Vega">Vega (Delta)</option>
-                              </select>
-                            </div>
-                        <div className="space-y-1.5">
-                          <label className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Full Name</label>
-                          <input
-                            type="text"
-                            required
-                            value={regName}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setRegName(val);
-                              if (val && !/^[A-Za-z\s]+$/.test(val)) {
-                                setRegNameError('❌ Numbers and symbols are not allowed in Full Name');
-                              } else {
-                                setRegNameError('');
-                              }
-                            }}
-                            placeholder="e.g. Jean-Luc Picard"
-                            className={`w-full text-sm px-4 py-3 rounded-xl bg-slate-900/60 border ${regNameError ? 'border-red-500 focus:ring-red-500/20 focus:border-red-500' : 'border-white/10 focus:ring-indigo-500/20 focus:border-indigo-500'} focus:outline-none focus:ring-2 text-white font-medium placeholder-slate-600 transition-all`}
-                          />
-                          {regNameError && <p className="text-red-500 text-[10px] font-bold mt-1">{regNameError}</p>}
-                        </div>
-                        <div className="space-y-1.5">
-                          <label className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">School Email</label>
-                          <input
-                            type="email"
-                            required
-                            value={regEmail}
-                            onChange={(e) => setRegEmail(e.target.value)}
-                            placeholder="e.g. captain@academy.edu"
-                            className="w-full text-sm px-4 py-3 rounded-xl bg-slate-900/60 border border-white/10 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-white font-mono placeholder-slate-600 transition-all"
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <label className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Phone Number</label>
-                          <input
-                            type="tel"
-                            required
-                            value={regPhone}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setRegPhone(val);
-                              if (val && !/^[+0-9\-\s()]+$/.test(val)) {
-                                setRegPhoneError('❌ Please enter a valid phone number');
-                              } else {
-                                setRegPhoneError('');
-                              }
-                            }}
-                            placeholder="e.g. +1 234 567 8900"
-                            className={`w-full text-sm px-4 py-3 rounded-xl bg-slate-900/60 border ${regPhoneError ? 'border-red-500 focus:ring-red-500/20 focus:border-red-500' : 'border-white/10 focus:ring-indigo-500/20 focus:border-indigo-500'} focus:outline-none focus:ring-2 text-white font-mono placeholder-slate-600 transition-all`}
-                          />
-                          {regPhoneError && <p className="text-red-500 text-[10px] font-bold mt-1">{regPhoneError}</p>}
-                        </div>
-                        <div className="space-y-1.5">
-                          <label className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Birthdate</label>
-                          <input
-                            type="date"
-                            required
-                            value={regBirthdate}
-                            onChange={(e) => {
-                              setRegBirthdate(e.target.value);
-                              if (e.target.value && new Date(e.target.value) > new Date()) {
-                                setRegBirthdateError('❌ Birthdate cannot be in the future');
-                              } else {
-                                setRegBirthdateError('');
-                              }
-                            }}
-                            className={`w-full text-sm px-4 py-3 rounded-xl bg-slate-900/60 border ${regBirthdateError ? 'border-red-500 focus:ring-red-500/20 focus:border-red-500' : 'border-white/10 focus:ring-indigo-500/20 focus:border-indigo-500'} focus:outline-none focus:ring-2 text-white font-medium placeholder-slate-600 transition-all`}
-                          />
-                          {regBirthdateError && <p className="text-red-500 text-[10px] font-bold mt-1">{regBirthdateError}</p>}
-                        </div>
+                  {regRole === 'teacher' && (
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <div>
+                        <label className="block text-[10px] font-semibold text-slate-400 mb-0.5">Department *</label>
+                        <input
+                          type="text"
+                          required
+                          value={regDept}
+                          onChange={(e) => setRegDept(e.target.value)}
+                          placeholder="Sciences"
+                          className="w-full text-xs px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-white"
+                        />
                       </div>
-                      
-                      {!isGoogleLinked && (
-                        <div className="space-y-1.5">
-                          <label className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wide">Password</label>
-                          <input
-                            type="password"
-                            required
-                            value={regPassword}
-                            onChange={(e) => setRegPassword(e.target.value)}
-                            placeholder="Must be at least 6 characters"
-                            className="w-full text-sm px-4 py-3 rounded-xl bg-slate-900/60 border border-white/10 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-white font-mono placeholder-slate-600 transition-all"
-                          />
-                        </div>
-                      )}
-
-                      {/* ROLE-SPECIFIC EXTRA FIELDS */}
-                      {regRole === 'student' && (
-                        <div className="space-y-3.5 p-4 rounded-2xl bg-slate-900/30 border border-white/5 text-left">
-                          <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Student Information</p>
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                            <div className="space-y-1.5">
-                              <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Class</label>
-                              <select
-                                value={regGrade}
-                                onChange={(e) => setRegGrade(e.target.value)}
-                                className="w-full text-xs px-3 py-2.5 rounded-lg bg-slate-950 border border-white/10 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white font-semibold"
-                              >
-                                {Array.from({ length: 12 }, (_, i) => `Grade ${i + 1}`).map((g) => (
-                                  <option key={g} value={g}>{g}</option>
-                                ))}
-                              </select>
-                            </div>
-
-                            <div className="space-y-1.5">
-                              <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Section</label>
-                              <select
-                                value={regSection}
-                                onChange={(e) => setRegSection(e.target.value)}
-                                className="w-full text-xs px-3 py-2.5 rounded-lg bg-slate-950 border border-white/10 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white"
-                              >
-                                <option value="Astra">Astra (Alpha)</option>
-                                <option value="Elara">Elara (Beta)</option>
-                                <option value="Solara">Solara (Gamma)</option>
-                                <option value="Vega">Vega (Delta)</option>
-                              </select>
-                            </div>
-
-                            <div className="space-y-1.5">
-                              <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">House</label>
-                              <select
-                                value={regHouse}
-                                onChange={(e) => setRegHouse(e.target.value)}
-                                className="w-full text-xs px-3 py-2.5 rounded-lg bg-slate-950 border border-white/10 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white"
-                              >
-                                <option value="Ruby">Ruby House (Crimson)</option>
-                                <option value="Emerald">Emerald House (Green)</option>
-                                <option value="Sapphire">Sapphire House (Blue)</option>
-                                <option value="Topaz">Topaz House (Gold)</option>
-                              </select>
-                            </div>
-                          </div>
-
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Profile Photo URL (Optional)</label>
-                            <input
-                              type="url"
-                              value={regPhoto}
-                              onChange={(e) => setRegPhoto(e.target.value)}
-                              placeholder="https://images.unsplash.com/..."
-                              className="w-full text-sm px-4 py-2.5 rounded-xl bg-slate-950 border border-white/10 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-white font-mono placeholder-slate-700"
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {regRole === 'teacher' && (
-                        <div className="space-y-3.5 p-4 rounded-2xl bg-slate-900/30 border border-white/5 text-left">
-                          <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Teacher Specifications</p>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div className="space-y-1.5">
-                              <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Primary Grade</label>
-                              <select
-                                value={regGrade}
-                                onChange={(e) => setRegGrade(e.target.value)}
-                                className="w-full text-xs px-3 py-2.5 rounded-xl bg-slate-950 border border-white/10 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white"
-                              >
-                                <option value="Grade 9">Grade 9</option>
-                                <option value="Grade 10">Grade 10</option>
-                                <option value="Grade 11">Grade 11</option>
-                                <option value="Grade 12">Grade 12</option>
-                              </select>
-                            </div>
-                            <div className="space-y-1.5">
-                              <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Primary Section</label>
-                              <select
-                                value={regSection}
-                                onChange={(e) => setRegSection(e.target.value)}
-                                className="w-full text-xs px-3 py-2.5 rounded-xl bg-slate-950 border border-white/10 focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white"
-                              >
-                                <option value="Astra">Astra (Alpha)</option>
-                                <option value="Elara">Elara (Beta)</option>
-                                <option value="Solara">Solara (Gamma)</option>
-                                <option value="Vega">Vega (Delta)</option>
-                              </select>
-                            </div>
-                            <div className="space-y-1.5">
-                              <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Department</label>
-                              <input
-                                type="text"
-                                required
-                                value={regDept}
-                                onChange={(e) => setRegDept(e.target.value)}
-                                placeholder="e.g. Sciences"
-                                className="w-full text-sm px-4 py-2.5 rounded-xl bg-slate-950 border border-white/10 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-white placeholder-slate-700"
-                              />
-                            </div>
-                            <div className="space-y-1.5">
-                              <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Subjects</label>
-                              <input
-                                type="text"
-                                required
-                                value={regSubjects}
-                                onChange={(e) => setRegSubjects(e.target.value)}
-                                placeholder="e.g. Physics, Chemistry"
-                                className="w-full text-sm px-4 py-2.5 rounded-xl bg-slate-950 border border-white/10 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-white placeholder-slate-700"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {regRole === 'coordinator' && (
-                        <div className="space-y-3.5 p-4 rounded-2xl bg-slate-900/30 border border-white/5 text-left">
-                          <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Coordinator Specifications</p>
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Department</label>
-                            <input
-                              type="text"
-                              required
-                              value={regDept}
-                              onChange={(e) => setRegDept(e.target.value)}
-                              placeholder="e.g. Academic Programs"
-                              className="w-full text-sm px-4 py-2.5 rounded-xl bg-slate-950 border border-white/10 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-white placeholder-slate-700"
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {regRole === 'admin' && (
-                        <div className="space-y-3.5 p-4 rounded-2xl bg-slate-900/30 border border-white/5 text-left">
-                          <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Administrator Specifications</p>
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wide">Designation</label>
-                            <input
-                              type="text"
-                              required
-                              value={regDesignation}
-                              onChange={(e) => setRegDesignation(e.target.value)}
-                              placeholder="e.g. Registrar, Vice Principal"
-                              className="w-full text-sm px-4 py-2.5 rounded-xl bg-slate-950 border border-white/10 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-white placeholder-slate-700"
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex justify-between items-center pt-4 border-t border-white/5">
-                      <button
-                        type="button"
-                        onClick={() => setRegStep('role')}
-                        className="px-5 py-2.5 text-xs font-bold text-slate-400 hover:text-white transition-all"
-                      >
-                        ← Back
-                      </button>
-                      <button
-                        type="submit"
-                        disabled={!!regNameError}
-                        className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed text-white text-xs font-extrabold uppercase tracking-wider transition-all active:scale-98"
-                      >
-                        Next →
-                      </button>
-                    </div>
-                  </motion.form>
-                )}
-
-                {/* STEP 3: SUBMIT REGISTRATION */}
-                {regStep === 'submit' && (
-                  <motion.div
-                    key="submit"
-                    initial={{ opacity: 0, y: 15 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -15 }}
-                    transition={{ duration: 0.25, ease: "easeInOut" }}
-                    id="reg-step-submit"
-                    className="space-y-5"
-                  >
-                    <div className="space-y-1 text-center">
-                      <span className="text-[10px] uppercase font-black tracking-widest text-indigo-400 bg-indigo-500/10 px-2.5 py-1 rounded-full border border-indigo-500/20">Step 3 of 3</span>
-                      <h2 className="text-xl font-bold text-white mt-3">Review Profile Registration</h2>
-                      <p className="text-xs text-slate-400">Please verify details before creating your node.</p>
-                    </div>
-
-                    <div className="p-4 rounded-2xl bg-slate-900/80 border border-white/5 space-y-3.5 text-xs text-left">
-                      <div className="flex justify-between items-center gap-2 py-1 border-b border-white/5">
-                        <span className="text-slate-400 uppercase font-black tracking-widest text-[9px] shrink-0">Target Account Role</span>
-                        <span className="font-extrabold text-indigo-400 uppercase tracking-wide truncate">{regRole}</span>
-                      </div>
-                      <div className="flex justify-between items-center gap-2 py-1 border-b border-white/5">
-                        <span className="text-slate-400 uppercase font-black tracking-widest text-[9px] shrink-0">Full Name</span>
-                        <span className="font-bold text-white truncate">{regName}</span>
-                      </div>
-                      <div className="flex justify-between items-center gap-2 py-1 border-b border-white/5">
-                        <span className="text-slate-400 uppercase font-black tracking-widest text-[9px] shrink-0">School Email</span>
-                        <span className="font-mono text-white truncate max-w-[180px] sm:max-w-xs">{regEmail}</span>
-                      </div>
-
-                      {regRole === 'student' && (
-                        <>
-                          <div className="flex justify-between items-center py-1 border-b border-white/5">
-                            <span className="text-slate-400 uppercase font-black tracking-widest text-[9px]">Grade & Section</span>
-                            <span className="font-bold text-white">{regGrade} - {regSection}</span>
-                          </div>
-                          <div className="flex justify-between items-center py-1 border-b border-white/5">
-                            <span className="text-slate-400 uppercase font-black tracking-widest text-[9px]">House Alliance</span>
-                            <span className="font-bold text-white">{regHouse}</span>
-                          </div>
-                        </>
-                      )}
-
-                      {regRole === 'teacher' && (
-                        <>
-                          <div className="flex justify-between items-center py-1 border-b border-white/5">
-                            <span className="text-slate-400 uppercase font-black tracking-widest text-[9px]">Department</span>
-                            <span className="font-bold text-white">{regDept}</span>
-                          </div>
-                          <div className="flex justify-between items-center py-1 border-b border-white/5">
-                            <span className="text-slate-400 uppercase font-black tracking-widest text-[9px]">Assigned Subjects</span>
-                            <span className="font-bold text-white">{regSubjects}</span>
-                          </div>
-                        </>
-                      )}
-
-                      {regRole === 'coordinator' && (
-                        <div className="flex justify-between items-center py-1 border-b border-white/5">
-                          <span className="text-slate-400 uppercase font-black tracking-widest text-[9px]">Department</span>
-                          <span className="font-bold text-white">{regDept}</span>
-                        </div>
-                      )}
-
-                      {regRole === 'admin' && (
-                        <div className="flex justify-between items-center py-1 border-b border-white/5">
-                          <span className="text-slate-400 uppercase font-black tracking-widest text-[9px]">Designation</span>
-                          <span className="font-bold text-white">{regDesignation}</span>
-                        </div>
-                      )}
-
-                      <div className="flex justify-between items-center py-1">
-                        <span className="text-slate-400 uppercase font-black tracking-widest text-[9px]">Google Verification Linked</span>
-                        <span className={`font-black tracking-wider uppercase text-[10px] ${isGoogleLinked ? 'text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20' : 'text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20'}`}>
-                          {isGoogleLinked ? 'Linked' : 'Unlinked'}
-                        </span>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-slate-400 mb-0.5">Subjects *</label>
+                        <input
+                          type="text"
+                          required
+                          value={regSubjects}
+                          onChange={(e) => setRegSubjects(e.target.value)}
+                          placeholder="Physics, Math"
+                          className="w-full text-xs px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-white"
+                        />
                       </div>
                     </div>
+                  )}
 
-                    <div className="p-3.5 rounded-2xl bg-indigo-500/5 border border-indigo-500/10 text-[11px] text-slate-400 text-center leading-relaxed">
-                      ⚙️ By proceeding, your institutional clearance request is logged. Standard accounts gain immediate access while administrative roles route into approval queues.
+                  {regRole === 'coordinator' && (
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-400 mb-0.5">Managed Department / Wing *</label>
+                      <input
+                        type="text"
+                        required
+                        value={regDept}
+                        onChange={(e) => setRegDept(e.target.value)}
+                        placeholder="Senior Secondary Wing"
+                        className="w-full text-xs px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-white"
+                      />
                     </div>
+                  )}
 
-                    <div className="flex flex-col-reverse sm:flex-row justify-between items-stretch sm:items-center gap-2.5 pt-4 border-t border-white/5">
-                      <button
-                        type="button"
-                        onClick={() => setRegStep('profile')}
-                        className="px-5 py-2.5 text-xs font-bold text-slate-400 hover:text-white transition-all text-center"
-                      >
-                        ← Back
-                      </button>
-                      <button
-                        id="submit-onboarding-btn"
-                        type="button"
-                        onClick={handleOnboardingLogin}
-                        className="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-extrabold uppercase tracking-wider transition-all shadow-lg shadow-indigo-500/25 active:scale-98 text-center"
-                      >
-                        Create Profile & Enter StudentOS
-                      </button>
+                  {regRole === 'admin' && (
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-400 mb-0.5">Official Designation *</label>
+                      <input
+                        type="text"
+                        required
+                        value={regDesignation}
+                        onChange={(e) => setRegDesignation(e.target.value)}
+                        placeholder="Principal / Administrator"
+                        className="w-full text-xs px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-white"
+                      />
                     </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                  )}
+
+                  <div className="flex justify-between items-center pt-2 border-t border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => setRegStep('role')}
+                      className="px-3 py-2 text-xs font-semibold text-slate-400 hover:text-white cursor-pointer"
+                    >
+                      ← Back
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={!!regNameError || !!regPhoneError || !!regBirthdateError}
+                      className="uiverse-btn-primary px-5 py-2.5 rounded-xl text-white text-xs font-bold disabled:opacity-50 cursor-pointer"
+                    >
+                      Review →
+                    </button>
+                  </div>
+                </motion.form>
+              )}
+
+              {/* STEP 3: SUBMIT REGISTRATION */}
+              {regStep === 'submit' && (
+                <motion.div
+                  key="submit"
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.16 }}
+                  id="reg-step-submit"
+                  className="space-y-3 text-left"
+                >
+                  <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-white/10 space-y-2 text-xs">
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-400">Role</span>
+                      <span className="font-bold text-indigo-300 capitalize">{regRole}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-400">Name</span>
+                      <span className="font-bold text-white truncate">{regName}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-400">Email</span>
+                      <span className="font-mono text-slate-200 truncate max-w-[200px]">{regEmail}</span>
+                    </div>
+                    {regRole === 'student' && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400">Placement</span>
+                        <span className="font-semibold text-white">{regGrade} · {regSection} · {regHouse}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <p className="text-[11px] text-slate-400 leading-snug">
+                    Student accounts activate immediately. Staff roles are queued for school administrator verification.
+                  </p>
+
+                  <div className="flex justify-between items-center gap-2 pt-2 border-t border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => setRegStep('profile')}
+                      className="px-3 py-2 text-xs font-semibold text-slate-400 hover:text-white cursor-pointer"
+                    >
+                      ← Edit
+                    </button>
+                    <button
+                      id="submit-onboarding-btn"
+                      type="button"
+                      onClick={handleOnboardingLogin}
+                      className="uiverse-btn-primary px-5 py-2.5 rounded-xl text-white text-xs font-bold cursor-pointer"
+                    >
+                      Create Account & Enter →
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Compact Security & Privacy Footer */}
+            <div className="pt-2.5 border-t border-white/10 flex items-center justify-between text-[10px] text-slate-500">
+              <span>🔒 Protected by school-isolated RLS</span>
+              <span>Authorized Institutional Access</span>
             </div>
           </div>
         </div>
@@ -8245,272 +8244,322 @@ ${roleLabel}: ${userQuery}`;
                     }} 
                   />
 
-                  {/* Glowing user banner */}
-                  <div className={`p-4 sm:p-8 rounded-3xl relative overflow-hidden backdrop-blur-md border shadow-xl ${currentUser.house === 'Ruby' ? 'bg-gradient-to-r from-red-950/40 to-slate-900 border-red-500/20' : currentUser.house === 'Emerald' ? 'bg-gradient-to-r from-emerald-950/40 to-slate-900 border-emerald-500/20' : currentUser.house === 'Sapphire' ? 'bg-gradient-to-r from-blue-950/40 to-slate-900 border-blue-500/20' : currentUser.house === 'Topaz' ? 'bg-gradient-to-r from-amber-950/40 to-slate-900 border-amber-500/20' : 'bg-gradient-to-r from-indigo-950/40 to-slate-900 border-white/10'}`}>
-                    <div className="absolute top-0 right-0 w-80 h-80 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
-                    
+                  {/* Welcome Hero & Context Card */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.22 }}
+                    className={`p-5 sm:p-7 rounded-3xl relative overflow-hidden backdrop-blur-md border shadow-xl ${
+                      currentUser.house === 'Ruby'
+                        ? 'bg-gradient-to-r from-red-950/40 to-slate-900 border-red-500/20'
+                        : currentUser.house === 'Emerald'
+                        ? 'bg-gradient-to-r from-emerald-950/40 to-slate-900 border-emerald-500/20'
+                        : currentUser.house === 'Sapphire'
+                        ? 'bg-gradient-to-r from-blue-950/40 to-slate-900 border-blue-500/20'
+                        : currentUser.house === 'Topaz'
+                        ? 'bg-gradient-to-r from-amber-950/40 to-slate-900 border-amber-500/20'
+                        : 'bg-gradient-to-r from-indigo-950/40 to-slate-900 border-white/10'
+                    }`}
+                  >
                     <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-6">
-                      <div className="space-y-2">
-                        <span className="text-[10px] sm:text-xs font-extrabold uppercase tracking-widest text-indigo-400">Adaptive Classroom Node</span>
-                        <h1 className="text-xl sm:text-3xl font-black font-display text-white">Welcome back, {currentUser.name}!</h1>
-                        <p className="text-slate-300 max-w-xl text-xs sm:text-sm">
-                          {effectiveRole === 'student' 
-                            ? `You represent ${currentUser.house} House, studying in Section ${currentUser.section}. Keep tracking critical tasks and contribute points to your house leaderboard!`
-                            : `You are logged in as a specialized faculty leader in ${currentUser.specialtySubject}. Set up whiteboard slide broadcasts, review student feedback lists, and evaluate class performance.`}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2 text-xs text-indigo-400 font-semibold">
+                          <span>Academic Workspace</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="text-slate-300 capitalize">{effectiveRole?.replace('_', ' ')}</span>
+                          {effectiveRole === 'student' && currentUser.grade && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="text-slate-300">{currentUser.grade} ({currentUser.section})</span>
+                            </>
+                          )}
+                        </div>
+                        <h1 className="text-xl sm:text-3xl font-black font-display text-white tracking-tight">
+                          Welcome back, {currentUser.name}
+                        </h1>
+                        <p className="text-slate-300 max-w-xl text-xs sm:text-sm leading-relaxed">
+                          {effectiveRole === 'student'
+                            ? `Representing ${currentUser.house} House in Section ${currentUser.section}. Stay on top of your daily schedule, assignments, and flashcard reviews.`
+                            : `Logged in as ${currentUser.specialtySubject || 'Faculty'} educator. Manage live smartboards, review submissions, and track class progress.`}
                         </p>
                       </div>
 
-                      {/* Summary Streak component */}
-                      <div className="flex items-center gap-3 sm:gap-4 bg-black/40 p-3 sm:p-4 rounded-2xl border border-white/5 animate-pulse shrink-0">
-                        <Flame className="w-8 h-8 sm:w-10 sm:h-10 text-orange-500" />
+                      {/* Study Streak Summary */}
+                      <div className="flex items-center gap-3.5 bg-slate-950/70 px-4 py-3 rounded-2xl border border-white/10 shrink-0">
+                        <Flame className="w-7 h-7 text-orange-400 shrink-0" />
                         <div>
-                          <p className="text-base sm:text-lg font-black text-white">{currentUser.streakDays || 5} Days</p>
-                          <p className="text-[9px] sm:text-[10px] text-slate-400 uppercase tracking-wider">Active study streak</p>
+                          <p className="text-base sm:text-lg font-black font-mono tabular-nums text-white">
+                            {currentUser.streakDays || 5} Days
+                          </p>
+                          <p className="text-[11px] text-slate-400">Active learning streak</p>
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </motion.div>
 
                   {/* Dashboard Quick Navigation Section */}
                   <div className="space-y-3">
-                    <h3 className="text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-1.5">
-                      <span>⚡</span> Quick Navigation Dashboard
-                    </h3>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 sm:gap-4">
-                      {/* Student Cards */}
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                        Quick Actions & Destinations
+                      </h2>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
                       {effectiveRole === 'student' && (
                         <>
                           <button
                             onClick={() => handleTabSelect('meet')}
-                            className="p-4 bg-indigo-900/40 hover:bg-indigo-800/60 border border-indigo-500/40 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-400 hover:shadow-lg transition-all"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">📹</span>
-                            <span className="text-xs font-bold text-white">StudentOS Meet</span>
+                            <span className="text-xl">📹</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Live Meet</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('notes')}
-                            className="p-4 bg-slate-900/60 hover:bg-indigo-950/40 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-500/50 hover:shadow-lg transition-all"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">📝</span>
-                            <span className="text-xs font-bold text-white">Lecture Notes</span>
+                            <span className="text-xl">📝</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Lecture Notes</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('homework')}
-                            className="p-4 bg-slate-900/60 hover:bg-indigo-950/40 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-500/50 hover:shadow-lg transition-all"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">📓</span>
-                            <span className="text-xs font-bold text-white">Homework Hub</span>
+                            <span className="text-xl">📓</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Homework Hub</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('quiz')}
-                            className="p-4 bg-slate-900/60 hover:bg-indigo-950/40 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-500/50 hover:shadow-lg transition-all"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">🧠</span>
-                            <span className="text-xs font-bold text-white">Interactive Quizzes</span>
+                            <span className="text-xl">🧠</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Practice Quiz</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('study_hub')}
-                            className="p-4 bg-gradient-to-br from-indigo-950/70 to-purple-950/70 hover:from-indigo-900 hover:to-purple-900 border border-indigo-500/30 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-400 hover:shadow-lg transition-all relative group"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left relative cursor-pointer"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">🎯</span>
-                            <span className="text-xs font-bold text-white">Study Hub</span>
+                            <span className="text-xl">🎯</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Study Hub</span>
                             {dueCardsCount > 0 && (
-                              <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded-full bg-rose-500 text-white font-mono text-[9px] font-black animate-pulse">
+                              <span className="absolute top-2.5 right-2.5 text-[10px] font-mono font-bold text-rose-400">
                                 {dueCardsCount} due
                               </span>
                             )}
                           </button>
                           <button
-                            onClick={() => handleTabSelect('analytics')}
-                            className="p-4 bg-slate-900/60 hover:bg-indigo-950/40 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-500/50 hover:shadow-lg transition-all"
+                            onClick={() => handleTabSelect('pomodoro')}
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">📊</span>
-                            <span className="text-xs font-bold text-white">Performance Stats</span>
+                            <span className="text-xl">⏱️</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Focus Timer</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('life')}
-                            className="p-4 bg-gradient-to-br from-indigo-900/80 to-purple-900/80 hover:from-indigo-800 hover:to-purple-800 border border-indigo-500/30 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-400 hover:shadow-lg transition-all shadow-md"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">🚀</span>
-                            <span className="text-xs font-bold text-white">StudentOS Life</span>
+                            <span className="text-xl">🚀</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">StudentOS Life</span>
                           </button>
                         </>
                       )}
 
-                      {/* Teacher Cards */}
                       {effectiveRole === 'teacher' && (
                         <>
                           <button
-                            onClick={() => handleTabSelect('funzone')}
-                            className="p-4 bg-gradient-to-br from-purple-900/80 to-amber-900/80 hover:from-purple-800 hover:to-amber-800 border border-amber-500/30 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-amber-400 hover:shadow-lg transition-all shadow-md"
+                            onClick={() => handleTabSelect('faculty')}
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">🎡</span>
-                            <span className="text-xs font-bold text-white">Teacher Fun Zone</span>
+                            <span className="text-xl">👨‍🏫</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Faculty Center</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('panel_mode')}
-                            className="p-4 bg-slate-900/60 hover:bg-indigo-950/40 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-500/50 hover:shadow-lg transition-all"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">🖥️</span>
-                            <span className="text-xs font-bold text-white">Smartboard Panel</span>
+                            <span className="text-xl">🖥️</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Smartboard</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('attendance_manager')}
-                            className="p-4 bg-slate-900/60 hover:bg-indigo-950/40 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-500/50 hover:shadow-lg transition-all"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">📋</span>
-                            <span className="text-xs font-bold text-white">Attendance Roll</span>
+                            <span className="text-xl">📋</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Attendance Roll</span>
                           </button>
                           <button
-                            onClick={() => handleTabSelect('faculty')}
-                            className="p-4 bg-slate-900/60 hover:bg-indigo-950/40 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-500/50 hover:shadow-lg transition-all"
+                            onClick={() => handleTabSelect('homework')}
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">👨‍🏫</span>
-                            <span className="text-xs font-bold text-white">Faculty Portal</span>
+                            <span className="text-xl">📓</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Homework</span>
                           </button>
-                          {isSportsTeacher ? (
-                            <button
-                              onClick={() => handleTabSelect('sports_activities')}
-                              className="p-4 bg-slate-900/60 hover:bg-indigo-950/40 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-500/50 hover:shadow-lg transition-all"
-                            >
-                              <span className="text-2xl">⚽</span>
-                              <span className="text-xs font-bold text-white">Co-Curriculars</span>
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => handleTabSelect('assignments')}
-                              className="p-4 bg-slate-900/60 hover:bg-indigo-950/40 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-500/50 hover:shadow-lg transition-all"
-                            >
-                              <span className="text-2xl">📓</span>
-                              <span className="text-xs font-bold text-white">Assignment Hub</span>
-                            </button>
-                          )}
+                          <button
+                            onClick={() => handleTabSelect('assignments')}
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                          >
+                            <span className="text-xl">📚</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Assignments</span>
+                          </button>
+                          <button
+                            onClick={() => handleTabSelect('funzone')}
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                          >
+                            <span className="text-xl">🎡</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Teacher Fun Zone</span>
+                          </button>
                           <button
                             onClick={() => handleTabSelect('life')}
-                            className="p-4 bg-gradient-to-br from-indigo-900/80 to-purple-900/80 hover:from-indigo-800 hover:to-purple-800 border border-indigo-500/30 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-400 hover:shadow-lg transition-all shadow-md"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">🚀</span>
-                            <span className="text-xs font-bold text-white">StudentOS Life</span>
+                            <span className="text-xl">🚀</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">StudentOS Life</span>
                           </button>
                         </>
                       )}
 
-                      {/* Coordinator Cards */}
                       {effectiveRole === 'coordinator' && (
                         <>
                           <button
                             onClick={() => handleTabSelect('attendance_manager')}
-                            className="p-4 bg-slate-900/60 hover:bg-indigo-950/40 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-500/50 hover:shadow-lg transition-all"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">📋</span>
-                            <span className="text-xs font-bold text-white">Attendance Ledger</span>
+                            <span className="text-xl">📋</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Attendance Ledger</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('blogs')}
-                            className="p-4 bg-slate-900/60 hover:bg-indigo-950/40 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-500/50 hover:shadow-lg transition-all"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">💎</span>
-                            <span className="text-xs font-bold text-white">School Blogs</span>
+                            <span className="text-xl">💎</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">School Blogs</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('planner')}
-                            className="p-4 bg-slate-900/60 hover:bg-indigo-950/40 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-500/50 hover:shadow-lg transition-all"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">📅</span>
-                            <span className="text-xs font-bold text-white">Study Planner</span>
+                            <span className="text-xl">📅</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Study Planner</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('life')}
-                            className="p-4 bg-gradient-to-br from-indigo-900/80 to-purple-900/80 hover:from-indigo-800 hover:to-purple-800 border border-indigo-500/30 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-400 hover:shadow-lg transition-all shadow-md"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">🚀</span>
-                            <span className="text-xs font-bold text-white">StudentOS Life</span>
+                            <span className="text-xl">🚀</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">StudentOS Life</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('profile')}
-                            className="p-4 bg-slate-900/60 hover:bg-indigo-950/40 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-500/50 hover:shadow-lg transition-all"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">👤</span>
-                            <span className="text-xs font-bold text-white">My Profile</span>
+                            <span className="text-xl">👤</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">My Profile</span>
                           </button>
                         </>
                       )}
 
-                      {/* Admin & Super Admin Cards */}
                       {(effectiveRole === 'admin' || effectiveRole === 'super_admin') && (
                         <>
                           <button
                             onClick={() => handleTabSelect('admin')}
-                            className="p-4 bg-slate-900/60 hover:bg-indigo-950/40 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-500/50 hover:shadow-lg transition-all"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">⚙️</span>
-                            <span className="text-xs font-bold text-white">Control Center</span>
+                            <span className="text-xl">⚙️</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Control Center</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('attendance_manager')}
-                            className="p-4 bg-slate-900/60 hover:bg-indigo-950/40 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-500/50 hover:shadow-lg transition-all"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">📋</span>
-                            <span className="text-xs font-bold text-white">Attendance Roll</span>
+                            <span className="text-xl">📋</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Attendance Roll</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('blogs')}
-                            className="p-4 bg-slate-900/60 hover:bg-indigo-950/40 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-500/50 hover:shadow-lg transition-all"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">💎</span>
-                            <span className="text-xs font-bold text-white">Blogs Portal</span>
+                            <span className="text-xl">💎</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Blogs Portal</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('life')}
-                            className="p-4 bg-gradient-to-br from-indigo-900/80 to-purple-900/80 hover:from-indigo-800 hover:to-purple-800 border border-indigo-500/30 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-400 hover:shadow-lg transition-all shadow-md"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">🚀</span>
-                            <span className="text-xs font-bold text-white">StudentOS Life</span>
+                            <span className="text-xl">🚀</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">StudentOS Life</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('profile')}
-                            className="p-4 bg-slate-900/60 hover:bg-indigo-950/40 border border-white/10 rounded-2xl flex flex-col items-center justify-center text-center gap-2 hover:border-indigo-500/50 hover:shadow-lg transition-all"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
-                            <span className="text-2xl">👤</span>
-                            <span className="text-xs font-bold text-white">My Profile</span>
+                            <span className="text-xl">👤</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">My Profile</span>
                           </button>
                         </>
                       )}
                     </div>
                   </div>
 
-                  {/* Core Metrics Bento Cards */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                    <div className="smart-glass p-5 rounded-2xl border border-white/5 flex items-center justify-between shadow-sm">
+                  {/* Core Metrics Summary Strip */}
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div
+                      onClick={() => { setStudyHubSubTab('tasks'); handleTabSelect('study_hub'); }}
+                      className="bento-card p-4 sm:p-5 rounded-2xl flex items-center justify-between cursor-pointer"
+                    >
                       <div className="space-y-1">
-                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Milestones Open</span>
-                        <h3 className="text-2xl font-black text-white tracking-tight">{tasks.filter(t => !t.completed).length} Tasks</h3>
+                        <span className="text-xs font-semibold text-slate-400">Open Tasks</span>
+                        <h3 className="text-xl sm:text-2xl font-black font-mono tabular-nums text-white">
+                          {tasks.filter(t => !t.completed).length}
+                        </h3>
                       </div>
-                      <div className="h-10 w-10 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-400">📋</div>
+                      <div className="h-9 w-9 bg-indigo-500/15 rounded-xl flex items-center justify-center text-indigo-400">
+                        <CheckSquare className="w-4 h-4" />
+                      </div>
                     </div>
 
-                    <div className="smart-glass p-5 rounded-2xl border border-white/5 flex items-center justify-between shadow-sm">
+                    <div
+                      onClick={() => handleTabSelect('notes')}
+                      className="bento-card p-4 sm:p-5 rounded-2xl flex items-center justify-between cursor-pointer"
+                    >
                       <div className="space-y-1">
-                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Saved Notes</span>
-                        <h3 className="text-2xl font-black text-white tracking-tight">{vaultNotes.length} Items</h3>
+                        <span className="text-xs font-semibold text-slate-400">Saved Notes</span>
+                        <h3 className="text-xl sm:text-2xl font-black font-mono tabular-nums text-white">
+                          {vaultNotes.length}
+                        </h3>
                       </div>
-                      <div className="h-10 w-10 bg-amber-500/10 rounded-xl flex items-center justify-center text-amber-400">📝</div>
+                      <div className="h-9 w-9 bg-amber-500/15 rounded-xl flex items-center justify-center text-amber-400">
+                        <FileText className="w-4 h-4" />
+                      </div>
                     </div>
 
-                    <div className="smart-glass p-5 rounded-2xl border border-white/5 flex items-center justify-between shadow-sm">
+                    <div
+                      onClick={() => handleTabSelect('quiz')}
+                      className="bento-card p-4 sm:p-5 rounded-2xl flex items-center justify-between cursor-pointer"
+                    >
                       <div className="space-y-1">
-                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Self Quizzes Taken</span>
-                        <h3 className="text-2xl font-black text-white tracking-tight">{currentUser.quizzesTaken || 3} Checked</h3>
+                        <span className="text-xs font-semibold text-slate-400">Quizzes Completed</span>
+                        <h3 className="text-xl sm:text-2xl font-black font-mono tabular-nums text-white">
+                          {currentUser.quizzesTaken || 3}
+                        </h3>
                       </div>
-                      <div className="h-10 w-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400">🧠</div>
+                      <div className="h-9 w-9 bg-emerald-500/15 rounded-xl flex items-center justify-center text-emerald-400">
+                        <Award className="w-4 h-4" />
+                      </div>
                     </div>
 
-                    <div className="smart-glass p-5 rounded-2xl border border-white/5 flex items-center justify-between shadow-sm">
+                    <div
+                      onClick={() => handleTabSelect('pomodoro')}
+                      className="bento-card p-4 sm:p-5 rounded-2xl flex items-center justify-between cursor-pointer"
+                    >
                       <div className="space-y-1">
-                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Hours In Field</span>
-                        <h3 className="text-2xl font-black text-white tracking-tight">{currentUser.studyHours || 12} hrs</h3>
+                        <span className="text-xs font-semibold text-slate-400">Study Hours</span>
+                        <h3 className="text-xl sm:text-2xl font-black font-mono tabular-nums text-white">
+                          {currentUser.studyHours || 12}h
+                        </h3>
                       </div>
-                      <div className="h-10 w-10 bg-rose-500/10 rounded-xl flex items-center justify-center text-rose-400">⏱️</div>
+                      <div className="h-9 w-9 bg-rose-500/15 rounded-xl flex items-center justify-center text-rose-400">
+                        <Clock className="w-4 h-4" />
+                      </div>
                     </div>
                   </div>
 
@@ -9505,108 +9554,315 @@ ${activeNote.content}`);
                 </div>
               )}
 
-              {/* Tab: Deep Focus Interval Timer View */}
-              {activeTab === 'pomodoro' && (
-                <div className="smart-glass p-4 sm:p-6 md:p-8 rounded-3xl space-y-6 max-w-2xl mx-auto text-center animate-fadeIn">
-                  <div className="space-y-2">
-                    <h3 className="text-xl sm:text-2xl font-black font-display text-white">Deep Work Engine</h3>
-                    <p className="text-xs text-slate-400">Isolate distractions and sustain baseline focus metrics over intervals. Earn 50 house points on session completion.</p>
-                  </div>
+              {/* Tab: Focus Timer — Distraction-Free Productivity Engine */}
+              {activeTab === 'pomodoro' && (() => {
+                const totalDuration = Math.max(1, customPomodoro);
+                const progressRatio = Math.min(1, Math.max(0, (totalDuration - pomodoroSeconds) / totalDuration));
+                const radius = 112;
+                const circumference = 2 * Math.PI * radius;
+                const strokeDashoffset = circumference * (1 - progressRatio);
+                const hrs = Math.floor(pomodoroSeconds / 3600);
+                const mins = Math.floor((pomodoroSeconds % 3600) / 60);
+                const secs = pomodoroSeconds % 60;
+                const timeFormatted = `${hrs > 0 ? `${hrs.toString().padStart(2, '0')}:` : ''}${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+                const isAtStart = pomodoroSeconds === customPomodoro;
 
-                  <div className="py-8 sm:py-12 px-4 sm:px-6 rounded-3xl bg-slate-950/60 border border-white/5 shadow-inner relative overflow-hidden flex flex-col items-center justify-center space-y-6">
-                    {/* Glowing pulse rings active only when counting down */}
-                    {pomodoroRunning && (
-                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                        <div className="absolute h-56 w-56 sm:h-64 sm:w-64 rounded-full border border-indigo-500/20 animate-ping"></div>
-                        <div className="absolute h-72 w-72 sm:h-96 sm:w-96 rounded-full border border-indigo-500/5 animate-pulse"></div>
+                const applyPreset = (mode: 'focus' | 'short_break' | 'long_break', seconds: number) => {
+                  if (pomodoroRunning) setPomodoroRunning(false);
+                  setPomodoroMode(mode);
+                  setCustomPomodoro(seconds);
+                  setPomodoroSeconds(seconds);
+                  setPomodoroJustCompleted(false);
+                  setShowPomodoroSettings(false);
+                };
+
+                return (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.25 }}
+                    className="bento-card p-6 sm:p-8 rounded-3xl space-y-6 max-w-2xl mx-auto text-center"
+                  >
+                    {/* Top Header & Today's Session Counter */}
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 border-b border-white/10 pb-4 text-left">
+                      <div>
+                        <div className="flex items-center gap-2 text-xs text-indigo-400 font-semibold">
+                          <Clock className="w-3.5 h-3.5" />
+                          <span>Focus Timer</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="text-slate-400">
+                            {pomodoroMode === 'focus' ? 'Deep Work Session' : pomodoroMode === 'short_break' ? 'Short Rest' : 'Long Recovery'}
+                          </span>
+                        </div>
+                        <h2 className="text-xl sm:text-2xl font-black font-display text-white tracking-tight mt-0.5">
+                          Distraction-Free Study Timer
+                        </h2>
                       </div>
+
+                      <div className="flex items-center gap-3 text-xs text-slate-300 bg-slate-950/80 px-3.5 py-2 rounded-xl border border-white/10 shrink-0">
+                        <span>Sessions today: <strong className="text-white font-mono tabular-nums">{pomodoroCompletedCount}</strong></span>
+                        <span aria-hidden="true" className="text-slate-600">·</span>
+                        <span className="text-emerald-400 font-semibold">+50 XP / focus</span>
+                      </div>
+                    </div>
+
+                    {/* Compact Mode & Duration Presets */}
+                    <div className="flex flex-wrap items-center justify-center gap-1.5 p-1.5 rounded-2xl bg-slate-950/80 border border-white/10 max-w-lg mx-auto">
+                      {[
+                        { mode: 'focus' as const, label: '25m Focus', sec: 1500 },
+                        { mode: 'focus' as const, label: '45m Deep Work', sec: 2700 },
+                        { mode: 'short_break' as const, label: '5m Break', sec: 300 },
+                        { mode: 'long_break' as const, label: '15m Long Break', sec: 900 }
+                      ].map((preset) => {
+                        const active = !showPomodoroSettings && pomodoroMode === preset.mode && customPomodoro === preset.sec;
+                        return (
+                          <button
+                            key={preset.label}
+                            type="button"
+                            onClick={() => applyPreset(preset.mode, preset.sec)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                              active
+                                ? 'bg-indigo-600 text-white shadow-sm'
+                                : 'text-slate-400 hover:text-white hover:bg-white/5'
+                            }`}
+                          >
+                            {preset.label}
+                          </button>
+                        );
+                      })}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPomodoroRunning(false);
+                          setShowPomodoroSettings(prev => !prev);
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                          showPomodoroSettings
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'text-slate-400 hover:text-white hover:bg-white/5'
+                        }`}
+                      >
+                        Custom
+                      </button>
+                    </div>
+
+                    {/* Main Circular Progress Timer Visualization */}
+                    <div className="py-4 flex flex-col items-center justify-center relative">
+                      <div className="relative w-64 h-64 sm:w-72 sm:h-72 flex items-center justify-center">
+                        <svg className="w-full h-full -rotate-90 transform" viewBox="0 0 256 256">
+                          <circle
+                            cx="128"
+                            cy="128"
+                            r={radius}
+                            fill="transparent"
+                            stroke="currentColor"
+                            strokeWidth="8"
+                            className="text-slate-800/80"
+                          />
+                          <circle
+                            cx="128"
+                            cy="128"
+                            r={radius}
+                            fill="transparent"
+                            stroke="currentColor"
+                            strokeWidth="8"
+                            strokeLinecap="round"
+                            strokeDasharray={circumference}
+                            strokeDashoffset={strokeDashoffset}
+                            className={`transition-all duration-300 ${
+                              pomodoroJustCompleted
+                                ? 'text-emerald-400'
+                                : pomodoroMode === 'focus'
+                                ? 'text-indigo-500'
+                                : 'text-teal-400'
+                            }`}
+                          />
+                        </svg>
+
+                        <div className="absolute inset-0 flex flex-col items-center justify-center px-4 select-none">
+                          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                            {pomodoroJustCompleted
+                              ? 'Completed'
+                              : pomodoroRunning
+                              ? pomodoroMode === 'focus'
+                                ? 'Focusing'
+                                : 'On Break'
+                              : isAtStart
+                              ? 'Ready'
+                              : 'Paused'}
+                          </span>
+                          <div className="text-4xl sm:text-5xl font-black font-mono tabular-nums tracking-tight text-white mt-1">
+                            {timeFormatted}
+                          </div>
+                          <span className="text-[11px] text-slate-500 font-mono tabular-nums mt-1.5">
+                            {Math.round(progressRatio * 100)}% elapsed
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Custom Duration Drawer */}
+                    <AnimatePresence>
+                      {showPomodoroSettings && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="bg-slate-950/90 p-4 rounded-2xl border border-white/10 max-w-sm mx-auto space-y-3">
+                            <p className="text-xs font-bold text-white">Custom Duration</p>
+                            <div className="flex justify-center items-center gap-2">
+                              <div className="flex flex-col">
+                                <label className="text-[10px] text-slate-400 font-semibold mb-1">Hours</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="12"
+                                  value={timerH}
+                                  onChange={e => setTimerH(Math.max(0, Number(e.target.value)))}
+                                  className="w-16 px-2 py-1.5 bg-slate-900 border border-white/10 rounded-xl text-center text-white font-mono text-xs"
+                                />
+                              </div>
+                              <span className="text-lg font-bold text-slate-500 mt-4">:</span>
+                              <div className="flex flex-col">
+                                <label className="text-[10px] text-slate-400 font-semibold mb-1">Minutes</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="59"
+                                  value={timerM}
+                                  onChange={e => setTimerM(Math.max(0, Math.min(59, Number(e.target.value))))}
+                                  className="w-16 px-2 py-1.5 bg-slate-900 border border-white/10 rounded-xl text-center text-white font-mono text-xs"
+                                />
+                              </div>
+                              <span className="text-lg font-bold text-slate-500 mt-4">:</span>
+                              <div className="flex flex-col">
+                                <label className="text-[10px] text-slate-400 font-semibold mb-1">Seconds</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="59"
+                                  value={timerS}
+                                  onChange={e => setTimerS(Math.max(0, Math.min(59, Number(e.target.value))))}
+                                  className="w-16 px-2 py-1.5 bg-slate-900 border border-white/10 rounded-xl text-center text-white font-mono text-xs"
+                                />
+                              </div>
+                            </div>
+                            <div className="flex gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const totalSec = Math.max(10, (timerH * 3600) + (timerM * 60) + timerS);
+                                  setCustomPomodoro(totalSec);
+                                  setPomodoroSeconds(totalSec);
+                                  setPomodoroJustCompleted(false);
+                                  setShowPomodoroSettings(false);
+                                  showNotification('Custom timer duration saved.');
+                                }}
+                                className="flex-1 bg-indigo-600 hover:bg-indigo-500 rounded-xl py-2 text-xs font-bold text-white cursor-pointer"
+                              >
+                                Apply Duration
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setShowPomodoroSettings(false)}
+                                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {/* Session Completion Feedback Banner */}
+                    {pomodoroJustCompleted && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex flex-col sm:flex-row items-center justify-between gap-3 text-left"
+                      >
+                        <div className="flex items-center gap-3">
+                          <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0" />
+                          <div>
+                            <p className="text-xs font-bold text-white">
+                              {pomodoroMode === 'focus'
+                                ? 'Focus session complete! +50 House Points earned.'
+                                : 'Break session complete! Ready to resume study.'}
+                            </p>
+                            <p className="text-[11px] text-slate-300">
+                              {pomodoroMode === 'focus'
+                                ? 'Take a short 5-minute break to recharge before your next block.'
+                                : 'Start a 25-minute focus block when you are ready.'}
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (pomodoroMode === 'focus') {
+                              applyPreset('short_break', 300);
+                              setPomodoroRunning(true);
+                            } else {
+                              applyPreset('focus', 1500);
+                              setPomodoroRunning(true);
+                            }
+                          }}
+                          className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shrink-0 cursor-pointer"
+                        >
+                          {pomodoroMode === 'focus' ? 'Start 5m Break →' : 'Start 25m Focus →'}
+                        </button>
+                      </motion.div>
                     )}
 
-                    <div className="text-4xl sm:text-5xl md:text-7xl font-black font-mono tracking-wider text-white bg-slate-900/80 px-4 sm:px-6 md:px-8 py-3 sm:py-4 md:py-5 rounded-2xl border border-white/10 shadow-lg relative z-10 select-none">
-                      {Math.floor(pomodoroSeconds / 3600) > 0 ? `${Math.floor(pomodoroSeconds / 3600).toString().padStart(2, '0')}:` : ''}{Math.floor((pomodoroSeconds % 3600) / 60).toString().padStart(2, '0')}:{(pomodoroSeconds % 60).toString().padStart(2, '0')}
-                    </div>
-                    <p className="text-[10px] md:text-xs uppercase font-bold tracking-widest text-indigo-400 relative z-10 px-4">
-                      {pomodoroRunning ? '⚡ Focus Session countdown in progress' : '⏸️ Session timer halted'}
-                    </p>
-
-                    {showPomodoroSettings ? (
-                      <div className="flex flex-col gap-4 relative z-10 bg-slate-900 p-4 rounded-2xl border border-white/10 w-full max-w-sm mt-4">
-                        <div className="flex justify-between items-center gap-2">
-                          <div className="flex flex-col">
-                            <label className="text-[10px] uppercase text-slate-400 font-bold">Hours</label>
-                            <input type="number" min="0" max="23" value={timerH} onChange={e => setTimerH(Number(e.target.value))} className="w-16 px-2 py-1 bg-slate-950 border border-white/10 rounded text-center text-white" />
-                          </div>
-                          <span className="text-xl font-bold text-slate-500">:</span>
-                          <div className="flex flex-col">
-                            <label className="text-[10px] uppercase text-slate-400 font-bold">Minutes</label>
-                            <input type="number" min="0" max="59" value={timerM} onChange={e => setTimerM(Number(e.target.value))} className="w-16 px-2 py-1 bg-slate-950 border border-white/10 rounded text-center text-white" />
-                          </div>
-                          <span className="text-xl font-bold text-slate-500">:</span>
-                          <div className="flex flex-col">
-                            <label className="text-[10px] uppercase text-slate-400 font-bold">Seconds</label>
-                            <input type="number" min="0" max="59" value={timerS} onChange={e => setTimerS(Number(e.target.value))} className="w-16 px-2 py-1 bg-slate-950 border border-white/10 rounded text-center text-white" />
-                          </div>
-                        </div>
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={() => {
-                              const totalSec = (timerH * 3600) + (timerM * 60) + timerS;
-                              setCustomPomodoro(totalSec);
-                              setPomodoroSeconds(totalSec);
-                              setShowPomodoroSettings(false);
-                              showNotification('Custom preferred timer saved.');
-                            }}
-                            className="flex-1 bg-indigo-600 rounded py-2 text-xs font-bold text-white hover:bg-indigo-500"
-                          >
-                            Save Custom Timer
-                          </button>
-                          <button onClick={() => setShowPomodoroSettings(false)} className="px-4 py-2 rounded bg-slate-800 text-xs font-bold text-white hover:bg-slate-700">Cancel</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex flex-wrap justify-center gap-3 relative z-10 px-4 mt-2">
-                        <button 
+                    {/* Primary Timer Controls */}
+                    <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+                      {!pomodoroRunning ? (
+                        <button
+                          type="button"
                           onClick={() => {
+                            if (pomodoroSeconds <= 0) {
+                              setPomodoroSeconds(customPomodoro);
+                            }
+                            setPomodoroJustCompleted(false);
+                            pomodoroEndTimeRef.current = Date.now() + (pomodoroSeconds > 0 ? pomodoroSeconds : customPomodoro) * 1000;
                             setPomodoroRunning(true);
-                            showNotification('Focus interval initialized. Keep learning!');
                           }}
-                          disabled={pomodoroRunning}
-                          className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-55 disabled:cursor-not-allowed text-white font-bold px-4 md:px-6 py-3 rounded-xl text-xs uppercase tracking-wider transition-all shadow-md active:scale-95 w-full sm:w-auto"
+                          className="uiverse-btn-primary px-8 py-3 rounded-xl text-white font-bold text-xs sm:text-sm cursor-pointer min-w-[140px]"
                         >
-                          {pomodoroSeconds === customPomodoro ? 'Initiate Focus' : 'Resume'}
+                          {isAtStart || pomodoroSeconds <= 0 ? 'Start Session' : 'Resume'}
                         </button>
-                        <button 
+                      ) : (
+                        <button
+                          type="button"
                           onClick={() => {
                             setPomodoroRunning(false);
-                            showNotification('Focus timer suspended.');
                           }}
-                          disabled={!pomodoroRunning}
-                          className="bg-amber-500 hover:bg-amber-400 disabled:opacity-55 disabled:cursor-not-allowed text-white font-bold px-4 md:px-6 py-3 rounded-xl text-xs uppercase tracking-wider transition-all shadow-md active:scale-95 w-full sm:w-auto mt-2 sm:mt-0"
+                          className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-8 py-3 rounded-xl text-xs sm:text-sm transition-colors cursor-pointer min-w-[140px]"
                         >
                           Pause
                         </button>
-                        <button 
-                          onClick={() => {
-                            setPomodoroRunning(false);
-                            setPomodoroSeconds(customPomodoro);
-                            showNotification('Focus interval duration reset.');
-                          }}
-                          className="bg-rose-600/80 hover:bg-rose-500 text-white font-bold px-4 md:px-6 py-3 rounded-xl text-xs uppercase tracking-wider transition-all active:scale-95 w-full sm:w-auto mt-2 sm:mt-0"
-                        >
-                          Reset
-                        </button>
-                        <button 
-                          onClick={() => setShowPomodoroSettings(true)}
-                          disabled={pomodoroRunning}
-                          className="bg-slate-800 hover:bg-slate-700 disabled:opacity-55 disabled:cursor-not-allowed text-slate-200 font-bold px-4 md:px-6 py-3 rounded-xl text-xs uppercase tracking-wider transition-all active:scale-95 w-full sm:w-auto mt-2 sm:mt-0"
-                        >
-                          ⚙️ Setup
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPomodoroRunning(false);
+                          pomodoroEndTimeRef.current = null;
+                          setPomodoroSeconds(customPomodoro);
+                          setPomodoroJustCompleted(false);
+                          localStorage.removeItem('s_os_pomodoro_active_state');
+                        }}
+                        className="bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-white/10 font-bold px-5 py-3 rounded-xl text-xs sm:text-sm transition-colors cursor-pointer"
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </motion.div>
+                );
+              })()}
 
               {/* Tab: Performance Analytics (Unified Overview, Gradebook, Report Cards, and Attendance) */}
               {(activeTab === 'analytics' || activeTab === 'gradebook' || activeTab === 'report_cards') && (
@@ -10105,82 +10361,113 @@ ${activeNote.content}`);
               )}
               {/* Tab: Assignment Center */}
               {activeTab === 'assignments' && (
-                <div className="space-y-6 animate-fadeIn max-w-6xl mx-auto">
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                    <div>
-                      <h3 className="text-2xl font-black font-display tracking-tight text-white uppercase">Assignment Center</h3>
-                      <p className="text-xs text-slate-400 font-medium tracking-wide">Manage school work, timetables, and class notices.</p>
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.22 }}
+                  className="space-y-6 max-w-6xl mx-auto"
+                >
+                  <div className="bento-card rounded-3xl p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-xs text-indigo-400 font-semibold">
+                        <span>Academic Coursework</span>
+                        <span aria-hidden="true">·</span>
+                        <span className="text-slate-400">
+                          {effectiveRole === 'student' ? `${currentUser.grade || 'Grade 10'} (${currentUser.section || 'Solara'})` : 'Faculty & Class Management'}
+                        </span>
+                      </div>
+                      <h2 className="text-2xl sm:text-3xl font-black font-display tracking-tight text-white">
+                        Assignment Center
+                      </h2>
+                      <p className="text-xs sm:text-sm text-slate-400">
+                        Access daily homework, subject projects, practice worksheets, class timetables, and official notices.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleTabSelect('homework')}
+                        className="uiverse-btn-primary px-4 py-2.5 rounded-xl text-xs font-bold text-white flex items-center gap-2 cursor-pointer"
+                      >
+                        <CheckSquare className="w-4 h-4" />
+                        <span>Open Homework Desk ({homeworkList.length})</span>
+                      </button>
                     </div>
                   </div>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    <div className="smart-glass p-6 rounded-3xl space-y-4 hover:border-indigo-500/50 transition-all cursor-pointer" onClick={() => handleTabSelect('homework')}>
-                      <div className="flex justify-between items-center">
-                        <span className="text-3xl">📓</span>
-                        <span className="bg-indigo-500 text-white text-[10px] uppercase font-bold px-2 py-1 rounded-full">Active</span>
-                      </div>
-                      <div>
-                        <h4 className="text-lg font-black text-white">Homework</h4>
-                        <p className="text-xs text-slate-400">View and submit daily homework.</p>
-                      </div>
-                    </div>
-                    
-                    <div className="smart-glass p-6 rounded-3xl space-y-4 hover:border-emerald-500/50 transition-all cursor-pointer" onClick={() => handleTabSelect('worksheet_viewer')}>
-                      <div className="flex justify-between items-center">
-                        <span className="text-3xl">📝</span>
-                        <span className="bg-emerald-500/20 text-emerald-400 text-[10px] uppercase font-bold px-2 py-1 rounded-full border border-emerald-500/20">Resources</span>
-                      </div>
-                      <div>
-                        <h4 className="text-lg font-black text-white">Worksheets</h4>
-                        <p className="text-xs text-slate-400">Download practice worksheets.</p>
-                      </div>
-                    </div>
 
-                    <div className="smart-glass p-6 rounded-3xl space-y-4 hover:border-amber-500/50 transition-all cursor-pointer" onClick={() => handleTabSelect('timetable_viewer')}>
-                      <div className="flex justify-between items-center">
-                        <span className="text-3xl">📅</span>
-                        <span className="bg-amber-500/20 text-amber-400 text-[10px] uppercase font-bold px-2 py-1 rounded-full border border-amber-500/20">Schedule</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                    {[
+                      {
+                        tab: 'homework',
+                        icon: '📓',
+                        title: 'Daily Homework',
+                        meta: `${homeworkList.length} posted`,
+                        desc: 'Track daily class assignments, due dates, and submission status.'
+                      },
+                      {
+                        tab: 'assignment_viewer',
+                        icon: '📋',
+                        title: 'Subject Projects & Assignments',
+                        meta: 'Long-term work',
+                        desc: 'Download project briefs, rubrics, and term coursework files.'
+                      },
+                      {
+                        tab: 'worksheet_viewer',
+                        icon: '📝',
+                        title: 'Practice Worksheets',
+                        meta: 'Revision sets',
+                        desc: 'Chapter-wise problem sets and exam preparation sheets.'
+                      },
+                      {
+                        tab: 'timetable_viewer',
+                        icon: '📅',
+                        title: 'Class Timetables',
+                        meta: 'Schedules',
+                        desc: 'Weekly lecture schedules, lab slots, and assessment dates.'
+                      },
+                      {
+                        tab: 'notice_viewer',
+                        icon: '📢',
+                        title: 'Class Notices',
+                        meta: 'Bulletins',
+                        desc: 'Important circulars and updates from teachers and coordinators.'
+                      },
+                      {
+                        tab: 'gallery_viewer',
+                        icon: '🖼️',
+                        title: 'Campus Event Gallery',
+                        meta: 'Media',
+                        desc: 'Highlights from science fairs, house competitions, and workshops.'
+                      }
+                    ].map((card) => (
+                      <div
+                        key={card.tab}
+                        onClick={() => handleTabSelect(card.tab)}
+                        className="bento-card p-6 rounded-3xl flex flex-col justify-between gap-4 cursor-pointer group"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-3xl">{card.icon}</span>
+                          <span className="text-xs font-mono text-slate-400 group-hover:text-indigo-300 transition-colors">
+                            {card.meta} →
+                          </span>
+                        </div>
+                        <div className="space-y-1">
+                          <h3 className="text-base font-bold text-white group-hover:text-indigo-300 transition-colors">
+                            {card.title}
+                          </h3>
+                          <p className="text-xs text-slate-400 leading-relaxed">{card.desc}</p>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="text-lg font-black text-white">Timetable</h4>
-                        <p className="text-xs text-slate-400">Class timetable and routines.</p>
-                      </div>
-                    </div>
-
-                    <div className="smart-glass p-6 rounded-3xl space-y-4 hover:border-rose-500/50 transition-all cursor-pointer" onClick={() => handleTabSelect('assignment_viewer')}>
-                      <div className="flex justify-between items-center">
-                        <span className="text-3xl">📋</span>
-                        <span className="bg-rose-500/20 text-rose-400 text-[10px] uppercase font-bold px-2 py-1 rounded-full border border-rose-500/20">Tasks</span>
-                      </div>
-                      <div>
-                        <h4 className="text-lg font-black text-white">Assignments</h4>
-                        <p className="text-xs text-slate-400">Projects and long-term assignments.</p>
-                      </div>
-                    </div>
-
-                    <div className="smart-glass p-6 rounded-3xl space-y-4 hover:border-cyan-500/50 transition-all cursor-pointer" onClick={() => handleTabSelect('notice_viewer')}>
-                      <div className="flex justify-between items-center">
-                        <span className="text-3xl">📢</span>
-                        <span className="bg-cyan-500/20 text-cyan-400 text-[10px] uppercase font-bold px-2 py-1 rounded-full border border-cyan-500/20">Updates</span>
-                      </div>
-                      <div>
-                        <h4 className="text-lg font-black text-white">Class Notices</h4>
-                        <p className="text-xs text-slate-400">Important messages from teachers.</p>
-                      </div>
-                    </div>
-
-                    <div className="smart-glass p-6 rounded-3xl space-y-4 hover:border-fuchsia-500/50 transition-all cursor-pointer" onClick={() => handleTabSelect('gallery_viewer')}>
-                      <div className="flex justify-between items-center">
-                        <span className="text-3xl">🖼️</span>
-                        <span className="bg-fuchsia-500/20 text-fuchsia-400 text-[10px] uppercase font-bold px-2 py-1 rounded-full border border-fuchsia-500/20">Events</span>
-                      </div>
-                      <div>
-                        <h4 className="text-lg font-black text-white">Photo Gallery</h4>
-                        <p className="text-xs text-slate-400">Upload school event photos.</p>
-                      </div>
-                    </div>
+                    ))}
                   </div>
-                </div>
+
+                  {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '') && (
+                    <div className="pt-2">
+                      <AssignmentCenter />
+                    </div>
+                  )}
+                </motion.div>
               )}
 
               {activeTab === 'gallery_viewer' && (
@@ -10366,74 +10653,57 @@ ${activeNote.content}`);
                     </div>
                   )}
 
-                  {/* Filter panel */}
-                  <div className="smart-glass p-4 rounded-2xl grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
-                    <div className="md:col-span-4 relative">
-                      <input 
-                        type="text"
-                        placeholder="Search assignments by subject or title..."
-                        value={hwSearch}
-                        onChange={e => setHwSearch(e.target.value)}
-                        className="w-full text-xs pl-9 pr-3 py-2.5 rounded-xl bg-slate-900 border border-white/5 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      />
-                      <span className="absolute left-3 top-3 text-[10px]">🔎</span>
-                    </div>
+                  {/* Filter & Status Control Bar */}
+                  <div className="bento-card p-4 rounded-2xl flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1">
+                      <div className="relative flex-1">
+                        <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          placeholder="Search assignments by subject or title..."
+                          value={hwSearch}
+                          onChange={e => setHwSearch(e.target.value)}
+                          className="w-full text-xs pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-white focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
 
-                    <div className="md:col-span-4">
                       <select
                         value={hwFilterGrade}
                         onChange={e => setHwFilterGrade(e.target.value)}
-                        className="w-full text-xs px-3 py-2.5 rounded-xl bg-slate-900 border border-white/5 text-slate-300 font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        className="text-xs px-3.5 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-slate-200 font-semibold focus:outline-none focus:border-indigo-500"
                       >
-                        <option value="All Grades">📚 All Grades (Grade 1 - 12)</option>
-                        {effectiveRole !== 'student' && <option value="My Classes">👨‍🏫 My Assigned Classes</option>}
+                        <option value="All Grades">All Grades (Grade 1 - 12)</option>
+                        {effectiveRole !== 'student' && <option value="My Classes">My Assigned Classes</option>}
                         {Array.from({ length: 12 }, (_, i) => `Grade ${i + 1}`).map(g => (
-                          <option key={g} value={g}>🏫 {g}</option>
+                          <option key={g} value={g}>{g}</option>
                         ))}
                       </select>
                     </div>
 
-                    <div className="md:col-span-4 flex justify-end gap-2 text-xs text-slate-400">
-                      <span>Total Assigned: <strong className="text-white font-mono">{homeworkList.length}</strong></span>
-                      <span>•</span>
-                      <span>Filters Match: <strong className="text-white font-mono">
-                        {homeworkList.filter(hw => {
-                          let roleAllowed = true;
-                          if (effectiveRole === 'student') {
-                            const normG = (g?: string) => g ? g.toLowerCase().replace(/grade|class/g, '').trim() : '';
-                            const normS = (s?: string) => s ? s.toLowerCase().trim() : '';
-                            const sg = normG(currentUser?.grade);
-                            const hg = normG(hw.classGrade);
-                            const ss = normS(currentUser?.section);
-                            const hs = normS(hw.classSection);
-                            const gradeMatches = !sg || !hg || sg === hg || hw.classGrade === 'All Grades';
-                            const secMatches = hw.classSection === 'All Sections' || !ss || !hs || ss === hs;
-                            roleAllowed = gradeMatches && secMatches;
-                          } else if (effectiveRole === 'teacher') {
-                            const gradeMatch = !currentUser?.assignedGrades || currentUser.assignedGrades.length === 0 || currentUser.assignedGrades.includes(hw.classGrade);
-                            const secMatch = hw.classSection === 'All Sections' || !currentUser?.assignedSections || currentUser.assignedSections.length === 0 || currentUser.assignedSections.includes(hw.classSection);
-                            const isMyCreation = hw.givenBy === currentUser?.name || hw.givenBy === 'Teacher';
-                            if (hwFilterGrade === 'My Classes') {
-                              roleAllowed = (gradeMatch && secMatch) || isMyCreation;
-                            } else {
-                              roleAllowed = true;
-                            }
-                          } else {
-                            roleAllowed = true;
-                          }
-                          
-                          const matchG = hwFilterGrade === 'All Grades' || 
-                                       (hwFilterGrade === 'My Classes' ? roleAllowed : hw.classGrade === hwFilterGrade);
-                          const matchS = !hwSearch.trim() || hw.title.toLowerCase().includes(hwSearch.toLowerCase()) || hw.content.toLowerCase().includes(hwSearch.toLowerCase()) || hw.subject.toLowerCase().includes(hwSearch.toLowerCase());
-                          return roleAllowed && matchG && matchS;
-                        }).length}
-                      </strong></span>
+                    <div className="flex items-center justify-between sm:justify-end gap-2">
+                      <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-950 border border-white/10">
+                        {(['all', 'pending', 'completed'] as const).map((statusKey) => (
+                          <button
+                            key={statusKey}
+                            type="button"
+                            onClick={() => setHwStatusFilter(statusKey)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-colors cursor-pointer ${
+                              hwStatusFilter === statusKey
+                                ? 'bg-indigo-600 text-white'
+                                : 'text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            {statusKey}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
 
                   {/* Homework Grid list */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                     {(() => {
+                      const userEmail = currentUser?.email || 'anonymous@school.edu';
                       const filtered = homeworkList.filter(hw => {
                         let roleAllowed = true;
                         if (effectiveRole === 'student') {
@@ -10462,8 +10732,11 @@ ${activeNote.content}`);
                         const matchG = hwFilterGrade === 'All Grades' || 
                                      (hwFilterGrade === 'My Classes' ? roleAllowed : hw.classGrade === hwFilterGrade);
                         const matchS = !hwSearch.trim() || hw.title.toLowerCase().includes(hwSearch.toLowerCase()) || hw.content.toLowerCase().includes(hwSearch.toLowerCase()) || hw.subject.toLowerCase().includes(hwSearch.toLowerCase());
+                        const isDone = hw.completedList?.includes(userEmail);
+                        const matchStatus =
+                          hwStatusFilter === 'all' ? true : hwStatusFilter === 'completed' ? Boolean(isDone) : !isDone;
                         
-                        return roleAllowed && matchG && matchS;
+                        return roleAllowed && matchG && matchS && matchStatus;
                       });
 
                       if (filtered.length === 0) {
@@ -12958,19 +13231,244 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                 activeTab={activeTab}
               />
 
-              {/* Tab 9: Faculty Dashboard View */}
-              {activeTab === 'faculty' && effectiveRole === 'teacher' && (
-                <div className="space-y-6 animate-fadeIn">
-                  <div className="flex gap-4 items-center bg-slate-900 border border-white/5 rounded-3xl p-6">
-                    <span className="text-4xl">👨‍🏫</span>
-                    <div>
-                      <h3 className="text-2xl font-black font-display text-white">Faculty Center</h3>
-                      <p className="text-xs text-slate-400">Manage your assigned classes and section performances here.</p>
+              {/* Tab 9: Faculty Center — Teacher Interface */}
+              {activeTab === 'faculty' && effectiveRole === 'teacher' && (() => {
+                const assignedGradesList = currentUser.assignedGrades && currentUser.assignedGrades.length > 0
+                  ? currentUser.assignedGrades
+                  : [currentUser.grade || 'Grade 10'];
+                const assignedSectionsList = currentUser.assignedSections && currentUser.assignedSections.length > 0
+                  ? currentUser.assignedSections
+                  : [currentUser.section || 'Solara'];
+                const teacherHomework = homeworkList.filter(hw =>
+                  assignedGradesList.includes(hw.classGrade) || hw.givenBy === currentUser.name
+                );
+                const pendingSubmissionsToReview = teacherHomework.reduce(
+                  (acc, hw) => acc + (hw.completedList ? hw.completedList.length : 0),
+                  0
+                );
+
+                return (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.22 }}
+                    className="space-y-6 max-w-6xl mx-auto pb-12"
+                  >
+                    {/* Header: Faculty Center Title, Contextual Greeting & Academic Context */}
+                    <div className="bento-card rounded-3xl p-6 sm:p-8 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-xs text-indigo-400 font-semibold flex-wrap">
+                          <span>Faculty Center</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="text-slate-300">{currentUser.department || currentUser.specialtySubject || 'Academic Faculty'}</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="text-slate-400 font-mono">Term 1 Academic Period</span>
+                        </div>
+                        <h1 className="text-2xl sm:text-3xl font-black font-display text-white tracking-tight">
+                          Good day, {currentUser.name}
+                        </h1>
+                        <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
+                          Overview of your assigned classes ({assignedGradesList.join(', ')} · {assignedSectionsList.join(', ')}), pending assignment reviews, upcoming lessons, and gradebook records.
+                        </p>
+                      </div>
+
+                      {/* Primary Quick Actions */}
+                      <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleTabSelect('whiteboard')}
+                          className="uiverse-btn-primary px-4 py-2.5 rounded-xl text-xs font-bold text-white flex items-center gap-2 cursor-pointer"
+                        >
+                          <Monitor className="w-4 h-4" />
+                          <span>Open Smartboard Class</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleTabSelect('attendance_manager')}
+                          className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 border border-white/10 text-xs font-semibold transition-colors cursor-pointer"
+                        >
+                          Take Attendance
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                  <StudentMarksCenter currentUser={currentUser} effectiveRole={effectiveRole} showNotification={showNotification} />
-                </div>
-              )}
+
+                    {/* Quick Actions Bar */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                      {[
+                        { label: 'Open Classes', icon: '🏫', action: () => { setProfileTab('student_list'); handleTabSelect('profile'); } },
+                        { label: 'Manage Assignments', icon: '📓', action: () => handleTabSelect('homework') },
+                        { label: 'Review Submissions', icon: '📋', action: () => handleTabSelect('assignments') },
+                        { label: 'Open Gradebook', icon: '📊', action: () => handleTabSelect('gradebook') },
+                        { label: 'School Calendar', icon: '📅', action: () => handleTabSelect('calendar') },
+                        { label: 'Teaching Materials', icon: '📂', action: () => handleTabSelect('materials') }
+                      ].map((item) => (
+                        <button
+                          key={item.label}
+                          type="button"
+                          onClick={item.action}
+                          className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer group"
+                        >
+                          <span className="text-xl">{item.icon}</span>
+                          <span className="text-xs font-bold text-white group-hover:text-indigo-300 transition-colors whitespace-nowrap">
+                            {item.label}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Priority Overview Grid */}
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                      {/* Left 7 Cols: Assigned Classes & Pending Assignment Reviews */}
+                      <div className="lg:col-span-7 space-y-6">
+                        {/* Assigned Classes & Sections */}
+                        <div className="bento-card rounded-3xl p-6 space-y-4">
+                          <div className="flex items-center justify-between border-b border-white/10 pb-3.5">
+                            <div>
+                              <h2 className="text-base font-bold text-white">Assigned Classes & Sections</h2>
+                              <p className="text-xs text-slate-400">Authorized cohorts under your instruction</p>
+                            </div>
+                            <span className="text-xs font-mono text-indigo-400 tabular-nums">
+                              {assignedGradesList.length} {assignedGradesList.length === 1 ? 'Grade' : 'Grades'}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {assignedGradesList.map((grade) => (
+                              <div key={grade} className="p-4 rounded-2xl bg-slate-950/60 border border-white/5 flex items-center justify-between gap-3">
+                                <div>
+                                  <p className="text-sm font-bold text-white">{grade}</p>
+                                  <p className="text-xs text-slate-400">
+                                    Sections: {assignedSectionsList.join(', ')} · {currentUser.specialtySubject || 'Core Subject'}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleTabSelect('attendance_manager')}
+                                  className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-indigo-600 text-xs font-semibold text-slate-200 hover:text-white transition-colors cursor-pointer shrink-0"
+                                >
+                                  Roll Call
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Pending Grading & Assignment Review Tasks */}
+                        <div className="bento-card rounded-3xl p-6 space-y-4">
+                          <div className="flex items-center justify-between border-b border-white/10 pb-3.5">
+                            <div>
+                              <h2 className="text-base font-bold text-white">Assignment & Submission Review</h2>
+                              <p className="text-xs text-slate-400">Active homework assigned to your classes</p>
+                            </div>
+                            <span className="text-xs font-mono text-emerald-400 tabular-nums">
+                              {pendingSubmissionsToReview} student submissions
+                            </span>
+                          </div>
+
+                          {teacherHomework.length === 0 ? (
+                            <div className="py-6 text-center space-y-2">
+                              <p className="text-sm font-semibold text-slate-200">No active assignments awaiting review</p>
+                              <p className="text-xs text-slate-400">
+                                Create a new homework task or assessment sheet from the Homework Hub.
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="divide-y divide-white/5">
+                              {teacherHomework.slice(0, 5).map((hw) => (
+                                <div key={hw.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-2 text-xs text-slate-400">
+                                      <span className="font-semibold text-indigo-400">{hw.subject}</span>
+                                      <span aria-hidden="true">·</span>
+                                      <span>{hw.classGrade} ({hw.classSection || 'All Sections'})</span>
+                                      <span aria-hidden="true">·</span>
+                                      <span className="font-mono">Due {hw.dueDate}</span>
+                                    </div>
+                                    <p className="text-sm font-bold text-white truncate mt-0.5">{hw.title}</p>
+                                  </div>
+                                  <div className="flex items-center gap-3 shrink-0">
+                                    <span className="text-xs font-mono text-emerald-400 tabular-nums">
+                                      {(hw.completedList || []).length} completed
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleTabSelect('homework')}
+                                      className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 cursor-pointer"
+                                    >
+                                      Review →
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Right 5 Cols: Upcoming Lessons & School Announcements */}
+                      <div className="lg:col-span-5 space-y-6">
+                        {/* Upcoming Lessons */}
+                        <div className="bento-card rounded-3xl p-6 space-y-4">
+                          <div className="flex items-center justify-between border-b border-white/10 pb-3.5">
+                            <h2 className="text-base font-bold text-white">Upcoming Lessons & Schedule</h2>
+                            <button
+                              type="button"
+                              onClick={() => handleTabSelect('calendar')}
+                              className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 cursor-pointer"
+                            >
+                              Full Calendar →
+                            </button>
+                          </div>
+
+                          {schedules.length === 0 ? (
+                            <p className="text-xs text-slate-400 py-4 text-center">No scheduled lecture blocks today.</p>
+                          ) : (
+                            <div className="space-y-2.5">
+                              {schedules.slice(0, 4).map((sch) => (
+                                <div key={sch.id} className="p-3.5 rounded-2xl bg-slate-950/60 border border-white/5 flex items-center justify-between gap-3">
+                                  <div>
+                                    <p className="text-xs sm:text-sm font-bold text-white">{sch.subject}</p>
+                                    <p className="text-[11px] text-slate-400">{sch.day}</p>
+                                  </div>
+                                  <span className="text-xs font-mono text-indigo-300 tabular-nums">{sch.time}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Relevant School Announcements */}
+                        <div className="bento-card rounded-3xl p-6 space-y-4">
+                          <div className="flex items-center justify-between border-b border-white/10 pb-3.5">
+                            <h2 className="text-base font-bold text-white">Faculty & School Notices</h2>
+                            <span className="text-xs text-slate-400">{announcements.length} active</span>
+                          </div>
+
+                          {announcements.length === 0 ? (
+                            <p className="text-xs text-slate-400 py-4 text-center">No recent faculty announcements.</p>
+                          ) : (
+                            <div className="space-y-3">
+                              {announcements.slice(0, 3).map((ann) => (
+                                <div key={ann.id} className="p-3.5 rounded-2xl bg-slate-950/60 border border-white/5 space-y-1">
+                                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                                    <span className="font-semibold text-indigo-300">{ann.tag || 'Notice'}</span>
+                                    <span className="font-mono">{ann.date || 'Today'}</span>
+                                  </div>
+                                  <h3 className="text-xs sm:text-sm font-bold text-white">{ann.title}</h3>
+                                  <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">{ann.content}</p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Integrated Student Marks & Evaluation Center */}
+                    <StudentMarksCenter currentUser={currentUser} effectiveRole={effectiveRole} showNotification={showNotification} />
+                  </motion.div>
+                );
+              })()}
 
               {/* Tab 10: Attendance Manager */}
               {activeTab === 'attendance_manager' && ['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole) && (

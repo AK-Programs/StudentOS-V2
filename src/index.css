@@ -506,6 +506,50 @@ button, a, [role="button"], input, select, textarea {
   transform: rotateY(180deg);
 }
 
+/* ==========================================
+   MOTION, ACETERNITY & MAGIC UI INSPIRED UTILITIES
+   ========================================== */
+.bento-card {
+  position: relative;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.22s ease, box-shadow 0.22s ease;
+}
+.bento-card:hover {
+  border-color: rgba(99, 102, 241, 0.28);
+  box-shadow: 0 10px 28px -10px rgba(15, 23, 42, 0.6), 0 0 20px -6px rgba(99, 102, 241, 0.14);
+}
+
+.light-theme .bento-card,
+.theme-paper .bento-card {
+  background: rgba(255, 255, 255, 0.92) !important;
+  border-color: rgba(15, 23, 42, 0.08) !important;
+  box-shadow: 0 4px 16px -4px rgba(15, 23, 42, 0.05) !important;
+}
+.light-theme .bento-card:hover,
+.theme-paper .bento-card:hover {
+  border-color: rgba(79, 70, 229, 0.3) !important;
+  box-shadow: 0 10px 24px -8px rgba(79, 70, 229, 0.12) !important;
+}
+
+/* Respect prefers-reduced-motion across all animated components */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .uiverse-card-hover:hover,
+  .bento-card:hover,
+  .uiverse-btn-primary:hover:not(:disabled) {
+    transform: none !important;
+  }
+}
+
+
 
 
 

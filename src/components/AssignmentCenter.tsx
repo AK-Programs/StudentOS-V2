@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
 import { AssignmentUploadForm } from './AssignmentUploadForm';
 import { ResourceCategory } from '../types';
-import { uploadFileToStorage } from '../lib/storageHelper';
-import { Sparkles, FileCheck, HelpCircle, Loader2 } from 'lucide-react';
+import { Sparkles, FileCheck, HelpCircle, Loader2, Upload, BookOpen, Calendar, FileText, Image as ImageIcon } from 'lucide-react';
 
 export const AssignmentCenter: React.FC = () => {
   const [activeUploadType, setActiveUploadType] = useState<ResourceCategory>('assignment');
@@ -16,7 +16,7 @@ export const AssignmentCenter: React.FC = () => {
   const [qLoading, setQLoading] = useState(false);
 
   // AI Homework Checker State
-  const [hwTitle, setHwTitle] = useState('Newton\'s Laws Analysis');
+  const [hwTitle, setHwTitle] = useState("Newton's Laws Analysis");
   const [hwSubmission, setHwSubmission] = useState('');
   const [hwResult, setHwResult] = useState('');
   const [hwLoading, setHwLoading] = useState(false);
@@ -67,80 +67,139 @@ export const AssignmentCenter: React.FC = () => {
     }
   };
 
+  const uploadTypes: { id: ResourceCategory; label: string; icon: React.ReactNode; desc: string }[] = [
+    { id: 'assignment', label: 'Assignment', icon: <BookOpen className="w-4 h-4" />, desc: 'Class assignments & project briefs' },
+    { id: 'worksheet', label: 'Worksheet', icon: <FileText className="w-4 h-4" />, desc: 'Practice problem sets & revision sheets' },
+    { id: 'timetable', label: 'Timetable', icon: <Calendar className="w-4 h-4" />, desc: 'Section schedules & exam datesheets' },
+    { id: 'gallery', label: 'Photo Gallery', icon: <ImageIcon className="w-4 h-4" />, desc: 'Campus events & classroom highlights' }
+  ];
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-4">
-        <div>
-          <h2 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2">
-            <span>📚</span> Resource & Assessment Center
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22 }}
+      className="space-y-6"
+    >
+      <div className="bento-card rounded-3xl p-5 sm:p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-xs text-indigo-400 font-semibold">
+            <span>Academic Resource Suite</span>
+            <span aria-hidden="true">·</span>
+            <span className="text-slate-400">Faculty & Student Tools</span>
+          </div>
+          <h2 className="text-xl sm:text-2xl font-black font-display text-white tracking-tight">
+            Resource & Assessment Center
           </h2>
-          <p className="text-xs text-slate-400">Upload materials, auto-generate question papers, and run AI homework checks.</p>
+          <p className="text-xs text-slate-400">
+            Publish class resources, generate structured exam papers, and evaluate submissions.
+          </p>
         </div>
-        
-        <div className="flex items-center gap-1.5 bg-slate-900 p-1.5 rounded-xl border border-white/10 overflow-x-auto scrollbar-none w-full sm:w-auto">
+
+        <div className="flex items-center gap-1 bg-slate-950/90 p-1 rounded-xl border border-white/10 overflow-x-auto scrollbar-none w-full md:w-auto">
           <button
+            type="button"
             onClick={() => setActiveTab('upload')}
-            className={`px-3 py-2 rounded-lg font-bold text-xs whitespace-nowrap shrink-0 transition-all ${activeTab === 'upload' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+            className={`px-3.5 py-2 rounded-lg font-bold text-xs whitespace-nowrap shrink-0 transition-colors flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'upload'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-white'
+            }`}
           >
-            Upload Center
+            <Upload className="w-3.5 h-3.5" />
+            <span>Upload Center</span>
           </button>
           <button
+            type="button"
             onClick={() => setActiveTab('qgen')}
-            className={`px-3 py-2 rounded-lg font-bold text-xs whitespace-nowrap shrink-0 transition-all flex items-center gap-1.5 ${activeTab === 'qgen' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+            className={`px-3.5 py-2 rounded-lg font-bold text-xs whitespace-nowrap shrink-0 transition-colors flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'qgen'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-white'
+            }`}
           >
-            <HelpCircle className="w-3.5 h-3.5 text-teal-400" /> AI Question Generator
+            <HelpCircle className="w-3.5 h-3.5 text-teal-400" />
+            <span>Question Generator</span>
           </button>
           <button
+            type="button"
             onClick={() => setActiveTab('checker')}
-            className={`px-3 py-2 rounded-lg font-bold text-xs whitespace-nowrap shrink-0 transition-all flex items-center gap-1.5 ${activeTab === 'checker' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+            className={`px-3.5 py-2 rounded-lg font-bold text-xs whitespace-nowrap shrink-0 transition-colors flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'checker'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-white'
+            }`}
           >
-            <FileCheck className="w-3.5 h-3.5 text-amber-400" /> AI Homework Checker
+            <FileCheck className="w-3.5 h-3.5 text-amber-400" />
+            <span>Homework Checker</span>
           </button>
         </div>
       </div>
 
       {activeTab === 'upload' && (
-        <>
-          <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
-            <button onClick={() => setActiveUploadType('assignment')} className={`px-3.5 sm:px-4 py-2 rounded-xl font-bold text-xs whitespace-nowrap shrink-0 ${activeUploadType === 'assignment' ? 'bg-indigo-600 text-white shadow' : 'bg-slate-800 text-slate-400'}`}>Assignment</button>
-            <button onClick={() => setActiveUploadType('timetable')} className={`px-3.5 sm:px-4 py-2 rounded-xl font-bold text-xs whitespace-nowrap shrink-0 ${activeUploadType === 'timetable' ? 'bg-indigo-600 text-white shadow' : 'bg-slate-800 text-slate-400'}`}>Timetable</button>
-            <button onClick={() => setActiveUploadType('worksheet')} className={`px-3.5 sm:px-4 py-2 rounded-xl font-bold text-xs whitespace-nowrap shrink-0 ${activeUploadType === 'worksheet' ? 'bg-indigo-600 text-white shadow' : 'bg-slate-800 text-slate-400'}`}>Worksheet</button>
-            <button onClick={() => setActiveUploadType('gallery')} className={`px-3.5 sm:px-4 py-2 rounded-xl font-bold text-xs whitespace-nowrap shrink-0 ${activeUploadType === 'gallery' ? 'bg-indigo-600 text-white shadow' : 'bg-slate-800 text-slate-400'}`}>Photo Gallery</button>
+        <div className="space-y-5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {uploadTypes.map((item) => {
+              const selected = activeUploadType === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setActiveUploadType(item.id)}
+                  className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
+                    selected
+                      ? 'bg-indigo-600/15 border-indigo-500/50 text-white shadow-sm'
+                      : 'bg-slate-900/70 border-white/10 text-slate-300 hover:border-white/20 hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 font-bold text-xs">
+                    <span className={selected ? 'text-indigo-400' : 'text-slate-400'}>{item.icon}</span>
+                    <span>{item.label}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1 line-clamp-1">{item.desc}</p>
+                </button>
+              );
+            })}
           </div>
 
-          <div className="grid grid-cols-1 gap-6">
-            <div className="p-4 sm:p-6 bg-slate-900 border border-white/10 rounded-2xl">
-              <h3 className="text-base sm:text-lg text-white font-bold capitalize mb-1">Upload {activeUploadType}</h3>
-              <p className="text-xs text-slate-400 mb-4">Master template file storage & database registration.</p>
-              <AssignmentUploadForm key={activeUploadType} category={activeUploadType} onSuccess={() => {}} />
+          <div className="bento-card p-5 sm:p-6 rounded-3xl">
+            <div className="mb-4 pb-3 border-b border-white/10">
+              <h3 className="text-base sm:text-lg text-white font-bold capitalize">
+                Upload {activeUploadType}
+              </h3>
+              <p className="text-xs text-slate-400">
+                Files are stored in school cloud storage and indexed for authorized classes.
+              </p>
             </div>
+            <AssignmentUploadForm key={activeUploadType} category={activeUploadType} onSuccess={() => {}} />
           </div>
-        </>
+        </div>
       )}
 
       {activeTab === 'qgen' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-          <div className="bg-slate-900 border border-white/10 p-4 sm:p-5 rounded-2xl space-y-4">
-            <div className="flex items-center gap-2 text-indigo-400 font-bold text-sm">
-              <Sparkles className="w-4 h-4" /> Assessment Parameters
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          <div className="bento-card p-5 rounded-3xl space-y-4">
+            <div className="flex items-center gap-2 text-indigo-400 font-bold text-sm border-b border-white/10 pb-3">
+              <Sparkles className="w-4 h-4" />
+              <span>Assessment Parameters</span>
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1">Subject</label>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Subject</label>
               <input
                 type="text"
                 value={qSubject}
                 onChange={(e) => setQSubject(e.target.value)}
-                className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
+                className="w-full bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1">Grade / Class</label>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Grade / Class</label>
               <select
                 value={qGrade}
                 onChange={(e) => setQGrade(e.target.value)}
-                className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
+                className="w-full bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
               >
                 <option value="Grade 8">Grade 8</option>
                 <option value="Grade 9">Grade 9</option>
@@ -151,48 +210,52 @@ export const AssignmentCenter: React.FC = () => {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1">Difficulty</label>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Difficulty Level</label>
               <select
                 value={qDifficulty}
                 onChange={(e) => setQDifficulty(e.target.value)}
-                className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
+                className="w-full bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
               >
-                <option value="Easy">Easy</option>
-                <option value="Medium">Medium</option>
-                <option value="Hard">Hard / Competitive</option>
+                <option value="Easy">Foundational / Easy</option>
+                <option value="Medium">Standard / Medium</option>
+                <option value="Hard">Advanced / Competitive</option>
                 <option value="HOTS Special">HOTS & Olympiad Level</option>
               </select>
             </div>
 
-            <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-[11px] text-indigo-200">
-              Includes: MCQs, HOTS, 1-Mark, 2-Mark, 5-Mark, Case Study, Assertion-Reason, and True/False with Answer Keys.
-            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Generates a structured test paper with MCQs, short-answer, long-answer, case study questions, and a complete marking scheme.
+            </p>
 
             <button
+              type="button"
               onClick={handleGenerateQuestions}
               disabled={qLoading}
-              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow"
+              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer"
             >
               {qLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              Generate Question Paper
+              <span>Generate Question Paper</span>
             </button>
           </div>
 
-          <div className="lg:col-span-2 bg-slate-900 border border-white/10 p-4 sm:p-5 rounded-2xl flex flex-col min-h-[320px] sm:min-h-[400px]">
-            <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-              <span>📝</span> Generated Test Paper & Answer Key
+          <div className="lg:col-span-2 bento-card p-5 rounded-3xl flex flex-col min-h-[360px]">
+            <h4 className="text-sm font-bold text-white mb-3 border-b border-white/10 pb-3">
+              Generated Test Paper & Answer Key
             </h4>
-            <div className="flex-1 bg-slate-950 p-3.5 sm:p-4 rounded-xl border border-white/5 overflow-auto font-sans text-xs text-slate-200 leading-relaxed whitespace-pre-wrap">
+            <div className="flex-1 bg-slate-950/80 p-4 rounded-2xl border border-white/5 overflow-auto font-sans text-xs text-slate-200 leading-relaxed whitespace-pre-wrap">
               {qLoading ? (
                 <div className="h-full flex flex-col items-center justify-center space-y-2 py-12">
                   <Loader2 className="w-6 h-6 text-indigo-400 animate-spin" />
-                  <p className="text-xs text-slate-400 font-medium">Orion AI authoring exam questions...</p>
+                  <p className="text-xs text-slate-400 font-medium">Preparing structured exam questions...</p>
                 </div>
               ) : qResult ? (
                 qResult
               ) : (
-                <div className="text-center py-16 text-slate-500">
-                  Select parameters and click "Generate Question Paper" to construct an automated test sheet.
+                <div className="text-center py-16 text-slate-400 space-y-1">
+                  <p className="text-xs font-semibold text-slate-300">No question paper generated yet</p>
+                  <p className="text-[11px] text-slate-500">
+                    Select subject, grade, and difficulty on the left, then click Generate Question Paper.
+                  </p>
                 </div>
               )}
             </div>
@@ -201,64 +264,69 @@ export const AssignmentCenter: React.FC = () => {
       )}
 
       {activeTab === 'checker' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-          <div className="bg-slate-900 border border-white/10 p-4 sm:p-5 rounded-2xl space-y-4">
-            <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
-              <FileCheck className="w-4 h-4" /> Homework Submission Input
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <div className="bento-card p-5 rounded-3xl space-y-4">
+            <div className="flex items-center gap-2 text-amber-400 font-bold text-sm border-b border-white/10 pb-3">
+              <FileCheck className="w-4 h-4" />
+              <span>Homework Submission Input</span>
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1">Homework / Essay Title</label>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Assignment / Essay Title</label>
               <input
                 type="text"
                 value={hwTitle}
                 onChange={(e) => setHwTitle(e.target.value)}
-                className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
+                className="w-full bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1">Paste Student Submission Text</label>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Student Submission Text</label>
               <textarea
                 value={hwSubmission}
                 onChange={(e) => setHwSubmission(e.target.value)}
-                placeholder="Paste homework text or essay submission here..."
+                placeholder="Paste homework response or essay text here for rubric evaluation..."
                 rows={8}
-                className="w-full bg-slate-950 border border-white/10 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                className="w-full bg-slate-950 border border-white/10 rounded-xl p-3.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
               />
             </div>
 
             <button
+              type="button"
               onClick={handleCheckHomework}
               disabled={hwLoading || !hwSubmission.trim()}
-              className="w-full py-2.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow"
+              className="w-full py-2.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer"
             >
               {hwLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              Run AI Grammar, Logic & Plagiarism Check
+              <span>Evaluate Submission</span>
             </button>
           </div>
 
-          <div className="bg-slate-900 border border-white/10 p-4 sm:p-5 rounded-2xl flex flex-col min-h-[320px] sm:min-h-[400px]">
-            <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-              <span>🔍</span> Orion AI Review Report
+          <div className="bento-card p-5 rounded-3xl flex flex-col min-h-[360px]">
+            <h4 className="text-sm font-bold text-white mb-3 border-b border-white/10 pb-3">
+              Evaluation & Rubric Report
             </h4>
-            <div className="flex-1 bg-slate-950 p-3.5 sm:p-4 rounded-xl border border-white/5 overflow-auto font-sans text-xs text-slate-200 leading-relaxed whitespace-pre-wrap">
+            <div className="flex-1 bg-slate-950/80 p-4 rounded-2xl border border-white/5 overflow-auto font-sans text-xs text-slate-200 leading-relaxed whitespace-pre-wrap">
               {hwLoading ? (
                 <div className="h-full flex flex-col items-center justify-center space-y-2 py-12">
                   <Loader2 className="w-6 h-6 text-amber-400 animate-spin" />
-                  <p className="text-xs text-slate-400 font-medium">Checking grammar, logic steps & plagiarism score...</p>
+                  <p className="text-xs text-slate-400 font-medium">Reviewing reasoning, clarity, and structure...</p>
                 </div>
               ) : hwResult ? (
                 hwResult
               ) : (
-                <div className="text-center py-16 text-slate-500">
-                  Paste submission text on the left and click check to get instant AI grading feedback.
+                <div className="text-center py-16 text-slate-400 space-y-1">
+                  <p className="text-xs font-semibold text-slate-300">Ready for submission review</p>
+                  <p className="text-[11px] text-slate-500">
+                    Paste student work on the left and click Evaluate Submission to generate constructive feedback.
+                  </p>
                 </div>
               )}
             </div>
           </div>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 };
