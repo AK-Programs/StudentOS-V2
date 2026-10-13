@@ -864,13 +864,11 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
           try {
             const { data: row } = await supabase
               .from('global_data')
-              .select('content')
+              .select('*')
               .eq('id', `__bb_room_${activeRoom.code}__`)
               .maybeSingle();
-            if (row?.content) {
-              const parsed = JSON.parse(row.content);
-              if (parsed && parsed.code) syncedRoom = parsed;
-            }
+            const parsed = (row as any)?.data ?? ((row as any)?.content ? JSON.parse((row as any).content) : null);
+            if (parsed && parsed.code) syncedRoom = parsed;
           } catch (_) {}
         }
 
@@ -1262,9 +1260,8 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
             try {
               await supabase.from('global_data').upsert({
                 id: `__bb_room_${activeRoom.code}__`,
-                title: `Brain Battle Room ${activeRoom.code}`,
-                subject: activeRoom.subject || 'Multiplayer Arena',
-                content: JSON.stringify(data.room)
+                data: data.room,
+                updated_at: new Date().toISOString()
               });
             } catch (_) {}
             setActiveRoom(data.room);
@@ -1327,9 +1324,8 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
         // Direct cloud persistence backup in Supabase
         await supabase.from('global_data').upsert({
           id: `__bb_room_${data.room.code}__`,
-          title: `Brain Battle Room ${data.room.code}`,
-          subject: data.room.subject || 'Multiplayer Arena',
-          content: JSON.stringify(data.room)
+          data: data.room,
+          updated_at: new Date().toISOString()
         });
         setActiveRoom(data.room);
         sendRealtimeEvent(`brain_battle_room_${data.room.code}`, 'room:state', data.room);
@@ -1378,9 +1374,8 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
         // Direct cloud persistence backup in Supabase
         await supabase.from('global_data').upsert({
           id: `__bb_room_${cleanCode}__`,
-          title: `Brain Battle Room ${cleanCode}`,
-          subject: data.room.subject || 'Multiplayer Arena',
-          content: JSON.stringify(data.room)
+          data: data.room,
+          updated_at: new Date().toISOString()
         });
         setActiveRoom(data.room);
         sendRealtimeEvent(`brain_battle_room_${cleanCode}`, 'room:state', data.room);
@@ -1394,35 +1389,31 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
     try {
       const { data: row } = await supabase
         .from('global_data')
-        .select('content')
+        .select('*')
         .eq('id', `__bb_room_${cleanCode}__`)
         .maybeSingle();
 
-      if (row?.content) {
-        const room: BrainBattleRoomState = JSON.parse(row.content);
-        if (room && room.code && room.status !== 'completed') {
-          if (!room.players) room.players = {};
-          room.players[userId] = newPlayerData;
-          room.updatedAt = Date.now();
+      const parsedRoom = (row as any)?.data ?? ((row as any)?.content ? JSON.parse((row as any).content) : null);
+      if (parsedRoom && parsedRoom.code && parsedRoom.status !== 'completed') {
+        const room: BrainBattleRoomState = parsedRoom;
+        if (!room.players) room.players = {};
+        room.players[userId] = newPlayerData;
+        room.updatedAt = Date.now();
 
-          await supabase.from('global_data').upsert({
-            id: `__bb_room_${cleanCode}__`,
-            title: `Brain Battle Room ${cleanCode}`,
-            subject: room.subject || 'Multiplayer Arena',
-            content: JSON.stringify(room)
-          });
+        await supabase.from('global_data').upsert({
+          id: `__bb_room_${cleanCode}__`,
+          data: room,
+          updated_at: new Date().toISOString()
+        });
 
-          setActiveRoom(room);
-          sendRealtimeEvent(`brain_battle_room_${cleanCode}`, 'room:state', room);
-          soundService.playAppearSound();
-          setActiveView('multiplayer_lobby');
-          return;
-        }
+        setActiveRoom(room);
+        sendRealtimeEvent(`brain_battle_room_${cleanCode}`, 'room:state', room);
+        soundService.playAppearSound();
+        setActiveView('multiplayer_lobby');
+        return;
       }
-      setRoomError('Battle Room not found. Verify the 6-character code.');
-    } catch (err: any) {
-      setRoomError('Unable to join battle room. Please verify network connection.');
-    }
+    } catch (_) {}
+    setRoomError('Battle Room not found. Verify the 6-character code.');
   };
 
   const handleStartMultiplayerMatch = async () => {
@@ -1458,9 +1449,8 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
     try {
       await supabase.from('global_data').upsert({
         id: `__bb_room_${activeRoom.code}__`,
-        title: `Brain Battle Room ${activeRoom.code}`,
-        subject: activeRoom.subject || 'Multiplayer Arena',
-        content: JSON.stringify(updatedRoom)
+        data: updatedRoom,
+        updated_at: new Date().toISOString()
       });
     } catch (_) {}
 

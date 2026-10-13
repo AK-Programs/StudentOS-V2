@@ -648,12 +648,30 @@ app.get('/api/gamification/profile', async (req, res) => {
     });
     if (gRes.ok) {
       const rows = await gRes.json();
-      if (Array.isArray(rows) && rows[0]?.content) {
-        const parsed = JSON.parse(rows[0].content);
-        storeData = { ...parsed, ...storeData };
+      const content = rows[0]?.data ?? (rows[0]?.content ? JSON.parse(rows[0].content) : null);
+      if (content && typeof content === 'object') {
+        storeData = { ...content, ...storeData };
       }
     }
   } catch (_) {}
+
+  // Also query user-specific document gamification_user_${userId}
+  if (userId) {
+    try {
+      const uRes = await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.gamification_user_${encodeURIComponent(userId)}&select=*`, {
+        headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
+      });
+      if (uRes.ok) {
+        const uRows = await uRes.json();
+        const uContent = uRows[0]?.data ?? (uRows[0]?.content ? JSON.parse(uRows[0].content) : null);
+        if (uContent && typeof uContent === 'object') {
+          if (!storeData[userId] || (uContent.xp || 0) > (storeData[userId]?.xp || 0)) {
+            storeData[userId] = uContent;
+          }
+        }
+      }
+    } catch (_) {}
+  }
 
   const profile = userId ? storeData[userId] || null : null;
   const leaderboard = Object.values(storeData).sort((a: any, b: any) => (b.xp || 0) - (a.xp || 0));
@@ -676,6 +694,7 @@ app.post('/api/gamification/award', async (req, res) => {
   const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
   const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
   const docId = `__studentos_gamification_${schoolId}__`;
+  const userDocId = `gamification_user_${userId}`;
 
   try {
     let existingMap: Record<string, any> = {};
@@ -684,8 +703,9 @@ app.post('/api/gamification/award', async (req, res) => {
     });
     if (gRes.ok) {
       const rows = await gRes.json();
-      if (Array.isArray(rows) && rows[0]?.content) {
-        existingMap = JSON.parse(rows[0].content);
+      const loaded = rows[0]?.data ?? (rows[0]?.content ? JSON.parse(rows[0].content) : null);
+      if (loaded && typeof loaded === 'object') {
+        existingMap = loaded;
       }
     }
     const existingProfile = existingMap[userId];
@@ -697,6 +717,7 @@ app.post('/api/gamification/award', async (req, res) => {
     existingMap[userId] = profile;
     Object.assign(memoryGamificationStore, existingMap);
 
+    // 1. Persist aggregated school gamification store
     await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
       method: 'POST',
       headers: {
@@ -707,12 +728,42 @@ app.post('/api/gamification/award', async (req, res) => {
       },
       body: JSON.stringify({
         id: docId,
-        title: 'StudentOS Gamification Store',
-        subject: schoolId,
-        content: JSON.stringify(existingMap),
-        created_at: new Date().toISOString()
+        data: existingMap,
+        updated_at: new Date().toISOString()
       })
     });
+
+    // 2. Persist individual user profile document for rock-solid cross-device isolation
+    await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
+      method: 'POST',
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({
+        id: userDocId,
+        data: profile,
+        updated_at: new Date().toISOString()
+      })
+    });
+
+    // 3. Mirror points to user_profiles table if user row exists
+    try {
+      await fetch(`${supabaseUrl}/rest/v1/user_profiles?id=eq.${encodeURIComponent(userId)}`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          points: profile.xp,
+          updated_at: Date.now()
+        })
+      });
+    } catch (_) {}
   } catch (e: any) {
     console.warn('[Gamification Server] Sync notice:', e?.message);
   }
@@ -979,10 +1030,8 @@ app.post('/api/brain-battle/complete', async (req, res) => {
       },
       body: JSON.stringify({
         id: hDocId,
-        title: 'StudentOS Brain Battle Match History',
-        subject: schoolId,
-        content: JSON.stringify(updated),
-        created_at: new Date().toISOString()
+        data: updated,
+        updated_at: new Date().toISOString()
       })
     });
   } catch (_) {}
@@ -1011,12 +1060,10 @@ async function fetchBrainBattleRoomFromSupabase(code: string): Promise<BrainBatt
     });
     if (res.ok) {
       const rows = await res.json();
-      if (Array.isArray(rows) && rows[0]?.content) {
-        const parsed = JSON.parse(rows[0].content);
-        if (parsed && parsed.code) {
-          memoryBrainBattleRooms[cleanCode] = parsed;
-          return parsed;
-        }
+      const parsed = rows[0]?.data ?? (rows[0]?.content ? JSON.parse(rows[0].content) : null);
+      if (parsed && parsed.code) {
+        memoryBrainBattleRooms[cleanCode] = parsed;
+        return parsed;
       }
     }
   } catch (err) {
@@ -1044,9 +1091,8 @@ async function persistBrainBattleRoomToSupabase(room: BrainBattleRoomState) {
       },
       body: JSON.stringify({
         id: `__bb_room_${room.code}__`,
-        title: `Brain Battle Room ${room.code}`,
-        subject: room.subject || 'Multiplayer Arena',
-        content: JSON.stringify(room)
+        data: room,
+        updated_at: new Date().toISOString()
       })
     });
   } catch (err) {
@@ -1055,6 +1101,26 @@ async function persistBrainBattleRoomToSupabase(room: BrainBattleRoomState) {
 }
 
 app.get('/api/brain-battle/rooms/active', async (req, res) => {
+  // Merge from Supabase cloud store to support multiple clients / restarted servers
+  try {
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+    const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+    const rRes = await fetch(`${supabaseUrl}/rest/v1/global_data?id=like.__bb_room_%25__&select=*&limit=30`, {
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+    });
+    if (rRes.ok) {
+      const rows = await rRes.json();
+      if (Array.isArray(rows)) {
+        rows.forEach((r: any) => {
+          const roomObj = r.data ?? (r.content ? JSON.parse(r.content) : null);
+          if (roomObj && roomObj.code && !memoryBrainBattleRooms[roomObj.code]) {
+            memoryBrainBattleRooms[roomObj.code] = roomObj;
+          }
+        });
+      }
+    }
+  } catch (_) {}
+
   const activeRooms = Object.values(memoryBrainBattleRooms)
     .filter(r => r.status === 'lobby' || r.status === 'active')
     .map(r => ({
@@ -1264,12 +1330,11 @@ app.get('/api/syllabus', async (req, res) => {
     });
     if (r.ok) {
       const rows = await r.json();
-      if (Array.isArray(rows) && rows[0]?.content) {
-        let parsed = JSON.parse(rows[0].content);
-        if (Array.isArray(parsed)) {
-          if (grade) parsed = parsed.filter((s: any) => s.grade?.toLowerCase() === grade.toLowerCase());
-          return res.json({ status: 'ok', syllabuses: parsed });
-        }
+      const content = rows[0]?.data ?? (rows[0]?.content ? JSON.parse(rows[0].content) : null);
+      if (Array.isArray(content)) {
+        let parsed = content;
+        if (grade) parsed = parsed.filter((s: any) => s.grade?.toLowerCase() === grade.toLowerCase());
+        return res.json({ status: 'ok', syllabuses: parsed });
       }
     }
   } catch (_) {}
@@ -1293,9 +1358,8 @@ app.post('/api/syllabus', async (req, res) => {
       },
       body: JSON.stringify({
         id: `__studentos_syllabus_${schoolId}__`,
-        title: `Official Syllabus — ${schoolId}`,
-        subject: 'Curriculum Management',
-        content: JSON.stringify(syllabuses)
+        data: syllabuses,
+        updated_at: new Date().toISOString()
       })
     });
     return res.json({ status: 'ok', count: Array.isArray(syllabuses) ? syllabuses.length : 0 });
@@ -1316,9 +1380,9 @@ app.get('/api/timetables', async (req, res) => {
     });
     if (r.ok) {
       const rows = await r.json();
-      if (Array.isArray(rows) && rows[0]?.content) {
-        const parsed = JSON.parse(rows[0].content);
-        return res.json({ status: 'ok', timetable: parsed });
+      const content = rows[0]?.data ?? (rows[0]?.content ? JSON.parse(rows[0].content) : null);
+      if (content && typeof content === 'object') {
+        return res.json({ status: 'ok', timetable: content });
       }
     }
   } catch (_) {}
@@ -1344,9 +1408,8 @@ app.post('/api/timetables', async (req, res) => {
       },
       body: JSON.stringify({
         id: `__studentos_timetable_${schoolId}_${grade}__`,
-        title: `Official School Timetable — ${grade} (${schoolId})`,
-        subject: 'Official Timetable',
-        content: JSON.stringify(timetable)
+        data: timetable,
+        updated_at: new Date().toISOString()
       })
     });
     return res.json({ status: 'ok', timetable });

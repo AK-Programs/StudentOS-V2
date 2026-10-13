@@ -384,8 +384,23 @@ export const DEFAULT_OFFICIAL_TIMETABLE: OfficialClassTimetable = {
         { periodNumber: 7, name: 'Period 5', startTime: '13:05', endTime: '13:55', subject: 'Clubs & House Activities', teacherName: 'House Masters', room: 'Auditorium' },
         { periodNumber: 8, name: 'Period 6', startTime: '14:00', endTime: '14:50', subject: 'Weekly Assembly / Review', teacherName: 'Staff', room: 'Main Quad' }
       ]
+    },
+    {
+      day: 'Saturday',
+      periods: [
+        { periodNumber: 1, name: 'Period 1', startTime: '08:30', endTime: '09:20', subject: 'Mathematics Problem Clinic', teacherName: 'Dr. Evelyn Reed', room: 'Room 302' },
+        { periodNumber: 2, name: 'Period 2', startTime: '09:25', endTime: '10:15', subject: 'Physics Practical Lab', teacherName: 'Prof. Marcus Vance', room: 'Sci Lab 1' },
+        { periodNumber: 3, name: 'Morning Break', startTime: '10:15', endTime: '10:35', isBreak: true },
+        { periodNumber: 4, name: 'Period 3', startTime: '10:35', endTime: '11:25', subject: 'Computer Science Practical', teacherName: 'Coach Solara', room: 'IT Lab 3' },
+        { periodNumber: 5, name: 'Period 4', startTime: '11:30', endTime: '12:20', subject: 'Remedial Doubt Clearing & Discussion', teacherName: 'Faculty Mentors', room: 'Room 302' }
+      ]
     }
-  ]
+  ],
+  saturdayConfig: {
+    isWorkingDay: true,
+    scheduleType: 'half_day',
+    note: 'Special Saturday Half-Day Sessions, Science Practicals & Doubt Clinics'
+  }
 };
 
 // ============================================================================

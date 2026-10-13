@@ -413,13 +413,30 @@ export async function loadAuthoritativeGamificationProfile(user: {
       .maybeSingle();
 
     let remoteProfile: StudentGamificationStats | null = null;
-    if (userDoc && userDoc.content) {
-      try {
-        remoteProfile = JSON.parse(userDoc.content);
-      } catch (_) {}
+    if (userDoc) {
+      const parsed = (userDoc as any).data ?? ((userDoc as any).content ? JSON.parse((userDoc as any).content) : null);
+      if (parsed && typeof parsed === 'object') {
+        remoteProfile = parsed;
+      }
     }
 
-    // 2. If not found in individual doc, check backend API / school doc
+    // 2. Also check user_profiles table for any existing points
+    try {
+      const { data: uProfile } = await supabase
+        .from('user_profiles')
+        .select('points')
+        .eq('id', userId)
+        .maybeSingle();
+      if (uProfile && typeof uProfile.points === 'number' && uProfile.points > 0) {
+        if (!remoteProfile || (remoteProfile.xp || 0) < uProfile.points) {
+          if (remoteProfile) {
+            remoteProfile.xp = uProfile.points;
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 3. If not found in individual doc, check backend API / school doc
     if (!remoteProfile) {
       try {
         const resp = await fetch(
@@ -494,19 +511,25 @@ export async function saveGamificationProfile(profile: StudentGamificationStats)
     window.dispatchEvent(new CustomEvent('studentos-gamification-updated', { detail: { profile } }));
   }
 
-  // Authoritative cloud persistence in Supabase global_data
+  // Authoritative cloud persistence in Supabase global_data (using data column)
   try {
     const userDocId = `gamification_user_${profile.userId}`;
     await supabase.from('global_data').upsert({
       id: userDocId,
-      title: `Gamification Profile: ${profile.name || profile.userId}`,
-      subject: profile.schoolId || 'default_school',
-      content: JSON.stringify(profile),
-      created_at: new Date().toISOString()
+      data: profile,
+      updated_at: new Date().toISOString()
     });
   } catch (err) {
     console.warn('[Gamification] Direct Supabase persistence notice:', err);
   }
+
+  // Mirror to user_profiles table points column
+  try {
+    await supabase.from('user_profiles').update({
+      points: profile.xp,
+      updated_at: Date.now()
+    }).eq('id', profile.userId);
+  } catch (_) {}
 
   try {
     await fetch('/api/gamification/award', {

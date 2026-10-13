@@ -72,6 +72,14 @@ export interface StudentChapterProgress {
   questionsAttempted?: number;
   questionsCorrect?: number;
   masteryEarnedAt?: string;
+  topicMasteryRecords?: Record<string, {
+    mastered: boolean;
+    score: number;
+    totalQuestions: number;
+    completedAt: string;
+    attempts: number;
+    weakAreas?: string[];
+  }>;
 }
 
 export interface SubjectProgressSummary {

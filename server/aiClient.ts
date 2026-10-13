@@ -16,6 +16,7 @@
  */
 
 import dotenv from 'dotenv';
+import { GoogleGenAI } from '@google/genai';
 dotenv.config();
 
 export type TaskComplexityTier = 'short' | 'fast' | 'general' | 'complex' | 'tool';
@@ -33,7 +34,7 @@ export interface ModelRoutingContext {
 
 export interface AIPerformanceTelemetry {
   requestId: string;
-  providerUsed: 'apinex' | 'groq' | 'ministral' | 'nara_router';
+  providerUsed: 'apinex' | 'groq' | 'ministral' | 'nara_router' | 'gemini';
   modelUsed: string;
   complexityTier: TaskComplexityTier;
   requestStart: number;
@@ -62,6 +63,27 @@ export interface AICompletionOptions {
 }
 
 // API Key Getters
+export function getGeminiApiKey(): string {
+  return (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim().replace(/^["']|["']$/g, '');
+}
+
+let cachedGeminiClient: GoogleGenAI | null = null;
+export function getGeminiClient(): GoogleGenAI | null {
+  const key = getGeminiApiKey();
+  if (!key) return null;
+  if (!cachedGeminiClient) {
+    cachedGeminiClient = new GoogleGenAI({
+      apiKey: key,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build'
+        }
+      }
+    });
+  }
+  return cachedGeminiClient;
+}
+
 export function getApinexApiKey(): string {
   return (process.env.APINEX_API_KEY || process.env.VITE_APINEX_API_KEY || '').trim().replace(/^["']|["']$/g, '');
 }
@@ -508,6 +530,68 @@ export async function generateAICompletionWithTelemetry(
 
   console.log(`[AI_ROUTER] tier=${routing.tier} provider=${provider} model=${model} requestId=${requestId}`);
 
+  // 0. Primary / Fallback: Google GenAI (Gemini)
+  const gemini = getGeminiClient();
+  const hasNaraKey = Boolean(getNaraRouterApiKey());
+  const hasGroqKey = Boolean(getGroqApiKey());
+  const hasMinistralKey = Boolean(getMinistralApiKey());
+  const hasApinexKey = Boolean(getApinexApiKey());
+  const providerKeyAvailable = 
+    (provider === 'nara_router' && hasNaraKey) ||
+    (provider === 'groq' && hasGroqKey) ||
+    (provider === 'ministral' && hasMinistralKey) ||
+    (provider === 'apinex' && hasApinexKey);
+
+  if (gemini && (!providerKeyAvailable || modelOverride?.toLowerCase().includes('gemini'))) {
+    try {
+      const contents = [
+        ...history.slice(-8).map(h => ({
+          role: h.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: String(h.content || '') }]
+        })),
+        {
+          role: 'user',
+          parts: [{ text: prompt }]
+        }
+      ];
+
+      const config: any = {
+        temperature,
+        systemInstruction,
+        maxOutputTokens: Math.max(effectiveMaxTokens, 1200)
+      };
+      if (jsonMode) {
+        config.responseMimeType = 'application/json';
+      }
+
+      const geminiRes = await gemini.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents,
+        config
+      });
+
+      const text = geminiRes.text || '';
+      return {
+        text,
+        telemetry: {
+          requestId,
+          providerUsed: 'gemini',
+          modelUsed: 'gemini-2.5-flash',
+          complexityTier: routing.tier,
+          requestStart,
+          firstTokenLatencyMs: Date.now() - requestStart,
+          totalGenerationTimeMs: Date.now() - requestStart,
+          retries: 0,
+          fallbackTriggered: !providerKeyAvailable,
+          streamed: false
+        }
+      };
+    } catch (gErr: any) {
+      console.warn('[Gemini AI Engine] Call error:', gErr?.message || gErr);
+      if (!providerKeyAvailable) throw gErr;
+    }
+  }
+
   // 1. Nara Router (long context / complex)
   if (isNaraOrComplex) {
     const naraModel = getNaraRouterModel(modelOverride);
@@ -784,6 +868,77 @@ export async function streamAICompletion(
   console.log(
     `[AI_STREAM_ROUTER] tier=${routing.tier} provider=${activeProvider} model=${activeModel} requestId=${requestId}`
   );
+
+  // 0. Primary / Fallback: Google GenAI (Gemini) Streaming
+  const gemini = getGeminiClient();
+  const hasNaraKey = Boolean(getNaraRouterApiKey());
+  const hasGroqKey = Boolean(getGroqApiKey());
+  const hasMinistralKey = Boolean(getMinistralApiKey());
+  const hasApinexKey = Boolean(getApinexApiKey());
+  const providerKeyAvailable = 
+    (activeProvider === 'nara_router' && hasNaraKey) ||
+    (activeProvider === 'groq' && hasGroqKey) ||
+    (activeProvider === 'ministral' && hasMinistralKey) ||
+    (activeProvider === 'apinex' && hasApinexKey);
+
+  if (gemini && (!providerKeyAvailable || modelOverride?.toLowerCase().includes('gemini'))) {
+    try {
+      callbacks.onMeta?.({ requestId, provider: 'gemini', model: 'gemini-2.5-flash', tier: routing.tier });
+      const contents = [
+        ...history.slice(-8).map(h => ({
+          role: h.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: String(h.content || '') }]
+        })),
+        {
+          role: 'user',
+          parts: [{ text: prompt }]
+        }
+      ];
+
+      const config: any = {
+        temperature,
+        systemInstruction,
+        maxOutputTokens: Math.max(effectiveMaxTokens, 1200)
+      };
+
+      const stream = await gemini.models.generateContentStream({
+        model: 'gemini-2.5-flash',
+        contents,
+        config
+      });
+
+      let fullText = '';
+      let firstTokenLatencyMs: number | null = null;
+      for await (const chunk of stream) {
+        if (abortSignal?.aborted) break;
+        const piece = chunk.text || '';
+        if (piece) {
+          if (firstTokenLatencyMs === null) {
+            firstTokenLatencyMs = Date.now() - requestStart;
+          }
+          fullText += piece;
+          callbacks.onToken(piece, firstTokenLatencyMs);
+        }
+      }
+      const telemetry: AIPerformanceTelemetry = {
+        requestId,
+        providerUsed: 'gemini',
+        modelUsed: 'gemini-2.5-flash',
+        complexityTier: routing.tier,
+        requestStart,
+        firstTokenLatencyMs,
+        totalGenerationTimeMs: Date.now() - requestStart,
+        retries: 0,
+        fallbackTriggered: !providerKeyAvailable,
+        streamed: true
+      };
+      callbacks.onComplete?.(fullText, telemetry);
+      return { text: fullText, telemetry };
+    } catch (gErr: any) {
+      console.warn('[Gemini Stream Engine] Call error:', gErr?.message || gErr);
+      if (!providerKeyAvailable) throw gErr;
+    }
+  }
 
   async function tryStreamOnce(
     p: 'apinex' | 'groq' | 'ministral' | 'nara_router',
