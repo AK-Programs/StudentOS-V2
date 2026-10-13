@@ -1819,9 +1819,9 @@ export default async function handler(req: any, res: any) {
     }
 
     const systemInstruction = `You are an expert educational vector drawing AI for StudentOS whiteboard.
-Generate a detailed schematic illustration for the user's prompt using 6 to 20 precise drawing strokes.
+Generate a detailed schematic illustration for the user's prompt using 6 to 16 precise drawing strokes.
 Coordinates must be inside a 900 by 600 canvas (x: 0 to 900, y: 0 to 600).
-Reject generic labels such as Overview, Principles, Operations, or Applications. Use precise scientific or technical labels.
+Use short labels. Reject generic labels such as Overview, Principles, Operations, or Applications. Use precise scientific or technical labels.
 You MUST output valid raw JSON ONLY, with no markdown code blocks or surrounding text, matching this exact schema:
 {
   "title": "Illustration Title",
@@ -1829,66 +1829,72 @@ You MUST output valid raw JSON ONLY, with no markdown code blocks or surrounding
     { "type": "line", "points": [x1, y1, x2, y2], "color": "#38bdf8", "size": 3 },
     { "type": "circle", "x": 450, "y": 300, "radius": 80, "color": "#22c55e", "size": 3 },
     { "type": "arrow", "points": [200, 300, 380, 300], "color": "#f8fafc", "size": 2 },
-    { "type": "label", "x": 450, "y": 210, "text": "Specific Label", "color": "#f8fafc", "size": 14 }
+    { "type": "label", "x": 450, "y": 210, "text": "Short Label", "color": "#f8fafc", "size": 14 }
   ]
 }`;
 
     const fullPrompt = `Create drawing commands for: "${userPrompt}"`;
 
     let rawText = '';
-    let attempt = 0;
-    while (attempt < 2) {
-      attempt++;
+    let lastError: any = null;
+    let successfulMaxTokens = 4096;
+
+    const tokenLimits = [4096, 6000];
+    for (let i = 0; i < tokenLimits.length; i++) {
+      const maxToks = tokenLimits[i];
       try {
-        const result = await callRoutedCompletion(
+        const resResult = await callMinistralCompletion(
           fullPrompt,
           systemInstruction,
           [],
           {
             jsonMode: true,
-            endpointName: 'MagicDraw',
-            taskType: 'fast',
-            requestId,
-            maxTokens: 4000
+            maxTokens: maxToks,
+            requestId
           }
         );
-        rawText = result.text;
-        if (rawText) break;
-      } catch (e) {
-        if (attempt >= 2) throw e;
+        rawText = resResult.text;
+        
+        let cleaned = rawText.trim();
+        if (cleaned.startsWith('```json')) {
+          cleaned = cleaned.replace(/^```json/, '').replace(/```$/, '').trim();
+        } else if (cleaned.startsWith('```')) {
+          cleaned = cleaned.replace(/^```/, '').replace(/```$/, '').trim();
+        }
+
+        const parsed = JSON.parse(cleaned);
+        if (parsed && Array.isArray(parsed.strokes)) {
+          successfulMaxTokens = maxToks;
+          return sendJson(res, 200, {
+            success: true,
+            title: parsed.title || userPrompt,
+            strokes: parsed.strokes,
+            providerUsed: 'ministral',
+            modelUsed: 'ministral-8b-2410',
+            requestId,
+            telemetry: {
+              requestId,
+              providerUsed: 'ministral',
+              modelUsed: 'ministral-8b-2410',
+              maxTokens: successfulMaxTokens
+            }
+          });
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`[Magic Draw] Attempt ${i + 1} with maxTokens=${maxToks} failed:`, err?.message || err);
       }
     }
 
-    if (!rawText) {
-      return sendJson(res, 500, { success: false, error: 'AI generation failed to produce output', requestId });
-    }
-
-    let cleaned = rawText.trim();
-    if (cleaned.startsWith('```json')) {
-      cleaned = cleaned.replace(/^```json/, '').replace(/```$/, '').trim();
-    } else if (cleaned.startsWith('```')) {
-      cleaned = cleaned.replace(/^```/, '').replace(/```$/, '').trim();
-    }
-
-    try {
-      const parsed = JSON.parse(cleaned);
-      if (!parsed || !Array.isArray(parsed.strokes)) {
-        throw new Error('Invalid JSON structure returned by AI model');
-      }
-      return sendJson(res, 200, {
-        success: true,
-        title: parsed.title || userPrompt,
-        strokes: parsed.strokes,
-        requestId
-      });
-    } catch (parseErr: any) {
-      return sendJson(res, 500, {
-        success: false,
-        error: 'Failed to parse AI drawing JSON: ' + parseErr.message,
-        raw: rawText,
-        requestId
-      });
-    }
+    const statusCode = typeof lastError?.status === 'number' && lastError.status >= 400 ? lastError.status : 500;
+    return sendJson(res, statusCode, {
+      success: false,
+      status: statusCode,
+      error: lastError?.message || 'Failed to parse AI drawing JSON: Unterminated string or invalid JSON.',
+      providerUsed: 'ministral',
+      modelUsed: 'ministral-8b-2410',
+      requestId
+    });
   }
 
   // 3. AI Chat & SSE Streaming Endpoint
