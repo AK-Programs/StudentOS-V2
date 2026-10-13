@@ -154,6 +154,25 @@ function getOrCreateManagedChannel(channelName: string): ManagedChannel {
     }
   });
 
+  // Also listen for any direct broadcast event (e.g. room:state)
+  sbChannel.on('broadcast', { event: '*' }, (rawMsg: any) => {
+    const ev = rawMsg?.event;
+    if (!ev || ev === 'studentos_event') return;
+    const payload = rawMsg?.payload;
+    const envId = payload?.__envelopeId;
+    if (markEnvelopeProcessed(envId)) return;
+    const currentHandlers = entry?.listeners.get(ev);
+    if (currentHandlers) {
+      currentHandlers.forEach((fn) => {
+        try {
+          fn(payload);
+        } catch (e) {
+          console.warn('[RealtimeBus] Wildcard callback error:', e);
+        }
+      });
+    }
+  });
+
   sbChannel.subscribe((status: string) => {
     if (!entry) return;
     if (status === 'SUBSCRIBED') {

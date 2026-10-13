@@ -6,7 +6,15 @@
  */
 
 export type SyllabusExamRelevance = 'core' | 'high' | 'medium' | 'low';
-export type ChapterLearningStatus = 'not_started' | 'in_progress' | 'completed' | 'revised';
+export type ChapterLearningStatus =
+  | 'not_started'
+  | 'learning'
+  | 'practicing'
+  | 'completed'
+  | 'mastered'
+  | 'needs_review'
+  | 'revised'
+  | 'in_progress';
 
 export interface SyllabusTopic {
   id: string;
@@ -60,6 +68,10 @@ export interface StudentChapterProgress {
   completedTopics: string[];
   revisionCount: number;
   lastStudiedAt?: string;
+  practiceAccuracy?: number; // 0 - 100 percentage
+  questionsAttempted?: number;
+  questionsCorrect?: number;
+  masteryEarnedAt?: string;
 }
 
 export interface SubjectProgressSummary {
@@ -103,6 +115,12 @@ export interface DayTimetable {
   periods: TimetablePeriod[];
 }
 
+export interface SaturdayWorkingConfig {
+  isWorkingDay: boolean;
+  scheduleType: 'full_day' | 'half_day' | 'holiday';
+  note?: string;
+}
+
 export interface OfficialClassTimetable {
   id: string;
   schoolId: string;
@@ -110,6 +128,7 @@ export interface OfficialClassTimetable {
   grade: string;
   section?: string; // e.g. "A", "B"
   schedule: DayTimetable[];
+  saturdayConfig?: SaturdayWorkingConfig;
   publishedBy: string;
   publishedAt: string;
   effectiveFrom: string; // YYYY-MM-DD
@@ -135,7 +154,17 @@ export type StudySessionType =
   | 'exam_prep'
   | 'catch_up';
 
-export type StudySessionStatus = 'pending' | 'in_progress' | 'completed' | 'skipped' | 'rescheduled';
+export type StudySessionStatus =
+  | 'pending'
+  | 'starting_soon'
+  | 'in_progress'
+  | 'paused'
+  | 'completed'
+  | 'finished_early'
+  | 'missed'
+  | 'skipped'
+  | 'rescheduled'
+  | 'cancelled';
 
 export interface StudySessionItem {
   id: string;
@@ -145,6 +174,8 @@ export interface StudySessionItem {
   startTime: string; // HH:MM
   endTime: string; // HH:MM
   durationMinutes: number;
+  actualDurationMinutes?: number;
+  startedAt?: string;
   subject: string;
   chapterId?: string;
   chapterTitle?: string;

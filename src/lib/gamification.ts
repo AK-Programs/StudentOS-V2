@@ -386,6 +386,105 @@ export function getLocalGamificationProfile(user: {
 }
 
 /**
+ * Load authoritative gamification profile from Supabase and reconcile with local cache.
+ * Guarantees XP is NEVER wiped or reset to zero on fresh logins, new tabs, or separate devices.
+ */
+export async function loadAuthoritativeGamificationProfile(user: {
+  uid?: string;
+  id?: string;
+  name?: string;
+  avatar?: string;
+  grade?: string;
+  section?: string;
+  house?: string;
+  schoolId?: string;
+}): Promise<StudentGamificationStats> {
+  const userId = user?.uid || user?.id || 'student_default';
+  const schoolId = user?.schoolId || 'default_school';
+  const localProfile = getLocalGamificationProfile(user);
+
+  try {
+    // 1. Check user-specific document in Supabase global_data
+    const userDocId = `gamification_user_${userId}`;
+    const { data: userDoc } = await supabase
+      .from('global_data')
+      .select('*')
+      .eq('id', userDocId)
+      .maybeSingle();
+
+    let remoteProfile: StudentGamificationStats | null = null;
+    if (userDoc && userDoc.content) {
+      try {
+        remoteProfile = JSON.parse(userDoc.content);
+      } catch (_) {}
+    }
+
+    // 2. If not found in individual doc, check backend API / school doc
+    if (!remoteProfile) {
+      try {
+        const resp = await fetch(
+          `/api/gamification/profile?userId=${encodeURIComponent(userId)}&schoolId=${encodeURIComponent(schoolId)}`
+        );
+        if (resp.ok) {
+          const json = await resp.json();
+          if (json?.profile) remoteProfile = json.profile;
+        }
+      } catch (_) {}
+    }
+
+    if (remoteProfile) {
+      // Reconcile safely: ALWAYS keep whichever has the higher XP to prevent data loss!
+      const reconciledXp = Math.max(Number(remoteProfile.xp) || 0, Number(localProfile.xp) || 0);
+      const lvlInfo = calculateLevelInfo(reconciledXp);
+
+      const merged: StudentGamificationStats = {
+        ...localProfile,
+        ...remoteProfile,
+        userId,
+        name: user.name || remoteProfile.name || localProfile.name,
+        grade: user.grade || remoteProfile.grade || localProfile.grade,
+        schoolId,
+        xp: reconciledXp,
+        level: lvlInfo.current.level,
+        levelTitle: lvlInfo.current.title,
+        earnedBadges: {
+          ...(remoteProfile.earnedBadges || {}),
+          ...(localProfile.earnedBadges || {})
+        },
+        counts: {
+          totalActions: Math.max(localProfile.counts?.totalActions || 0, remoteProfile.counts?.totalActions || 0),
+          homeworkCompleted: Math.max(localProfile.counts?.homeworkCompleted || 0, remoteProfile.counts?.homeworkCompleted || 0),
+          flashcardsStudied: Math.max(localProfile.counts?.flashcardsStudied || 0, remoteProfile.counts?.flashcardsStudied || 0),
+          quizzesCompleted: Math.max(localProfile.counts?.quizzesCompleted || 0, remoteProfile.counts?.quizzesCompleted || 0),
+          highScoreQuizzes: Math.max(localProfile.counts?.highScoreQuizzes || 0, remoteProfile.counts?.highScoreQuizzes || 0),
+          notesCreated: Math.max(localProfile.counts?.notesCreated || 0, remoteProfile.counts?.notesCreated || 0),
+          aiStudyUses: Math.max(localProfile.counts?.aiStudyUses || 0, remoteProfile.counts?.aiStudyUses || 0),
+          noticesRead: Math.max(localProfile.counts?.noticesRead || 0, remoteProfile.counts?.noticesRead || 0),
+          brainBattlesPlayed: Math.max(localProfile.counts?.brainBattlesPlayed || 0, remoteProfile.counts?.brainBattlesPlayed || 0),
+          brainBattlePerfects: Math.max(localProfile.counts?.brainBattlePerfects || 0, remoteProfile.counts?.brainBattlePerfects || 0),
+          dailyChallengesCompleted: Math.max(localProfile.counts?.dailyChallengesCompleted || 0, remoteProfile.counts?.dailyChallengesCompleted || 0),
+          multiplayerWins: Math.max(localProfile.counts?.multiplayerWins || 0, remoteProfile.counts?.multiplayerWins || 0)
+        },
+        currentStreak: Math.max(localProfile.currentStreak || 1, remoteProfile.currentStreak || 1),
+        longestStreak: Math.max(localProfile.longestStreak || 1, remoteProfile.longestStreak || 1),
+        updatedAt: new Date().toISOString()
+      };
+
+      if (typeof window !== 'undefined') {
+        const storageKey = `s_os_gamification_${userId}`;
+        localStorage.setItem(storageKey, JSON.stringify(merged));
+        window.dispatchEvent(new CustomEvent('studentos-gamification-updated', { detail: { profile: merged } }));
+      }
+      return merged;
+    }
+  } catch (err) {
+    console.warn('[Gamification] Authoritative load notice:', err);
+  }
+
+  return localProfile;
+}
+
+/**
  * Save gamification profile locally and sync to server + Supabase
  */
 export async function saveGamificationProfile(profile: StudentGamificationStats): Promise<void> {
@@ -393,6 +492,20 @@ export async function saveGamificationProfile(profile: StudentGamificationStats)
     const storageKey = `s_os_gamification_${profile.userId}`;
     localStorage.setItem(storageKey, JSON.stringify(profile));
     window.dispatchEvent(new CustomEvent('studentos-gamification-updated', { detail: { profile } }));
+  }
+
+  // Authoritative cloud persistence in Supabase global_data
+  try {
+    const userDocId = `gamification_user_${profile.userId}`;
+    await supabase.from('global_data').upsert({
+      id: userDocId,
+      title: `Gamification Profile: ${profile.name || profile.userId}`,
+      subject: profile.schoolId || 'default_school',
+      content: JSON.stringify(profile),
+      created_at: new Date().toISOString()
+    });
+  } catch (err) {
+    console.warn('[Gamification] Direct Supabase persistence notice:', err);
   }
 
   try {

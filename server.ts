@@ -688,6 +688,12 @@ app.post('/api/gamification/award', async (req, res) => {
         existingMap = JSON.parse(rows[0].content);
       }
     }
+    const existingProfile = existingMap[userId];
+    if (existingProfile && typeof existingProfile.xp === 'number' && existingProfile.xp > (profile.xp || 0)) {
+      profile.xp = existingProfile.xp;
+      profile.level = existingProfile.level || profile.level;
+      profile.levelTitle = existingProfile.levelTitle || profile.levelTitle;
+    }
     existingMap[userId] = profile;
     Object.assign(memoryGamificationStore, existingMap);
 

@@ -36,6 +36,7 @@ import {
   BadgeDefinition,
   calculateLevelInfo,
   getLocalGamificationProfile,
+  loadAuthoritativeGamificationProfile,
   fetchGamificationLeaderboard,
   awardStudentXP
 } from '../lib/gamification';
@@ -152,7 +153,7 @@ export const DashboardGamificationCard: React.FC<{
   const [showFullModal, setShowFullModal] = useState(false);
 
   const refreshData = async () => {
-    const p = getLocalGamificationProfile(currentUser);
+    const p = await loadAuthoritativeGamificationProfile(currentUser);
     setProfile(p);
     const lb = await fetchGamificationLeaderboard(currentUser);
     const sIdx = lb.findIndex(item => item.userId === p.userId);
@@ -169,9 +170,13 @@ export const DashboardGamificationCard: React.FC<{
   };
 
   useEffect(() => {
-    // Award daily check-in XP automatically once per day
-    awardStudentXP(currentUser, 'daily_login', { silent: false }).then(() => {
-      refreshData();
+    // 1. First load authoritative Supabase XP
+    loadAuthoritativeGamificationProfile(currentUser).then(p => {
+      setProfile(p);
+      // 2. Award daily check-in XP once per day
+      awardStudentXP(currentUser, 'daily_login', { silent: false }).then(() => {
+        refreshData();
+      });
     });
 
     const handleUpdate = () => refreshData();

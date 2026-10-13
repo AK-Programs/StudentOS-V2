@@ -62,6 +62,7 @@ import {
   getTodayDateString
 } from '../lib/gamification';
 import { subscribeRealtimeEvents, sendRealtimeEvent } from '../lib/wsHelper';
+import { supabase } from '../lib/supabase';
 import { soundService } from '../lib/soundService';
 import { BrainBattleExamPrep } from './BrainBattleExamPrep';
 
@@ -849,40 +850,61 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
     // 1.5s Active Room Heartbeat Polling Fallback (ensures 100% sync reliability across all networks/devices)
     const pollTimer = setInterval(async () => {
       try {
-        const resp = await fetch(`/api/brain-battle/rooms/${activeRoom.code}`);
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data?.room) {
-            setActiveRoom(prev => {
-              if (JSON.stringify(prev) !== JSON.stringify(data.room)) {
-                return data.room;
-              }
-              return prev;
-            });
-            if (data.room.status === 'active' && activeView === 'multiplayer_lobby') {
-              setMatchMode('multiplayer');
-              setActiveQuestions(data.room.questions);
-              setCurrentIndex(data.room.currentQuestionIndex || 0);
-              setSelectedOption(null);
-              setIsSubmitted(false);
-              setTimePerQuestion(data.room.timePerQuestion || 15);
-              setTimeLeft(data.room.timePerQuestion || 15);
-              setMatchScore(data.room.players[userId]?.score || 0);
-              setCorrectCount(data.room.players[userId]?.correctCount || 0);
-              setCurrentStreak(data.room.players[userId]?.streak || 0);
-              setPeakStreak(0);
-              setQuestionResults([]);
-              setMatchStartedAt(Date.now());
-              setMatchSessionId(`mp_${data.room.code}_${data.room.createdAt}_${userId}`);
-              setActiveView('playing');
-            } else if (data.room.status === 'completed' && activeView === 'playing') {
-              finishMatchNow(
-                data.room.players[userId]?.score ?? matchScore,
-                data.room.players[userId]?.correctCount ?? correctCount,
-                peakStreak,
-                data.room
-              );
+        let syncedRoom: BrainBattleRoomState | null = null;
+        try {
+          const resp = await fetch(`/api/brain-battle/rooms/${activeRoom.code}`);
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data?.room) syncedRoom = data.room;
+          }
+        } catch (_) {}
+
+        // Supabase direct cloud persistence fallback
+        if (!syncedRoom) {
+          try {
+            const { data: row } = await supabase
+              .from('global_data')
+              .select('content')
+              .eq('id', `__bb_room_${activeRoom.code}__`)
+              .maybeSingle();
+            if (row?.content) {
+              const parsed = JSON.parse(row.content);
+              if (parsed && parsed.code) syncedRoom = parsed;
             }
+          } catch (_) {}
+        }
+
+        if (syncedRoom) {
+          const r = syncedRoom;
+          setActiveRoom(prev => {
+            if (JSON.stringify(prev) !== JSON.stringify(r)) {
+              return r;
+            }
+            return prev;
+          });
+          if (r.status === 'active' && activeView === 'multiplayer_lobby') {
+            setMatchMode('multiplayer');
+            setActiveQuestions(r.questions);
+            setCurrentIndex(r.currentQuestionIndex || 0);
+            setSelectedOption(null);
+            setIsSubmitted(false);
+            setTimePerQuestion(r.timePerQuestion || 15);
+            setTimeLeft(r.timePerQuestion || 15);
+            setMatchScore(r.players[userId]?.score || 0);
+            setCorrectCount(r.players[userId]?.correctCount || 0);
+            setCurrentStreak(r.players[userId]?.streak || 0);
+            setPeakStreak(0);
+            setQuestionResults([]);
+            setMatchStartedAt(Date.now());
+            setMatchSessionId(`mp_${r.code}_${r.createdAt}_${userId}`);
+            setActiveView('playing');
+          } else if (r.status === 'completed' && activeView === 'playing') {
+            finishMatchNow(
+              r.players[userId]?.score ?? matchScore,
+              r.players[userId]?.correctCount ?? correctCount,
+              peakStreak,
+              r
+            );
           }
         }
       } catch (_) {}
@@ -1237,6 +1259,14 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
         if (resp.ok) {
           const data = await resp.json();
           if (data.room) {
+            try {
+              await supabase.from('global_data').upsert({
+                id: `__bb_room_${activeRoom.code}__`,
+                title: `Brain Battle Room ${activeRoom.code}`,
+                subject: activeRoom.subject || 'Multiplayer Arena',
+                content: JSON.stringify(data.room)
+              });
+            } catch (_) {}
             setActiveRoom(data.room);
             sendRealtimeEvent(`brain_battle_room_${activeRoom.code}`, 'room:state', data.room);
             if (data.room.status === 'completed') {
@@ -1294,7 +1324,15 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
       });
       const data = await resp.json();
       if (resp.ok && data.room) {
+        // Direct cloud persistence backup in Supabase
+        await supabase.from('global_data').upsert({
+          id: `__bb_room_${data.room.code}__`,
+          title: `Brain Battle Room ${data.room.code}`,
+          subject: data.room.subject || 'Multiplayer Arena',
+          content: JSON.stringify(data.room)
+        });
         setActiveRoom(data.room);
+        sendRealtimeEvent(`brain_battle_room_${data.room.code}`, 'room:state', data.room);
         setActiveView('multiplayer_lobby');
       } else {
         setRoomError(data.error || 'Could not create room.');
@@ -1311,40 +1349,101 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
       return;
     }
     setRoomError('');
+
+    const newPlayerData = {
+      userId,
+      name: currentUser.name || 'Scholar',
+      role: effectiveRole,
+      house: currentUser.house || 'Emerald',
+      grade: currentUser.grade || '',
+      avatar: currentUser.photoURL || currentUser.avatar || '',
+      score: 0,
+      correctCount: 0,
+      streak: 0,
+      answeredCurrentIndex: -1,
+      joinedAt: Date.now()
+    };
+
     try {
       const resp = await fetch('/api/brain-battle/rooms/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           code: cleanCode,
-          player: {
-            userId,
-            name: currentUser.name || 'Scholar',
-            role: effectiveRole,
-            house: currentUser.house,
-            grade: currentUser.grade,
-            avatar: currentUser.photoURL || currentUser.avatar
-          }
+          player: newPlayerData
         })
       });
       const data = await resp.json();
       if (resp.ok && data.room) {
+        // Direct cloud persistence backup in Supabase
+        await supabase.from('global_data').upsert({
+          id: `__bb_room_${cleanCode}__`,
+          title: `Brain Battle Room ${cleanCode}`,
+          subject: data.room.subject || 'Multiplayer Arena',
+          content: JSON.stringify(data.room)
+        });
         setActiveRoom(data.room);
         sendRealtimeEvent(`brain_battle_room_${cleanCode}`, 'room:state', data.room);
         soundService.playAppearSound();
         setActiveView('multiplayer_lobby');
-      } else {
-        setRoomError(data.error || 'Battle Room not found. Verify the code.');
+        return;
       }
-    } catch (_) {
-      setRoomError('Unable to join battle room. Check network connection.');
+    } catch (_) {}
+
+    // Resilient Direct Supabase Join Fallback
+    try {
+      const { data: row } = await supabase
+        .from('global_data')
+        .select('content')
+        .eq('id', `__bb_room_${cleanCode}__`)
+        .maybeSingle();
+
+      if (row?.content) {
+        const room: BrainBattleRoomState = JSON.parse(row.content);
+        if (room && room.code && room.status !== 'completed') {
+          if (!room.players) room.players = {};
+          room.players[userId] = newPlayerData;
+          room.updatedAt = Date.now();
+
+          await supabase.from('global_data').upsert({
+            id: `__bb_room_${cleanCode}__`,
+            title: `Brain Battle Room ${cleanCode}`,
+            subject: room.subject || 'Multiplayer Arena',
+            content: JSON.stringify(room)
+          });
+
+          setActiveRoom(room);
+          sendRealtimeEvent(`brain_battle_room_${cleanCode}`, 'room:state', room);
+          soundService.playAppearSound();
+          setActiveView('multiplayer_lobby');
+          return;
+        }
+      }
+      setRoomError('Battle Room not found. Verify the 6-character code.');
+    } catch (err: any) {
+      setRoomError('Unable to join battle room. Please verify network connection.');
     }
   };
 
   const handleStartMultiplayerMatch = async () => {
     if (!activeRoom) return;
+    const now = Date.now();
+    const updatedRoom: BrainBattleRoomState = {
+      ...activeRoom,
+      status: 'active',
+      currentQuestionIndex: 0,
+      questionStartedAt: now,
+      updatedAt: now
+    };
+    Object.values(updatedRoom.players).forEach(p => {
+      p.score = 0;
+      p.correctCount = 0;
+      p.streak = 0;
+      p.answeredCurrentIndex = -1;
+    });
+
     try {
-      const resp = await fetch('/api/brain-battle/rooms/action', {
+      await fetch('/api/brain-battle/rooms/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1353,27 +1452,35 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
           userId
         })
       });
-      const data = await resp.json();
-      if (resp.ok && data.room) {
-        setActiveRoom(data.room);
-        sendRealtimeEvent(`brain_battle_room_${activeRoom.code}`, 'room:state', data.room);
-        setMatchMode('multiplayer');
-        setActiveQuestions(data.room.questions);
-        setCurrentIndex(0);
-        setSelectedOption(null);
-        setIsSubmitted(false);
-        setTimePerQuestion(data.room.timePerQuestion || 15);
-        setTimeLeft(data.room.timePerQuestion || 15);
-        setMatchScore(0);
-        setCorrectCount(0);
-        setCurrentStreak(0);
-        setPeakStreak(0);
-        setQuestionResults([]);
-        setMatchStartedAt(Date.now());
-        setMatchSessionId(`mp_${data.room.code}_${data.room.createdAt}_${userId}`);
-        setActiveView('playing');
-      }
     } catch (_) {}
+
+    // Authoritative state update in Supabase
+    try {
+      await supabase.from('global_data').upsert({
+        id: `__bb_room_${activeRoom.code}__`,
+        title: `Brain Battle Room ${activeRoom.code}`,
+        subject: activeRoom.subject || 'Multiplayer Arena',
+        content: JSON.stringify(updatedRoom)
+      });
+    } catch (_) {}
+
+    setActiveRoom(updatedRoom);
+    sendRealtimeEvent(`brain_battle_room_${activeRoom.code}`, 'room:state', updatedRoom);
+    setMatchMode('multiplayer');
+    setActiveQuestions(updatedRoom.questions);
+    setCurrentIndex(0);
+    setSelectedOption(null);
+    setIsSubmitted(false);
+    setTimePerQuestion(updatedRoom.timePerQuestion || 15);
+    setTimeLeft(updatedRoom.timePerQuestion || 15);
+    setMatchScore(0);
+    setCorrectCount(0);
+    setCurrentStreak(0);
+    setPeakStreak(0);
+    setQuestionResults([]);
+    setMatchStartedAt(now);
+    setMatchSessionId(`mp_${updatedRoom.code}_${updatedRoom.createdAt}_${userId}`);
+    setActiveView('playing');
   };
 
   // Faculty Question Bank Submission
