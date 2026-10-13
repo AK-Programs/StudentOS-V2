@@ -1819,17 +1819,29 @@ export default async function handler(req: any, res: any) {
     }
 
     const systemInstruction = `You are an expert educational vector drawing AI for StudentOS whiteboard.
-Generate a detailed schematic illustration for the user's prompt using 6 to 16 precise drawing strokes.
+Generate a detailed, realistic classroom diagram for the user's prompt using 18 to 30 precise drawing strokes.
 Coordinates must be inside a 900 by 600 canvas (x: 0 to 900, y: 0 to 600).
-Use short labels. Reject generic labels such as Overview, Principles, Operations, or Applications. Use precise scientific or technical labels.
+CRITICAL DRAWING RULES:
+1. DO NOT draw diagrams from generic rectangles and single straight lines. Use smooth curves and organic shapes!
+2. Allowed stroke types: "curve", "line", "circle", "ellipse", "arrow", "label".
+3. A "curve" stroke MUST have a "points" array with at least 8 numbers (4 or more (x,y) coordinate pairs: [x1, y1, x2, y2, x3, y3, x4, y4, ...]) to form smooth curved outlines (cell walls, organ membranes, bent arrows, anatomical contours).
+4. Use "ellipse" for round/oval organs (nucleus, vacuole, chloroplast, mitochondria, cells).
+5. For biological or scientific diagrams (e.g. plant cell), you MUST include:
+   - A curved outer cell wall (using "curve" with 8+ points).
+   - An inner cell membrane (using "curve").
+   - A large central vacuole (using "ellipse" or "curve").
+   - A nucleus with nucleolus (using "ellipse").
+   - At least 2-3 chloroplasts (using "ellipse").
+   - Bent arrows and precise scientific labels (using "arrow" and "label").
+6. Use short, precise scientific or technical labels. Reject generic labels such as Overview, Principles, Operations, or Applications.
 You MUST output valid raw JSON ONLY, with no markdown code blocks or surrounding text, matching this exact schema:
 {
   "title": "Illustration Title",
   "strokes": [
-    { "type": "line", "points": [x1, y1, x2, y2], "color": "#38bdf8", "size": 3 },
-    { "type": "circle", "x": 450, "y": 300, "radius": 80, "color": "#22c55e", "size": 3 },
-    { "type": "arrow", "points": [200, 300, 380, 300], "color": "#f8fafc", "size": 2 },
-    { "type": "label", "x": 450, "y": 210, "text": "Short Label", "color": "#f8fafc", "size": 14 }
+    { "type": "curve", "points": [100,150, 150,120, 250,110, 350,120, 400,180, 410,280, 380,380, 280,410, 180,390, 120,300, 100,200, 100,150], "color": "#22c55e", "size": 3 },
+    { "type": "ellipse", "x": 260, "y": 250, "width": 120, "height": 80, "color": "#38bdf8", "size": 2, "fill": "transparent" },
+    { "type": "arrow", "points": [320, 250, 460, 200], "color": "#f8fafc", "size": 2 },
+    { "type": "label", "x": 470, "y": 190, "text": "Nucleus", "color": "#f8fafc", "size": 14 }
   ]
 }`;
 

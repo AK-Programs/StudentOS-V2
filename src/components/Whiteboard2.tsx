@@ -123,6 +123,7 @@ export interface LineObj {
   scaleX?: number;
   scaleY?: number;
   rotation?: number;
+  tension?: number;
 }
 
 export interface StickyNoteObj {
@@ -728,7 +729,17 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
               points: stroke.points,
               color,
               brushSize: size,
-              tool: 'pen'
+              tool: 'pen',
+              tension: 0.4
+            });
+          } else if (stroke.type === 'curve' && Array.isArray(stroke.points) && stroke.points.length >= 4) {
+            newLines.push({
+              id,
+              points: stroke.points,
+              color,
+              brushSize: size,
+              tool: 'pen',
+              tension: 0.5
             });
           } else if (stroke.type === 'arrow' && Array.isArray(stroke.points) && stroke.points.length >= 4) {
             newShapes.push({
@@ -750,6 +761,22 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
               x: cx,
               y: cy,
               radius,
+              stroke: color,
+              strokeWidth: size,
+              fill: stroke.fill || 'transparent'
+            });
+          } else if (stroke.type === 'ellipse') {
+            const cx = stroke.x ?? 250;
+            const cy = stroke.y ?? 200;
+            const rx = stroke.radiusX ?? (stroke.width ? stroke.width / 2 : (stroke.radius ?? 50));
+            const ry = stroke.radiusY ?? (stroke.height ? stroke.height / 2 : (stroke.radius ?? 30));
+            newShapes.push({
+              id,
+              type: 'ellipse',
+              x: cx,
+              y: cy,
+              width: rx * 2,
+              height: ry * 2,
               stroke: color,
               strokeWidth: size,
               fill: stroke.fill || 'transparent'
@@ -3681,7 +3708,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                 points={line.points}
                 stroke={line.color}
                 strokeWidth={line.brushSize}
-                tension={0.4}
+                tension={(line as any).tension ?? 0.4}
                 lineCap="round"
                 lineJoin="round"
                 draggable={tool === 'select' && !(line as any).isLocked}
