@@ -1039,6 +1039,7 @@ async function callMinistralCompletion(
     jsonMode?: boolean;
     maxTokens?: number;
     requestId?: string;
+    timeoutMs?: number;
   }
 ): Promise<{
   text: string;
@@ -1061,9 +1062,10 @@ async function callMinistralCompletion(
   const start = Date.now();
   const messages = buildChatMessages(systemPrompt, history, prompt);
   const effectiveMaxTokens = options?.maxTokens ? Math.max(options.maxTokens, 300) : 2048;
+  const timeoutMs = options?.timeoutMs || 25000;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const resp = await fetch(MINISTRAL_CHAT_COMPLETIONS_URL, {
@@ -1123,8 +1125,12 @@ async function callMinistralCompletion(
     if (fetchErr?.providerUsed === 'ministral') {
       throw fetchErr;
     }
-    const err: any = new Error(fetchErr?.message || 'Ministral network request failed');
-    err.status = fetchErr?.status || 502;
+    const isTimeout = fetchErr?.name === 'AbortError' || fetchErr?.message?.includes('aborted');
+    const msg = isTimeout
+      ? `Ministral request timed out after ${Math.round(timeoutMs / 1000)} seconds`
+      : (fetchErr?.message || 'Ministral network request failed');
+    const err: any = new Error(msg);
+    err.status = isTimeout ? 504 : (fetchErr?.status || 502);
     err.providerUsed = 'ministral';
     err.modelUsed = effectiveModel;
     throw err;
@@ -1819,7 +1825,7 @@ export default async function handler(req: any, res: any) {
     }
 
     const systemInstruction = `You are an expert educational vector drawing AI for StudentOS whiteboard.
-Generate a detailed, realistic classroom diagram for the user's prompt using 18 to 30 precise drawing strokes.
+Generate a detailed, realistic classroom diagram for the user's prompt using 12 to 20 precise drawing strokes.
 Coordinates must be inside a 900 by 600 canvas (x: 0 to 900, y: 0 to 600).
 CRITICAL DRAWING RULES:
 1. DO NOT draw diagrams from generic rectangles and single straight lines. Use smooth curves and organic shapes!
@@ -1862,7 +1868,8 @@ You MUST output valid raw JSON ONLY, with no markdown code blocks or surrounding
           {
             jsonMode: true,
             maxTokens: maxToks,
-            requestId
+            requestId,
+            timeoutMs: 55000
           }
         );
         rawText = resResult.text;
