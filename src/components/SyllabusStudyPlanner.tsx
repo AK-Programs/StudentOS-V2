@@ -50,6 +50,10 @@ import {
 import { SyllabusTimetableService } from '../lib/syllabusTimetableService';
 import { OfficialTimetableViewer } from './OfficialTimetableViewer';
 import { soundService } from '../lib/soundService';
+import { DuolingoLearningJourney } from './syllabus/DuolingoLearningJourney';
+import { ChapterLearningScreen } from './syllabus/ChapterLearningScreen';
+import { SubjectSelectionCards } from './syllabus/SubjectSelectionCards';
+import { LearningCelebration } from './syllabus/LearningCelebration';
 
 interface SyllabusStudyPlannerProps {
   currentUser: UserProfile;
@@ -78,6 +82,13 @@ export const SyllabusStudyPlanner: React.FC<SyllabusStudyPlannerProps> = ({
   const [activePlannerTab, setActivePlannerTab] = useState<
     'progress' | 'sessions' | 'ai_timetable' | 'official_timetable'
   >('progress');
+
+  // Duolingo-Inspired Learning Module Sub-States
+  const [learningJourneyView, setLearningJourneyView] = useState<'subjects' | 'path' | 'chapter'>('subjects');
+  const [activeSubjectForPath, setActiveSubjectForPath] = useState<string>('Mathematics');
+  const [activeChapterForScreen, setActiveChapterForScreen] = useState<SyllabusChapter | null>(null);
+  const [celebrationChapterTitle, setCelebrationChapterTitle] = useState<string | null>(null);
+  const [staffViewMode, setStaffViewMode] = useState<'duolingo' | 'table'>('duolingo');
 
   // Core Data State
   const [syllabuses, setSyllabuses] = useState<OfficialSubjectSyllabus[]>([]);
@@ -185,7 +196,7 @@ export const SyllabusStudyPlanner: React.FC<SyllabusStudyPlannerProps> = ({
       userId,
       chapterId,
       subject,
-      { status: newStatus }
+      { status: newStatus, lastStudiedAt: new Date().toISOString() }
     );
     setStudentProgress(prev => ({
       ...prev,
@@ -194,10 +205,58 @@ export const SyllabusStudyPlanner: React.FC<SyllabusStudyPlannerProps> = ({
 
     if (newStatus === 'completed') {
       soundService.playLevelUp();
+      const targetSyl = syllabuses.find(s => s.subject.toLowerCase() === subject.toLowerCase());
+      const targetChapter = targetSyl?.chapters.find(c => c.id === chapterId);
+      setCelebrationChapterTitle(targetChapter?.title || 'Chapter');
       if (showNotification) showNotification(`🎉 Chapter marked Completed (+50 Scholar XP)!`);
     } else if (newStatus === 'revised') {
       soundService.playAchievementSound();
       if (showNotification) showNotification(`✓ Chapter Revision logged (+25 Scholar XP)!`);
+    }
+  };
+
+  // Handle Topic Checklist Toggle (Duolingo-inspired lesson breakdown)
+  const handleToggleTopic = async (chapterId: string, subject: string, topic: string) => {
+    const currentProg = studentProgress[chapterId];
+    const completedTopics = currentProg?.completedTopics || [];
+    const isAlreadyDone = completedTopics.includes(topic);
+    const updatedTopics = isAlreadyDone
+      ? completedTopics.filter(t => t !== topic)
+      : [...completedTopics, topic];
+
+    const targetSyl = syllabuses.find(s => s.subject.toLowerCase() === subject.toLowerCase());
+    const targetChapter = targetSyl?.chapters.find(c => c.id === chapterId);
+    const totalTopics = targetChapter?.topics?.length || 0;
+
+    let newStatus: ChapterLearningStatus = currentProg?.status || 'in_progress';
+    if (updatedTopics.length === 0) {
+      newStatus = 'not_started';
+    } else if (totalTopics > 0 && updatedTopics.length >= totalTopics) {
+      newStatus = 'completed';
+    } else {
+      newStatus = 'in_progress';
+    }
+
+    const updated = await SyllabusTimetableService.updateStudentChapterProgress(
+      userId,
+      chapterId,
+      subject,
+      {
+        completedTopics: updatedTopics,
+        status: newStatus,
+        lastStudiedAt: new Date().toISOString()
+      }
+    );
+
+    setStudentProgress(prev => ({
+      ...prev,
+      [chapterId]: updated
+    }));
+
+    if (newStatus === 'completed' && currentProg?.status !== 'completed') {
+      soundService.playLevelUp();
+      setCelebrationChapterTitle(targetChapter?.title || 'Chapter');
+      if (showNotification) showNotification('🎉 All topics mastered! Chapter marked Completed (+50 XP)!');
     }
   };
 
@@ -451,194 +510,166 @@ export const SyllabusStudyPlanner: React.FC<SyllabusStudyPlannerProps> = ({
       </div>
 
       {/* ==================================================================== */}
-      {/* TAB 1: SYLLABUS & CHAPTER PROGRESS */}
+      {/* TAB 1: DUOLINGO-INSPIRED SYLLABUS LEARNING MODULE */}
       {/* ==================================================================== */}
       {activePlannerTab === 'progress' && (
         <div className="space-y-6">
-          {/* Subject Overview Dashboard Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {subjectSummaries.map(sub => (
-              <div
-                key={sub.subject}
-                onClick={() => setSelectedSubject(sub.subject)}
-                className={`p-5 rounded-2xl border transition-all cursor-pointer ${
-                  selectedSubject === sub.subject
-                    ? 'bg-indigo-950/60 border-indigo-500/60 ring-1 ring-indigo-500/30'
-                    : 'bg-slate-950/70 hover:bg-slate-900 border-white/10'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-extrabold text-white">{sub.subject}</h4>
-                  <span className="font-mono text-xs font-black text-indigo-400">
-                    {sub.progressPercentage}%
-                  </span>
-                </div>
-
-                {/* Progress bar */}
-                <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden mt-3 mb-2">
-                  <div
-                    className="h-full bg-gradient-to-r from-indigo-500 to-emerald-400 rounded-full transition-all duration-500"
-                    style={{ width: `${sub.progressPercentage}%` }}
-                  />
-                </div>
-
-                <div className="flex items-center justify-between text-[11px] text-slate-400">
-                  <span>{sub.completedCount + sub.revisedCount}/{sub.totalChapters} Chapters</span>
-                  <span className="text-emerald-400 font-bold">{sub.revisedCount} Revised</span>
-                </div>
-
-                {sub.nextRecommendedChapter && (
-                  <div className="mt-3 pt-2.5 border-t border-white/5 text-[11px] text-slate-300 truncate">
-                    <span className="text-indigo-400 font-bold">Next: </span>
-                    <span>Ch {sub.nextRecommendedChapter.chapterNumber} · {sub.nextRecommendedChapter.title}</span>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Subject Filter Selector */}
-          <div className="flex items-center justify-between flex-wrap gap-2 pt-2">
-            <div className="flex items-center gap-1.5">
-              <Filter className="w-3.5 h-3.5 text-slate-400" />
-              <span className="text-xs font-bold text-slate-300">Filter Syllabus:</span>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {['All Subjects', ...syllabuses.map(s => s.subject)].map(subj => (
+          {/* Staff Mode Switcher (Teachers & Admins only) */}
+          {isStaff && (
+            <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-900 border border-white/10 flex-wrap gap-2">
+              <span className="text-xs font-bold text-slate-300">Staff Curriculum View:</span>
+              <div className="flex items-center gap-2">
                 <button
-                  key={subj}
                   type="button"
-                  onClick={() => setSelectedSubject(subj)}
+                  onClick={() => setStaffViewMode('duolingo')}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                    selectedSubject === subj
+                    staffViewMode === 'duolingo'
                       ? 'bg-indigo-600 text-white'
-                      : 'bg-slate-900/80 border border-white/5 text-slate-400 hover:text-white'
+                      : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  {subj}
+                  Duolingo Student Journey
                 </button>
-              ))}
+                <button
+                  type="button"
+                  onClick={() => setStaffViewMode('table')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    staffViewMode === 'table'
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Curriculum Editor Table
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Chapter Details Cards */}
-          <div className="space-y-4">
-            {syllabuses
-              .filter(s => selectedSubject === 'All Subjects' || s.subject === selectedSubject)
-              .map(syl => (
-                <div key={syl.id} className="space-y-3">
-                  <div className="flex items-center justify-between px-1">
-                    <h3 className="text-base font-extrabold text-white flex items-center gap-2">
-                      <span>{syl.subject}</span>
-                      <span className="text-xs font-mono text-slate-400 font-normal">
-                        ({syl.chapters.length} Official Chapters · {syl.board || 'Standard Curriculum'})
-                      </span>
-                    </h3>
-                    <span className="text-xs text-slate-500 font-mono">
-                      Published by {syl.publishedBy}
-                    </span>
+          {/* VIEW A: STAFF CURRICULUM EDITOR TABLE */}
+          {isStaff && staffViewMode === 'table' ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-extrabold text-white">Official Curriculum Registry</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowAddChapterModal(true)}
+                  className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Publish New Chapter</span>
+                </button>
+              </div>
+
+              {syllabuses.map(syl => (
+                <div key={syl.id} className="p-5 rounded-2xl bg-slate-950/80 border border-white/10 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-bold text-white">
+                      {syl.subject} ({syl.chapters.length} Chapters)
+                    </h4>
+                    <span className="text-xs text-slate-400 font-mono">By {syl.publishedBy}</span>
                   </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                    {syl.chapters.map(ch => {
-                      const prog = studentProgress[ch.id];
-                      const status = prog?.status || 'not_started';
-                      const relevanceColor =
-                        ch.examRelevance === 'core'
-                          ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
-                          : ch.examRelevance === 'high'
-                          ? 'bg-orange-500/15 text-orange-300 border-orange-500/30'
-                          : 'bg-slate-800 text-slate-300 border-white/10';
-
-                      return (
-                        <div
-                          key={ch.id}
-                          className="p-5 rounded-2xl bg-slate-950/80 border border-white/10 space-y-4 relative overflow-hidden"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono text-xs font-black text-indigo-400">
-                                  Chapter {ch.chapterNumber}
-                                </span>
-                                <span
-                                  className={`text-[9px] uppercase font-extrabold px-2 py-0.5 rounded-full border ${relevanceColor}`}
-                                >
-                                  {ch.examRelevance} Exam Relevance
-                                </span>
-                                {ch.weightageMarks && (
-                                  <span className="text-[10px] text-slate-400 font-mono">
-                                    {ch.weightageMarks} Marks
-                                  </span>
-                                )}
-                              </div>
-                              <h4 className="text-base font-bold text-white">{ch.title}</h4>
-                            </div>
-                          </div>
-
-                          {/* Syllabus Topics */}
-                          {ch.topics && ch.topics.length > 0 && (
-                            <div className="space-y-1.5">
-                              <span className="text-[10px] uppercase font-bold text-slate-400 block">
-                                Topics & Objectives:
-                              </span>
-                              <div className="flex flex-wrap gap-1.5">
-                                {ch.topics.map((t, idx) => (
-                                  <span
-                                    key={idx}
-                                    className="px-2 py-0.5 rounded-lg bg-slate-900 border border-white/5 text-[11px] text-slate-300"
-                                  >
-                                    {t}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Syllabus Notes */}
-                          {ch.syllabusNotes && (
-                            <p className="text-xs text-slate-400 leading-relaxed italic bg-white/[0.02] p-2.5 rounded-xl border border-white/5">
-                              "{ch.syllabusNotes}"
-                            </p>
-                          )}
-
-                          {/* Student Learning Progress Toggle Buttons (Student Only) */}
-                          <div className="pt-2 border-t border-white/10 flex items-center justify-between flex-wrap gap-2">
-                            <span className="text-[11px] font-bold text-slate-400">
-                              Your Status:
-                            </span>
-
-                            <div className="flex items-center gap-1.5">
-                              {(
-                                [
-                                  { key: 'not_started', label: 'Not Started', color: 'bg-slate-800 text-slate-300' },
-                                  { key: 'in_progress', label: 'In Progress', color: 'bg-amber-600 text-white' },
-                                  { key: 'completed', label: 'Completed', color: 'bg-indigo-600 text-white' },
-                                  { key: 'revised', label: 'Revised', color: 'bg-emerald-600 text-white' }
-                                ] as const
-                              ).map(btn => (
-                                <button
-                                  key={btn.key}
-                                  type="button"
-                                  onClick={() => handleUpdateChapterStatus(ch.id, syl.subject, btn.key)}
-                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
-                                    status === btn.key
-                                      ? btn.color + ' ring-1 ring-white/30'
-                                      : 'bg-slate-900 border border-white/5 text-slate-400 hover:text-white'
-                                  }`}
-                                >
-                                  {btn.label}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                  <div className="divide-y divide-white/5">
+                    {syl.chapters.map(ch => (
+                      <div key={ch.id} className="py-2.5 flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-200">
+                          Ch {ch.chapterNumber}: {ch.title}
+                        </span>
+                        <span className="font-mono text-indigo-400">{ch.examRelevance} relevance</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               ))}
-          </div>
+            </div>
+          ) : (
+            /* VIEW B: DUOLINGO GUIDED LEARNING EXPERIENCE */
+            <div>
+              {/* Level 1: Subject Selection Cards */}
+              {learningJourneyView === 'subjects' && (
+                <SubjectSelectionCards
+                  summaries={subjectSummaries}
+                  onSelectSubject={subj => {
+                    setActiveSubjectForPath(subj);
+                    setLearningJourneyView('path');
+                  }}
+                  selectedSubject={activeSubjectForPath}
+                />
+              )}
+
+              {/* Level 2: Duolingo-Inspired Learning Path */}
+              {learningJourneyView === 'path' && (() => {
+                const targetSyl =
+                  syllabuses.find(s => s.subject.toLowerCase() === activeSubjectForPath.toLowerCase()) ||
+                  syllabuses[0];
+
+                if (!targetSyl) {
+                  return (
+                    <div className="p-8 rounded-3xl bg-slate-950 border border-white/10 text-center space-y-3">
+                      <p className="text-sm text-slate-300">No syllabus found for this subject yet.</p>
+                      <button
+                        type="button"
+                        onClick={() => setLearningJourneyView('subjects')}
+                        className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs"
+                      >
+                        Back to Subjects
+                      </button>
+                    </div>
+                  );
+                }
+
+                return (
+                  <DuolingoLearningJourney
+                    syllabus={targetSyl}
+                    studentProgress={studentProgress}
+                    onSelectChapter={ch => {
+                      setActiveChapterForScreen(ch);
+                      setLearningJourneyView('chapter');
+                    }}
+                    onBackToSubjects={() => setLearningJourneyView('subjects')}
+                  />
+                );
+              })()}
+
+              {/* Level 3: Chapter Learning Screen */}
+              {learningJourneyView === 'chapter' && activeChapterForScreen && (() => {
+                const targetSyl =
+                  syllabuses.find(s => s.subject.toLowerCase() === activeSubjectForPath.toLowerCase()) ||
+                  syllabuses[0];
+
+                if (!targetSyl) return null;
+
+                return (
+                  <ChapterLearningScreen
+                    syllabus={targetSyl}
+                    chapter={activeChapterForScreen}
+                    progress={studentProgress[activeChapterForScreen.id]}
+                    onBack={() => setLearningJourneyView('path')}
+                    onUpdateStatus={async newStatus => {
+                      await handleUpdateChapterStatus(
+                        activeChapterForScreen.id,
+                        targetSyl.subject,
+                        newStatus
+                      );
+                    }}
+                    onToggleTopic={async topic => {
+                      await handleToggleTopic(
+                        activeChapterForScreen.id,
+                        targetSyl.subject,
+                        topic
+                      );
+                    }}
+                    onNextChapter={nextId => {
+                      const nextCh = targetSyl.chapters.find(c => c.id === nextId);
+                      if (nextCh) setActiveChapterForScreen(nextCh);
+                    }}
+                    onTriggerCelebration={title => {
+                      setCelebrationChapterTitle(title);
+                    }}
+                  />
+                );
+              })()}
+            </div>
+          )}
         </div>
       )}
 
@@ -1124,6 +1155,16 @@ export const SyllabusStudyPlanner: React.FC<SyllabusStudyPlannerProps> = ({
           </div>
         )}
       </AnimatePresence>
+
+      {/* Chapter Completion Celebratory Burst (React Bits / UIverse) */}
+      {celebrationChapterTitle && (
+        <LearningCelebration
+          title={celebrationChapterTitle}
+          subtitle="You've mastered this chapter on your learning path!"
+          xpEarned={50}
+          onClose={() => setCelebrationChapterTitle(null)}
+        />
+      )}
     </div>
   );
 };
