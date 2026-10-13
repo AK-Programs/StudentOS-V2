@@ -1825,7 +1825,7 @@ export default async function handler(req: any, res: any) {
     }
 
     const systemInstruction = `You are an expert educational vector drawing AI for StudentOS whiteboard.
-Generate a detailed, realistic classroom diagram for the user's prompt using 12 to 20 precise drawing strokes.
+Generate a detailed, realistic classroom diagram for the user's prompt using 20 to 30 precise drawing strokes.
 Coordinates must be inside a 900 by 600 canvas (x: 0 to 900, y: 0 to 600).
 CRITICAL DRAWING RULES:
 1. DO NOT draw diagrams from generic rectangles and single straight lines. Use smooth curves and organic shapes!
@@ -1833,21 +1833,23 @@ CRITICAL DRAWING RULES:
 3. A "curve" stroke MUST have a "points" array with at least 8 numbers (4 or more (x,y) coordinate pairs: [x1, y1, x2, y2, x3, y3, x4, y4, ...]) to form smooth curved outlines (cell walls, organ membranes, bent arrows, anatomical contours).
 4. Use "ellipse" for round/oval organs (nucleus, vacuole, chloroplast, mitochondria, cells).
 5. For biological or scientific diagrams (e.g. plant cell), you MUST include:
-   - A curved outer cell wall (using "curve" with 8+ points).
-   - An inner cell membrane (using "curve").
-   - A large central vacuole (using "ellipse" or "curve").
-   - A nucleus with nucleolus (using "ellipse").
-   - At least 2-3 chloroplasts (using "ellipse").
-   - Bent arrows and precise scientific labels (using "arrow" and "label").
+   - One large rounded outer cell wall curve (using "curve" with 8+ points).
+   - One inner cell membrane curve (using "curve").
+   - One large central vacuole ellipse.
+   - One nucleus ellipse pushed to the side, not in the center.
+   - Two or three small chloroplast ellipses.
+   - Mitochondria or Golgi apparatus ellipses.
+   - Short leader arrows pointing from outside labels to organelles.
+   - Precise scientific labels with size 12 placed outside the main drawing shapes so they never cover the drawing.
 6. Use short, precise scientific or technical labels. Reject generic labels such as Overview, Principles, Operations, or Applications.
 You MUST output valid raw JSON ONLY, with no markdown code blocks or surrounding text, matching this exact schema:
 {
   "title": "Illustration Title",
   "strokes": [
-    { "type": "curve", "points": [100,150, 150,120, 250,110, 350,120, 400,180, 410,280, 380,380, 280,410, 180,390, 120,300, 100,200, 100,150], "color": "#22c55e", "size": 3 },
-    { "type": "ellipse", "x": 260, "y": 250, "width": 120, "height": 80, "color": "#38bdf8", "size": 2, "fill": "transparent" },
-    { "type": "arrow", "points": [320, 250, 460, 200], "color": "#f8fafc", "size": 2 },
-    { "type": "label", "x": 470, "y": 190, "text": "Nucleus", "color": "#f8fafc", "size": 14 }
+    { "type": "curve", "points": [150,120, 350,110, 450,180, 480,280, 420,380, 280,410, 180,390, 120,300, 150,120], "color": "#22c55e", "size": 3 },
+    { "type": "ellipse", "x": 300, "y": 250, "width": 140, "height": 90, "color": "#38bdf8", "size": 2, "fill": "transparent" },
+    { "type": "arrow", "points": [370, 250, 520, 180], "color": "#f8fafc", "size": 2 },
+    { "type": "label", "x": 530, "y": 170, "text": "Central Vacuol", "color": "#f8fafc", "size": 12 }
   ]
 }`;
 

@@ -794,6 +794,8 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
               fill: stroke.fill || 'transparent'
             });
           } else if (stroke.type === 'label' || stroke.type === 'text') {
+            const rawSize = stroke.size || 12;
+            const cappedSize = Math.max(11, Math.min(16, rawSize));
             newShapes.push({
               id,
               type: 'text',
@@ -803,7 +805,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
               stroke: color,
               strokeWidth: 1,
               fill: color,
-              fontSize: stroke.size ? stroke.size * 3 : 14
+              fontSize: cappedSize
             });
           }
         });
