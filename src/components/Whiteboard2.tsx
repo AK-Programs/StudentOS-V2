@@ -583,6 +583,13 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     value: string;
   }>({ open: false, mode: 'create', value: '' });
 
+  const [magicPenModal, setMagicPenModal] = useState<{
+    open: boolean;
+    prompt: string;
+    loading: boolean;
+    error: string | null;
+  }>({ open: false, prompt: '', loading: false, error: null });
+
   const stageRef = useRef<any>(null);
   const trRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -690,6 +697,111 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     setRedoStack(prev => prev.slice(0, -1));
     setSlides(next);
     setSelectedIds([]);
+  };
+
+  const handleMagicDrawSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const promptText = magicPenModal.prompt.trim();
+    if (!promptText) return;
+
+    setMagicPenModal(prev => ({ ...prev, loading: true, error: null }));
+    try {
+      const res = await fetch('/api/ai/magic-draw', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: promptText })
+      });
+      const data = await res.json();
+      if (data?.success && Array.isArray(data.strokes)) {
+        pushHistory();
+        const newLines: LineObj[] = [];
+        const newShapes: ShapeObj[] = [];
+
+        data.strokes.forEach((stroke: any, idx: number) => {
+          const id = 'magic_' + Math.random().toString(36).substring(2, 9) + '_' + idx;
+          const color = stroke.color || '#38bdf8';
+          const size = stroke.size || stroke.brushSize || 3;
+
+          if (stroke.type === 'line' && Array.isArray(stroke.points) && stroke.points.length >= 4) {
+            newLines.push({
+              id,
+              points: stroke.points,
+              color,
+              brushSize: size,
+              tool: 'pen'
+            });
+          } else if (stroke.type === 'arrow' && Array.isArray(stroke.points) && stroke.points.length >= 4) {
+            newShapes.push({
+              id,
+              type: 'arrow',
+              x: stroke.points[0],
+              y: stroke.points[1],
+              points: stroke.points,
+              stroke: color,
+              strokeWidth: size
+            });
+          } else if (stroke.type === 'circle') {
+            const cx = stroke.x ?? 250;
+            const cy = stroke.y ?? 200;
+            const radius = stroke.radius ?? 45;
+            newShapes.push({
+              id,
+              type: 'circle',
+              x: cx,
+              y: cy,
+              radius,
+              stroke: color,
+              strokeWidth: size,
+              fill: stroke.fill || 'transparent'
+            });
+          } else if (stroke.type === 'rect') {
+            newShapes.push({
+              id,
+              type: 'rect',
+              x: stroke.x ?? 150,
+              y: stroke.y ?? 150,
+              width: stroke.width ?? 120,
+              height: stroke.height ?? 80,
+              stroke: color,
+              strokeWidth: size,
+              fill: stroke.fill || 'transparent'
+            });
+          } else if (stroke.type === 'label' || stroke.type === 'text') {
+            newShapes.push({
+              id,
+              type: 'text',
+              x: stroke.x ?? 150,
+              y: stroke.y ?? 150,
+              text: stroke.text || '',
+              stroke: color,
+              strokeWidth: 1,
+              fill: color,
+              fontSize: stroke.size ? stroke.size * 3 : 14
+            });
+          }
+        });
+
+        setSlides(prev => {
+          const next = [...prev];
+          const sl = next[activeSlideIdx];
+          if (sl) {
+            sl.lines = [...sl.lines, ...newLines];
+            sl.shapes = [...sl.shapes, ...newShapes];
+          }
+          return next;
+        });
+
+        setMagicPenModal({ open: false, prompt: '', loading: false, error: null });
+      } else {
+        throw new Error(data?.error || 'AI generation failed to produce valid drawing strokes.');
+      }
+    } catch (err: any) {
+      setMagicPenModal(prev => ({
+        ...prev,
+        loading: false,
+        error: err.message || 'Failed to generate drawing. Please try again.'
+      }));
+    }
   };
 
   useEffect(() => {
@@ -2600,6 +2712,18 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           >
             <Pen className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
+
+          <button 
+            onClick={() => {
+              setMagicPenModal({ open: true, prompt: '', loading: false, error: null });
+              setShapesMenuOpen(false);
+            }}
+            className="p-1.5 sm:p-2 rounded-xl transition-all bg-purple-600/20 border border-purple-500/40 text-purple-300 hover:bg-purple-600 hover:text-white flex items-center gap-1.5 px-2"
+            title="Magic Pen (AI Vector Drawing)"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+            <span className="text-xs font-bold hidden md:inline">Magic Pen</span>
+          </button>
           
           <button 
             onClick={() => { setTool('pencil'); setShapesMenuOpen(false); }} 
@@ -3851,6 +3975,76 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           onSelectDocument={handleSelectCloudDocument}
           currentUser={currentUser}
         />
+
+        {/* Magic Pen AI Vector Drawing Modal */}
+        {magicPenModal.open && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+            <div className="bg-slate-900 border border-purple-500/40 rounded-2xl w-full max-w-md shadow-2xl p-6 text-slate-100 relative animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-400">
+                  <Sparkles className="w-5 h-5 animate-pulse text-amber-300" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Magic Pen AI Vector Drawing</h3>
+                  <p className="text-xs text-slate-400">Type what you want drawn on the whiteboard canvas</p>
+                </div>
+              </div>
+
+              <form onSubmit={handleMagicDrawSubmit}>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
+                      Subject / Diagram / Concept
+                    </label>
+                    <input
+                      type="text"
+                      value={magicPenModal.prompt}
+                      onChange={(e) => setMagicPenModal(prev => ({ ...prev, prompt: e.target.value }))}
+                      placeholder="e.g. draw a simple plant cell with nucleus and cell wall"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      autoFocus
+                      disabled={magicPenModal.loading}
+                    />
+                  </div>
+
+                  {magicPenModal.error && (
+                    <div className="p-3 rounded-xl bg-red-950/60 border border-red-800/60 text-red-300 text-xs">
+                      {magicPenModal.error}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-end gap-2.5 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setMagicPenModal({ open: false, prompt: '', loading: false, error: null })}
+                      className="px-4 py-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-slate-800 transition"
+                      disabled={magicPenModal.loading}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={magicPenModal.loading || !magicPenModal.prompt.trim()}
+                      className="px-5 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg hover:from-purple-500 hover:to-indigo-500 disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {magicPenModal.loading ? (
+                        <>
+                          <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          <span>Drawing with AI...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                          <span>Generate Drawing</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

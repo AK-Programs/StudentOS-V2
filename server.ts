@@ -2765,6 +2765,82 @@ app.post('/api/ai/svg-diagram', async (req, res) => {
   }
 });
 
+// Magic Pen / Magic Draw Endpoint (Returns JSON canvas drawing commands)
+app.post('/api/ai/magic-draw', async (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  try {
+    const { prompt: userPrompt } = req.body || {};
+    if (!userPrompt) {
+      return res.status(400).json({ success: false, error: 'Prompt is required' });
+    }
+
+    const systemInstruction = `You are an expert educational vector drawing AI for StudentOS whiteboard.
+Generate a detailed schematic illustration for the user's prompt using 6 to 20 precise drawing strokes.
+Coordinates must be inside a 900 by 600 canvas (x: 0 to 900, y: 0 to 600).
+Reject generic labels such as Overview, Principles, Operations, or Applications. Use precise scientific or technical labels.
+You MUST output valid raw JSON ONLY, with no markdown code blocks or surrounding text, matching this exact schema:
+{
+  "title": "Illustration Title",
+  "strokes": [
+    { "type": "line", "points": [x1, y1, x2, y2], "color": "#38bdf8", "size": 3 },
+    { "type": "circle", "x": 450, "y": 300, "radius": 80, "color": "#22c55e", "size": 3 },
+    { "type": "arrow", "points": [200, 300, 380, 300], "color": "#f8fafc", "size": 2 },
+    { "type": "label", "x": 450, "y": 210, "text": "Specific Label", "color": "#f8fafc", "size": 14 }
+  ]
+}`;
+
+    const fullPrompt = `Create drawing commands for: "${userPrompt}"`;
+
+    let rawText = '';
+    let attempt = 0;
+    while (attempt < 2) {
+      attempt++;
+      try {
+        rawText = await generateAICompletion({
+          systemInstruction,
+          prompt: fullPrompt,
+          endpointName: 'MagicDraw',
+          taskType: 'fast',
+          temperature: 0.4,
+          maxTokens: 4000
+        });
+        if (rawText) break;
+      } catch (e) {
+        if (attempt >= 2) throw e;
+      }
+    }
+
+    if (!rawText) {
+      return res.status(500).json({ success: false, error: 'AI generation failed to produce output' });
+    }
+
+    // Clean up potential markdown code fences
+    let cleaned = rawText.trim();
+    if (cleaned.startsWith('```json')) {
+      cleaned = cleaned.replace(/^```json/, '').replace(/```$/, '').trim();
+    } else if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replace(/^```/, '').replace(/```$/, '').trim();
+    }
+
+    const parsed = JSON.parse(cleaned);
+    if (!parsed || !Array.isArray(parsed.strokes)) {
+      throw new Error('Invalid JSON structure returned by AI model');
+    }
+
+    return res.status(200).json({
+      success: true,
+      title: parsed.title || userPrompt,
+      strokes: parsed.strokes
+    });
+  } catch (err: any) {
+    console.error('[Magic Draw Error]', err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || 'Failed to generate magic drawing'
+    });
+  }
+});
+
 // 3D Educational Object & Selected-Object-to-3D Infographic Generator Endpoint
 app.post('/api/ai/whiteboard-3d', async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
