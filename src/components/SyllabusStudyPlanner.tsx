@@ -260,6 +260,78 @@ export const SyllabusStudyPlanner: React.FC<SyllabusStudyPlannerProps> = ({
     }
   };
 
+  // Handle Authoritative Topic Mastery from AI Tutor Lesson
+  const handleMasterTopic = async (
+    chapterId: string,
+    subject: string,
+    topic: string,
+    score: number
+  ) => {
+    const currentProg = studentProgress[chapterId];
+    const completedTopics = currentProg?.completedTopics || [];
+    const isAlreadyDone = completedTopics.includes(topic);
+    const updatedTopics = isAlreadyDone ? completedTopics : [...completedTopics, topic];
+
+    const targetSyl = syllabuses.find(s => s.subject.toLowerCase() === subject.toLowerCase());
+    const targetChapter = targetSyl?.chapters.find(c => c.id === chapterId);
+    const totalTopics = targetChapter?.topics?.length || 0;
+
+    let newStatus: ChapterLearningStatus = currentProg?.status || 'in_progress';
+    if (totalTopics > 0 && updatedTopics.length >= totalTopics) {
+      newStatus = 'completed';
+    } else {
+      newStatus = 'in_progress';
+    }
+
+    const previousRecords = currentProg?.topicMasteryRecords || {};
+    const attempts = (previousRecords[topic]?.attempts || 0) + 1;
+    const updatedMasteryRecords = {
+      ...previousRecords,
+      [topic]: {
+        mastered: true,
+        score,
+        totalQuestions: 2,
+        completedAt: new Date().toISOString(),
+        attempts
+      }
+    };
+
+    const updated = await SyllabusTimetableService.updateStudentChapterProgress(
+      userId,
+      chapterId,
+      subject,
+      {
+        completedTopics: updatedTopics,
+        status: newStatus,
+        topicMasteryRecords: updatedMasteryRecords,
+        lastStudiedAt: new Date().toISOString()
+      }
+    );
+
+    setStudentProgress(prev => ({
+      ...prev,
+      [chapterId]: updated
+    }));
+
+    // Authoritative XP award
+    try {
+      const { awardStudentXP } = await import('../lib/gamification');
+      await awardStudentXP(currentUser, 'use_ai_study', {
+        customXpAmount: 50,
+        customLabel: `Mastered topic: ${topic} in ${subject}`
+      });
+    } catch (_) {}
+
+    if (newStatus === 'completed' && currentProg?.status !== 'completed') {
+      soundService.playLevelUp();
+      setCelebrationChapterTitle(targetChapter?.title || 'Chapter');
+      if (showNotification) showNotification(`🎉 All chapter topics mastered! (+100 Scholar XP)!`);
+    } else {
+      soundService.playAchievementSound();
+      if (showNotification) showNotification(`✓ Topic Mastered: ${topic} (+50 Scholar XP)!`);
+    }
+  };
+
   // Handle Complete Study Session
   const handleCompleteSession = async (sessionId: string) => {
     soundService.playButtonClick();
@@ -643,6 +715,9 @@ export const SyllabusStudyPlanner: React.FC<SyllabusStudyPlannerProps> = ({
                     syllabus={targetSyl}
                     chapter={activeChapterForScreen}
                     progress={studentProgress[activeChapterForScreen.id]}
+                    currentUser={currentUser}
+                    effectiveRole={effectiveRole}
+                    showNotification={showNotification}
                     onBack={() => setLearningJourneyView('path')}
                     onUpdateStatus={async newStatus => {
                       await handleUpdateChapterStatus(
@@ -656,6 +731,14 @@ export const SyllabusStudyPlanner: React.FC<SyllabusStudyPlannerProps> = ({
                         activeChapterForScreen.id,
                         targetSyl.subject,
                         topic
+                      );
+                    }}
+                    onMasterTopic={async (topic, score) => {
+                      await handleMasterTopic(
+                        activeChapterForScreen.id,
+                        targetSyl.subject,
+                        topic,
+                        score
                       );
                     }}
                     onNextChapter={nextId => {

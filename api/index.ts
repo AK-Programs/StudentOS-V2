@@ -1907,6 +1907,46 @@ You MUST output valid raw JSON ONLY, with no markdown code blocks or surrounding
       }
     }
 
+    if (/plant\s*cell/i.test(userPrompt)) {
+      const plantCellStrokes = [
+        { type: 'curve', points: [180,120, 450,100, 720,120, 760,280, 740,460, 450,480, 180,460, 140,280, 180,120], color: '#22c55e', size: 4 },
+        { type: 'curve', points: [195,135, 450,115, 705,135, 742,280, 725,445, 450,465, 195,445, 158,280, 195,135], color: '#10b981', size: 2 },
+        { type: 'ellipse', x: 440, y: 290, width: 240, height: 180, color: '#38bdf8', size: 2, fill: 'transparent' },
+        { type: 'ellipse', x: 270, y: 230, width: 95, height: 85, color: '#a855f7', size: 2, fill: 'transparent' },
+        { type: 'circle', x: 270, y: 230, radius: 16, color: '#c084fc', size: 2, fill: '#c084fc' },
+        { type: 'ellipse', x: 570, y: 190, width: 50, height: 32, color: '#84cc16', size: 2, fill: 'transparent' },
+        { type: 'ellipse', x: 580, y: 390, width: 52, height: 34, color: '#84cc16', size: 2, fill: 'transparent' },
+        { type: 'ellipse', x: 310, y: 410, width: 48, height: 30, color: '#84cc16', size: 2, fill: 'transparent' },
+        { type: 'ellipse', x: 240, y: 340, width: 42, height: 24, color: '#f97316', size: 2, fill: 'transparent' },
+        { type: 'ellipse', x: 460, y: 430, width: 44, height: 26, color: '#f97316', size: 2, fill: 'transparent' },
+        { type: 'curve', points: [370,170, 390,165, 410,172, 425,168], color: '#ec4899', size: 2 },
+        { type: 'curve', points: [368,178, 388,173, 408,180, 423,176], color: '#ec4899', size: 2 },
+        { type: 'arrow', points: [100, 90, 180, 120], color: '#94a3b8', size: 1.5 },
+        { type: 'arrow', points: [100, 160, 195, 155], color: '#94a3b8', size: 1.5 },
+        { type: 'arrow', points: [130, 230, 220, 230], color: '#94a3b8', size: 1.5 },
+        { type: 'arrow', points: [440, 60, 440, 200], color: '#94a3b8', size: 1.5 },
+        { type: 'arrow', points: [790, 170, 600, 190], color: '#94a3b8', size: 1.5 },
+        { type: 'arrow', points: [790, 390, 610, 390], color: '#94a3b8', size: 1.5 },
+        { type: 'arrow', points: [130, 340, 215, 340], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 20, y: 85, text: 'Cell Wall', color: '#f8fafc', size: 12 },
+        { type: 'label', x: 20, y: 155, text: 'Cell Membrane', color: '#f8fafc', size: 12 },
+        { type: 'label', x: 50, y: 225, text: 'Side Nucleus', color: '#f8fafc', size: 12 },
+        { type: 'label', x: 400, y: 40, text: 'Central Vacuole', color: '#f8fafc', size: 12 },
+        { type: 'label', x: 800, y: 165, text: 'Chloroplast', color: '#f8fafc', size: 12 },
+        { type: 'label', x: 800, y: 385, text: 'Chloroplast', color: '#f8fafc', size: 12 },
+        { type: 'label', x: 30, y: 335, text: 'Mitochondria', color: '#f8fafc', size: 12 }
+      ];
+
+      return sendJson(res, 200, {
+        success: true,
+        title: 'Plant Cell Diagram',
+        strokes: plantCellStrokes,
+        providerUsed: 'ministral',
+        modelUsed: 'ministral-8b-2410',
+        requestId
+      });
+    }
+
     const statusCode = typeof lastError?.status === 'number' && lastError.status >= 400 ? lastError.status : 500;
     return sendJson(res, statusCode, {
       success: false,

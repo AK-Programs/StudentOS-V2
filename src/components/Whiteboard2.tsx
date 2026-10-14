@@ -31,6 +31,7 @@ import {
   doesCircleIntersectStroke
 } from '../lib/whiteboardEraserGeometry';
 import { searchVerifiedAssets } from '../lib/whiteboardAssetRegistry';
+import { soundService } from '../lib/soundService';
 
 const Stage = StageComp as any;
 const Layer = LayerComp as any;
@@ -715,8 +716,8 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       const data = await res.json();
       if (data?.success && Array.isArray(data.strokes)) {
         pushHistory();
-        const newLines: LineObj[] = [];
-        const newShapes: ShapeObj[] = [];
+        type DrawItem = { kind: 'line'; data: LineObj } | { kind: 'shape'; data: ShapeObj };
+        const drawItems: DrawItem[] = [];
 
         data.strokes.forEach((stroke: any, idx: number) => {
           const id = 'magic_' + Math.random().toString(36).substring(2, 9) + '_' + idx;
@@ -724,103 +725,139 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           const size = stroke.size || stroke.brushSize || 3;
 
           if (stroke.type === 'line' && Array.isArray(stroke.points) && stroke.points.length >= 4) {
-            newLines.push({
-              id,
-              points: stroke.points,
-              color,
-              brushSize: size,
-              tool: 'pen',
-              tension: 0.4
+            drawItems.push({
+              kind: 'line',
+              data: {
+                id,
+                points: stroke.points,
+                color,
+                brushSize: size,
+                tool: 'pen',
+                tension: 0.4
+              }
             });
           } else if (stroke.type === 'curve' && Array.isArray(stroke.points) && stroke.points.length >= 4) {
-            newLines.push({
-              id,
-              points: stroke.points,
-              color,
-              brushSize: size,
-              tool: 'pen',
-              tension: 0.5
+            drawItems.push({
+              kind: 'line',
+              data: {
+                id,
+                points: stroke.points,
+                color,
+                brushSize: size,
+                tool: 'pen',
+                tension: 0.5
+              }
             });
           } else if (stroke.type === 'arrow' && Array.isArray(stroke.points) && stroke.points.length >= 4) {
-            newShapes.push({
-              id,
-              type: 'arrow',
-              x: stroke.points[0],
-              y: stroke.points[1],
-              points: stroke.points,
-              stroke: color,
-              strokeWidth: size
+            drawItems.push({
+              kind: 'shape',
+              data: {
+                id,
+                type: 'arrow',
+                x: stroke.points[0],
+                y: stroke.points[1],
+                points: stroke.points,
+                stroke: color,
+                strokeWidth: size
+              }
             });
           } else if (stroke.type === 'circle') {
             const cx = stroke.x ?? 250;
             const cy = stroke.y ?? 200;
             const radius = stroke.radius ?? 45;
-            newShapes.push({
-              id,
-              type: 'circle',
-              x: cx,
-              y: cy,
-              radius,
-              stroke: color,
-              strokeWidth: size,
-              fill: stroke.fill || 'transparent'
+            drawItems.push({
+              kind: 'shape',
+              data: {
+                id,
+                type: 'circle',
+                x: cx,
+                y: cy,
+                radius,
+                stroke: color,
+                strokeWidth: size,
+                fill: stroke.fill || 'transparent'
+              }
             });
           } else if (stroke.type === 'ellipse') {
             const cx = stroke.x ?? 250;
             const cy = stroke.y ?? 200;
             const rx = stroke.radiusX ?? (stroke.width ? stroke.width / 2 : (stroke.radius ?? 50));
             const ry = stroke.radiusY ?? (stroke.height ? stroke.height / 2 : (stroke.radius ?? 30));
-            newShapes.push({
-              id,
-              type: 'ellipse',
-              x: cx,
-              y: cy,
-              width: rx * 2,
-              height: ry * 2,
-              stroke: color,
-              strokeWidth: size,
-              fill: stroke.fill || 'transparent'
+            drawItems.push({
+              kind: 'shape',
+              data: {
+                id,
+                type: 'ellipse',
+                x: cx,
+                y: cy,
+                width: rx * 2,
+                height: ry * 2,
+                stroke: color,
+                strokeWidth: size,
+                fill: stroke.fill || 'transparent'
+              }
             });
           } else if (stroke.type === 'rect') {
-            newShapes.push({
-              id,
-              type: 'rect',
-              x: stroke.x ?? 150,
-              y: stroke.y ?? 150,
-              width: stroke.width ?? 120,
-              height: stroke.height ?? 80,
-              stroke: color,
-              strokeWidth: size,
-              fill: stroke.fill || 'transparent'
+            drawItems.push({
+              kind: 'shape',
+              data: {
+                id,
+                type: 'rect',
+                x: stroke.x ?? 150,
+                y: stroke.y ?? 150,
+                width: stroke.width ?? 120,
+                height: stroke.height ?? 80,
+                stroke: color,
+                strokeWidth: size,
+                fill: stroke.fill || 'transparent'
+              }
             });
           } else if (stroke.type === 'label' || stroke.type === 'text') {
             const rawSize = stroke.size || 12;
             const cappedSize = Math.max(11, Math.min(16, rawSize));
-            newShapes.push({
-              id,
-              type: 'text',
-              x: stroke.x ?? 150,
-              y: stroke.y ?? 150,
-              text: stroke.text || '',
-              stroke: color,
-              strokeWidth: 1,
-              fill: color,
-              fontSize: cappedSize
+            drawItems.push({
+              kind: 'shape',
+              data: {
+                id,
+                type: 'text',
+                x: stroke.x ?? 150,
+                y: stroke.y ?? 150,
+                text: stroke.text || '',
+                stroke: color,
+                strokeWidth: 1,
+                fill: color,
+                fontSize: cappedSize
+              }
             });
           }
         });
 
-        setSlides(prev => {
-          const next = [...prev];
-          const sl = next[activeSlideIdx];
-          if (sl) {
-            sl.lines = [...sl.lines, ...newLines];
-            sl.shapes = [...sl.shapes, ...newShapes];
-          }
-          return next;
-        });
-
+        // Close modal immediately so the user can watch the animated drawing occur live on canvas
         setMagicPenModal({ open: false, prompt: '', loading: false, error: null });
+
+        // Animate the strokes in order
+        let step = 0;
+        const animInterval = setInterval(() => {
+          if (step >= drawItems.length) {
+            clearInterval(animInterval);
+            soundService.playAchievementSound();
+            return;
+          }
+          const item = drawItems[step];
+          setSlides(prev => {
+            const next = [...prev];
+            const sl = next[activeSlideIdx];
+            if (sl) {
+              if (item.kind === 'line') {
+                sl.lines = [...sl.lines, item.data];
+              } else {
+                sl.shapes = [...sl.shapes, item.data];
+              }
+            }
+            return next;
+          });
+          step++;
+        }, 70);
       } else {
         throw new Error(data?.error || 'AI generation failed to produce valid drawing strokes.');
       }

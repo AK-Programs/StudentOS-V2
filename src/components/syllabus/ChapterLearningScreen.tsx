@@ -2,9 +2,9 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * 
- * StudentOS — Structured Chapter Learning Experience
- * Follows Duolingo-inspired lesson breakdown: objectives, topic checklist,
- * authorized notes, quick knowledge check, and completion actions.
+ * StudentOS — Structured Chapter Learning Experience with Animated Robot Teacher
+ * Replaces simple checkbox clicking with real AI teaching, worked examples,
+ * and adaptive mastery assessments powered by Byte, our AI Robot Tutor.
  */
 
 import React, { useState } from 'react';
@@ -23,7 +23,9 @@ import {
   Check,
   RotateCcw,
   Clock,
-  Compass
+  Compass,
+  GraduationCap,
+  Play
 } from 'lucide-react';
 import {
   OfficialSubjectSyllabus,
@@ -31,16 +33,23 @@ import {
   StudentChapterProgress,
   ChapterLearningStatus
 } from '../../types/syllabusTimetable';
+import { UserProfile, UserRole } from '../../types';
 import { MOCK_QUIZZES } from '../../mockData';
 import { soundService } from '../../lib/soundService';
+import { AnimatedRobotTeacher } from './AnimatedRobotTeacher';
+import { AITopicTutorModal } from './AITopicTutorModal';
 
 interface ChapterLearningScreenProps {
   syllabus: OfficialSubjectSyllabus;
   chapter: SyllabusChapter;
   progress?: StudentChapterProgress;
+  currentUser?: UserProfile;
+  effectiveRole?: UserRole;
+  showNotification?: (msg: string) => void;
   onBack: () => void;
   onUpdateStatus: (newStatus: ChapterLearningStatus) => Promise<void>;
   onToggleTopic: (topic: string) => Promise<void>;
+  onMasterTopic?: (topic: string, score: number) => Promise<void>;
   onNextChapter?: (nextChapterId: string) => void;
   onTriggerCelebration: (chapterTitle: string) => void;
 }
@@ -49,9 +58,13 @@ export const ChapterLearningScreen: React.FC<ChapterLearningScreenProps> = ({
   syllabus,
   chapter,
   progress,
+  currentUser,
+  effectiveRole,
+  showNotification,
   onBack,
   onUpdateStatus,
   onToggleTopic,
+  onMasterTopic,
   onNextChapter,
   onTriggerCelebration
 }) => {
@@ -64,9 +77,11 @@ export const ChapterLearningScreen: React.FC<ChapterLearningScreenProps> = ({
   // Active sub-tab inside chapter screen
   const [activeTab, setActiveTab] = useState<'topics' | 'notes' | 'quiz'>('topics');
 
+  // Active Topic for AI Tutor Modal
+  const [selectedTopicForTutor, setSelectedTopicForTutor] = useState<string | null>(null);
+
   // Quick Knowledge Check state (from MOCK_QUIZZES)
   const availableQuizzes = MOCK_QUIZZES[syllabus.subject] || [];
-  // Pick deterministic question based on chapter number
   const chNum = typeof chapter.chapterNumber === 'number' ? chapter.chapterNumber : parseInt(String(chapter.chapterNumber)) || 1;
   const selectedQuestion = availableQuizzes.length > 0 ? availableQuizzes[(chNum - 1) % availableQuizzes.length] : null;
 
@@ -107,6 +122,15 @@ export const ChapterLearningScreen: React.FC<ChapterLearningScreenProps> = ({
     setSelectedQuizOption(null);
     setQuizSubmitted(false);
     setQuizCorrect(null);
+  };
+
+  // Safe fallback user object if not provided
+  const safeUser: UserProfile = currentUser || {
+    uid: 'student_current',
+    email: 'scholar@studentos.internal',
+    name: 'Scholar',
+    role: 'student',
+    grade: syllabus.grade || 'Grade 10'
   };
 
   return (
@@ -151,62 +175,78 @@ export const ChapterLearningScreen: React.FC<ChapterLearningScreenProps> = ({
         </div>
       </div>
 
-      {/* Chapter Hero Card */}
-      <div className="p-6 sm:p-8 rounded-3xl bg-gradient-to-br from-indigo-950/60 via-slate-900 to-slate-950 border border-indigo-500/30 shadow-xl relative overflow-hidden">
+      {/* Chapter Hero Card with Robot Teacher Companion */}
+      <div className="p-6 sm:p-8 rounded-3xl bg-gradient-to-br from-indigo-950/70 via-slate-900 to-slate-950 border border-indigo-500/30 shadow-xl relative overflow-hidden">
         {/* Subtle accent glow */}
-        <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute top-0 right-0 w-72 h-72 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
 
-        <div className="relative space-y-4">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <span className="px-3 py-1 rounded-xl bg-indigo-600/30 border border-indigo-500/40 text-xs font-extrabold font-mono text-indigo-300">
-              Chapter {chapter.chapterNumber}
-            </span>
-            <span className="text-[11px] font-bold text-slate-400">
-              Exam Relevance: <strong className="text-amber-400 uppercase">{chapter.examRelevance}</strong>
-            </span>
-            {chapter.weightageMarks && (
-              <span className="text-[11px] font-mono text-indigo-400">
-                · {chapter.weightageMarks} Marks
+        <div className="relative flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+          <div className="space-y-4 max-w-xl">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="px-3 py-1 rounded-xl bg-indigo-600/30 border border-indigo-500/40 text-xs font-extrabold font-mono text-indigo-300">
+                Chapter {chapter.chapterNumber}
               </span>
-            )}
-            {chapter.expectedCompletionDate && (
-              <span className="text-[11px] text-slate-400 flex items-center gap-1">
-                <Clock className="w-3 h-3 text-slate-500" />
-                Target: {chapter.expectedCompletionDate}
+              <span className="text-[11px] font-bold text-slate-400">
+                Exam Relevance: <strong className="text-amber-400 uppercase">{chapter.examRelevance}</strong>
               </span>
+              {chapter.weightageMarks && (
+                <span className="text-[11px] font-mono text-indigo-400">
+                  · {chapter.weightageMarks} Marks
+                </span>
+              )}
+              {chapter.expectedCompletionDate && (
+                <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                  <Clock className="w-3 h-3 text-slate-500" />
+                  Target: {chapter.expectedCompletionDate}
+                </span>
+              )}
+            </div>
+
+            <h2 className="text-2xl sm:text-3xl font-black text-white font-display">
+              {chapter.title}
+            </h2>
+
+            {chapter.description ? (
+              <p className="text-sm text-slate-300 leading-relaxed">
+                {chapter.description}
+              </p>
+            ) : (
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Official curriculum topic series. Complete each interactive lesson and demonstrate understanding with Byte to unlock chapter mastery.
+              </p>
             )}
+
+            {/* Chapter Progress Bar */}
+            <div className="pt-2 max-w-md space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-mono">
+                <span className="text-slate-400">Topics Mastered</span>
+                <span className="font-bold text-indigo-300">
+                  {completedCount}/{totalTopics} ({progressPercent}%)
+                </span>
+              </div>
+              <div className="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden border border-white/10">
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: `${progressPercent}%` }}
+                  transition={{ duration: 0.6, ease: 'easeOut' }}
+                  className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-400 rounded-full"
+                />
+              </div>
+            </div>
           </div>
 
-          <h2 className="text-2xl sm:text-3xl font-black text-white font-display">
-            {chapter.title}
-          </h2>
-
-          {chapter.description ? (
-            <p className="text-sm text-slate-300 leading-relaxed max-w-2xl">
-              {chapter.description}
-            </p>
-          ) : (
-            <p className="text-xs text-slate-400 leading-relaxed max-w-2xl">
-              Official curriculum topic series approved by school department head. Complete each topic checklist item to reinforce your understanding.
-            </p>
-          )}
-
-          {/* Chapter Progress Bar */}
-          <div className="pt-2 max-w-md space-y-1.5">
-            <div className="flex items-center justify-between text-xs font-mono">
-              <span className="text-slate-400">Topics Mastered</span>
-              <span className="font-bold text-indigo-300">
-                {completedCount}/{totalTopics} ({progressPercent}%)
-              </span>
-            </div>
-            <div className="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden border border-white/10">
-              <motion.div
-                initial={{ width: 0 }}
-                animate={{ width: `${progressPercent}%` }}
-                transition={{ duration: 0.6, ease: 'easeOut' }}
-                className="h-full bg-gradient-to-r from-indigo-500 to-emerald-400 rounded-full"
-              />
-            </div>
+          {/* Interactive Animated Robot Teacher Avatar & Speech Bubble */}
+          <div className="shrink-0 flex flex-col items-center">
+            <AnimatedRobotTeacher
+              mood={completedCount === totalTopics && totalTopics > 0 ? 'happy' : 'teaching'}
+              size="md"
+              bubbleMessage={
+                completedCount === totalTopics && totalTopics > 0
+                  ? `Fantastic work! You've mastered all topics in Chapter ${chapter.chapterNumber}!`
+                  : `Hi! Pick any topic below to learn with worked examples and prove your mastery!`
+              }
+              speechText={`Welcome to Chapter ${chapter.chapterNumber}: ${chapter.title}. Select a topic to start our interactive AI lesson.`}
+            />
           </div>
         </div>
       </div>
@@ -226,7 +266,7 @@ export const ChapterLearningScreen: React.FC<ChapterLearningScreenProps> = ({
           }`}
         >
           <Compass className="w-3.5 h-3.5" />
-          <span>Topic Learning Path ({totalTopics})</span>
+          <span>Interactive Topic Lessons ({totalTopics})</span>
         </button>
 
         <button
@@ -264,58 +304,104 @@ export const ChapterLearningScreen: React.FC<ChapterLearningScreenProps> = ({
         )}
       </div>
 
-      {/* TAB CONTENT 1: TOPICS CHECKLIST */}
+      {/* TAB CONTENT 1: TOPICS LIST (AI TUTOR TRIGGER) */}
       {activeTab === 'topics' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
-              <span>Chapter Syllabus Topics</span>
-              <span className="text-xs font-mono text-slate-400 font-normal">
-                (Click to toggle mastery)
-              </span>
-            </h3>
+            <div>
+              <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+                <span>Chapter Curriculum Topics</span>
+              </h3>
+              <p className="text-xs text-slate-400">
+                Click any topic to learn with Byte, solve worked examples, and demonstrate understanding.
+              </p>
+            </div>
             <span className="text-xs text-indigo-400 font-mono font-bold">
-              {completedCount} of {totalTopics} completed
+              {completedCount} of {totalTopics} Mastered
             </span>
           </div>
 
           {chapter.topics && chapter.topics.length > 0 ? (
-            <div className="space-y-2.5">
+            <div className="space-y-3">
               {chapter.topics.map((topic, idx) => {
                 const isDone = completedTopics.includes(topic);
+                const record = progress?.topicMasteryRecords?.[topic];
+
                 return (
                   <motion.div
                     key={idx}
-                    whileHover={{ scale: 1.01 }}
-                    whileTap={{ scale: 0.99 }}
+                    whileHover={{ scale: 1.008 }}
                     onClick={() => {
                       soundService.playButtonClick();
-                      onToggleTopic(topic);
+                      setSelectedTopicForTutor(topic);
                     }}
-                    className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                    className={`p-5 rounded-2xl border transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
                       isDone
-                        ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-200 shadow-sm'
-                        : 'bg-slate-950/70 hover:bg-slate-900 border-white/10 text-slate-300'
+                        ? 'bg-emerald-950/20 hover:bg-emerald-950/30 border-emerald-500/30 text-emerald-200 shadow-sm'
+                        : 'bg-slate-950/80 hover:bg-slate-900 border-white/10 hover:border-indigo-500/40 text-slate-300'
                     }`}
                   >
                     <div className="flex items-center gap-3.5">
                       <div
-                        className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold transition-all ${
+                        className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-bold transition-all ${
                           isDone
                             ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/30'
-                            : 'bg-slate-900 border border-white/15 text-slate-400'
+                            : 'bg-indigo-600/20 border border-indigo-500/30 text-indigo-300'
                         }`}
                       >
-                        {isDone ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : idx + 1}
+                        {isDone ? <Check className="w-4 h-4 stroke-[3]" /> : idx + 1}
                       </div>
-                      <span className={`text-sm font-semibold ${isDone ? 'line-through text-slate-400' : 'text-white'}`}>
-                        {topic}
-                      </span>
+
+                      <div className="space-y-0.5">
+                        <span className="text-sm sm:text-base font-bold text-white block">
+                          {topic}
+                        </span>
+                        <div className="flex items-center gap-2 text-xs text-slate-400 font-mono">
+                          {isDone ? (
+                            <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                              <span>✓ Mastered</span>
+                              {record?.score !== undefined && (
+                                <span>· Score: {record.score}%</span>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="text-indigo-400">
+                              Requires demonstration of understanding
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
 
-                    <span className={`text-[11px] font-mono ${isDone ? 'text-emerald-400 font-bold' : 'text-slate-500'}`}>
-                      {isDone ? 'Mastered' : 'Pending'}
-                    </span>
+                    <div className="flex items-center gap-3 self-end sm:self-center">
+                      {isDone ? (
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            soundService.playButtonClick();
+                            setSelectedTopicForTutor(topic);
+                          }}
+                          className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs font-bold text-slate-300 hover:text-white flex items-center gap-1.5 transition-all cursor-pointer"
+                        >
+                          <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>Review Lesson</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            soundService.playButtonClick();
+                            setSelectedTopicForTutor(topic);
+                          }}
+                          className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-md shadow-indigo-600/30 transition-all cursor-pointer"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                          <span>Learn with Robot Tutor →</span>
+                        </button>
+                      )}
+                    </div>
                   </motion.div>
                 );
               })}
@@ -350,53 +436,15 @@ export const ChapterLearningScreen: React.FC<ChapterLearningScreenProps> = ({
               </p>
             )}
           </div>
-
-          {/* Authorized Resources */}
-          {chapter.authorizedResources && chapter.authorizedResources.length > 0 && (
-            <div className="p-6 rounded-2xl bg-slate-950/80 border border-white/10 space-y-3">
-              <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                <FileText className="w-4 h-4 text-indigo-400" />
-                <span>Authorized Learning Resources</span>
-              </h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {chapter.authorizedResources.map((res, i) => (
-                  <div
-                    key={i}
-                    className="p-3.5 rounded-xl bg-slate-900 border border-white/10 flex items-center justify-between gap-3"
-                  >
-                    <div className="space-y-0.5 truncate">
-                      <span className="text-[10px] uppercase font-bold text-indigo-400 block">
-                        {res.type}
-                      </span>
-                      <span className="text-xs font-semibold text-white truncate block">
-                        {res.title}
-                      </span>
-                    </div>
-                    {res.url && (
-                      <a
-                        href={res.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </a>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
 
-      {/* TAB CONTENT 3: KNOWLEDGE CHECK (Quiz from MOCK_QUIZZES) */}
+      {/* TAB CONTENT 3: QUICK KNOWLEDGE CHECK */}
       {activeTab === 'quiz' && selectedQuestion && (
-        <div className="p-6 sm:p-8 rounded-3xl bg-slate-950 border border-indigo-500/30 space-y-5">
+        <div className="p-6 sm:p-8 rounded-3xl bg-slate-950/90 border border-indigo-500/20 space-y-5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-mono font-bold text-indigo-400 flex items-center gap-1.5">
-              <HelpCircle className="w-3.5 h-3.5" />
-              Quick Knowledge Check
+            <span className="text-xs font-mono font-bold text-indigo-400">
+              Diagnostic Check
             </span>
             <span className="text-[11px] uppercase font-extrabold px-2 py-0.5 rounded-full bg-slate-900 border border-white/10 text-slate-400">
               Curriculum Check
@@ -479,17 +527,17 @@ export const ChapterLearningScreen: React.FC<ChapterLearningScreenProps> = ({
         </div>
       )}
 
-      {/* Bottom Action Footer - UIverse Pushable Buttons */}
+      {/* Bottom Action Footer */}
       <div className="pt-4 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-2">
-          {currentStatus !== 'completed' && (
+          {currentStatus !== 'completed' && completedCount === totalTopics && totalTopics > 0 && (
             <button
               type="button"
               onClick={handleCompleteChapter}
-              className="py-3 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 text-slate-950 font-black text-sm transition-all transform active:scale-95 shadow-[0_4px_0_rgb(6,95,70)] hover:brightness-110 flex items-center gap-2 cursor-pointer"
+              className="py-3 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 text-slate-950 font-black text-sm transition-all transform active:scale-95 shadow-lg shadow-emerald-500/20 hover:brightness-110 flex items-center gap-2 cursor-pointer"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>Mark Chapter Completed (+50 XP)</span>
+              <span>Claim Chapter Mastery (+50 XP)</span>
             </button>
           )}
 
@@ -519,6 +567,30 @@ export const ChapterLearningScreen: React.FC<ChapterLearningScreenProps> = ({
           </button>
         )}
       </div>
+
+      {/* Dynamic AI Topic Tutor Modal */}
+      <AnimatePresence>
+        {selectedTopicForTutor && (
+          <AITopicTutorModal
+            subject={syllabus.subject}
+            chapter={chapter}
+            topic={selectedTopicForTutor}
+            grade={syllabus.grade || 'Grade 10'}
+            currentUser={safeUser}
+            isMastered={completedTopics.includes(selectedTopicForTutor)}
+            masteryRecord={progress?.topicMasteryRecords?.[selectedTopicForTutor]}
+            onClose={() => setSelectedTopicForTutor(null)}
+            onMasterTopic={async (top, score) => {
+              if (onMasterTopic) {
+                await onMasterTopic(top, score);
+              } else {
+                await onToggleTopic(top);
+              }
+            }}
+            showNotification={showNotification}
+          />
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 };
