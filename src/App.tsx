@@ -37,6 +37,7 @@ import {
   saveStudyOutputToFlashcards,
   formatMathematicalText
 } from './lib/studentosAiEngine';
+import { AITopicTutorModal } from './components/syllabus/AITopicTutorModal';
 import { GamificationRewardToast, DashboardGamificationCard } from './components/StudentGamificationHub';
 import { 
   getAiBuddyChats, saveAiBuddyChat, deleteAiBuddyChat, renameAiBuddyChat,
@@ -1168,7 +1169,33 @@ export default function App() {
   );
   const [showQuotaModal, setShowQuotaModal] = useState<boolean>(false);
   const [showAiHistoryDrawer, setShowAiHistoryDrawer] = useState<boolean>(false);
+  const [selectedTopicForTutor, setSelectedTopicForTutor] = useState<string | null>(null);
+  const [aiReasoningMode, setAiReasoningMode] = useState<boolean>(false);
+  const [showScrollBottomBtn, setShowScrollBottomBtn] = useState<boolean>(false);
   const aiFileInputRef = useRef<HTMLInputElement>(null);
+
+  function detectTeachingIntent(query: string): string | null {
+    const lower = query.toLowerCase().trim();
+    const patterns = [
+      /^teach me (about )?(.+)/i,
+      /^explain (this chapter|this topic|about )?(.+)/i,
+      /^can you teach me (.+)/i,
+      /^i don't understand (.+)/i,
+      /^help me learn (.+)/i,
+      /^explain (.+) in simple words/i,
+      /^how does (.+) work/i,
+    ];
+    for (const p of patterns) {
+      const m = lower.match(p);
+      if (m) {
+        return (m[2] || m[1] || query).replace(/[?.!]/g, '').trim();
+      }
+    }
+    if (lower.startsWith('teach ') || lower.startsWith('learn ') || lower.includes('step by step')) {
+      return query.replace(/^(teach me|teach|learn|explain|can you explain|help me learn about)\s+/i, '').replace(/[?.!]/g, '').trim();
+    }
+    return null;
+  }
 
   // Sync AI Usage status dynamically
   useEffect(() => {
@@ -12656,6 +12683,19 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                           </select>
                         </div>
 
+                        {/* Reasoning Mode Toggle */}
+                        <button
+                          type="button"
+                          onClick={() => setAiReasoningMode(!aiReasoningMode)}
+                          className={`px-2.5 py-1 rounded-xl border text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                            aiReasoningMode ? 'bg-purple-600/30 text-purple-300 border-purple-500/50 shadow-sm' : 'bg-slate-900 text-slate-400 border-white/10 hover:text-white'
+                          }`}
+                          title="Toggle Deep Reasoning Mode for step-by-step rigorous analysis"
+                        >
+                          <Cpu className="w-3.5 h-3.5 text-purple-400" />
+                          <span>{aiReasoningMode ? 'Reasoning: ON' : 'Reasoning'}</span>
+                        </button>
+
                         {/* Web Search Mode Selector */}
                         <div className="flex items-center gap-1.5 bg-slate-900 border border-teal-500/25 rounded-xl px-2.5 py-1 shadow-inner">
                           <Globe className={`w-3.5 h-3.5 shrink-0 ${aiWebSearchMode === 'off' ? 'text-slate-500' : 'text-teal-400'}`} />
@@ -13871,6 +13911,35 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
           }}
         />
       )}
+
+      {/* Global Byte Learning Modal Triggered from Byte Chat Intent Detection */}
+      <AnimatePresence>
+        {selectedTopicForTutor && currentUser && (
+          <AITopicTutorModal
+            subject={currentUser?.specialtySubject || 'General Studies'}
+            chapter={{
+              id: 'chapter-dynamic',
+              chapterNumber: 1,
+              title: selectedTopicForTutor,
+              topics: [selectedTopicForTutor],
+              description: `Dynamic learning session for ${selectedTopicForTutor}`,
+              examRelevance: 'high',
+              status: 'published',
+              lastUpdated: new Date().toISOString().split('T')[0]
+            }}
+            topic={selectedTopicForTutor}
+            grade={currentUser?.grade || 'Grade 10'}
+            currentUser={currentUser}
+            isMastered={false}
+            onClose={() => setSelectedTopicForTutor(null)}
+            onMasterTopic={async (top, score) => {
+              showNotification(`✓ Mastered ${top} with score ${score}!`);
+            }}
+            showNotification={showNotification}
+            onOpenByteChat={() => setSelectedTopicForTutor(null)}
+          />
+        )}
+      </AnimatePresence>
 
     </div>
   );

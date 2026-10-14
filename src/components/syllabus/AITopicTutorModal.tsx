@@ -91,6 +91,7 @@ interface AITopicTutorModalProps {
   onClose: () => void;
   onMasterTopic: (topic: string, score: number) => Promise<void>;
   showNotification?: (msg: string) => void;
+  onOpenByteChat?: () => void;
 }
 
 export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
