@@ -5,6 +5,8 @@
  * StudentOS — Real AI Topic Learning Tutor + Animated Robot Teacher ("Byte")
  * High-performance, curriculum-grounded interactive teaching engine:
  * - Dynamic structured concept explanations generated via StudentOS AI Engine
+ * - Type-safe StructuredContentRenderer preventing React Error #31
+ * - Robust handling of { text, analogy } objects, strings, and block arrays
  * - Zero-delay local session caching for instant 0ms revisits
  * - Real worked examples with step-by-step reasoning
  * - Adaptive interactive practice exercises & mastery checkpoints
@@ -38,31 +40,38 @@ import {
   Compass
 } from 'lucide-react';
 import { AnimatedRobotTeacher, RobotMood } from './AnimatedRobotTeacher';
+import {
+  StructuredContentRenderer,
+  extractTutorText,
+  normalizeTutorContent,
+  normalizeTopicLesson,
+  TutorContent
+} from './StructuredContentRenderer';
 import { SyllabusChapter } from '../../types/syllabusTimetable';
 import { UserProfile } from '../../types';
 import { soundService } from '../../lib/soundService';
 
 interface PracticeQuestion {
   id: string;
-  question: string;
-  options: string[];
+  question: TutorContent;
+  options: TutorContent[];
   correctIndex: number;
-  explanation: string;
-  hint: string;
+  explanation: TutorContent;
+  hint: TutorContent;
 }
 
 interface DynamicTopicLesson {
   topic: string;
   subject: string;
   grade: string;
-  hook: string;
-  prerequisites: string;
-  coreExplanation: string;
-  keyPoints: string[];
+  hook: TutorContent;
+  prerequisites: TutorContent;
+  coreExplanation: TutorContent;
+  keyPoints: TutorContent[];
   workedExample: {
-    problem: string;
-    steps: { title: string; detail: string }[];
-    examTip: string;
+    problem: TutorContent;
+    steps: { title: TutorContent; detail: TutorContent }[];
+    examTip: TutorContent;
   };
   practiceQuestions: PracticeQuestion[];
 }
@@ -101,7 +110,7 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
 
   // Robot State & Spoken Audio
   const [robotMood, setRobotMood] = useState<RobotMood>('teaching');
-  const [robotBubble, setRobotBubble] = useState<string>(
+  const [robotBubble, setRobotBubble] = useState<TutorContent>(
     `Welcome! Let's master "${topic}" step by step.`
   );
   const [currentSpeechText, setCurrentSpeechText] = useState<string>('');
@@ -122,7 +131,7 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
 
   // Ask Robot Q&A State
   const [chatMessages, setChatMessages] = useState<
-    Array<{ role: 'user' | 'assistant'; text: string; speechSummary?: string; followUps?: string[] }>
+    Array<{ role: 'user' | 'assistant'; text: TutorContent; speechSummary?: string; followUps?: string[] }>
   >([
     {
       role: 'assistant',
@@ -149,14 +158,16 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
       try {
         const cachedRaw = sessionStorage.getItem(sessionCacheKey);
         if (cachedRaw) {
-          const cachedLesson = JSON.parse(cachedRaw);
-          if (cachedLesson && cachedLesson.coreExplanation && Array.isArray(cachedLesson.practiceQuestions)) {
+          const cachedParsed = JSON.parse(cachedRaw);
+          if (cachedParsed && (cachedParsed.coreExplanation || cachedParsed.explanation || cachedParsed.text)) {
+            const cachedLesson: DynamicTopicLesson = normalizeTopicLesson(cachedParsed, topic, subject, grade);
             setLesson(cachedLesson);
             setLoading(false);
             setRobotMood('teaching');
-            const introBubble = `Ready! Let's conquer "${topic}". ${cachedLesson.hook}`;
+            const hookText = extractTutorText(cachedLesson.hook);
+            const introBubble = `Ready! Let's conquer "${topic}". ${hookText}`;
             setRobotBubble(introBubble);
-            setCurrentSpeechText(`Welcome! Let's master ${topic}. ${cachedLesson.hook}`);
+            setCurrentSpeechText(`Welcome! Let's master ${topic}. ${hookText}`);
             return;
           }
         }
@@ -184,13 +195,14 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
 
       const data = await res.json();
       if (data?.success && data?.lesson) {
-        const genLesson: DynamicTopicLesson = data.lesson;
+        const genLesson: DynamicTopicLesson = normalizeTopicLesson(data.lesson, topic, subject, grade);
         setLesson(genLesson);
         setLoading(false);
         setRobotMood('teaching');
-        const welcomeText = `Ready! Let's explore "${topic}". ${genLesson.hook}`;
+        const hookText = extractTutorText(genLesson.hook);
+        const welcomeText = `Ready! Let's explore "${topic}". ${hookText}`;
         setRobotBubble(welcomeText);
-        setCurrentSpeechText(`Welcome! Let's master ${topic}. ${genLesson.hook}`);
+        setCurrentSpeechText(`Welcome! Let's master ${topic}. ${hookText}`);
 
         // Store into session cache
         if (typeof window !== 'undefined') {
@@ -237,14 +249,16 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
       setRobotMood('happy');
       const cheer = 'Outstanding! You demonstrated accurate understanding of this principle!';
       setRobotBubble(cheer);
-      setCurrentSpeechText(`Outstanding job! That's correct! ${question.explanation}`);
+      const explanationText = extractTutorText(question.explanation);
+      setCurrentSpeechText(`Outstanding job! That's correct! ${explanationText}`);
       setCorrectAnswersCount(prev => prev + 1);
     } else {
       soundService.playAppearSound();
       setRobotMood('guiding');
       const hintMsg = `Not quite, but you're thinking! Check Byte's hint below.`;
       setRobotBubble(hintMsg);
-      setCurrentSpeechText(`Good effort! Here is Byte's hint: ${question.hint}`);
+      const hintText = extractTutorText(question.hint);
+      setCurrentSpeechText(`Good effort! Here is Byte's hint: ${hintText}`);
       setShowHint(true);
     }
   };
@@ -265,7 +279,8 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
       const nextQ = lesson.practiceQuestions[currentQuestionIdx + 1];
       const bubble = `Question ${currentQuestionIdx + 2} of ${totalQuestions}: Apply what you've learned!`;
       setRobotBubble(bubble);
-      setCurrentSpeechText(`Question ${currentQuestionIdx + 2}: ${nextQ.question}`);
+      const qText = extractTutorText(nextQ.question);
+      setCurrentSpeechText(`Question ${currentQuestionIdx + 2}: ${qText}`);
     } else {
       // Completed all questions in the practice check!
       const totalCorrect = correctAnswersCount + (answerState === 'correct' ? 1 : 0);
@@ -328,7 +343,7 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
       if (res.ok) {
         const data = await res.json();
         const reply = data?.reply || `In ${topic}, focus on the direct relationship between inputs and outputs.`;
-        const speechSummary = data?.speechSummary || reply.slice(0, 120);
+        const speechSummary = extractTutorText(data?.speechSummary || reply);
 
         setChatMessages(prev => [
           ...prev,
@@ -337,7 +352,7 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
             role: 'assistant',
             text: reply,
             speechSummary,
-            followUps: data?.suggestedFollowUps || []
+            followUps: Array.isArray(data?.suggestedFollowUps) ? data.suggestedFollowUps : []
           }
         ]);
 
@@ -397,7 +412,7 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
       if (res.ok) {
         const data = await res.json();
         const reply = data?.reply || `Great question! In ${topic}, focus on connecting the principle to the worked example steps.`;
-        const speechSummary = data?.speechSummary || reply.slice(0, 120);
+        const speechSummary = extractTutorText(data?.speechSummary || reply);
 
         setChatMessages([
           ...newHistory,
@@ -405,7 +420,7 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
             role: 'assistant',
             text: reply,
             speechSummary,
-            followUps: data?.suggestedFollowUps || []
+            followUps: Array.isArray(data?.suggestedFollowUps) ? data.suggestedFollowUps : []
           }
         ]);
         setRobotMood('teaching');
@@ -510,7 +525,9 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
               setRobotMood('teaching');
               setRobotBubble(`Reviewing core principles of ${topic}.`);
               if (lesson) {
-                setCurrentSpeechText(`${lesson.hook}. ${lesson.coreExplanation.slice(0, 160)}`);
+                const coreStr = extractTutorText(lesson.coreExplanation);
+                const hookStr = extractTutorText(lesson.hook);
+                setCurrentSpeechText(`${hookStr}. ${coreStr.slice(0, 160)}`);
               }
             }}
             className={`px-3.5 sm:px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border-b-2 whitespace-nowrap ${
@@ -531,7 +548,7 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
               setRobotMood('teaching');
               setRobotBubble(`Here is how exam problems are solved step by step.`);
               if (lesson) {
-                setCurrentSpeechText(`Exam scenario: ${lesson.workedExample.problem}`);
+                setCurrentSpeechText(`Exam scenario: ${extractTutorText(lesson.workedExample.problem)}`);
               }
             }}
             className={`px-3.5 sm:px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border-b-2 whitespace-nowrap ${
@@ -552,7 +569,8 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
               setRobotMood('curious');
               setRobotBubble(`Prove your understanding to unlock official mastery!`);
               if (lesson?.practiceQuestions?.[currentQuestionIdx]) {
-                setCurrentSpeechText(`Let's solve question ${currentQuestionIdx + 1}: ${lesson.practiceQuestions[currentQuestionIdx].question}`);
+                const qText = extractTutorText(lesson.practiceQuestions[currentQuestionIdx].question);
+                setCurrentSpeechText(`Let's solve question ${currentQuestionIdx + 1}: ${qText}`);
               }
             }}
             className={`px-3.5 sm:px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border-b-2 whitespace-nowrap ${
@@ -635,18 +653,19 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
                       <div className="text-[11px] font-mono text-cyan-400 font-extrabold uppercase tracking-wider">
                         Real-World Phenomenon / Hook
                       </div>
-                      <p className="text-sm text-slate-100 leading-relaxed font-medium italic">
-                        "{lesson.hook}"
-                      </p>
+                      <div className="text-sm text-slate-100 leading-relaxed font-medium italic">
+                        &ldquo;<StructuredContentRenderer content={lesson.hook} inline />&rdquo;
+                      </div>
                       {lesson.prerequisites && (
                         <div className="text-xs text-slate-400 pt-1">
-                          <strong className="text-cyan-300">Prerequisites:</strong> {lesson.prerequisites}
+                          <strong className="text-cyan-300">Prerequisites:</strong>{' '}
+                          <StructuredContentRenderer content={lesson.prerequisites} inline />
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* Core Explanation Paragraphs */}
+                  {/* Core Explanation Paragraphs with StructuredContentRenderer */}
                   <div className="p-6 rounded-3xl bg-slate-900/70 border border-white/10 space-y-4 shadow-md">
                     <div className="flex items-center justify-between">
                       <h3 className="text-base font-black text-white flex items-center gap-2">
@@ -655,7 +674,7 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
                       </h3>
                       <button
                         type="button"
-                        onClick={() => setCurrentSpeechText(lesson.coreExplanation)}
+                        onClick={() => setCurrentSpeechText(extractTutorText(lesson.coreExplanation))}
                         className="text-xs text-cyan-300 hover:text-white flex items-center gap-1 font-semibold cursor-pointer"
                       >
                         <Volume2 className="w-3.5 h-3.5" />
@@ -663,8 +682,8 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
                       </button>
                     </div>
 
-                    <div className="text-sm text-slate-200 leading-relaxed space-y-3 whitespace-pre-line font-sans">
-                      {lesson.coreExplanation}
+                    <div className="text-sm text-slate-200 leading-relaxed font-sans">
+                      <StructuredContentRenderer content={lesson.coreExplanation} />
                     </div>
                   </div>
 
@@ -683,9 +702,9 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
                           <div className="w-6 h-6 rounded-lg bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 flex items-center justify-center text-xs font-bold font-mono mt-0.5 shrink-0">
                             {idx + 1}
                           </div>
-                          <span className="text-xs text-slate-200 font-medium leading-relaxed">
-                            {point}
-                          </span>
+                          <div className="text-xs text-slate-200 font-medium leading-relaxed">
+                            <StructuredContentRenderer content={point} inline />
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -699,7 +718,7 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
                         soundService.playButtonClick();
                         setActiveTab('example');
                         setRobotMood('teaching');
-                        setCurrentSpeechText(`Let's solve this worked problem: ${lesson.workedExample.problem}`);
+                        setCurrentSpeechText(`Let's solve this worked problem: ${extractTutorText(lesson.workedExample.problem)}`);
                       }}
                       className="px-5 py-2.5 rounded-2xl bg-cyan-600 hover:bg-cyan-500 text-white font-extrabold text-xs flex items-center gap-2 shadow-lg shadow-cyan-600/30 cursor-pointer transition-all"
                     >
@@ -724,7 +743,7 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
                     </div>
 
                     <h3 className="text-base font-bold text-white leading-relaxed">
-                      {lesson.workedExample.problem}
+                      <StructuredContentRenderer content={lesson.workedExample.problem} />
                     </h3>
                   </div>
 
@@ -741,12 +760,12 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
                       >
                         <div className="flex items-center gap-2">
                           <span className="px-2.5 py-0.5 rounded-md bg-purple-500/20 border border-purple-500/30 text-purple-300 text-[11px] font-mono font-bold">
-                            {step.title}
+                            <StructuredContentRenderer content={step.title} inline />
                           </span>
                         </div>
-                        <p className="text-xs text-slate-300 leading-relaxed font-sans pl-1">
-                          {step.detail}
-                        </p>
+                        <div className="text-xs text-slate-300 leading-relaxed font-sans pl-1">
+                          <StructuredContentRenderer content={step.detail} />
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -758,9 +777,9 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
                       <span className="text-xs font-extrabold text-amber-300 uppercase tracking-wide">
                         Examiner's Warning & Scoring Secret
                       </span>
-                      <p className="text-xs text-slate-200 leading-relaxed">
-                        {lesson.workedExample.examTip}
-                      </p>
+                      <div className="text-xs text-slate-200 leading-relaxed">
+                        <StructuredContentRenderer content={lesson.workedExample.examTip} />
+                      </div>
                     </div>
                   </div>
 
@@ -811,7 +830,7 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
                       <div className="p-6 rounded-3xl bg-slate-900/90 border border-emerald-500/30 space-y-5 shadow-xl">
                         <div className="flex items-start justify-between gap-4">
                           <h3 className="text-base sm:text-lg font-black text-white leading-relaxed font-sans">
-                            {q.question}
+                            <StructuredContentRenderer content={q.question} />
                           </h3>
 
                           <button
@@ -820,7 +839,7 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
                               setShowHint(!showHint);
                               setRobotMood('guiding');
                               setRobotBubble(q.hint);
-                              setCurrentSpeechText(q.hint);
+                              setCurrentSpeechText(extractTutorText(q.hint));
                             }}
                             className="px-3 py-1.5 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-center gap-1.5 shrink-0 hover:bg-amber-500/30 transition-all cursor-pointer"
                           >
@@ -833,7 +852,9 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
                         {showHint && (
                           <div className="p-3.5 rounded-2xl bg-amber-950/30 border border-amber-500/40 text-xs text-amber-200 flex items-center gap-2.5">
                             <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-                            <span>Byte's Hint: {q.hint}</span>
+                            <span>
+                              Byte's Hint: <StructuredContentRenderer content={q.hint} inline />
+                            </span>
                           </div>
                         )}
 
@@ -865,7 +886,9 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
                                   <div className="w-6 h-6 rounded-lg bg-slate-800 border border-white/10 flex items-center justify-center text-xs font-mono font-bold text-slate-300 shrink-0">
                                     {String.fromCharCode(65 + oIdx)}
                                   </div>
-                                  <span>{opt}</span>
+                                  <div className="text-xs sm:text-sm font-medium">
+                                    <StructuredContentRenderer content={opt} inline />
+                                  </div>
                                 </div>
 
                                 {isAnswerSubmitted && oIdx === q.correctIndex && (
@@ -890,7 +913,9 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
                             <div className="font-extrabold mb-1 flex items-center gap-1.5 text-sm">
                               {answerState === 'correct' ? '✓ Mastered Reasoning' : '✕ Learning Opportunity'}
                             </div>
-                            <p>{q.explanation}</p>
+                            <div className="text-xs leading-relaxed">
+                              <StructuredContentRenderer content={q.explanation} />
+                            </div>
                           </motion.div>
                         )}
 
@@ -975,7 +1000,7 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
                     </button>
                   </div>
 
-                  {/* Chat Log */}
+                  {/* Chat Log with StructuredContentRenderer */}
                   <div className="p-4 rounded-3xl bg-slate-950 border border-white/10 space-y-3.5 max-h-80 overflow-y-auto">
                     {chatMessages.map((msg, mIdx) => (
                       <div
@@ -991,7 +1016,9 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
                               : 'bg-slate-900 border border-white/10 text-slate-200 rounded-bl-none shadow-lg'
                           }`}
                         >
-                          <div className="whitespace-pre-line font-sans">{msg.text}</div>
+                          <div className="font-sans">
+                            <StructuredContentRenderer content={msg.text} />
+                          </div>
 
                           {/* Suggested Follow-Ups */}
                           {msg.followUps && msg.followUps.length > 0 && (

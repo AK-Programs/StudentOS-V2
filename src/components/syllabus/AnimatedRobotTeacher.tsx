@@ -31,6 +31,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { soundService } from '../../lib/soundService';
+import { StructuredContentRenderer, extractTutorText } from './StructuredContentRenderer';
 
 export type RobotMood = 'idle' | 'teaching' | 'thinking' | 'happy' | 'guiding' | 'curious';
 
@@ -42,9 +43,9 @@ export interface RobotBubbleAction {
 
 interface AnimatedRobotTeacherProps {
   mood?: RobotMood;
-  speechText?: string;
+  speechText?: any;
   autoSpeak?: boolean;
-  bubbleMessage?: string;
+  bubbleMessage?: any;
   bubbleTitle?: string;
   size?: 'sm' | 'md' | 'lg' | 'hero';
   onSpeechEnd?: () => void;
@@ -123,19 +124,13 @@ export const AnimatedRobotTeacher: React.FC<AnimatedRobotTeacherProps> = ({
     };
   }, []);
 
-  // Clean raw text for speech synthesis
-  const cleanSpeechForTTS = (text: string): string => {
-    return text
-      .replace(/```[\s\S]*?```/g, ' ')
-      .replace(/`.*?`/g, ' ')
-      .replace(/\[(.*?)\]\(.*?\)/g, '$1')
-      .replace(/[#*_~>[\]()]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+  // Clean raw text or structured objects for speech synthesis
+  const cleanSpeechForTTS = (text: any): string => {
+    return extractTutorText(text);
   };
 
   // Perform Speech Synthesis
-  const speakText = useCallback((textToSpeak: string) => {
+  const speakText = useCallback((textToSpeak: any) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
 
     const cleaned = cleanSpeechForTTS(textToSpeak);
@@ -348,9 +343,9 @@ export const AnimatedRobotTeacher: React.FC<AnimatedRobotTeacherProps> = ({
             </div>
 
             {/* Bubble Message Text */}
-            <p className="text-slate-100 text-xs sm:text-sm leading-relaxed font-sans font-medium">
-              {bubbleMessage}
-            </p>
+            <div className="text-slate-100 text-xs sm:text-sm leading-relaxed font-sans font-medium">
+              <StructuredContentRenderer content={bubbleMessage} inline />
+            </div>
 
             {/* Interactive Action Quick-Chips (Pedagogical Accelerators) */}
             {onBubbleAction && (

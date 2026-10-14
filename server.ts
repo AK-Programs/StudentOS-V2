@@ -2836,7 +2836,10 @@ Return strict raw JSON format matching this schema:
       }
     }
 
-    if (!parsed || !parsed.coreExplanation || !Array.isArray(parsed.practiceQuestions)) {
+    // Support both string and structured { text, analogy } coreExplanation
+    const coreExp = parsed?.coreExplanation;
+    const hasCore = coreExp && (typeof coreExp === 'string' ? coreExp.trim().length > 0 : Boolean(coreExp.text || coreExp.explanation));
+    if (!parsed || !hasCore || !Array.isArray(parsed.practiceQuestions)) {
       throw new Error('AI generated incomplete lesson schema');
     }
 
@@ -2858,6 +2861,16 @@ Return strict raw JSON format matching this schema:
     });
   }
 });
+
+// Helper to extract clean plain string for speech or single-line fields
+function extractSafeString(val: any): string {
+  if (typeof val === 'string') return val;
+  if (!val) return '';
+  if (typeof val === 'object') {
+    return val.text || val.speechSummary || val.explanation || val.message || val.content || '';
+  }
+  return String(val);
+}
 
 // AI Tutor Conversational Q&A Endpoint
 app.post('/api/ai/tutor/ask', async (req, res) => {
@@ -2935,12 +2948,11 @@ Return strict raw JSON format matching this schema:
     }
 
     const reply = parsed?.fullExplanation || text;
-    const speechSummary =
-      parsed?.speechSummary ||
-      reply
-        .replace(/[#*_`~>[\]()]/g, '')
-        .split(/[.?!]/)[0]
-        .slice(0, 140) + '.';
+    const rawSpeech = parsed?.speechSummary || extractSafeString(reply);
+    const speechSummary = extractSafeString(rawSpeech)
+      .replace(/[#*_`~>[\]()]/g, '')
+      .split(/[.?!]/)[0]
+      .slice(0, 140) + '.';
 
     return res.status(200).json({
       success: true,
