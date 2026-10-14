@@ -1079,9 +1079,22 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
 
         {/* Modal Footer */}
         <div className="p-4 border-t border-white/10 bg-slate-950/80 flex items-center justify-between text-xs text-slate-400 font-mono">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-            <span>StudentOS Adaptive AI Tutor</span>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+              <span>Byte Learning — Interactive Syllabus Tutor</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('switch-tab', { detail: 'ai_teacher' }));
+                onClose();
+              }}
+              className="px-2.5 py-1 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/30 font-bold text-xs flex items-center gap-1 transition-all cursor-pointer"
+              title="Switch to Byte Chat for open-ended conversation"
+            >
+              <span>💬 Switch to Byte Chat</span>
+            </button>
           </div>
           <button
             type="button"

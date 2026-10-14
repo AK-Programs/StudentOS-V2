@@ -333,6 +333,16 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => {
+    const handleSwitchTab = (e: any) => {
+      if (e.detail) {
+        setActiveTab(e.detail);
+      }
+    };
+    window.addEventListener('switch-tab', handleSwitchTab as EventListener);
+    return () => window.removeEventListener('switch-tab', handleSwitchTab as EventListener);
+  }, []);
+
   // Global States
   const [isDemoMode, setIsDemoMode] = useState<boolean>(false);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
@@ -7491,15 +7501,15 @@ ${roleLabel}: ${userQuery}`;
                             )}
 
                           {(!presentationMode || isTabAllowedInPresentation('ai_teacher')) &&
-                            matchesFilter('Campus AI Agent', 'tutor assistant buddy') && (
+                            matchesFilter('Byte Chat', 'tutor assistant buddy byte') && (
                               <button
                                 type="button"
                                 onClick={() => handleTabSelect('ai_teacher')}
                                 className={getSidebarBtnClass('ai_teacher')}
-                                title="Campus AI Agent"
+                                title="Byte Chat"
                               >
                                 <Brain className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="truncate">Campus AI Agent</span>}
+                                {sidebarOpen && <span className="truncate">Byte Chat</span>}
                               </button>
                             )}
 
@@ -12421,7 +12431,15 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                       </div>
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="text-sm font-black text-white">AI Buddy Study Assistant</h2>
+                          <h2 className="text-sm font-black text-white">Byte — AI Study & Learning Assistant</h2>
+                          <button
+                            onClick={() => handleTabSelect('study_hub')}
+                            className="px-2.5 py-0.5 rounded-full bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 text-[10px] font-extrabold flex items-center gap-1 transition-all cursor-pointer"
+                            title="Switch to Byte Learning Syllabus & Interactive Lessons"
+                          >
+                            <BookOpen className="w-3 h-3" />
+                            <span>Switch to Byte Learning</span>
+                          </button>
                           <span className="text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-0.5 rounded-full bg-slate-800/90 text-slate-300 border border-white/10 capitalize">
                             {effectiveRole || 'student'} Tier
                           </span>
@@ -13410,7 +13428,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                   { id: 'dashboard', label: 'Home', icon: '🏠' },
                   { id: 'study_hub', label: 'Study', icon: '🎯', badge: dueCardsCount > 0 ? dueCardsCount : 0 },
                   { id: 'peer_chat', label: 'Chat', icon: '🌍' },
-                  { id: 'ai_teacher', label: 'AI Tutor', icon: '🤖' },
+                  { id: 'ai_teacher', label: 'Byte', icon: '🤖' },
                 ].map((item) => {
                   const isActive = item.id === 'study_hub'
                     ? ['study_hub', 'tasks', 'planner', 'flashcards'].includes(activeTab)
