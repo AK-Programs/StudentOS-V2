@@ -2,16 +2,18 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * 
- * StudentOS — Real AI Topic Learning Tutor + Animated Robot Teacher
- * Replaces simple checkbox clicking with a real, interactive AI teaching experience:
- * - Dynamic structured concept explanations grounded in school curriculum
+ * StudentOS — Real AI Topic Learning Tutor + Animated Robot Teacher ("Byte")
+ * High-performance, curriculum-grounded interactive teaching engine:
+ * - Dynamic structured concept explanations generated via StudentOS AI Engine
+ * - Zero-delay local session caching for instant 0ms revisits
  * - Real worked examples with step-by-step reasoning
  * - Adaptive interactive practice exercises & mastery checkpoints
- * - Direct conversational Q&A with the animated robot tutor ("Byte")
+ * - Direct conversational Q&A with Byte featuring automatic robotic speech
+ * - Next-level holographic HUD speech bubbles with interactive pedagogy chips
  * - Supabase persistence and authoritative XP gamification
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   X,
@@ -31,7 +33,9 @@ import {
   GraduationCap,
   ChevronRight,
   Flame,
-  Volume2
+  Volume2,
+  RefreshCw,
+  Compass
 } from 'lucide-react';
 import { AnimatedRobotTeacher, RobotMood } from './AnimatedRobotTeacher';
 import { SyllabusChapter } from '../../types/syllabusTimetable';
@@ -95,14 +99,16 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
   // Navigation tabs inside tutor modal
   const [activeTab, setActiveTab] = useState<'concept' | 'example' | 'practice' | 'ask'>('concept');
 
-  // Robot State
+  // Robot State & Spoken Audio
   const [robotMood, setRobotMood] = useState<RobotMood>('teaching');
   const [robotBubble, setRobotBubble] = useState<string>(
     `Welcome! Let's master "${topic}" step by step.`
   );
+  const [currentSpeechText, setCurrentSpeechText] = useState<string>('');
 
-  // Lesson Content State
+  // Dynamic Lesson State
   const [loading, setLoading] = useState<boolean>(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [lesson, setLesson] = useState<DynamicTopicLesson | null>(null);
 
   // Interactive Practice State
@@ -115,189 +121,100 @@ export const AITopicTutorModal: React.FC<AITopicTutorModalProps> = ({
   const [practiceCompleted, setPracticeCompleted] = useState<boolean>(isMastered);
 
   // Ask Robot Q&A State
-  const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant'; text: string }>>([
+  const [chatMessages, setChatMessages] = useState<
+    Array<{ role: 'user' | 'assistant'; text: string; speechSummary?: string; followUps?: string[] }>
+  >([
     {
       role: 'assistant',
-      text: `Hi ${currentUser.name || 'Scholar'}! Ask me anything about "${topic}". You can ask for a simpler explanation, an analogy, or an exam tip!`
+      text: `Hi ${currentUser.name || 'Scholar'}! Ask me anything about "${topic}". You can also tap the quick-chips above for an everyday analogy, an ELI5 breakdown, or an exam tip!`,
+      speechSummary: `Hi ${currentUser.name || 'Scholar'}! Ask me anything about ${topic}.`
     }
   ]);
   const [chatInput, setChatInput] = useState<string>('');
   const [isChatLoading, setIsChatLoading] = useState<boolean>(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
 
-  // Fetch or Generate Dynamic Lesson
-  useEffect(() => {
-    let isCancelled = false;
+  // Cache key for sessionStorage (0ms instant retrieval)
+  const sessionCacheKey = `studentos_lesson_${subject.toLowerCase()}_${chapter.id}_${topic.toLowerCase()}_${grade.toLowerCase()}`;
 
-    async function loadTopicLesson() {
-      setLoading(true);
-      setRobotMood('thinking');
-      setRobotBubble(`Preparing curriculum lesson for ${topic} (${grade})…`);
+  // Fetch or retrieve dynamic lesson from server / session cache
+  const fetchTopicLesson = useCallback(async (forceRefresh = false) => {
+    setLoading(true);
+    setErrorMsg(null);
+    setRobotMood('thinking');
+    setRobotBubble(`Preparing authentic curriculum lesson for ${topic} (${grade})…`);
 
+    // 1. Check Session Cache for Instant 0ms load
+    if (!forceRefresh && typeof window !== 'undefined') {
       try {
-        const prompt = `You are Byte, the elite AI educator on StudentOS.
-Generate a structured, age-appropriate educational lesson for:
-Subject: ${subject}
-Chapter: Chapter ${chapter.chapterNumber} — ${chapter.title}
-Topic: "${topic}"
-Student Level: ${grade}
-Chapter Notes Context: ${chapter.syllabusNotes || chapter.description || 'Standard approved syllabus'}
-
-Return strict JSON only (no markdown wrapper, no extra text) matching this schema:
-{
-  "topic": "${topic}",
-  "subject": "${subject}",
-  "grade": "${grade}",
-  "hook": "Engaging real-world connection or opening mystery in 1-2 sentences",
-  "prerequisites": "1-2 sentence quick reminder of fundamental concepts needed",
-  "coreExplanation": "Clear, comprehensive 2-3 paragraph explanation with bold concepts, intuitive analogies, and clean structure.",
-  "keyPoints": [
-    "Key definition or principle 1",
-    "Key definition or principle 2",
-    "Key formula, relationship, or rule 3"
-  ],
-  "workedExample": {
-    "problem": "A realistic exam-style practice problem or scenario testing this concept",
-    "steps": [
-      { "title": "Step 1: Identify Given Information", "detail": "Detailed reasoning..." },
-      { "title": "Step 2: Apply the Core Formula/Principle", "detail": "Detailed application..." },
-      { "title": "Step 3: Conclude with Units/Reasoning", "detail": "Final step and check..." }
-    ],
-    "examTip": "A crucial mistake students often make in exams and how to avoid it."
-  },
-  "practiceQuestions": [
-    {
-      "id": "q1",
-      "question": "Clear conceptual multiple choice question testing understanding of this topic",
-      "options": ["Option A", "Option B", "Option C", "Option D"],
-      "correctIndex": 0,
-      "explanation": "Clear explanation of why this is correct and why other options fail.",
-      "hint": "Gentle guiding hint without giving away the answer directly."
-    },
-    {
-      "id": "q2",
-      "question": "Application-based multiple choice question testing practical problem-solving",
-      "options": ["Option A", "Option B", "Option C", "Option D"],
-      "correctIndex": 1,
-      "explanation": "Clear explanation with calculation or reasoning steps.",
-      "hint": "Consider the relationship between the key components."
-    }
-  ]
-}`;
-
-        const res = await fetch('/api/ai/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            prompt,
-            persona: 'academic_tutor',
-            taskType: 'general',
-            stream: false
-          })
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          let rawText = data?.reply || data?.content || data?.text || '';
-          if (rawText) {
-            // Clean markdown code blocks
-            let clean = rawText.trim();
-            if (clean.startsWith('```json')) {
-              clean = clean.replace(/^```json/, '').replace(/```$/, '').trim();
-            } else if (clean.startsWith('```')) {
-              clean = clean.replace(/^```/, '').replace(/```$/, '').trim();
-            }
-
-            const parsed = JSON.parse(clean);
-            if (parsed && parsed.coreExplanation && Array.isArray(parsed.practiceQuestions)) {
-              if (!isCancelled) {
-                setLesson(parsed);
-                setLoading(false);
-                setRobotMood('teaching');
-                setRobotBubble(`Ready! Let's explore "${topic}".`);
-                return;
-              }
-            }
+        const cachedRaw = sessionStorage.getItem(sessionCacheKey);
+        if (cachedRaw) {
+          const cachedLesson = JSON.parse(cachedRaw);
+          if (cachedLesson && cachedLesson.coreExplanation && Array.isArray(cachedLesson.practiceQuestions)) {
+            setLesson(cachedLesson);
+            setLoading(false);
+            setRobotMood('teaching');
+            const introBubble = `Ready! Let's conquer "${topic}". ${cachedLesson.hook}`;
+            setRobotBubble(introBubble);
+            setCurrentSpeechText(`Welcome! Let's master ${topic}. ${cachedLesson.hook}`);
+            return;
           }
         }
-      } catch (err) {
-        console.warn('[AI Tutor] Dynamic lesson generator error, generating deterministic curriculum lesson:', err);
-      }
-
-      // High-Fidelity Curriculum Fallback (Guarantees seamless zero-latency uptime)
-      if (!isCancelled) {
-        const fallbackLesson: DynamicTopicLesson = {
-          topic,
-          subject,
-          grade,
-          hook: `Mastering ${topic} allows you to understand how ${subject} models the real world with mathematical and physical precision.`,
-          prerequisites: `Basic understanding of ${chapter.title} foundations and standard terminology.`,
-          coreExplanation: `${topic} is a cornerstone concept in ${subject} for ${grade}. When analyzing ${topic}, it is essential to focus on cause, structure, and quantifiable relationships.\n\nFirst, consider the structural principles: every component operates within defined boundaries governed by foundational laws. Second, observe how these elements interact under changing conditions. By mapping out the inputs and outputs systematically, complex questions become straightforward step-by-step calculations.`,
-          keyPoints: [
-            `Foundational Definition: Clear scientific and mathematical bounds for ${topic}.`,
-            `Key Mechanism: The exact relationship connecting variables in ${chapter.title}.`,
-            `Real-World Implication: Practical applications from modern laboratory research to everyday engineering.`
-          ],
-          workedExample: {
-            problem: `Calculate or analyze the standard behavior of ${topic} when key parameters are varied systematically in a classroom experiment.`,
-            steps: [
-              {
-                title: 'Step 1: State Known Variables & Invariants',
-                detail: `Isolate each known value given in the question and verify consistent SI units before performing operations.`
-              },
-              {
-                title: 'Step 2: Apply the Governing Theorem',
-                detail: `Substitute the parameters into the governing formula and calculate the intermediate relations cleanly.`
-              },
-              {
-                title: 'Step 3: Verification & Sanity Check',
-                detail: `Check if the magnitude and direction of the result adhere to fundamental conservation laws.`
-              }
-            ],
-            examTip: `Always state the governing principle or formula before plugging in values to secure full method marks in board exams.`
-          },
-          practiceQuestions: [
-            {
-              id: 'q1',
-              question: `Which of the following statements best describes the primary principle behind ${topic}?`,
-              options: [
-                `It follows direct conservation and predictable mathematical relationships under standard conditions.`,
-                `It is completely random and cannot be calculated using standard formulas.`,
-                `It only occurs in theoretical models and has no physical validity.`,
-                `It replaces all previous laws without obeying boundary constraints.`
-              ],
-              correctIndex: 0,
-              explanation: `Correct! In ${subject}, ${topic} is defined through rigorous observable conservation and predictable mathematical relationships.`,
-              hint: `Think about how scientific theories maintain predictability and obey conservation laws.`
-            },
-            {
-              id: 'q2',
-              question: `When applying ${topic} in an exam scenario, what should you verify first?`,
-              options: [
-                `Skip reading the conditions and immediately guess the outcome.`,
-                `Verify initial assumptions, unit consistency, and boundary constraints.`,
-                `Assume all variables are equal to zero.`,
-                `Memorize without understanding the underlying steps.`
-              ],
-              correctIndex: 1,
-              explanation: `Exactly right! Checking initial conditions and ensuring uniform units prevents the most frequent calculation errors.`,
-              hint: `What do examiners penalize most when checking numerical or theoretical answers?`
-            }
-          ]
-        };
-
-        setLesson(fallbackLesson);
-        setLoading(false);
-        setRobotMood('teaching');
-        setRobotBubble(`Lesson ready! Let's conquer "${topic}".`);
-      }
+      } catch (_) {}
     }
 
-    loadTopicLesson();
+    // 2. Fetch from High-Performance Server Endpoint
+    try {
+      const res = await fetch('/api/ai/tutor/lesson', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject,
+          chapterTitle: chapter.title,
+          chapterNumber: chapter.chapterNumber,
+          topic,
+          grade,
+          notesContext: chapter.syllabusNotes || chapter.description || ''
+        })
+      });
 
-    return () => {
-      isCancelled = true;
-    };
-  }, [topic, subject, chapter, grade]);
+      if (!res.ok) {
+        throw new Error(`Server returned status ${res.status}`);
+      }
+
+      const data = await res.json();
+      if (data?.success && data?.lesson) {
+        const genLesson: DynamicTopicLesson = data.lesson;
+        setLesson(genLesson);
+        setLoading(false);
+        setRobotMood('teaching');
+        const welcomeText = `Ready! Let's explore "${topic}". ${genLesson.hook}`;
+        setRobotBubble(welcomeText);
+        setCurrentSpeechText(`Welcome! Let's master ${topic}. ${genLesson.hook}`);
+
+        // Store into session cache
+        if (typeof window !== 'undefined') {
+          try {
+            sessionStorage.setItem(sessionCacheKey, JSON.stringify(genLesson));
+          } catch (_) {}
+        }
+        return;
+      } else {
+        throw new Error(data?.error || 'Invalid lesson response');
+      }
+    } catch (err: any) {
+      console.warn('[AI Tutor] Primary lesson generator encountered error:', err);
+      setErrorMsg(err?.message || 'Unable to load dynamic lesson.');
+      setLoading(false);
+      setRobotMood('idle');
+      setRobotBubble(`I had trouble generating the lesson. Tap "Retry Generation" to try again.`);
+    }
+  }, [subject, chapter, topic, grade, sessionCacheKey]);
+
+  // Initial load
+  useEffect(() => {
+    fetchTopicLesson();
+  }, [fetchTopicLesson]);
 
   // Handle Practice Answer Selection
   const handleSelectOption = (idx: number) => {
@@ -318,12 +235,16 @@ Return strict JSON only (no markdown wrapper, no extra text) matching this schem
     if (isCorrect) {
       soundService.playLevelUp();
       setRobotMood('happy');
-      setRobotBubble('Outstanding! You grasped the core concept perfectly!');
+      const cheer = 'Outstanding! You demonstrated accurate understanding of this principle!';
+      setRobotBubble(cheer);
+      setCurrentSpeechText(`Outstanding job! That's correct! ${question.explanation}`);
       setCorrectAnswersCount(prev => prev + 1);
     } else {
       soundService.playAppearSound();
       setRobotMood('guiding');
-      setRobotBubble(`Not quite, but you're on the right track! Check Byte's hint below.`);
+      const hintMsg = `Not quite, but you're thinking! Check Byte's hint below.`;
+      setRobotBubble(hintMsg);
+      setCurrentSpeechText(`Good effort! Here is Byte's hint: ${question.hint}`);
       setShowHint(true);
     }
   };
@@ -341,23 +262,112 @@ Return strict JSON only (no markdown wrapper, no extra text) matching this schem
       setAnswerState(null);
       setShowHint(false);
       setRobotMood('teaching');
-      setRobotBubble(`Question ${currentQuestionIdx + 2} of ${totalQuestions}: Apply what you've learned!`);
+      const nextQ = lesson.practiceQuestions[currentQuestionIdx + 1];
+      const bubble = `Question ${currentQuestionIdx + 2} of ${totalQuestions}: Apply what you've learned!`;
+      setRobotBubble(bubble);
+      setCurrentSpeechText(`Question ${currentQuestionIdx + 2}: ${nextQ.question}`);
     } else {
       // Completed all questions in the practice check!
-      const finalScore = Math.round(((correctAnswersCount + (answerState === 'correct' ? 1 : 0)) / totalQuestions) * 100);
+      const totalCorrect = correctAnswersCount + (answerState === 'correct' ? 1 : 0);
+      const finalScore = Math.round((totalCorrect / totalQuestions) * 100);
       setPracticeCompleted(true);
       setRobotMood('happy');
-      setRobotBubble(`🎉 Congratulations! You have proven understanding of "${topic}"!`);
+      const winMessage = `🎉 Congratulations! You have proven understanding of "${topic}" with a score of ${finalScore}%!`;
+      setRobotBubble(winMessage);
+      setCurrentSpeechText(`Congratulations! You have demonstrated authentic mastery of ${topic}! You earned 50 Scholar XP.`);
 
-      // Award authoritative mastery
-      await onMasterTopic(topic, Math.max(finalScore, 80));
+      // Award authoritative mastery record
+      await onMasterTopic(topic, Math.max(finalScore, 85));
       if (showNotification) {
         showNotification(`🎉 Topic Mastered: "${topic}" (+50 Scholar XP)!`);
       }
     }
   };
 
-  // Ask Byte Live Q&A
+  // Handle Pedagogical Quick Action Chips from Bubble or UI
+  const handleBubbleAction = async (actionType: 'simpler' | 'analogy' | 'exam_tip' | 'quiz') => {
+    if (actionType === 'quiz') {
+      soundService.playButtonClick();
+      setActiveTab('practice');
+      setRobotMood('curious');
+      setRobotBubble(`Prove your understanding on the practice checkpoint!`);
+      if (lesson?.practiceQuestions?.[currentQuestionIdx]) {
+        setCurrentSpeechText(`Let's test your understanding of ${topic}! Here is your diagnostic challenge.`);
+      }
+      return;
+    }
+
+    // Otherwise, generate the insight and switch to Ask tab
+    setActiveTab('ask');
+    soundService.playButtonClick();
+    setIsChatLoading(true);
+    setRobotMood('thinking');
+    
+    let userPromptLabel = '';
+    if (actionType === 'simpler') userPromptLabel = `💡 Explain "${topic}" simply with an everyday metaphor.`;
+    if (actionType === 'analogy') userPromptLabel = `🌍 Give me a vivid real-world analogy for "${topic}".`;
+    if (actionType === 'exam_tip') userPromptLabel = `🎯 What is the #1 exam secret or marking criteria trick for "${topic}"?`;
+
+    setRobotBubble(`Synthesizing ${actionType === 'simpler' ? 'intuitive breakdown' : actionType === 'analogy' ? 'real-world analogy' : 'exam heuristics'}…`);
+
+    try {
+      const res = await fetch('/api/ai/tutor/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject,
+          chapterTitle: chapter.title,
+          chapterNumber: chapter.chapterNumber,
+          topic,
+          grade,
+          actionType,
+          question: userPromptLabel
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const reply = data?.reply || `In ${topic}, focus on the direct relationship between inputs and outputs.`;
+        const speechSummary = data?.speechSummary || reply.slice(0, 120);
+
+        setChatMessages(prev => [
+          ...prev,
+          { role: 'user', text: userPromptLabel },
+          {
+            role: 'assistant',
+            text: reply,
+            speechSummary,
+            followUps: data?.suggestedFollowUps || []
+          }
+        ]);
+
+        setRobotMood('teaching');
+        setRobotBubble(speechSummary);
+        setCurrentSpeechText(speechSummary);
+        soundService.playAchievementSound();
+      } else {
+        throw new Error('Ask failed');
+      }
+    } catch (_) {
+      setChatMessages(prev => [
+        ...prev,
+        { role: 'user', text: userPromptLabel },
+        {
+          role: 'assistant',
+          text: `In ${topic}, always identify the fundamental rule first and verify your assumptions against physical principles.`,
+          speechSummary: `In ${topic}, verify your assumptions and apply the core principle step by step.`
+        }
+      ]);
+      setRobotMood('teaching');
+    } finally {
+      setIsChatLoading(false);
+      setTimeout(() => {
+        chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  };
+
+  // Ask Byte Live Free-Form Q&A
   const handleSendChat = async (presetPrompt?: string) => {
     const textToSend = presetPrompt || chatInput.trim();
     if (!textToSend || isChatLoading) return;
@@ -368,28 +378,39 @@ Return strict JSON only (no markdown wrapper, no extra text) matching this schem
     setChatInput('');
     setIsChatLoading(true);
     setRobotMood('thinking');
-    setRobotBubble(`Thinking about your question on "${topic}"…`);
+    setRobotBubble(`Analyzing your question on "${topic}"…`);
 
     try {
-      const res = await fetch('/api/ai/chat', {
+      const res = await fetch('/api/ai/tutor/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: `You are Byte, the friendly, brilliant AI robot teacher on StudentOS.
-The student is studying: ${subject} · Chapter ${chapter.chapterNumber}: ${chapter.title} · Topic: "${topic}" (${grade}).
-Answer their question clearly in 2-3 friendly, illuminating sentences with analogies or exam tips.
-Student Question: "${textToSend}"`,
-          persona: 'academic_tutor',
-          taskType: 'fast'
+          subject,
+          chapterTitle: chapter.title,
+          chapterNumber: chapter.chapterNumber,
+          topic,
+          grade,
+          question: textToSend
         })
       });
 
       if (res.ok) {
         const data = await res.json();
-        const reply = data?.reply || data?.content || data?.text || `Great question! In ${topic}, always remember to break down the formula into its constituent parts.`;
-        setChatMessages([...newHistory, { role: 'assistant', text: reply }]);
+        const reply = data?.reply || `Great question! In ${topic}, focus on connecting the principle to the worked example steps.`;
+        const speechSummary = data?.speechSummary || reply.slice(0, 120);
+
+        setChatMessages([
+          ...newHistory,
+          {
+            role: 'assistant',
+            text: reply,
+            speechSummary,
+            followUps: data?.suggestedFollowUps || []
+          }
+        ]);
         setRobotMood('teaching');
-        setRobotBubble(reply.slice(0, 80) + '…');
+        setRobotBubble(speechSummary);
+        setCurrentSpeechText(speechSummary);
         soundService.playAchievementSound();
       } else {
         throw new Error('Chat failed');
@@ -399,42 +420,47 @@ Student Question: "${textToSend}"`,
         ...newHistory,
         {
           role: 'assistant',
-          text: `Here's the key takeaway for ${topic}: Relate the definition directly to the units and rules we reviewed in the worked example. Try solving a practice question to lock it in!`
+          text: `Here is the key takeaway for ${topic}: Relate the definition directly to the units and rules we reviewed in the worked example. Try solving a practice question to lock it in!`,
+          speechSummary: `Remember to connect this concept directly to the rules in our worked example.`
         }
       ]);
       setRobotMood('teaching');
     } finally {
       setIsChatLoading(false);
+      setTimeout(() => {
+        chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 15 }}
-        transition={{ duration: 0.25 }}
-        className="w-full max-w-4xl bg-gradient-to-b from-slate-900 to-slate-950 border border-indigo-500/30 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]"
+        transition={{ duration: 0.22 }}
+        className="w-full max-w-4xl bg-gradient-to-b from-slate-900 to-slate-950 border border-cyan-500/30 rounded-3xl shadow-[0_20px_60px_rgba(6,182,212,0.18)] overflow-hidden flex flex-col max-h-[92vh]"
       >
         {/* ==================================================================== */}
         {/* MODAL HEADER WITH ROBOT COMPANION */}
         {/* ==================================================================== */}
-        <div className="p-5 sm:p-6 border-b border-white/10 bg-slate-950/60 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="p-4 sm:p-5 border-b border-white/10 bg-slate-950/70 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             {/* Small Animated Robot Avatar in Header */}
-            <div className="w-16 h-16 flex items-center justify-center bg-indigo-950/50 rounded-2xl border border-indigo-500/30 shadow-inner">
+            <div className="w-16 h-16 shrink-0 flex items-center justify-center bg-cyan-950/40 rounded-2xl border border-cyan-500/30 shadow-inner">
               <AnimatedRobotTeacher
                 mood={robotMood}
                 size="sm"
                 bubbleMessage=""
                 speechText=""
+                showAutoSpeakToggle={false}
               />
             </div>
 
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-mono text-indigo-400 font-bold uppercase">
+                <span className="text-xs font-mono text-cyan-400 font-extrabold uppercase tracking-wider">
                   {subject} · Ch. {chapter.chapterNumber}
                 </span>
                 <span className="text-slate-500">·</span>
@@ -455,9 +481,17 @@ Student Question: "${textToSend}"`,
           <div className="flex items-center gap-2 self-end sm:self-center">
             <button
               type="button"
+              onClick={() => fetchTopicLesson(true)}
+              className="p-2.5 rounded-2xl bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-cyan-300 transition-all cursor-pointer"
+              title="Regenerate lesson with fresh AI insights"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
               onClick={onClose}
               className="p-2.5 rounded-2xl bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white transition-all cursor-pointer"
-              title="Close modal"
+              title="Close lesson"
             >
               <X className="w-5 h-5" />
             </button>
@@ -467,7 +501,7 @@ Student Question: "${textToSend}"`,
         {/* ==================================================================== */}
         {/* STAGED LEARNING TABS (Concept -> Worked Example -> Practice -> Ask Byte) */}
         {/* ==================================================================== */}
-        <div className="flex items-center gap-1 px-5 pt-3 border-b border-white/10 bg-slate-950/30 overflow-x-auto">
+        <div className="flex items-center gap-1 px-4 sm:px-6 pt-2.5 border-b border-white/10 bg-slate-950/40 overflow-x-auto">
           <button
             type="button"
             onClick={() => {
@@ -475,15 +509,18 @@ Student Question: "${textToSend}"`,
               setActiveTab('concept');
               setRobotMood('teaching');
               setRobotBubble(`Reviewing core principles of ${topic}.`);
+              if (lesson) {
+                setCurrentSpeechText(`${lesson.hook}. ${lesson.coreExplanation.slice(0, 160)}`);
+              }
             }}
-            className={`px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border-b-2 ${
+            className={`px-3.5 sm:px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border-b-2 whitespace-nowrap ${
               activeTab === 'concept'
-                ? 'border-indigo-400 text-white bg-indigo-600/20'
+                ? 'border-cyan-400 text-white bg-cyan-600/20'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <BookOpen className="w-4 h-4 text-indigo-400" />
-            <span>1. Concept & Breakdown</span>
+            <BookOpen className="w-4 h-4 text-cyan-400" />
+            <span>1. Concept Breakdown</span>
           </button>
 
           <button
@@ -493,10 +530,13 @@ Student Question: "${textToSend}"`,
               setActiveTab('example');
               setRobotMood('teaching');
               setRobotBubble(`Here is how exam problems are solved step by step.`);
+              if (lesson) {
+                setCurrentSpeechText(`Exam scenario: ${lesson.workedExample.problem}`);
+              }
             }}
-            className={`px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border-b-2 ${
+            className={`px-3.5 sm:px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border-b-2 whitespace-nowrap ${
               activeTab === 'example'
-                ? 'border-indigo-400 text-white bg-indigo-600/20'
+                ? 'border-purple-400 text-white bg-purple-600/20'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -511,8 +551,11 @@ Student Question: "${textToSend}"`,
               setActiveTab('practice');
               setRobotMood('curious');
               setRobotBubble(`Prove your understanding to unlock official mastery!`);
+              if (lesson?.practiceQuestions?.[currentQuestionIdx]) {
+                setCurrentSpeechText(`Let's solve question ${currentQuestionIdx + 1}: ${lesson.practiceQuestions[currentQuestionIdx].question}`);
+              }
             }}
-            className={`px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border-b-2 ${
+            className={`px-3.5 sm:px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border-b-2 whitespace-nowrap ${
               activeTab === 'practice'
                 ? 'border-emerald-400 text-white bg-emerald-600/20'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
@@ -531,15 +574,15 @@ Student Question: "${textToSend}"`,
               soundService.playButtonClick();
               setActiveTab('ask');
               setRobotMood('idle');
-              setRobotBubble(`Ask me anything! I can provide analogies or mnemonics.`);
+              setRobotBubble(`Ask me anything about ${topic}! I can provide analogies or exam heuristics.`);
             }}
-            className={`px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border-b-2 ${
+            className={`px-3.5 sm:px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all flex items-center gap-2 cursor-pointer border-b-2 whitespace-nowrap ${
               activeTab === 'ask'
-                ? 'border-cyan-400 text-white bg-cyan-600/20'
+                ? 'border-amber-400 text-white bg-amber-600/20'
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <MessageSquare className="w-4 h-4 text-cyan-400" />
+            <MessageSquare className="w-4 h-4 text-amber-400" />
             <span>4. Ask Robot Teacher</span>
           </button>
         </div>
@@ -550,63 +593,94 @@ Student Question: "${textToSend}"`,
         <div className="flex-1 overflow-y-auto p-5 sm:p-7 space-y-6">
           {loading ? (
             <div className="py-16 flex flex-col items-center justify-center space-y-4">
-              <AnimatedRobotTeacher mood="thinking" size="lg" bubbleMessage={robotBubble} />
-              <p className="text-xs font-mono text-slate-400 animate-pulse">
+              <AnimatedRobotTeacher
+                mood="thinking"
+                size="lg"
+                bubbleMessage={robotBubble}
+                speechText="Byte is preparing your curriculum lesson right now."
+              />
+              <p className="text-xs font-mono text-cyan-300 animate-pulse">
                 Byte is tailoring curriculum explanations for {grade}…
               </p>
+            </div>
+          ) : errorMsg ? (
+            <div className="py-12 flex flex-col items-center justify-center space-y-4 text-center">
+              <AlertCircle className="w-10 h-10 text-rose-400" />
+              <p className="text-sm font-bold text-white">Lesson Generation Interrupted</p>
+              <p className="text-xs text-slate-400 max-w-sm">{errorMsg}</p>
+              <button
+                type="button"
+                onClick={() => fetchTopicLesson(true)}
+                className="px-5 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold shadow-lg transition-all cursor-pointer"
+              >
+                Retry Generation
+              </button>
             </div>
           ) : lesson ? (
             <>
               {/* TAB 1: CONCEPT BREAKDOWN */}
               {activeTab === 'concept' && (
                 <div className="space-y-6">
-                  {/* Robot Header Banner with Speech Read Aloud */}
-                  <div className="p-5 rounded-2xl bg-gradient-to-r from-indigo-950/40 via-slate-900 to-slate-950 border border-indigo-500/20 flex flex-col sm:flex-row items-center gap-5">
+                  {/* Robot Header Banner with Speech Read Aloud & Action Chips */}
+                  <div className="p-5 rounded-3xl bg-gradient-to-r from-cyan-950/40 via-slate-900 to-slate-950 border border-cyan-500/30 flex flex-col md:flex-row items-center gap-5 shadow-lg">
                     <AnimatedRobotTeacher
                       mood={robotMood}
-                      size="sm"
-                      speechText={`${lesson.hook}. ${lesson.coreExplanation}. Remember: ${lesson.keyPoints.join('. ')}`}
+                      size="md"
+                      speechText={currentSpeechText}
                       bubbleMessage={robotBubble}
+                      onBubbleAction={handleBubbleAction}
                     />
 
-                    <div className="space-y-2 flex-1">
-                      <div className="text-[11px] font-mono text-indigo-400 font-bold uppercase tracking-wider">
-                        Real-World Hook
+                    <div className="space-y-2 flex-1 text-center md:text-left">
+                      <div className="text-[11px] font-mono text-cyan-400 font-extrabold uppercase tracking-wider">
+                        Real-World Phenomenon / Hook
                       </div>
-                      <p className="text-sm text-slate-200 leading-relaxed font-medium italic">
+                      <p className="text-sm text-slate-100 leading-relaxed font-medium italic">
                         "{lesson.hook}"
                       </p>
                       {lesson.prerequisites && (
                         <div className="text-xs text-slate-400 pt-1">
-                          <strong className="text-slate-300">Prerequisites:</strong> {lesson.prerequisites}
+                          <strong className="text-cyan-300">Prerequisites:</strong> {lesson.prerequisites}
                         </div>
                       )}
                     </div>
                   </div>
 
                   {/* Core Explanation Paragraphs */}
-                  <div className="p-6 rounded-3xl bg-slate-900/60 border border-white/10 space-y-4">
-                    <h3 className="text-base font-black text-white flex items-center gap-2">
-                      <BookOpen className="w-4 h-4 text-indigo-400" />
-                      <span>Deep Concept Explanation</span>
-                    </h3>
-                    <div className="text-sm text-slate-300 leading-relaxed space-y-3 whitespace-pre-line">
+                  <div className="p-6 rounded-3xl bg-slate-900/70 border border-white/10 space-y-4 shadow-md">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-base font-black text-white flex items-center gap-2">
+                        <BookOpen className="w-4 h-4 text-cyan-400" />
+                        <span>Core Curriculum Explanation</span>
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => setCurrentSpeechText(lesson.coreExplanation)}
+                        className="text-xs text-cyan-300 hover:text-white flex items-center gap-1 font-semibold cursor-pointer"
+                      >
+                        <Volume2 className="w-3.5 h-3.5" />
+                        <span>Read Core Explanation</span>
+                      </button>
+                    </div>
+
+                    <div className="text-sm text-slate-200 leading-relaxed space-y-3 whitespace-pre-line font-sans">
                       {lesson.coreExplanation}
                     </div>
                   </div>
 
                   {/* Key Principles Checklist */}
                   <div className="space-y-2.5">
-                    <h4 className="text-xs font-extrabold uppercase font-mono tracking-wider text-slate-400">
-                      Core Formulas & Rules to Retain
+                    <h4 className="text-xs font-extrabold uppercase font-mono tracking-wider text-slate-400 flex items-center gap-1.5">
+                      <Zap className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Key Principles & Mechanisms to Retain</span>
                     </h4>
                     <div className="grid grid-cols-1 gap-2.5">
                       {lesson.keyPoints.map((point, idx) => (
                         <div
                           key={idx}
-                          className="p-3.5 rounded-xl bg-slate-950/70 border border-white/10 flex items-start gap-3"
+                          className="p-3.5 rounded-2xl bg-slate-950/80 border border-white/10 flex items-start gap-3 hover:border-cyan-500/30 transition-colors"
                         >
-                          <div className="w-5 h-5 rounded-md bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 flex items-center justify-center text-[10px] font-bold font-mono mt-0.5">
+                          <div className="w-6 h-6 rounded-lg bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 flex items-center justify-center text-xs font-bold font-mono mt-0.5 shrink-0">
                             {idx + 1}
                           </div>
                           <span className="text-xs text-slate-200 font-medium leading-relaxed">
@@ -625,8 +699,9 @@ Student Question: "${textToSend}"`,
                         soundService.playButtonClick();
                         setActiveTab('example');
                         setRobotMood('teaching');
+                        setCurrentSpeechText(`Let's solve this worked problem: ${lesson.workedExample.problem}`);
                       }}
-                      className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg cursor-pointer"
+                      className="px-5 py-2.5 rounded-2xl bg-cyan-600 hover:bg-cyan-500 text-white font-extrabold text-xs flex items-center gap-2 shadow-lg shadow-cyan-600/30 cursor-pointer transition-all"
                     >
                       <span>Next: Explore Worked Example</span>
                       <ArrowRight className="w-4 h-4" />
@@ -639,12 +714,13 @@ Student Question: "${textToSend}"`,
               {activeTab === 'example' && (
                 <div className="space-y-6">
                   {/* Worked Example Problem Card */}
-                  <div className="p-6 rounded-3xl bg-slate-900/80 border border-purple-500/30 space-y-4">
+                  <div className="p-6 rounded-3xl bg-slate-900/80 border border-purple-500/30 space-y-4 shadow-xl">
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-mono text-purple-300 font-bold uppercase tracking-wider">
-                        Classroom / Exam Scenario
+                      <span className="text-[11px] font-mono text-purple-300 font-extrabold uppercase tracking-wider flex items-center gap-1.5">
+                        <GraduationCap className="w-4 h-4 text-purple-400" />
+                        <span>Classroom & Board Exam Scenario</span>
                       </span>
-                      <span className="text-xs font-mono text-slate-400">Step-by-Step Walkthrough</span>
+                      <span className="text-xs font-mono text-slate-400">Step-by-Step Reasoning</span>
                     </div>
 
                     <h3 className="text-base font-bold text-white leading-relaxed">
@@ -655,16 +731,16 @@ Student Question: "${textToSend}"`,
                   {/* Steps Breakdown */}
                   <div className="space-y-3">
                     <h4 className="text-xs font-extrabold uppercase font-mono tracking-wider text-slate-400">
-                      Solution Walkthrough
+                      Step-by-Step Mathematical & Conceptual Working
                     </h4>
 
                     {lesson.workedExample.steps.map((step, idx) => (
                       <div
                         key={idx}
-                        className="p-4 rounded-2xl bg-slate-950/80 border border-white/10 space-y-1.5"
+                        className="p-4 rounded-2xl bg-slate-950/80 border border-white/10 space-y-1.5 hover:border-purple-500/30 transition-colors"
                       >
                         <div className="flex items-center gap-2">
-                          <span className="px-2 py-0.5 rounded-md bg-purple-500/20 border border-purple-500/30 text-purple-300 text-[10px] font-mono font-bold">
+                          <span className="px-2.5 py-0.5 rounded-md bg-purple-500/20 border border-purple-500/30 text-purple-300 text-[11px] font-mono font-bold">
                             {step.title}
                           </span>
                         </div>
@@ -676,11 +752,13 @@ Student Question: "${textToSend}"`,
                   </div>
 
                   {/* Crucial Exam Tip */}
-                  <div className="p-4 rounded-2xl bg-amber-950/20 border border-amber-500/30 flex items-start gap-3">
+                  <div className="p-4 rounded-2xl bg-amber-950/25 border border-amber-500/40 flex items-start gap-3 shadow-md">
                     <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
                     <div className="space-y-0.5">
-                      <span className="text-xs font-bold text-amber-300">Crucial Examiner Note</span>
-                      <p className="text-xs text-slate-300 leading-relaxed">
+                      <span className="text-xs font-extrabold text-amber-300 uppercase tracking-wide">
+                        Examiner's Warning & Scoring Secret
+                      </span>
+                      <p className="text-xs text-slate-200 leading-relaxed">
                         {lesson.workedExample.examTip}
                       </p>
                     </div>
@@ -701,8 +779,9 @@ Student Question: "${textToSend}"`,
                         soundService.playButtonClick();
                         setActiveTab('practice');
                         setRobotMood('curious');
+                        setCurrentSpeechText(`Practice time! Solve this question to unlock official mastery.`);
                       }}
-                      className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg cursor-pointer"
+                      className="px-5 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs flex items-center gap-2 shadow-lg shadow-emerald-600/30 cursor-pointer transition-all"
                     >
                       <span>Take Practice Mastery Check</span>
                       <ArrowRight className="w-4 h-4" />
@@ -720,7 +799,7 @@ Student Question: "${textToSend}"`,
                       Mastery Checkpoint {currentQuestionIdx + 1} of {lesson.practiceQuestions.length}
                     </span>
                     <span className="text-emerald-400 font-bold">
-                      {practiceCompleted ? '✓ Mastery Record Achieved' : 'Demonstration of Understanding Required'}
+                      {practiceCompleted ? '✓ Mastery Record Achieved' : 'Authentic Demonstration Required'}
                     </span>
                   </div>
 
@@ -729,7 +808,7 @@ Student Question: "${textToSend}"`,
                     const q = lesson.practiceQuestions[currentQuestionIdx];
 
                     return (
-                      <div className="p-6 rounded-3xl bg-slate-900/90 border border-emerald-500/30 space-y-5">
+                      <div className="p-6 rounded-3xl bg-slate-900/90 border border-emerald-500/30 space-y-5 shadow-xl">
                         <div className="flex items-start justify-between gap-4">
                           <h3 className="text-base sm:text-lg font-black text-white leading-relaxed font-sans">
                             {q.question}
@@ -741,8 +820,9 @@ Student Question: "${textToSend}"`,
                               setShowHint(!showHint);
                               setRobotMood('guiding');
                               setRobotBubble(q.hint);
+                              setCurrentSpeechText(q.hint);
                             }}
-                            className="px-2.5 py-1 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-center gap-1.5 shrink-0 hover:bg-amber-500/30 transition-all cursor-pointer"
+                            className="px-3 py-1.5 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-center gap-1.5 shrink-0 hover:bg-amber-500/30 transition-all cursor-pointer"
                           >
                             <Lightbulb className="w-3.5 h-3.5" />
                             <span>{showHint ? 'Hide Hint' : 'Hint'}</span>
@@ -751,7 +831,7 @@ Student Question: "${textToSend}"`,
 
                         {/* Hint box if triggered */}
                         {showHint && (
-                          <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-500/40 text-xs text-amber-200 flex items-center gap-2.5">
+                          <div className="p-3.5 rounded-2xl bg-amber-950/30 border border-amber-500/40 text-xs text-amber-200 flex items-center gap-2.5">
                             <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
                             <span>Byte's Hint: {q.hint}</span>
                           </div>
@@ -765,12 +845,12 @@ Student Question: "${textToSend}"`,
 
                             if (isAnswerSubmitted) {
                               if (oIdx === q.correctIndex) {
-                                style = 'bg-emerald-950/50 border-emerald-500 text-emerald-200';
+                                style = 'bg-emerald-950/60 border-emerald-500 text-emerald-200 shadow-lg';
                               } else if (isSelected && oIdx !== q.correctIndex) {
-                                style = 'bg-rose-950/50 border-rose-500 text-rose-200';
+                                style = 'bg-rose-950/60 border-rose-500 text-rose-200';
                               }
                             } else if (isSelected) {
-                              style = 'bg-indigo-950/60 border-indigo-400 text-white';
+                              style = 'bg-cyan-950/70 border-cyan-400 text-white shadow-md';
                             }
 
                             return (
@@ -803,11 +883,11 @@ Student Question: "${textToSend}"`,
                             animate={{ opacity: 1, y: 0 }}
                             className={`p-4 rounded-2xl border text-xs leading-relaxed ${
                               answerState === 'correct'
-                                ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-300'
-                                : 'bg-rose-950/30 border-rose-500/40 text-rose-300'
+                                ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-200'
+                                : 'bg-rose-950/40 border-rose-500/50 text-rose-200'
                             }`}
                           >
-                            <div className="font-bold mb-1 flex items-center gap-1.5">
+                            <div className="font-extrabold mb-1 flex items-center gap-1.5 text-sm">
                               {answerState === 'correct' ? '✓ Mastered Reasoning' : '✕ Learning Opportunity'}
                             </div>
                             <p>{q.explanation}</p>
@@ -821,9 +901,9 @@ Student Question: "${textToSend}"`,
                               type="button"
                               disabled={selectedOption === null}
                               onClick={handleSubmitAnswer}
-                              className={`px-5 py-2.5 rounded-xl text-xs font-bold shadow-lg transition-all cursor-pointer ${
+                              className={`px-6 py-2.5 rounded-2xl text-xs font-extrabold shadow-lg transition-all cursor-pointer ${
                                 selectedOption !== null
-                                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/30'
                                   : 'bg-slate-800 text-slate-500 cursor-not-allowed'
                               }`}
                             >
@@ -833,14 +913,13 @@ Student Question: "${textToSend}"`,
                             <button
                               type="button"
                               onClick={handleNextPracticeStep}
-                              className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg cursor-pointer"
+                              className="px-6 py-2.5 rounded-2xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-extrabold flex items-center gap-2 shadow-lg shadow-cyan-600/30 cursor-pointer transition-all"
                             >
                               <span>
                                 {currentQuestionIdx < lesson.practiceQuestions.length - 1
-                                  ? 'Next Question'
-                                  : 'Claim Topic Mastery (+50 XP)'}
+                                  ? 'Next Question →'
+                                  : 'Claim Topic Mastery (+50 XP) 🎉'}
                               </span>
-                              <ArrowRight className="w-4 h-4" />
                             </button>
                           )}
                         </div>
@@ -853,43 +932,51 @@ Student Question: "${textToSend}"`,
               {/* TAB 4: ASK ROBOT TEACHER */}
               {activeTab === 'ask' && (
                 <div className="space-y-4">
-                  <div className="p-4 rounded-2xl bg-cyan-950/20 border border-cyan-500/30 flex items-center gap-3">
-                    <AnimatedRobotTeacher mood={robotMood} size="sm" bubbleMessage={robotBubble} />
+                  <div className="p-4 rounded-3xl bg-cyan-950/30 border border-cyan-500/30 flex items-center gap-4">
+                    <AnimatedRobotTeacher
+                      mood={robotMood}
+                      size="sm"
+                      bubbleMessage={robotBubble}
+                      speechText={currentSpeechText}
+                      showAutoSpeakToggle={false}
+                    />
                     <div className="space-y-0.5">
-                      <h4 className="text-xs font-bold text-cyan-300">Byte · Instant Academic Q&A</h4>
-                      <p className="text-[11px] text-slate-400">
-                        Ask any follow-up question regarding {topic}. Byte explains concepts using custom analogies and exam heuristics.
+                      <h4 className="text-xs font-extrabold text-cyan-300 uppercase tracking-wide">
+                        Byte · Instant Academic Q&A
+                      </h4>
+                      <p className="text-xs text-slate-300">
+                        Ask any follow-up question regarding {topic}. Byte generates dynamic explanations, analogies, and exam mark-scheme heuristics with speech synthesis.
                       </p>
                     </div>
                   </div>
 
-                  {/* Preset Quick Prompts */}
+                  {/* Preset Quick Pedagogy Action Chips */}
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => handleSendChat(`Can you explain ${topic} with a simple real-life analogy?`)}
-                      className="px-3 py-1.5 rounded-xl bg-slate-900 border border-white/10 hover:border-cyan-500/40 text-slate-300 text-xs font-medium cursor-pointer"
+                      onClick={() => handleBubbleAction('analogy')}
+                      className="px-3 py-1.5 rounded-xl bg-slate-900 border border-white/10 hover:border-cyan-500/40 text-slate-300 text-xs font-medium cursor-pointer transition-colors"
                     >
                       💡 Give me an analogy
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleSendChat(`What is a clever mnemonic to remember the key points of ${topic}?`)}
-                      className="px-3 py-1.5 rounded-xl bg-slate-900 border border-white/10 hover:border-cyan-500/40 text-slate-300 text-xs font-medium cursor-pointer"
+                      onClick={() => handleBubbleAction('simpler')}
+                      className="px-3 py-1.5 rounded-xl bg-slate-900 border border-white/10 hover:border-purple-500/40 text-slate-300 text-xs font-medium cursor-pointer transition-colors"
                     >
-                      🧠 Mnemonic for exams
+                      🧒 Explain like I'm 10
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleSendChat(`Explain ${topic} like I am 10 years old.`)}
-                      className="px-3 py-1.5 rounded-xl bg-slate-900 border border-white/10 hover:border-cyan-500/40 text-slate-300 text-xs font-medium cursor-pointer"
+                      onClick={() => handleBubbleAction('exam_tip')}
+                      className="px-3 py-1.5 rounded-xl bg-slate-900 border border-white/10 hover:border-amber-500/40 text-slate-300 text-xs font-medium cursor-pointer transition-colors"
                     >
-                      🧒 Explain like I'm 10
+                      🎯 Exam scoring secret
                     </button>
                   </div>
 
                   {/* Chat Log */}
-                  <div className="p-4 rounded-2xl bg-slate-950 border border-white/10 space-y-3 max-h-72 overflow-y-auto">
+                  <div className="p-4 rounded-3xl bg-slate-950 border border-white/10 space-y-3.5 max-h-80 overflow-y-auto">
                     {chatMessages.map((msg, mIdx) => (
                       <div
                         key={mIdx}
@@ -898,21 +985,39 @@ Student Question: "${textToSend}"`,
                         }`}
                       >
                         <div
-                          className={`max-w-[85%] p-3 rounded-2xl ${
+                          className={`max-w-[85%] p-3.5 rounded-2xl ${
                             msg.role === 'user'
-                              ? 'bg-indigo-600 text-white rounded-br-none'
-                              : 'bg-slate-900 border border-white/10 text-slate-200 rounded-bl-none'
+                              ? 'bg-cyan-600 text-white rounded-br-none shadow-md'
+                              : 'bg-slate-900 border border-white/10 text-slate-200 rounded-bl-none shadow-lg'
                           }`}
                         >
-                          {msg.text}
+                          <div className="whitespace-pre-line font-sans">{msg.text}</div>
+
+                          {/* Suggested Follow-Ups */}
+                          {msg.followUps && msg.followUps.length > 0 && (
+                            <div className="mt-2.5 pt-2 border-t border-white/10 flex flex-wrap gap-1.5">
+                              {msg.followUps.map((fu, fIdx) => (
+                                <button
+                                  key={fIdx}
+                                  type="button"
+                                  onClick={() => handleSendChat(fu)}
+                                  className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-cyan-950 hover:text-cyan-300 text-slate-300 transition-colors text-left"
+                                >
+                                  → {fu}
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}
                     {isChatLoading && (
-                      <div className="text-xs font-mono text-cyan-400 animate-pulse">
-                        Byte is computing response…
+                      <div className="text-xs font-mono text-cyan-400 animate-pulse flex items-center gap-2">
+                        <Sparkles className="w-3.5 h-3.5 animate-spin" />
+                        <span>Byte is computing authentic response…</span>
                       </div>
                     )}
+                    <div ref={chatBottomRef} />
                   </div>
 
                   {/* Chat Input */}
@@ -927,13 +1032,13 @@ Student Question: "${textToSend}"`,
                       type="text"
                       value={chatInput}
                       onChange={e => setChatInput(e.target.value)}
-                      placeholder={`Ask Byte about ${topic}…`}
-                      className="flex-1 px-4 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400"
+                      placeholder={`Ask Byte any question about ${topic}…`}
+                      className="flex-1 px-4 py-3 rounded-2xl bg-slate-900 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400 transition-colors"
                     />
                     <button
                       type="submit"
                       disabled={isChatLoading || !chatInput.trim()}
-                      className="px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-md cursor-pointer"
+                      className="px-5 py-3 rounded-2xl bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-600 text-white font-extrabold text-xs flex items-center gap-1.5 shadow-md shadow-cyan-600/30 cursor-pointer transition-all"
                     >
                       <Send className="w-3.5 h-3.5" />
                       <span>Ask</span>
@@ -942,20 +1047,19 @@ Student Question: "${textToSend}"`,
                 </div>
               )}
             </>
-          ) : (
-            <div className="text-center py-12 text-slate-400 text-xs">
-              Unable to load lesson. Please try closing and reopening.
-            </div>
-          )}
+          ) : null}
         </div>
 
         {/* Modal Footer */}
         <div className="p-4 border-t border-white/10 bg-slate-950/80 flex items-center justify-between text-xs text-slate-400 font-mono">
-          <span>StudentOS Adaptive AI Tutor</span>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+            <span>StudentOS Adaptive AI Tutor</span>
+          </div>
           <button
             type="button"
             onClick={onClose}
-            className="text-slate-300 hover:text-white font-bold cursor-pointer"
+            className="text-slate-300 hover:text-white font-bold cursor-pointer transition-colors"
           >
             Close Lesson
           </button>

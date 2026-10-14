@@ -246,6 +246,12 @@ export const ChapterLearningScreen: React.FC<ChapterLearningScreenProps> = ({
                   : `Hi! Pick any topic below to learn with worked examples and prove your mastery!`
               }
               speechText={`Welcome to Chapter ${chapter.chapterNumber}: ${chapter.title}. Select a topic to start our interactive AI lesson.`}
+              onBubbleAction={() => {
+                const pendingTopic = (chapter.topics || []).find(t => !completedTopics.includes(t)) || (chapter.topics || [])[0];
+                if (pendingTopic) {
+                  setSelectedTopicForTutor(pendingTopic);
+                }
+              }}
             />
           </div>
         </div>

@@ -2712,6 +2712,253 @@ ${searchRes.formattedContext}`;
     }
   });
 
+// In-memory cache for dynamic AI tutor lessons to ensure instant 0ms retrieval on revisits
+const tutorLessonCache = new Map<string, { lesson: any; timestamp: number }>();
+
+// AI Tutor Dynamic Lesson Generator (High Performance & Curriculum Grounded)
+app.post('/api/ai/tutor/lesson', async (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  const {
+    subject = 'General Science',
+    chapterTitle = '',
+    chapterNumber = 1,
+    topic = '',
+    grade = 'Grade 10',
+    notesContext = ''
+  } = req.body || {};
+
+  if (!topic) {
+    return res.status(400).json({ success: false, error: 'Topic is required' });
+  }
+
+  const cacheKey = `${subject.toLowerCase()}:::${chapterNumber}:::${topic.toLowerCase()}:::${grade.toLowerCase()}`;
+  if (tutorLessonCache.has(cacheKey)) {
+    const cached = tutorLessonCache.get(cacheKey)!;
+    // 24 hour cache validity
+    if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+      return res.status(200).json({
+        success: true,
+        lesson: cached.lesson,
+        providerUsed: 'cache',
+        modelUsed: 'memory-cache',
+        cached: true
+      });
+    }
+  }
+
+  const prompt = `You are Byte, the elite AI educator on StudentOS.
+Generate a structured, authentic educational lesson for:
+Subject: ${subject}
+Chapter: Chapter ${chapterNumber} — ${chapterTitle || topic}
+Topic: "${topic}"
+Grade Level: ${grade}
+Context / Curriculum Notes: ${notesContext || 'Standard national board curriculum'}
+
+RULES:
+1. Provide authentic, scientifically and mathematically accurate content directly relevant to "${topic}".
+2. NO generic boilerplate, NO dummy text, NO placeholder phrases.
+3. coreExplanation: 2 concise, highly illuminating paragraphs with bold key terms (100-150 words total).
+4. workedExample: 1 clear problem and 3 concise steps (20-35 words per step) plus 1 exam tip.
+5. practiceQuestions: 2 diagnostic multiple choice questions with 4 distinct options each, correctIndex (0-3), concise explanation, and 1 hint.
+
+Return strict raw JSON format matching this schema:
+{
+  "topic": "${topic}",
+  "subject": "${subject}",
+  "grade": "${grade}",
+  "hook": "An intriguing, real-world hook or mystery in 1-2 punchy sentences",
+  "prerequisites": "1 short sentence reminding fundamental prerequisite concepts",
+  "coreExplanation": "Clear, comprehensive 2-paragraph explanation with bold concepts, intuitive analogies, and clean pedagogical structure.",
+  "keyPoints": [
+    "Key definition, theorem, or core mechanism 1",
+    "Key principle, equation, or relationship 2",
+    "Real-world application or rule 3"
+  ],
+  "workedExample": {
+    "problem": "A realistic exam-style practice problem or scenario testing this concept",
+    "steps": [
+      { "title": "Step 1: Identify Givens & Principle", "detail": "Detailed reasoning..." },
+      { "title": "Step 2: Step-by-Step Working", "detail": "Detailed calculation or deduction..." },
+      { "title": "Step 3: Verification & Conclusion", "detail": "Final check and unit..." }
+    ],
+    "examTip": "A crucial mistake students often make in board exams and how to avoid it."
+  },
+  "practiceQuestions": [
+    {
+      "id": "q1",
+      "question": "Conceptual multiple-choice question testing understanding of this topic",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correctIndex": 0,
+      "explanation": "Clear explanation of why this is correct and why other options fail.",
+      "hint": "Gentle guiding hint without giving away the answer directly."
+    },
+    {
+      "id": "q2",
+      "question": "Application-based multiple choice question testing practical problem-solving",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correctIndex": 1,
+      "explanation": "Clear explanation with calculation or reasoning steps.",
+      "hint": "Consider the relationship between the key components."
+    }
+  ]
+}`;
+
+  try {
+    const { text, telemetry } = await generateAICompletionWithTelemetry({
+      systemInstruction: 'You are Byte, the elite AI educator on StudentOS. Return authentic, curriculum-grounded structured JSON only.',
+      prompt,
+      temperature: 0.25,
+      jsonMode: true,
+      maxTokens: 4096,
+      taskType: 'general',
+      endpointName: 'AITutorLesson'
+    });
+
+    let clean = (text || '').trim();
+    if (clean.startsWith('```json')) {
+      clean = clean.replace(/^```json/, '').replace(/```$/, '').trim();
+    } else if (clean.startsWith('```')) {
+      clean = clean.replace(/^```/, '').replace(/```$/, '').trim();
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(clean);
+    } catch {
+      // Clean trailing commas or slice between first { and last }
+      const firstB = clean.indexOf('{');
+      const lastB = clean.lastIndexOf('}');
+      if (firstB !== -1 && lastB > firstB) {
+        const slice = clean.slice(firstB, lastB + 1).replace(/,\s*([\]}])/g, '$1');
+        parsed = JSON.parse(slice);
+      } else {
+        throw new Error('Unable to parse JSON from AI response');
+      }
+    }
+
+    if (!parsed || !parsed.coreExplanation || !Array.isArray(parsed.practiceQuestions)) {
+      throw new Error('AI generated incomplete lesson schema');
+    }
+
+    // Cache the valid lesson
+    tutorLessonCache.set(cacheKey, { lesson: parsed, timestamp: Date.now() });
+
+    return res.status(200).json({
+      success: true,
+      lesson: parsed,
+      providerUsed: telemetry.providerUsed,
+      modelUsed: telemetry.modelUsed,
+      cached: false
+    });
+  } catch (err: any) {
+    console.error('[AI Tutor Lesson Error]', err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Failed to generate dynamic AI lesson.'
+    });
+  }
+});
+
+// AI Tutor Conversational Q&A Endpoint
+app.post('/api/ai/tutor/ask', async (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  const {
+    subject = '',
+    chapterTitle = '',
+    chapterNumber = 1,
+    topic = '',
+    grade = 'Grade 10',
+    question = '',
+    actionType = 'general', // 'general' | 'simpler' | 'analogy' | 'exam_tip'
+    history = []
+  } = req.body || {};
+
+  if (!question && !actionType) {
+    return res.status(400).json({ success: false, error: 'Question is required' });
+  }
+
+  let promptFocus = `The student asked: "${question}"`;
+  if (actionType === 'simpler') {
+    promptFocus = `Explain "${topic}" in ${subject} so simply and intuitively that a 10-year-old would immediately get it. Use an everyday household metaphor.`;
+  } else if (actionType === 'analogy') {
+    promptFocus = `Provide a brilliant, vivid real-world analogy for "${topic}" in ${subject}. Compare it to something like sports, cooking, space travel, or gaming.`;
+  } else if (actionType === 'exam_tip') {
+    promptFocus = `Share the #1 secret exam technique or highest-scoring marking criteria rule for "${topic}" in ${subject} for ${grade}. What separates average answers from perfect scores?`;
+  }
+
+  const prompt = `You are Byte, the friendly, super-intelligent AI robot tutor for StudentOS.
+Student Details:
+- Subject: ${subject}
+- Chapter: Chapter ${chapterNumber} · ${chapterTitle || topic}
+- Topic: "${topic}" (${grade})
+
+Task:
+${promptFocus}
+
+Return strict raw JSON format matching this schema:
+{
+  "speechSummary": "1-2 short, warm, spoken sentences (no markdown, no symbols) for Byte to say aloud with text-to-speech voice.",
+  "fullExplanation": "Detailed, encouraging explanation with clear formatting, bold terms, and steps if needed.",
+  "suggestedFollowUps": ["Short follow-up question 1", "Short follow-up question 2"]
+}`;
+
+  try {
+    const { text, telemetry } = await generateAICompletionWithTelemetry({
+      systemInstruction: 'You are Byte, the friendly AI robot tutor on StudentOS. Return warm, concise, educational JSON only.',
+      prompt,
+      temperature: 0.35,
+      jsonMode: true,
+      maxTokens: 2048,
+      taskType: 'fast',
+      endpointName: 'AITutorAsk'
+    });
+
+    let clean = (text || '').trim();
+    if (clean.startsWith('```json')) {
+      clean = clean.replace(/^```json/, '').replace(/```$/, '').trim();
+    } else if (clean.startsWith('```')) {
+      clean = clean.replace(/^```/, '').replace(/```$/, '').trim();
+    }
+
+    let parsed: any = null;
+    try {
+      parsed = JSON.parse(clean);
+    } catch {
+      const firstB = clean.indexOf('{');
+      const lastB = clean.lastIndexOf('}');
+      if (firstB !== -1 && lastB > firstB) {
+        try {
+          const slice = clean.slice(firstB, lastB + 1).replace(/,\s*([\]}])/g, '$1');
+          parsed = JSON.parse(slice);
+        } catch (_) {}
+      }
+    }
+
+    const reply = parsed?.fullExplanation || text;
+    const speechSummary =
+      parsed?.speechSummary ||
+      reply
+        .replace(/[#*_`~>[\]()]/g, '')
+        .split(/[.?!]/)[0]
+        .slice(0, 140) + '.';
+
+    return res.status(200).json({
+      success: true,
+      reply,
+      speechSummary,
+      suggestedFollowUps: Array.isArray(parsed?.suggestedFollowUps) ? parsed.suggestedFollowUps : [],
+      providerUsed: telemetry.providerUsed,
+      modelUsed: telemetry.modelUsed
+    });
+  } catch (err: any) {
+    console.error('[AI Tutor Ask Error]', err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Failed to answer student question.'
+    });
+  }
+});
+
 
 // Secure API endpoint for Orion Diagram Generator
 app.post('/api/ai/diagram', async (req, res) => {
