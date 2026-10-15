@@ -60,6 +60,7 @@ export interface AICompletionOptions {
   mode?: string;
   persona?: string;
   contextLength?: number;
+  reasoningMode?: boolean;
 }
 
 // API Key Getters
@@ -344,12 +345,6 @@ export function extractTextFromChoice(choice: any, rootData?: any): string {
     }
   }
 
-  if (msg && typeof msg.reasoning_content === 'string' && msg.reasoning_content.trim()) {
-    return msg.reasoning_content.trim();
-  }
-  if (msg && typeof msg.reasoning === 'string' && msg.reasoning.trim()) {
-    return msg.reasoning.trim();
-  }
   if (msg && typeof msg.output_text === 'string' && msg.output_text.trim()) {
     return msg.output_text.trim();
   }
@@ -381,12 +376,8 @@ export function extractStreamingToken(choice: any): string {
       return joined;
     }
   }
-  if (typeof delta.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
-    return delta.reasoning_content;
-  }
-  if (typeof delta.reasoning === 'string' && delta.reasoning.length > 0) {
-    return delta.reasoning;
-  }
+  // Note: Never return internal reasoning_content or raw thinking traces to students.
+  // Wait for real content tokens to stream.
   if (typeof delta.output_text === 'string' && delta.output_text.length > 0) {
     return delta.output_text;
   }

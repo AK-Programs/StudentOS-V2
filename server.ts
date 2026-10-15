@@ -2375,7 +2375,8 @@ app.post(['/api/ai/chat', '/api/ai/chat/stream'], async (req, res) => {
     modelOverride,
     stream = false,
     taskType,
-    webSearchMode = 'auto'
+    webSearchMode = 'auto',
+    reasoningMode = false
   } = req.body || {};
 
   const isStreamingRequest = Boolean(stream || req.path.endsWith('/stream'));
@@ -2453,6 +2454,17 @@ app.post(['/api/ai/chat', '/api/ai/chat/stream'], async (req, res) => {
 - Explain WHY each step or theorem works conceptually, not just the formula.
 - Clearly highlight the **Final Answer** or **Key Takeaway** in bold.
 - Include a concise, concrete worked example when helpful.`;
+  }
+
+  // Inject Reasoning Mode when enabled by user
+  if (reasoningMode) {
+    systemInstruction += `\n\nREASONING & METHODOLOGY MODE:
+- Rigorous step-by-step educational analysis requested.
+- Explain the underlying principles, axioms, or formulas before applying them.
+- Present each deduction or calculation step sequentially with clear annotations explaining WHY it works.
+- Perform a consistency/dimensional check before presenting the final answer.
+- Highlight the **Final Answer** or **Core Takeaway** clearly.
+- Do NOT output internal chain-of-thought XML tags or raw thought markers; format everything as clean, structured pedagogical reasoning.`;
   }
 
   // Grounding & Data Integrity Rules (Non-negotiable Rule 14, 15, 16)
@@ -2564,7 +2576,8 @@ Do NOT fabricate current news, circulars, or live statistics. After stating that
           userRole: activeRole,
           mode,
           persona,
-          contextLength: combinedContext.length
+          contextLength: combinedContext.length,
+          reasoningMode: Boolean(reasoningMode)
         },
         {
           onMeta: (meta) => {
@@ -2666,7 +2679,8 @@ ${searchRes.formattedContext}`;
         userRole: activeRole,
         mode,
         persona,
-        contextLength: combinedContext.length
+        contextLength: combinedContext.length,
+        reasoningMode: Boolean(reasoningMode)
       });
       
       // Record rolling 24h usage log
@@ -2755,11 +2769,12 @@ Grade Level: ${grade}
 Context / Curriculum Notes: ${notesContext || 'Standard national board curriculum'}
 
 RULES:
-1. Provide authentic, scientifically and mathematically accurate content directly relevant to "${topic}".
-2. NO generic boilerplate, NO dummy text, NO placeholder phrases.
-3. coreExplanation: 2 concise, highly illuminating paragraphs with bold key terms (100-150 words total).
-4. workedExample: 1 clear problem and 3 concise steps (20-35 words per step) plus 1 exam tip.
-5. practiceQuestions: 2 diagnostic multiple choice questions with 4 distinct options each, correctIndex (0-3), concise explanation, and 1 hint.
+1. Provide authentic, scientifically, historically, and mathematically accurate content directly relevant to "${topic}".
+2. For school curriculum topics, align with verified concepts. For topics beyond the predefined syllabus (e.g., everyday curiosities, space, advanced physics, computing, life skills, general knowledge), explain what is known, acknowledge uncertainty or ongoing discoveries, and do not pretend that every topic belongs to the school's official board exam syllabus.
+3. NO generic boilerplate, NO dummy text, NO placeholder phrases.
+4. coreExplanation: 2 concise, highly illuminating paragraphs with bold key terms (100-150 words total).
+5. workedExample: 1 clear problem and 3 concise steps (20-35 words per step) plus 1 exam tip or real-world application tip.
+6. practiceQuestions: 2 diagnostic multiple choice questions with 4 distinct options each, correctIndex (0-3), concise explanation, and 1 hint.
 
 Return strict raw JSON format matching this schema:
 {
