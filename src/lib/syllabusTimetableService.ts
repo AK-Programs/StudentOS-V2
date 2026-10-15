@@ -474,6 +474,13 @@ export class SyllabusTimetableService {
   private static memoryCache: Record<string, any> = {};
 
   /**
+   * Invalidate memory cache (used for session switching and testing)
+   */
+  static clearCache() {
+    this.memoryCache = {};
+  }
+
+  /**
    * Fetch all official syllabi for a school & grade.
    */
   static async getOfficialSyllabuses(schoolId: string = 'default_school', grade: string = 'Grade 10'): Promise<OfficialSubjectSyllabus[]> {
@@ -490,8 +497,9 @@ export class SyllabusTimetableService {
         .eq('id', docId)
         .maybeSingle();
 
-      if (!error && data?.content) {
-        const parsed = JSON.parse(data.content);
+      if (!error && (data?.data || (data as any)?.content)) {
+        const raw = (data as any)?.data ?? (data as any)?.content;
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
         if (Array.isArray(parsed) && parsed.length > 0) {
           this.memoryCache[docId] = parsed;
           return parsed.filter(s => !grade || s.grade.toLowerCase() === grade.toLowerCase());
@@ -516,12 +524,15 @@ export class SyllabusTimetableService {
     this.memoryCache[docId] = syllabuses;
 
     try {
-      await supabase.from('global_data').upsert({
+      const { error } = await supabase.from('global_data').upsert({
         id: docId,
-        title: `Official Syllabus — ${schoolId}`,
-        subject: 'Curriculum Management',
-        content: JSON.stringify(syllabuses)
+        data: syllabuses,
+        updated_at: new Date().toISOString()
       });
+      if (error) {
+        console.error('[Syllabus] Supabase error:', error);
+        return false;
+      }
       return true;
     } catch (e) {
       console.error('[Syllabus] Save failed:', e);
@@ -573,6 +584,20 @@ export class SyllabusTimetableService {
       return this.memoryCache[docId];
     }
 
+    // Attempt retrieval from resilient local storage backup first to prevent reset
+    let localBackup: Record<string, StudentChapterProgress> | null = null;
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const raw = localStorage.getItem(`s_os_progress_${userId}`);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') {
+            localBackup = parsed;
+          }
+        }
+      } catch (_) {}
+    }
+
     try {
       const { data, error } = await supabase
         .from('global_data')
@@ -580,15 +605,36 @@ export class SyllabusTimetableService {
         .eq('id', docId)
         .maybeSingle();
 
-      if (!error && data?.content) {
-        const parsed = JSON.parse(data.content);
-        if (typeof parsed === 'object') {
+      if (!error && (data?.data || (data as any)?.content)) {
+        const raw = (data as any)?.data ?? (data as any)?.content;
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (typeof parsed === 'object' && parsed !== null) {
           this.memoryCache[docId] = parsed;
+          if (typeof window !== 'undefined' && window.localStorage) {
+            try {
+              localStorage.setItem(`s_os_progress_${userId}`, JSON.stringify(parsed));
+            } catch (_) {}
+          }
           return parsed;
+        }
+      } else if (error) {
+        console.warn('[Progress] Supabase query returned error, using fallback:', error);
+        if (localBackup) {
+          this.memoryCache[docId] = localBackup;
+          return localBackup;
         }
       }
     } catch (e) {
       console.warn('[Progress] Supabase fetch fallback:', e);
+      if (localBackup) {
+        this.memoryCache[docId] = localBackup;
+        return localBackup;
+      }
+    }
+
+    if (localBackup) {
+      this.memoryCache[docId] = localBackup;
+      return localBackup;
     }
 
     // Default progress seed for first-time students so progress counters are populated
@@ -717,13 +763,22 @@ export class SyllabusTimetableService {
     const docId = CACHE_KEYS.STUDENT_PROGRESS(userId);
     this.memoryCache[docId] = progress;
 
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        localStorage.setItem(`s_os_progress_${userId}`, JSON.stringify(progress));
+      } catch (_) {}
+    }
+
     try {
-      await supabase.from('global_data').upsert({
+      const { error } = await supabase.from('global_data').upsert({
         id: docId,
-        title: `Student Learning Progress — ${userId}`,
-        subject: 'Learning Progress',
-        content: JSON.stringify(progress)
+        data: progress,
+        updated_at: new Date().toISOString()
       });
+      if (error) {
+        console.error('[Progress] Supabase error while saving student progress:', error);
+        return false;
+      }
       return true;
     } catch (e) {
       console.error('[Progress] Save failed:', e);
@@ -830,8 +885,9 @@ export class SyllabusTimetableService {
         .eq('id', docId)
         .maybeSingle();
 
-      if (!error && data?.content) {
-        const parsed = JSON.parse(data.content);
+      if (!error && (data?.data || (data as any)?.content)) {
+        const raw = (data as any)?.data ?? (data as any)?.content;
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
         if (parsed?.schedule) {
           this.memoryCache[docId] = parsed;
           return parsed;
@@ -858,12 +914,15 @@ export class SyllabusTimetableService {
     this.memoryCache[docId] = timetable;
 
     try {
-      await supabase.from('global_data').upsert({
+      const { error } = await supabase.from('global_data').upsert({
         id: docId,
-        title: `Official School Timetable — ${grade} (${schoolId})`,
-        subject: 'Official Timetable',
-        content: JSON.stringify(timetable)
+        data: timetable,
+        updated_at: new Date().toISOString()
       });
+      if (error) {
+        console.error('[Timetable] Supabase error:', error);
+        return false;
+      }
       return true;
     } catch (e) {
       console.error('[Timetable] Save failed:', e);
@@ -881,16 +940,19 @@ export class SyllabusTimetableService {
     const conflicts: Array<{ day: string; period: number; type: 'teacher' | 'room'; details: string }> = [];
 
     schedule.forEach(daySchedule => {
-      const teacherMap: Record<string, string[]> = {};
-      const roomMap: Record<string, string[]> = {};
+      // Track allocations per period number so rooms and teachers can be reused across different periods
+      const periodTeacherMap: Record<number, Record<string, boolean>> = {};
+      const periodRoomMap: Record<number, Record<string, boolean>> = {};
 
       daySchedule.periods.forEach(p => {
         if (p.isBreak) return;
-        const periodKey = `${daySchedule.day}_P${p.periodNumber}`;
+        const pNum = p.periodNumber;
+        if (!periodTeacherMap[pNum]) periodTeacherMap[pNum] = {};
+        if (!periodRoomMap[pNum]) periodRoomMap[pNum] = {};
 
         if (p.teacherName) {
           const tName = p.teacherName.toLowerCase().trim();
-          if (teacherMap[tName]) {
+          if (periodTeacherMap[pNum][tName]) {
             conflicts.push({
               day: daySchedule.day,
               period: p.periodNumber,
@@ -898,13 +960,13 @@ export class SyllabusTimetableService {
               details: `Teacher "${p.teacherName}" allocated more than once in ${daySchedule.day} Period ${p.periodNumber}.`
             });
           } else {
-            teacherMap[tName] = [p.subject || ''];
+            periodTeacherMap[pNum][tName] = true;
           }
         }
 
         if (p.room) {
           const rName = p.room.toLowerCase().trim();
-          if (roomMap[rName]) {
+          if (periodRoomMap[pNum][rName]) {
             conflicts.push({
               day: daySchedule.day,
               period: p.periodNumber,
@@ -912,7 +974,7 @@ export class SyllabusTimetableService {
               details: `Room "${p.room}" allocated simultaneously in ${daySchedule.day} Period ${p.periodNumber}.`
             });
           } else {
-            roomMap[rName] = [p.subject || ''];
+            periodRoomMap[pNum][rName] = true;
           }
         }
       });
@@ -949,8 +1011,9 @@ export class SyllabusTimetableService {
           .eq('id', docId)
           .maybeSingle();
 
-        if (!error && data?.content) {
-          const parsed = JSON.parse(data.content);
+        if (!error && (data?.data || (data as any)?.content)) {
+          const raw = (data as any)?.data ?? (data as any)?.content;
+          const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
           if (Array.isArray(parsed)) {
             sessions = parsed;
             this.memoryCache[docId] = sessions;
@@ -1055,12 +1118,15 @@ export class SyllabusTimetableService {
     this.memoryCache[docId] = sessions;
 
     try {
-      await supabase.from('global_data').upsert({
+      const { error } = await supabase.from('global_data').upsert({
         id: docId,
-        title: `Study Sessions — ${userId}`,
-        subject: 'Study Planner Sessions',
-        content: JSON.stringify(sessions)
+        data: sessions,
+        updated_at: new Date().toISOString()
       });
+      if (error) {
+        console.error('[StudySessions] Supabase error:', error);
+        return false;
+      }
       return true;
     } catch (e) {
       console.error('[Sessions] Save failed:', e);
@@ -1253,8 +1319,9 @@ export class SyllabusTimetableService {
         .eq('id', docId)
         .maybeSingle();
 
-      if (!error && data?.content) {
-        const parsed = JSON.parse(data.content);
+      if (!error && (data?.data || (data as any)?.content)) {
+        const raw = (data as any)?.data ?? (data as any)?.content;
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
         if (Array.isArray(parsed) && parsed.length > 0) {
           this.memoryCache[docId] = parsed;
           return parsed;
@@ -1274,12 +1341,15 @@ export class SyllabusTimetableService {
     this.memoryCache[docId] = exams;
 
     try {
-      await supabase.from('global_data').upsert({
+      const { error } = await supabase.from('global_data').upsert({
         id: docId,
-        title: `Official Exams — ${schoolId}`,
-        subject: 'Exam Calendars',
-        content: JSON.stringify(exams)
+        data: exams,
+        updated_at: new Date().toISOString()
       });
+      if (error) {
+        console.error('[Exams] Supabase error:', error);
+        return false;
+      }
       return true;
     } catch (e) {
       console.error('[Exams] Save failed:', e);
@@ -1300,7 +1370,10 @@ export class SyllabusTimetableService {
     } else {
       try {
         const { data } = await supabase.from('global_data').select('*').eq('id', docId).maybeSingle();
-        if (data?.content) existingPlans = JSON.parse(data.content) || [];
+        if (data?.data || (data as any)?.content) {
+          const raw = (data as any)?.data ?? (data as any)?.content;
+          existingPlans = (typeof raw === 'string' ? JSON.parse(raw) : raw) || [];
+        }
       } catch (_) {}
     }
 
@@ -1319,12 +1392,15 @@ export class SyllabusTimetableService {
 
     this.memoryCache[docId] = existingPlans;
     try {
-      await supabase.from('global_data').upsert({
+      const { error } = await supabase.from('global_data').upsert({
         id: docId,
-        title: `Student Personal Exam Plans — ${userId}`,
-        subject: 'Personal Exam Targets',
-        content: JSON.stringify(existingPlans)
+        data: existingPlans,
+        updated_at: new Date().toISOString()
       });
+      if (error) {
+        console.error('[StudentExams] Supabase error:', error);
+        return false;
+      }
       return true;
     } catch (_) {
       return false;
@@ -1337,8 +1413,9 @@ export class SyllabusTimetableService {
 
     try {
       const { data } = await supabase.from('global_data').select('*').eq('id', docId).maybeSingle();
-      if (data?.content) {
-        const parsed = JSON.parse(data.content);
+      if (data?.data || (data as any)?.content) {
+        const raw = (data as any)?.data ?? (data as any)?.content;
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
         if (Array.isArray(parsed)) {
           this.memoryCache[docId] = parsed;
           return parsed;

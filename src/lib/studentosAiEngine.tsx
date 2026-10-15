@@ -592,6 +592,32 @@ export function extractFlashcardsFromResponse(
 }
 
 /**
+ * Detects whether a student prompt is requesting to be taught or learn any topic interactively,
+ * returning the normalized topic title for Byte Interactive Classroom.
+ */
+export function extractTopicTeachingIntent(text: string): string | null {
+  if (!text || typeof text !== 'string') return null;
+  const clean = text.trim();
+  
+  const patterns = [
+    /(?:teach\s+me|give\s+me\s+a\s+lesson\s+on|interactive\s+lesson\s+on|master|study|explain\s+in\s+detail|learn)\s+(?:about\s+)?(?:the\s+topic\s+of\s+)?([a-zA-Z0-9\s\-+'":]{2,50})/i,
+    /^(?:can\s+you\s+teach\s+me|prepare\s+a\s+lesson\s+for\s+me\s+on)\s+([a-zA-Z0-9\s\-+'":]{2,50})/i
+  ];
+
+  for (const pat of patterns) {
+    const match = clean.match(pat);
+    if (match && match[1]) {
+      let topic = match[1].replace(/[?.!]+$/, '').trim();
+      topic = topic.replace(/\s+(please|step by step|in detail|for beginners|simply)$/i, '').trim();
+      if (topic.length >= 3 && topic.length <= 45 && !/^(it|that|this|something|anything|me)$/i.test(topic)) {
+        return topic;
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Saves extracted flashcards directly into Study Center (local storage + Supabase sync)
  */
 export async function saveExtractedFlashcardsToStudyCenter(

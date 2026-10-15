@@ -35,7 +35,8 @@ import {
   detectMathInteractiveWidget,
   InteractiveMathWidget,
   saveStudyOutputToFlashcards,
-  formatMathematicalText
+  formatMathematicalText,
+  extractTopicTeachingIntent
 } from './lib/studentosAiEngine';
 import { AITopicTutorModal } from './components/syllabus/AITopicTutorModal';
 import { GamificationRewardToast, DashboardGamificationCard } from './components/StudentGamificationHub';
@@ -5302,9 +5303,31 @@ ${pageText}
   };
 
   // File attachments and Thread state mutations
+  // File attachments and Thread state mutations (strictly scoped to active thread, never touches user accounts)
   const handleFileUploadAction = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    e.stopPropagation();
+    e.preventDefault();
     const files = e.target.files;
     if (!files || files.length === 0) return;
+
+    // Guaranteed binding to active thread without affecting account state
+    let targetThreadId = activeThreadId;
+    if (!targetThreadId) {
+      if (aiThreads.length > 0) {
+        targetThreadId = aiThreads[0].id;
+        setActiveThreadId(targetThreadId);
+      } else {
+        targetThreadId = generateUniqueId();
+        setActiveThreadId(targetThreadId);
+        setAiThreads([{
+          id: targetThreadId,
+          title: 'Study Session with Attached Document',
+          personaId: selectedPersona || 'study_buddy',
+          mode: aiMode || 'explanatory',
+          messages: []
+        }]);
+      }
+    }
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -5360,7 +5383,7 @@ ${pageText}
         setAttachedFiles(prev => {
           const updated = [...prev, payloadFile];
           setAiThreads(threads => threads.map(t => {
-            if (t.id === activeThreadId) {
+            if (t.id === targetThreadId) {
               return { ...t, attachedFiles: updated, attachedFile: payloadFile };
             }
             return t;
@@ -12620,7 +12643,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                   </AnimatePresence>
 
                   {/* Primary Chat Dialog Pane */}
-                  <div className="smart-glass p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl min-h-[480px] sm:min-h-[580px] h-[calc(100dvh-220px)] max-h-[760px] flex flex-col justify-between shadow-lg relative border border-white/5">
+                  <div className="smart-glass p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl min-h-[560px] h-[calc(100dvh-210px)] flex flex-col justify-between shadow-xl relative border border-white/10 w-full">
                     
                     {/* Header: Controls, Selectors & Actions */}
                     <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-white/5 pb-3">
@@ -12746,9 +12769,26 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
 
                     {/* Dialogue Stream Body */}
                     <div id="ai-dialog-scroll" className="flex-1 overflow-y-auto pr-2 my-3 space-y-3.5 bg-slate-950/40 p-3 sm:p-4 rounded-2xl border border-white/5 shadow-inner">
-                      <div className="text-center p-2.5 border border-white/5 bg-white/5 rounded-2xl">
-                        <p className="text-[9px] text-indigo-400 font-extrabold uppercase tracking-widest">Dialogue channel connected successfully</p>
-                        <p className="text-[11px] text-slate-400 mt-0.5">Prompt mathematical derivations, software syntax, essay critiques, or review sheets.</p>
+                      <div className="text-center p-2.5 border border-white/5 bg-white/5 rounded-2xl flex items-center justify-between gap-3 flex-wrap">
+                        <div className="text-left">
+                          <p className="text-[10px] text-indigo-400 font-extrabold uppercase tracking-widest flex items-center gap-1.5">
+                            <span>🤖</span> Byte AI Workspace — Unified Assistant & Teacher
+                          </p>
+                          <p className="text-[11px] text-slate-400 mt-0.5">Ask questions, debug equations, or ask Byte to teach any topic interactively.</p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            const topicPrompt = prompt('Enter any concept or topic to launch an interactive Byte lesson:', 'Quantum Computing');
+                            if (topicPrompt && topicPrompt.trim()) {
+                              setSelectedTopicForTutor(topicPrompt.trim());
+                            }
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 text-indigo-200 text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
+                          title="Launch interactive teaching session on any topic"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>Teach Me Anything</span>
+                        </button>
                       </div>
 
                       {(!activeThread || !activeThread.messages || activeThread.messages.length === 0) && (
@@ -12758,30 +12798,30 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                               <Sparkles className="w-8 h-8 animate-pulse" />
                             </div>
                             <h3 className="text-base font-black text-white tracking-tight mt-2">
-                              Hi, {currentUser?.name || 'Scholar'}! 👋
+                              Hi, {currentUser?.name || 'Scholar'}! I am Byte 👋
                             </h3>
-                            <p className="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
-                              I am your advanced AI Teacher Copilot and Subject Expert. Ask me anything about your studies, or select one of the high-yield topics below:
+                            <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+                              Your unified AI assistant for conversational research, homework derivations, and interactive teaching. Ask me anything, or tap a topic to launch an interactive lesson:
                             </p>
                           </div>
 
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-md mx-auto text-left">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl mx-auto text-left">
                             {[
-                              { icon: '🌌', label: 'Physics', text: 'Explain Quantum Physics to a high school beginner with real-world analogies.' },
-                              { icon: '🧪', label: 'Chemistry', text: 'Show me step-by-step how to balance complex chemical equations.' },
-                              { icon: '📈', label: 'Calculus', text: 'Solve and explain the derivative of x^2 * sin(x) using the product rule.' },
-                              { icon: '💻', label: 'Computer Science', text: 'Explain how closures work in JavaScript with clear code examples.' }
+                              { icon: '🌌', label: 'Quantum Physics', text: 'Teach me Quantum Physics with analogies and an interactive quiz.' },
+                              { icon: '🧪', label: 'Chemistry', text: 'Teach me how to balance chemical equations with worked examples.' },
+                              { icon: '📈', label: 'Calculus', text: 'Explain the derivative product rule step by step.' },
+                              { icon: '💻', label: 'Computer Networks', text: 'Teach me Network Topologies and Protocols for exams.' }
                             ].map((item, i) => (
                               <button
                                 key={i}
-                                onClick={() => setAiInput(item.text)}
-                                className="p-3 bg-slate-900 hover:bg-slate-850 border border-white/5 hover:border-indigo-500/40 rounded-xl transition-all group flex flex-col justify-between h-28 text-left hover:scale-[1.02] active:scale-95 cursor-pointer"
+                                onClick={() => handleAskAIModel(item.text)}
+                                className="p-3.5 bg-slate-900 hover:bg-slate-850 border border-white/5 hover:border-indigo-500/40 rounded-2xl transition-all group flex flex-col justify-between h-28 text-left hover:scale-[1.02] active:scale-95 cursor-pointer shadow-sm"
                               >
                                 <div className="flex items-center justify-between w-full">
                                   <span className="text-lg">{item.icon}</span>
-                                  <span className="text-[8px] bg-indigo-500/10 text-indigo-300 px-1.5 py-0.5 rounded font-extrabold uppercase tracking-widest">{item.label}</span>
+                                  <span className="text-[8px] bg-indigo-500/10 text-indigo-300 px-2 py-0.5 rounded font-extrabold uppercase tracking-widest border border-indigo-500/20">{item.label}</span>
                                 </div>
-                                <p className="text-[10px] text-slate-400 font-medium leading-relaxed mt-2 group-hover:text-white transition-colors line-clamp-2">
+                                <p className="text-[11px] text-slate-400 font-medium leading-relaxed mt-2 group-hover:text-white transition-colors line-clamp-2">
                                   "{item.text}"
                                 </p>
                               </button>
@@ -12801,7 +12841,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                           <div key={idx} className={`p-3.5 rounded-2xl text-xs max-w-[92%] sm:max-w-[85%] overflow-hidden ${m.role === 'user' ? 'bg-indigo-600/15 border border-indigo-500/20 text-white ml-auto' : 'bg-slate-900 border border-white/5 text-slate-200 mr-auto'}`}>
                             <div className="flex items-center justify-between gap-2 flex-wrap mb-1.5">
                               <span className="text-[8px] uppercase tracking-wider font-extrabold text-indigo-400">
-                                {m.role === 'user' ? `👤 ${currentUser?.role ? currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1) : 'Student'} Inquiry` : '🤖 AI Buddy Tutor'}
+                                {m.role === 'user' ? `👤 ${currentUser?.role ? currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1) : 'Student'} Inquiry` : '🤖 Byte'}
                               </span>
                               {m.role === 'assistant' && (
                                 <div className="flex items-center gap-1.5 flex-wrap">
@@ -12834,6 +12874,35 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                             {mathWidget && (
                               <InteractiveMathWidget widgetType={mathWidget} />
                             )}
+
+                            {/* Byte Dynamic Topic Interactive Lesson Card Trigger */}
+                            {(() => {
+                              const detectedTopic = extractTopicTeachingIntent(prevUserMsg) || (m.role === 'assistant' && extractTopicTeachingIntent(m.content));
+                              if (detectedTopic && m.role === 'assistant') {
+                                return (
+                                  <div className="mt-3 p-3 rounded-2xl bg-gradient-to-r from-indigo-950/70 via-purple-950/50 to-slate-900 border border-indigo-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
+                                    <div className="flex items-center gap-2.5">
+                                      <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shrink-0">
+                                        <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
+                                      </div>
+                                      <div>
+                                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-300 flex items-center gap-1">
+                                          <span>🤖</span> Byte Interactive Classroom
+                                        </span>
+                                        <p className="text-xs font-bold text-white mt-0.5">Master "{detectedTopic}" with animated Byte tutor & checkpoint quiz</p>
+                                      </div>
+                                    </div>
+                                    <button
+                                      onClick={() => setSelectedTopicForTutor(detectedTopic)}
+                                      className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-black text-xs flex items-center gap-1.5 shadow-md transition-all active:scale-95 shrink-0 cursor-pointer"
+                                    >
+                                      <span>🚀 Launch Interactive Lesson</span>
+                                    </button>
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })()}
 
                             {/* Verified Web Search Sources & Citations Panel */}
                             {m.role === 'assistant' && m.webSources && m.webSources.length > 0 && (
@@ -13001,15 +13070,23 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                       })}
 
                       {aiLoading && (
-                        <div className="p-3 bg-amber-500/5 text-amber-400 border border-amber-500/20 rounded-2xl text-[10px] max-w-[85%] mr-auto flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-2 animate-pulse">
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
-                            <span>{aiStatusMessage || 'AI Buddy is streaming response...'}</span>
+                        <div className="p-3.5 bg-indigo-950/40 text-indigo-300 border border-indigo-500/30 rounded-2xl text-xs max-w-[85%] mr-auto flex items-center justify-between gap-3 shadow-md animate-fadeIn">
+                          <div className="flex items-center gap-3">
+                            <div className="relative flex items-center justify-center shrink-0">
+                              <div className="w-3.5 h-3.5 rounded-full bg-indigo-400 animate-ping absolute opacity-75" />
+                              <div className="w-3 h-3 rounded-full bg-indigo-500 relative flex items-center justify-center text-[8px] text-white font-bold">🤖</div>
+                            </div>
+                            <div>
+                              <span className="font-extrabold text-white text-[11px] block">Byte is thinking & generating...</span>
+                              <span className="text-[10px] text-indigo-300/80 font-mono">
+                                {aiStatusMessage || (aiReasoningMode ? 'Evaluating multi-step reasoning chain...' : 'Analyzing query & synthesizing clear explanation...')}
+                              </span>
+                            </div>
                           </div>
                           <button
                             type="button"
                             onClick={() => aiAbortControllerRef.current?.abort()}
-                            className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-rose-300 font-bold text-[10px] shrink-0 cursor-pointer"
+                            className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-rose-300 font-bold text-[10px] shrink-0 cursor-pointer transition-all active:scale-95"
                           >
                             ⏹ Stop
                           </button>
@@ -13933,7 +14010,42 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
             isMastered={false}
             onClose={() => setSelectedTopicForTutor(null)}
             onMasterTopic={async (top, score) => {
-              showNotification(`✓ Mastered ${top} with score ${score}!`);
+              if (currentUser?.uid) {
+                const chapterKey = 'dynamic_' + top.toLowerCase().replace(/[^a-z0-9]/g, '_');
+                const subject = currentUser.specialtySubject || 'General Studies';
+                try {
+                  const { SyllabusTimetableService } = await import('./lib/syllabusTimetableService');
+                  await SyllabusTimetableService.updateStudentChapterProgress(
+                    currentUser.uid,
+                    chapterKey,
+                    subject,
+                    {
+                      status: 'completed',
+                      completedTopics: [top],
+                      confidenceRating: 5,
+                      topicMasteryRecords: {
+                        [top]: {
+                          mastered: true,
+                          score,
+                          totalQuestions: 2,
+                          completedAt: new Date().toISOString(),
+                          attempts: 1
+                        }
+                      }
+                    }
+                  );
+                } catch (e) {
+                  console.warn('Could not sync dynamic chapter progress:', e);
+                }
+                try {
+                  const { awardStudentXP } = await import('./lib/gamification');
+                  await awardStudentXP(currentUser, 'use_ai_study', {
+                    customXpAmount: 50,
+                    customLabel: `Mastered topic: ${top} with Byte!`
+                  });
+                } catch (_) {}
+              }
+              showNotification(`🎉 Topic Mastered: "${top}" (Score: ${score}%) +50 Scholar XP!`);
             }}
             showNotification={showNotification}
             onOpenByteChat={() => setSelectedTopicForTutor(null)}
