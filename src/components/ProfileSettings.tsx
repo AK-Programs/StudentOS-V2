@@ -9,7 +9,7 @@ import { UserProfile, ProfileFrameStyle } from '../types';
 import { saveSupabaseUserProfile } from '../lib/supabaseUsers';
 import { uploadFileToStorage } from '../lib/storageHelper';
 import { BANNER_PRESETS, ACCENT_COLORS, AVATAR_FRAMES } from './ProfileCustomizer';
-import { useTheme, ThemeId, STUDENTOS_THEMES } from '../lib/themeSystem';
+import { useTheme, ThemeId, STUDENTOS_THEMES, THEME_ACCENTS, ThemeAccent } from '../lib/themeSystem';
 import { useAppEnvironment, promptPWAInstall } from '../lib/appEnvironment';
 import { APP_VERSION, APP_BUILD_ID } from '../config/version';
 import { EnvironmentBadge } from './EnvironmentBadge';
@@ -58,7 +58,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
   const env = useAppEnvironment();
 
   // Theme engine
-  const { currentTheme, changeTheme, themes } = useTheme(currentUser);
+  const { currentTheme, currentAccent, changeTheme, changeAccent, themes, accents } = useTheme(currentUser);
 
   // Verification state
   const [verification, setVerification] = useState(() => getVerificationStatus(currentUser));
@@ -946,56 +946,102 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
         <div className="smart-glass p-4 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl space-y-6 animate-fadeIn">
           <div className="space-y-1">
             <h3 className="text-lg font-black font-display text-white">
-              StudentOS Global Themes
+              StudentOS Global Themes & Color Accents
             </h3>
             <p className="text-xs text-slate-400 max-w-xl">
-              Themes apply globally across the entire StudentOS platform — including Dashboard, Profile, Material Hub, Chat, Meetings, and Attendance. Your preference is persisted to Supabase and synchronized across Web and App.
+              Switch between classic themes, Claymorphism 3D, and Glassmorphism, and personalize your experience with 4 switchable color accents. Preferences sync instantly to Supabase and localStorage.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {themes.map(t => {
-              const isSelected = currentTheme === t.id;
-              return (
-                <button
-                  key={t.id}
-                  onClick={() => changeTheme(t.id)}
-                  className={`p-5 rounded-2xl border text-left transition-all relative overflow-hidden group ${
-                    isSelected
-                      ? 'bg-slate-900 border-indigo-500 ring-2 ring-indigo-500/50 shadow-xl'
-                      : 'bg-slate-950/80 border-white/10 hover:border-white/20'
-                  }`}
-                >
-                  {/* Theme preview swatch */}
-                  <div className={`h-20 rounded-xl mb-3.5 bg-gradient-to-r ${t.previewGradient} border border-white/10 p-2.5 flex flex-col justify-between`}>
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.primary }} />
-                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.accent }} />
-                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.background }} />
+          {/* Color Accents Selector (4 Switchable Accents) */}
+          <div className="space-y-3 pt-2">
+            <label className="text-xs font-black uppercase tracking-wider text-indigo-300 block">
+              🎨 Color Accent ({accents.length} Available)
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {accents.map(acc => {
+                const isAccSelected = currentAccent === acc.id;
+                return (
+                  <button
+                    key={acc.id}
+                    onClick={() => changeAccent(acc.id as ThemeAccent)}
+                    className={`p-3 rounded-2xl border flex items-center gap-3 transition-all cursor-pointer text-left ${
+                      isAccSelected
+                        ? 'bg-slate-900 border-indigo-500 ring-2 ring-indigo-500/50 shadow-md'
+                        : 'bg-slate-950/60 border-white/10 hover:border-white/20'
+                    }`}
+                  >
+                    <div 
+                      className="w-6 h-6 rounded-full shrink-0 shadow-inner flex items-center justify-center text-white text-[10px]"
+                      style={{ backgroundColor: acc.primary }}
+                    >
+                      {isAccSelected && <Check className="w-3.5 h-3.5" />}
                     </div>
-                    <div className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-black/50 text-white w-fit">
-                      {t.isDark ? 'Dark / High-Contrast' : 'Light / Paper'}
+                    <div className="min-w-0">
+                      <p className="text-xs font-extrabold text-white truncate">{acc.name}</p>
+                      <p className="text-[10px] text-slate-400 capitalize">Accent Mode</p>
                     </div>
-                  </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-sm font-bold text-white">{t.name}</h4>
-                      <p className="text-xs text-slate-400">{t.tagline}</p>
-                    </div>
-                    {isSelected && (
-                      <span className="p-1 rounded-full bg-indigo-600 text-white shadow">
-                        <Check className="w-4 h-4" />
+          <div className="space-y-3 pt-2">
+            <label className="text-xs font-black uppercase tracking-wider text-indigo-300 block">
+              ✨ Global Theme Engine ({themes.length} Available)
+            </label>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {themes.map(t => {
+                const isSelected = currentTheme === t.id;
+                const isSpecial = t.id === 'claymorphism' || t.id === 'glassmorphism';
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => changeTheme(t.id)}
+                    className={`p-5 rounded-2xl border text-left transition-all relative overflow-hidden group cursor-pointer ${
+                      isSelected
+                        ? 'bg-slate-955 border-indigo-500 ring-2 ring-indigo-500/60 shadow-xl'
+                        : 'bg-slate-950/80 border-white/10 hover:border-white/20'
+                    }`}
+                  >
+                    {isSpecial && (
+                      <span className="absolute top-3 right-3 px-2 py-0.5 rounded-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-[9px] font-black uppercase tracking-wider shadow-sm">
+                        New Look
                       </span>
                     )}
-                  </div>
-                </button>
-              );
-            })}
+
+                    {/* Theme preview swatch */}
+                    <div className={`h-20 rounded-xl mb-3.5 bg-gradient-to-r ${t.previewGradient} border border-white/10 p-2.5 flex flex-col justify-between`}>
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.primary }} />
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.accent }} />
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.background }} />
+                      </div>
+                      <div className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-black/50 text-white w-fit">
+                        {t.id === 'claymorphism' ? 'Soft 3D Inflated' : t.id === 'glassmorphism' ? 'Frosted Blur Glass' : t.isDark ? 'Dark Theme' : 'Light Paper'}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="text-sm font-bold text-white">{t.name}</h4>
+                        <p className="text-xs text-slate-400 leading-relaxed mt-0.5">{t.tagline}</p>
+                      </div>
+                      {isSelected && (
+                        <span className="p-1 rounded-full bg-indigo-600 text-white shadow shrink-0">
+                          <Check className="w-4 h-4" />
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div className="p-4 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-between text-xs text-slate-300">
-            <span>Current Active Theme: <strong>{STUDENTOS_THEMES[currentTheme]?.name}</strong></span>
+            <span>Current Active Theme: <strong>{STUDENTOS_THEMES[currentTheme]?.name}</strong> ({currentAccent})</span>
             <span className="text-slate-400 text-[11px]">Synced to Supabase & localStorage</span>
           </div>
         </div>

@@ -1,9 +1,68 @@
-import { useState, useEffect } from 'react';
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ * 
+ * StudentOS Global Theme & Color Accent Engine
+ * Supports 7 Themes (Default, Midnight, Ocean, Aurora, Paper, Claymorphism, Glassmorphism)
+ * and 4 Color Accents (Indigo, Emerald, Amber, Rose) across all UI elements.
+ */
+
+import React, { useState, useEffect } from 'react';
 import { supabase } from './supabase';
 import { UserProfile } from '../types';
 import { saveSupabaseUserProfile } from './supabaseUsers';
 
-export type ThemeId = 'default' | 'midnight' | 'ocean' | 'aurora' | 'paper';
+export type ThemeId = 'default' | 'midnight' | 'ocean' | 'aurora' | 'paper' | 'claymorphism' | 'glassmorphism';
+export type ThemeAccent = 'indigo' | 'emerald' | 'amber' | 'rose';
+
+export interface ThemeAccentConfig {
+  id: ThemeAccent;
+  name: string;
+  primary: string;
+  primaryHover: string;
+  accent: string;
+  badgeBg: string;
+  badgeText: string;
+}
+
+export const THEME_ACCENTS: Record<ThemeAccent, ThemeAccentConfig> = {
+  indigo: {
+    id: 'indigo',
+    name: 'Indigo & Sky',
+    primary: '#6366f1',
+    primaryHover: '#4f46e5',
+    accent: '#38bdf8',
+    badgeBg: 'rgba(99, 102, 241, 0.2)',
+    badgeText: '#818cf8'
+  },
+  emerald: {
+    id: 'emerald',
+    name: 'Emerald & Teal',
+    primary: '#10b981',
+    primaryHover: '#059669',
+    accent: '#14b8a6',
+    badgeBg: 'rgba(16, 185, 129, 0.2)',
+    badgeText: '#34d399'
+  },
+  amber: {
+    id: 'amber',
+    name: 'Amber & Gold',
+    primary: '#f59e0b',
+    primaryHover: '#d97706',
+    accent: '#fbbf24',
+    badgeBg: 'rgba(245, 158, 11, 0.2)',
+    badgeText: '#fcd34d'
+  },
+  rose: {
+    id: 'rose',
+    name: 'Rose & Coral',
+    primary: '#f43f5e',
+    primaryHover: '#e11d48',
+    accent: '#fb7185',
+    badgeBg: 'rgba(244, 63, 94, 0.2)',
+    badgeText: '#fda4af'
+  }
+};
 
 export interface ThemeDefinition {
   id: ThemeId;
@@ -22,7 +81,7 @@ export interface ThemeDefinition {
     primaryHover: string;
     border: string;
     accent: string;
-    themeColor: string; // for <meta name="theme-color">
+    themeColor: string;
   };
   previewGradient: string;
 }
@@ -132,14 +191,54 @@ export const STUDENTOS_THEMES: Record<ThemeId, ThemeDefinition> = {
       themeColor: '#f8fafc'
     },
     previewGradient: 'from-slate-100 via-white to-blue-50'
+  },
+  claymorphism: {
+    id: 'claymorphism',
+    name: 'Claymorphism 3D',
+    tagline: 'Soft inflated cards, thick rounded corners & pastel depth',
+    isDark: true,
+    colors: {
+      background: '#0d1424',
+      surface: 'rgba(22, 33, 54, 0.9)',
+      surfaceSecondary: '#162136',
+      surfaceTertiary: '#1e2d4a',
+      text: '#f1f5f9',
+      textMuted: '#94a3b8',
+      textSubtle: '#64748b',
+      primary: '#6366f1',
+      primaryHover: '#4f46e5',
+      border: 'rgba(255, 255, 255, 0.15)',
+      accent: '#38bdf8',
+      themeColor: '#0d1424'
+    },
+    previewGradient: 'from-indigo-950 via-slate-900 to-blue-950'
+  },
+  glassmorphism: {
+    id: 'glassmorphism',
+    name: 'Glassmorphism',
+    tagline: 'Translucent frosted glass, heavy blur & layered depth',
+    isDark: true,
+    colors: {
+      background: '#030712',
+      surface: 'rgba(15, 23, 42, 0.35)',
+      surfaceSecondary: '#0f172a',
+      surfaceTertiary: '#1e293b',
+      text: '#f8fafc',
+      textMuted: '#cbd5e1',
+      textSubtle: '#94a3b8',
+      primary: '#6366f1',
+      primaryHover: '#4f46e5',
+      border: 'rgba(255, 255, 255, 0.22)',
+      accent: '#38bdf8',
+      themeColor: '#030712'
+    },
+    previewGradient: 'from-blue-950 via-slate-950 to-indigo-950'
   }
 };
 
 const THEME_STORAGE_KEY = 'studentos_theme';
+const ACCENT_STORAGE_KEY = 'studentos_accent';
 
-/**
- * Reads the active theme from localStorage or returns default
- */
 export function getSavedTheme(): ThemeId {
   if (typeof window === 'undefined') return 'default';
   try {
@@ -149,26 +248,35 @@ export function getSavedTheme(): ThemeId {
   return 'default';
 }
 
-/**
- * Applies theme CSS variables to document root, updates <meta name="theme-color">,
- * and sets the data-theme attribute on <html>.
- */
-export function applyTheme(themeId: ThemeId) {
+export function getSavedAccent(): ThemeAccent {
+  if (typeof window === 'undefined') return 'indigo';
+  try {
+    const stored = localStorage.getItem(ACCENT_STORAGE_KEY) as ThemeAccent;
+    if (stored && THEME_ACCENTS[stored]) return stored;
+  } catch (_) {}
+  return 'indigo';
+}
+
+export function applyTheme(themeId: ThemeId, accent: ThemeAccent = 'indigo') {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
 
   const theme = STUDENTOS_THEMES[themeId] || STUDENTOS_THEMES.default;
+  const accentCfg = THEME_ACCENTS[accent] || THEME_ACCENTS.indigo;
   const root = document.documentElement;
 
-  // Set data-theme attribute
   root.setAttribute('data-theme', theme.id);
+  root.setAttribute('data-accent', accentCfg.id);
 
-  // Toggle theme classes
   Object.keys(STUDENTOS_THEMES).forEach(id => {
     root.classList.remove(`theme-${id}`);
   });
   root.classList.add(`theme-${theme.id}`);
 
-  // Backwards compatibility with light-theme class
+  Object.keys(THEME_ACCENTS).forEach(acc => {
+    root.classList.remove(`accent-${acc}`);
+  });
+  root.classList.add(`accent-${accentCfg.id}`);
+
   if (!theme.isDark) {
     root.classList.add('light-theme');
     document.body?.classList.add('light-theme');
@@ -177,7 +285,6 @@ export function applyTheme(themeId: ThemeId) {
     document.body?.classList.remove('light-theme');
   }
 
-  // Set CSS Variables
   root.style.setProperty('--background', theme.colors.background);
   root.style.setProperty('--surface', theme.colors.surface);
   root.style.setProperty('--surface-secondary', theme.colors.surfaceSecondary);
@@ -185,12 +292,11 @@ export function applyTheme(themeId: ThemeId) {
   root.style.setProperty('--text', theme.colors.text);
   root.style.setProperty('--text-muted', theme.colors.textMuted);
   root.style.setProperty('--text-subtle', theme.colors.textSubtle);
-  root.style.setProperty('--primary', theme.colors.primary);
-  root.style.setProperty('--primary-hover', theme.colors.primaryHover);
+  root.style.setProperty('--primary', accentCfg.primary);
+  root.style.setProperty('--primary-hover', accentCfg.primaryHover);
   root.style.setProperty('--border', theme.colors.border);
-  root.style.setProperty('--accent', theme.colors.accent);
+  root.style.setProperty('--accent', accentCfg.accent);
 
-  // Update <meta name="theme-color"> for mobile status bar / PWA window frame
   try {
     let metaTag = document.querySelector('meta[name="theme-color"]');
     if (!metaTag) {
@@ -203,21 +309,16 @@ export function applyTheme(themeId: ThemeId) {
     console.warn('[ThemeSystem] Error updating meta theme-color:', err);
   }
 
-  // Persist locally for zero-flicker reload
   try {
     localStorage.setItem(THEME_STORAGE_KEY, theme.id);
+    localStorage.setItem(ACCENT_STORAGE_KEY, accentCfg.id);
   } catch (_) {}
 
-  // Dispatch global event for subscribers
-  window.dispatchEvent(new CustomEvent('studentos_theme_changed', { detail: { themeId: theme.id } }));
+  window.dispatchEvent(new CustomEvent('studentos_theme_changed', { detail: { themeId: theme.id, accent: accentCfg.id } }));
 }
 
-/**
- * Saves the selected theme to Supabase user profile so it persists
- * across devices, logins, web, and installed app.
- */
-export async function saveThemePreference(themeId: ThemeId, currentUser?: UserProfile | null): Promise<void> {
-  applyTheme(themeId);
+export async function saveThemePreference(themeId: ThemeId, accent: ThemeAccent, currentUser?: UserProfile | null): Promise<void> {
+  applyTheme(themeId, accent);
 
   if (!currentUser?.uid && !currentUser?.email) return;
 
@@ -226,7 +327,8 @@ export async function saveThemePreference(themeId: ThemeId, currentUser?: UserPr
       ...currentUser,
       raw_data: {
         ...(currentUser.raw_data || {}),
-        theme: themeId
+        theme: themeId,
+        accent: accent
       }
     };
     await saveSupabaseUserProfile(updatedProfile);
@@ -235,49 +337,66 @@ export async function saveThemePreference(themeId: ThemeId, currentUser?: UserPr
   }
 }
 
-/**
- * React hook to observe and change the active StudentOS theme
- */
 export function useTheme(currentUser?: UserProfile | null) {
   const [currentTheme, setCurrentTheme] = useState<ThemeId>(() => {
-    // 1. Check user profile preference from Supabase
     const profileTheme = currentUser?.raw_data?.theme as ThemeId;
-    if (profileTheme && STUDENTOS_THEMES[profileTheme]) {
-      return profileTheme;
-    }
-    // 2. Check local storage
+    if (profileTheme && STUDENTOS_THEMES[profileTheme]) return profileTheme;
     return getSavedTheme();
   });
 
-  // Sync if currentUser's Supabase profile loads with a saved theme
+  const [currentAccent, setCurrentAccent] = useState<ThemeAccent>(() => {
+    const profileAccent = currentUser?.raw_data?.accent as ThemeAccent;
+    if (profileAccent && THEME_ACCENTS[profileAccent]) return profileAccent;
+    return getSavedAccent();
+  });
+
   useEffect(() => {
     const profileTheme = currentUser?.raw_data?.theme as ThemeId;
+    const profileAccent = currentUser?.raw_data?.accent as ThemeAccent;
     if (profileTheme && STUDENTOS_THEMES[profileTheme] && profileTheme !== currentTheme) {
       setCurrentTheme(profileTheme);
-      applyTheme(profileTheme);
     }
-  }, [currentUser?.raw_data?.theme]);
+    if (profileAccent && THEME_ACCENTS[profileAccent] && profileAccent !== currentAccent) {
+      setCurrentAccent(profileAccent);
+    }
+    if ((profileTheme && STUDENTOS_THEMES[profileTheme]) || (profileAccent && THEME_ACCENTS[profileAccent])) {
+      applyTheme(profileTheme || currentTheme, profileAccent || currentAccent);
+    }
+  }, [currentUser?.raw_data?.theme, currentUser?.raw_data?.accent]);
 
-  // Listen to external theme changes
   useEffect(() => {
     const handleThemeEvent = (e: any) => {
       if (e.detail?.themeId && STUDENTOS_THEMES[e.detail.themeId as ThemeId]) {
         setCurrentTheme(e.detail.themeId as ThemeId);
+      }
+      if (e.detail?.accent && THEME_ACCENTS[e.detail.accent as ThemeAccent]) {
+        setCurrentAccent(e.detail.accent as ThemeAccent);
       }
     };
     window.addEventListener('studentos_theme_changed', handleThemeEvent);
     return () => window.removeEventListener('studentos_theme_changed', handleThemeEvent);
   }, []);
 
-  const changeTheme = async (newTheme: ThemeId) => {
+  const changeTheme = async (newTheme: ThemeId, newAccent?: ThemeAccent) => {
+    const targetAccent = newAccent || currentAccent;
     setCurrentTheme(newTheme);
-    await saveThemePreference(newTheme, currentUser);
+    setCurrentAccent(targetAccent);
+    await saveThemePreference(newTheme, targetAccent, currentUser);
+  };
+
+  const changeAccent = async (newAccent: ThemeAccent) => {
+    setCurrentAccent(newAccent);
+    await saveThemePreference(currentTheme, newAccent, currentUser);
   };
 
   return {
     currentTheme,
+    currentAccent,
     theme: STUDENTOS_THEMES[currentTheme],
+    accent: THEME_ACCENTS[currentAccent],
     changeTheme,
-    themes: Object.values(STUDENTOS_THEMES)
+    changeAccent,
+    themes: Object.values(STUDENTOS_THEMES),
+    accents: Object.values(THEME_ACCENTS)
   };
 }

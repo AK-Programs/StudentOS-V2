@@ -184,6 +184,44 @@ body {
   color: #0f172a !important;
 }
 
+/* 6. Claymorphism Theme (Soft inflated cards & pastel depth) */
+.theme-claymorphism, .theme-claymorphism body {
+  background-color: #0d1424 !important;
+  color: #f1f5f9 !important;
+}
+.theme-claymorphism .smart-glass,
+.theme-claymorphism .bento-card {
+  background: rgba(22, 33, 54, 0.9) !important;
+  border-radius: 1.75rem !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  box-shadow: inset 0 2px 6px rgba(255, 255, 255, 0.35), 0 16px 32px rgba(0, 0, 0, 0.25) !important;
+}
+.theme-claymorphism .bg-slate-950,
+.theme-claymorphism .bg-slate-900 {
+  background-color: #162136 !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+/* 7. Glassmorphism Theme (Translucent panels & frosted blur) */
+.theme-glassmorphism, .theme-glassmorphism body {
+  background-color: #030712 !important;
+  color: #f8fafc !important;
+}
+.theme-glassmorphism .smart-glass,
+.theme-glassmorphism .bento-card {
+  background: rgba(15, 23, 42, 0.38) !important;
+  backdrop-filter: blur(24px) !important;
+  -webkit-backdrop-filter: blur(24px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
+}
+.theme-glassmorphism .bg-slate-950,
+.theme-glassmorphism .bg-slate-900 {
+  background-color: rgba(15, 23, 42, 0.5) !important;
+  backdrop-filter: blur(16px) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
 .light-theme .bg-slate-950,
 .light-theme .bg-slate-900,
 .light-theme .bg-slate-900\/60,
