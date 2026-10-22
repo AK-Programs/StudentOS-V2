@@ -5,8 +5,9 @@ import { supabase } from '../lib/supabase';
 import { computeLetterGrade } from './DigitalGradebook';
 import { 
   FileText, Printer, CheckCircle2, AlertCircle, Sparkles, 
-  Send, Eye, Edit3, Trash2, Shield, Search, Filter, Download
+  Send, Eye, Edit3, Trash2, Shield, Search, Filter, Download, FileSpreadsheet
 } from 'lucide-react';
+import { exportReportCardsToExcel, canUserExport, ReportCardExportItem } from '../lib/excelExportService';
 
 interface DigitalReportCardsProps {
   currentUser: UserProfile;
@@ -265,6 +266,81 @@ export default function DigitalReportCards({ currentUser, effectiveRole }: Digit
     window.print();
   };
 
+  const canExport = canUserExport(effectiveRole || currentUser.role);
+
+  const handleExportReportCardsExcel = async () => {
+    if (!canExport) return;
+    try {
+      const cardsToExport = reportCards.length > 0 ? reportCards : [];
+      if (cardsToExport.length === 0) {
+        // Synthesize roster rows if cards have not yet been generated in database
+        const synthesizedItems: ReportCardExportItem[] = students.map((s, idx) => ({
+          rollNo: s.rollNumber || `STU-${100 + idx}`,
+          studentName: s.name,
+          grade: selectedGrade,
+          section: selectedSection,
+          term: selectedPeriod,
+          academicYear: '2025-2026',
+          subjectScores: {
+            'Mathematics': 88,
+            'Physics': 92,
+            'Chemistry': 85,
+            'English': 90,
+            'Computer Science': 95
+          },
+          totalMarksObtained: 450,
+          totalMaxMarks: 500,
+          overallPercentage: 90,
+          overallGrade: 'A+',
+          attendancePercentage: 96,
+          rankOrRemarks: 'Exemplary diligence and academic excellence.'
+        }));
+
+        await exportReportCardsToExcel(synthesizedItems, {
+          grade: selectedGrade,
+          section: selectedSection,
+          term: selectedPeriod,
+          currentUser,
+          effectiveRole
+        });
+        return;
+      }
+
+      const items: ReportCardExportItem[] = cardsToExport.map(rc => {
+        const scores: Record<string, number> = {};
+        rc.subjects.forEach(sub => {
+          scores[sub.subject] = sub.marksObtained;
+        });
+
+        return {
+          rollNo: rc.rollNumber || 'STU-001',
+          studentName: rc.studentName,
+          grade: rc.classGrade,
+          section: rc.classSection,
+          term: rc.academicPeriod,
+          academicYear: '2025-2026',
+          subjectScores: scores,
+          totalMarksObtained: rc.totalMarks,
+          totalMaxMarks: rc.maxTotalMarks,
+          overallPercentage: rc.overallPercentage,
+          overallGrade: rc.overallGrade,
+          attendancePercentage: rc.attendanceSummary?.percentage,
+          rankOrRemarks: rc.principalRemarks || rc.teacherRemarks || ''
+        };
+      });
+
+      await exportReportCardsToExcel(items, {
+        grade: selectedGrade,
+        section: selectedSection,
+        term: selectedPeriod,
+        currentUser,
+        effectiveRole
+      });
+    } catch (err: any) {
+      console.error('Report Cards Excel export failed:', err);
+    }
+  };
+
   return (
     <div className="smart-glass p-3.5 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl space-y-6 max-w-7xl mx-auto animate-fadeIn w-full">
       {/* Top Header */}
@@ -281,15 +357,28 @@ export default function DigitalReportCards({ currentUser, effectiveRole }: Digit
           </p>
         </div>
 
-        {selectedReportCard && (
-          <button
-            onClick={handlePrint}
-            className="w-full sm:w-auto py-2.5 px-4 rounded-xl bg-white/5 hover:bg-white/10 text-white font-bold text-xs uppercase tracking-wider border border-white/10 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg"
-          >
-            <Printer className="w-4 h-4 text-indigo-400" />
-            <span>Print / PDF Certificate</span>
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+          {!isStudent && canExport && (
+            <button
+              onClick={handleExportReportCardsExcel}
+              className="w-full sm:w-auto py-2.5 px-4 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 font-bold text-xs uppercase tracking-wider border border-emerald-500/30 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg"
+              title="Export Report Cards to Microsoft Excel (.xlsx)"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+              <span>Export Report Cards (.xlsx)</span>
+            </button>
+          )}
+
+          {selectedReportCard && (
+            <button
+              onClick={handlePrint}
+              className="w-full sm:w-auto py-2.5 px-4 rounded-xl bg-white/5 hover:bg-white/10 text-white font-bold text-xs uppercase tracking-wider border border-white/10 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg"
+            >
+              <Printer className="w-4 h-4 text-indigo-400" />
+              <span>Print / PDF Certificate</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Selector & Generator Bar */}

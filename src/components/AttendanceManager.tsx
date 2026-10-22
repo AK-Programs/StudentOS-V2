@@ -5,8 +5,9 @@ import { supabase } from '../lib/supabase';
 import { sendNotificationToUsers } from '../firebase';
 import { 
   Calendar, Check, X, Clock, FileText, Download, 
-  Users, AlertTriangle, Filter, CheckCircle2, RefreshCw, BarChart2, Shield
+  Users, AlertTriangle, Filter, CheckCircle2, RefreshCw, BarChart2, Shield, FileSpreadsheet
 } from 'lucide-react';
+import { exportAttendanceToExcel, canUserExport } from '../lib/excelExportService';
 
 const SUBJECT_LIST = [
   'General / Homeroom',
@@ -231,6 +232,33 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
     document.body.removeChild(link);
   };
 
+  const canExport = canUserExport(effectiveRole || currentUser.role);
+
+  const handleExportToExcel = async () => {
+    if (!canExport) return;
+    try {
+      const items = targetUsers.map(u => ({
+        date,
+        grade: selectedGrade,
+        section: selectedSection,
+        studentName: u.name,
+        status: attendance[u.uid!]?.status || 'unmarked',
+        subject: selectedSubject,
+        remarks: attendance[u.uid!]?.remarks || ''
+      }));
+
+      await exportAttendanceToExcel(items, {
+        grade: selectedGrade,
+        section: selectedSection,
+        date,
+        currentUser,
+        effectiveRole
+      });
+    } catch (err: any) {
+      console.error('Attendance Excel export failed:', err);
+    }
+  };
+
   const fetchLeaveRequests = async () => {
     try {
       const { data, error } = await supabase
@@ -417,12 +445,23 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
                   <span>Mark All Present</span>
                 </button>
 
+                {canExport && (
+                  <button
+                    onClick={handleExportToExcel}
+                    className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 font-bold text-xs border border-emerald-500/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                    title="Export Attendance Sheet to Microsoft Excel (.xlsx)"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
+                    <span>Export Excel (.xlsx)</span>
+                  </button>
+                )}
+
                 <button
                   onClick={exportToCSV}
-                  className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 font-bold text-xs border border-white/10 transition-all flex items-center justify-center gap-1.5"
+                  className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 font-bold text-xs border border-white/10 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5 shrink-0" />
-                  <span>CSV Export</span>
+                  <span>CSV</span>
                 </button>
               </div>
             </div>

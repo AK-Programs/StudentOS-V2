@@ -137,6 +137,8 @@ import {
   setDoc, updateDoc, deleteDoc
 } from './firebase';
 import { uploadFileToStorage } from './lib/storageHelper';
+import { presenceService } from './lib/presenceService';
+import { logTabOpen } from './lib/tabUsageService';
 
 const generateUniqueId = () => {
   return crypto.randomUUID();
@@ -526,7 +528,15 @@ export default function App() {
     if (activeTab === 'tasks') setStudyHubSubTab('tasks');
     else if (activeTab === 'planner') setStudyHubSubTab('planner');
     else if (activeTab === 'flashcards') setStudyHubSubTab('flashcards');
-  }, [activeTab]);
+
+    try {
+      localStorage.setItem('s_os_active_tab', activeTab);
+      presenceService.updateCurrentTab(activeTab);
+      if (currentUser) {
+        logTabOpen(activeTab, currentUser);
+      }
+    } catch (_) {}
+  }, [activeTab, currentUser]);
 
   useEffect(() => {
     const handlePopState = () => {

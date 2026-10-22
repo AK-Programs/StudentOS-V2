@@ -4,8 +4,9 @@ import { fetchAllSupabaseUsers } from '../lib/supabaseUsers';
 import { supabase } from '../lib/supabase';
 import { 
   Award, BookOpen, Plus, Save, Check, Filter, Search, 
-  BarChart2, TrendingUp, AlertCircle, FileText, Download, CheckCircle2
+  BarChart2, TrendingUp, AlertCircle, FileText, Download, CheckCircle2, FileSpreadsheet
 } from 'lucide-react';
+import { exportMarksToExcel, canUserExport } from '../lib/excelExportService';
 
 interface DigitalGradebookProps {
   currentUser: UserProfile;
@@ -306,6 +307,42 @@ export default function DigitalGradebook({ currentUser, effectiveRole }: Digital
     }
   };
 
+  const canExport = canUserExport(effectiveRole || currentUser.role);
+
+  const handleExportMarksExcel = async () => {
+    if (!canExport || !currentAssessment) return;
+    try {
+      const items = students.map(s => {
+        const entry = entries[s.uid!];
+        const score = entry ? entry.score : 0;
+        const max = currentAssessment.maxScore;
+        const pct = Math.round((score / max) * 100);
+        return {
+          studentName: s.name,
+          grade: selectedGrade,
+          section: selectedSection,
+          subject: currentAssessment.subject,
+          examName: currentAssessment.title,
+          marks: score,
+          maxMarks: max,
+          percentage: pct,
+          letterGrade: computeLetterGrade(pct)
+        };
+      });
+
+      await exportMarksToExcel(items, {
+        grade: selectedGrade,
+        section: selectedSection,
+        subject: currentAssessment.subject,
+        examName: currentAssessment.title,
+        currentUser,
+        effectiveRole
+      });
+    } catch (err: any) {
+      console.error('Marks export failed:', err);
+    }
+  };
+
   // Create New Assessment
   const handleCreateAssessment = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -488,6 +525,18 @@ export default function DigitalGradebook({ currentUser, effectiveRole }: Digital
             <Plus className="w-4 h-4 text-indigo-400" />
             <span>New Assessment</span>
           </button>
+
+          {canExport && (
+            <button
+              onClick={handleExportMarksExcel}
+              disabled={!currentAssessment || students.length === 0}
+              className="w-full sm:w-auto py-2.5 px-4 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 font-bold text-xs uppercase tracking-wider border border-emerald-500/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-sm"
+              title="Export Marks & Grades to Microsoft Excel (.xlsx)"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+              <span>Export Marks (.xlsx)</span>
+            </button>
+          )}
 
           <button
             onClick={handleSaveGrades}
