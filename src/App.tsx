@@ -128,6 +128,7 @@ import {
   BASE_ROLE_LIMITS 
 } from './lib/aiUsageManager';
 import { MOCK_QUIZZES, AI_PERSONAS, INITIAL_ANNOUNCEMENTS, INITIAL_FEEDBACK, INITIAL_MATERIALS, MOCK_SCHEDULES } from './mockData';
+import { FloatingByteWidget } from './components/byte/FloatingByteWidget';
 
 // Stub Integrations
 import {
@@ -14062,6 +14063,17 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
           />
         )}
       </AnimatePresence>
+
+      {/* Floating Duolingo-style Byte Widget with Procedural 3D Character */}
+      <FloatingByteWidget
+        activeTab={activeTab}
+        currentUser={currentUser}
+        tasks={tasks}
+        homeworkList={homeworkList}
+        announcements={announcements}
+        dueCardsCount={dueCardsCount}
+        onNavigateTab={handleTabSelect}
+      />
 
     </div>
   );

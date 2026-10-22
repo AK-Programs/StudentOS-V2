@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { soundService } from '../../lib/soundService';
 import { StructuredContentRenderer, extractTutorText } from './StructuredContentRenderer';
+import { Byte3DCanvas, Byte3DMood } from '../byte/Byte3DCanvas';
 
 export type RobotMood = 'idle' | 'teaching' | 'thinking' | 'happy' | 'guiding' | 'curious';
 
@@ -84,6 +85,22 @@ export const AnimatedRobotTeacher: React.FC<AnimatedRobotTeacherProps> = ({
     const stored = localStorage.getItem('studentos_byte_autovoice');
     return stored === null ? true : stored === 'true';
   });
+
+  // 3D Procedural Mesh vs 2D Vector preference (defaulting to 3D for unified character presence)
+  const [use3DModel, setUse3DModel] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    const stored = localStorage.getItem('studentos_byte_3d_mode');
+    return stored === null ? true : stored === 'true';
+  });
+
+  const handleToggle3D = () => {
+    const nextVal = !use3DModel;
+    setUse3DModel(nextVal);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('studentos_byte_3d_mode', String(nextVal));
+    }
+    soundService.playButtonClick();
+  };
 
   // Track cursor movement relative to robot to create subtle eye tracking
   useEffect(() => {
@@ -285,6 +302,12 @@ export const AnimatedRobotTeacher: React.FC<AnimatedRobotTeacherProps> = ({
     }
   }[internalMood];
 
+  // Map internal mood to 3D procedural character mood
+  const byte3DMood: Byte3DMood =
+    internalMood === 'happy' ? 'happy' :
+    internalMood === 'teaching' || internalMood === 'guiding' || isSpeaking ? 'talking' :
+    'idle';
+
   return (
     <div
       ref={containerRef}
@@ -388,25 +411,39 @@ export const AnimatedRobotTeacher: React.FC<AnimatedRobotTeacherProps> = ({
       </AnimatePresence>
 
       {/* ==================================================================== */}
-      {/* 2. PREMIUM ANIMATED VECTOR ROBOT CHASSIS ("BYTE") */}
+      {/* 2. UNIFIED 3D PROCEDURAL CHARACTER OR 2D VECTOR ROBOT ("BYTE") */}
       {/* ==================================================================== */}
-      <motion.div
-        onClick={handleRobotClick}
-        animate={
-          internalMood === 'happy'
-            ? { y: [0, -14, 0], rotate: [-1.5, 2, -1.5] }
-            : internalMood === 'thinking'
-            ? { y: [0, -4, 0], rotate: [0, 1, 0] }
-            : { y: [0, -7, 0] }
-        }
-        transition={{
-          duration: internalMood === 'happy' ? 1.1 : 2.6,
-          repeat: Infinity,
-          ease: 'easeInOut'
-        }}
-        className="relative cursor-pointer group-hover:drop-shadow-[0_0_24px_rgba(56,189,248,0.4)] transition-all"
-        style={{ width, height }}
-      >
+      {use3DModel ? (
+        <div
+          onClick={handleRobotClick}
+          className="relative flex items-center justify-center cursor-pointer transition-transform hover:scale-105 active:scale-95 group-hover:drop-shadow-[0_0_24px_rgba(56,189,248,0.4)]"
+          style={{ width, height }}
+        >
+          <Byte3DCanvas
+            size={Math.min(width, height) * 0.96}
+            mood={byte3DMood}
+            interactiveGaze={true}
+            onClick={handleRobotClick}
+          />
+        </div>
+      ) : (
+        <motion.div
+          onClick={handleRobotClick}
+          animate={
+            internalMood === 'happy'
+              ? { y: [0, -14, 0], rotate: [-1.5, 2, -1.5] }
+              : internalMood === 'thinking'
+              ? { y: [0, -4, 0], rotate: [0, 1, 0] }
+              : { y: [0, -7, 0] }
+          }
+          transition={{
+            duration: internalMood === 'happy' ? 1.1 : 2.6,
+            repeat: Infinity,
+            ease: 'easeInOut'
+          }}
+          className="relative cursor-pointer group-hover:drop-shadow-[0_0_24px_rgba(56,189,248,0.4)] transition-all"
+          style={{ width, height }}
+        >
         <svg
           viewBox="0 0 180 200"
           width={width}
@@ -879,11 +916,27 @@ export const AnimatedRobotTeacher: React.FC<AnimatedRobotTeacherProps> = ({
           </g>
         </svg>
       </motion.div>
+      )}
 
       {/* ==================================================================== */}
       {/* 3. ROBOT CONTROLS & AUTO-VOICE SYSTEM BAR */}
       {/* ==================================================================== */}
       <div className="mt-3 flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/90 border border-white/10 shadow-xl backdrop-blur-md text-xs">
+        {/* 3D / 2D Character Switch */}
+        <button
+          type="button"
+          onClick={handleToggle3D}
+          className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
+            use3DModel
+              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+              : 'bg-slate-800 text-slate-400 border border-white/5 hover:text-slate-200'
+          }`}
+          title="Switch between 3D Mesh and 2D Vector character"
+        >
+          <Sparkles className="w-3 h-3 text-cyan-400" />
+          <span>{use3DModel ? '3D Byte' : '2D Byte'}</span>
+        </button>
+
         {/* Listen / Voice Playback Button */}
         {(speechText || bubbleMessage) && (
           <button
