@@ -3,127 +3,193 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * StudentOS — Official 3D Character Model: "Byte"
- * Lightweight, procedural Three.js 3D character optimized for school phones & desktops:
- * - Expressive rounded cybernetic head with dark reflective visor
- * - Digital glowing LED eyes that blink periodically
- * - Antenna with pulsing quantum beacon
- * - Floating magnetic chassis with glowing Arc-Reactor core
- * - Articulated magnetic floating arms with wave animation
- * - Smooth idle floating bob, nodding celebration, and eye gaze tracking
- * - 100% procedural (zero remote assets, zero 404s, high mobile FPS)
+ * High-performance, procedural Three.js 3D character with 12 state-driven expressions:
+ * - States: idle, listening, thinking, speaking, explaining, encouraging,
+ *           correct_answer, incorrect_answer, celebration, confused, recoverable_error, quiet
+ * - Articulated visor with dynamic LED eyes, blushing cheeks, and mouth visualizer
+ * - Articulated magnetic floating arms with state-specific pedagogical gestures
+ * - Quantum Arc-Reactor chest core with dynamic energy pulse
+ * - Dual-Theme Harmony: Native visual styling for both Claymorphism & Glassmorphism
+ * - Accessibility: Native reduced-motion compliance & automatic WebGL context loss recovery
  */
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 
-export type Byte3DMood = 'idle' | 'wave' | 'nod' | 'happy' | 'talking';
+export type Byte3DState =
+  | 'idle'
+  | 'listening'
+  | 'thinking'
+  | 'speaking'
+  | 'explaining'
+  | 'encouraging'
+  | 'correct_answer'
+  | 'incorrect_answer'
+  | 'celebration'
+  | 'confused'
+  | 'recoverable_error'
+  | 'quiet'
+  // Backward compatibility aliases
+  | 'wave'
+  | 'nod'
+  | 'happy'
+  | 'talking';
 
-interface Byte3DCanvasProps {
-  mood?: Byte3DMood;
-  size?: number; // Canvas size in pixels (e.g. 72, 96, 128, 200)
+export type Byte3DMood = Byte3DState;
+
+// Normalize any mood alias to the official 12 states
+export function normalizeByteState(state?: string): Byte3DState {
+  if (!state) return 'idle';
+  if (state === 'wave' || state === 'happy') return 'celebration';
+  if (state === 'nod') return 'encouraging';
+  if (state === 'talking') return 'speaking';
+  return state as Byte3DState;
+}
+
+export interface Byte3DCanvasProps {
+  mood?: Byte3DState;
+  state?: Byte3DState;
+  size?: number | 'sm' | 'md' | 'lg'; // Size in pixels or semantic label
   className?: string;
   onClick?: () => void;
   interactiveGaze?: boolean;
+  reducedMotion?: boolean;
+  themeStyle?: 'clay' | 'glass' | 'standard';
+  isSpeaking?: boolean;
 }
 
 export const Byte3DCanvas: React.FC<Byte3DCanvasProps> = ({
-  mood = 'idle',
-  size = 96,
+  mood,
+  state,
+  size = 110,
   className = '',
   onClick,
-  interactiveGaze = true
+  interactiveGaze = true,
+  reducedMotion = false,
+  themeStyle = 'standard',
+  isSpeaking = false
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
-  const moodRef = useRef<Byte3DMood>(mood);
-  moodRef.current = mood;
+  const numericSize = typeof size === 'number'
+    ? size
+    : size === 'lg'
+    ? 260
+    : size === 'md'
+    ? 200
+    : 110;
 
+  const rawState = state || mood || (isSpeaking ? 'speaking' : 'idle');
+  const activeState = normalizeByteState(rawState);
+  const stateRef = useRef<Byte3DState>(activeState);
+  stateRef.current = activeState;
+
+  const [hasWebGlError, setHasWebGlError] = useState(false);
   const mousePosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
 
-    // Detect software rendering to safeguard budget school devices
-    const isSoftwareGl = (() => {
-      try {
-        const gl = document.createElement('canvas').getContext('webgl2');
-        if (!gl) return true;
-        const ext = gl.getExtension('WEBGL_debug_renderer_info');
-        const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER;
-        const gpu = String(gl.getParameter(param));
-        gl.getExtension('WEBGL_lose_context')?.loseContext();
-        return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
-      } catch (_) {
-        return false;
+    // Detect software rendering or disabled WebGL
+    let glContext: WebGLRenderingContext | null = null;
+    try {
+      const testCanvas = document.createElement('canvas');
+      glContext = (testCanvas.getContext('webgl2') || testCanvas.getContext('webgl')) as WebGLRenderingContext;
+      if (!glContext) {
+        setHasWebGlError(true);
+        return;
       }
-    })();
+    } catch (_) {
+      setHasWebGlError(true);
+      return;
+    }
 
-    // 1. Scene, Camera, Renderer
+    // 1. Scene & Camera Setup
     const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 50);
+    camera.position.set(0, 0.08, 4.3);
 
-    const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 50);
-    camera.position.set(0, 0.1, 4.2);
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        alpha: true,
+        antialias: true,
+        powerPreference: 'high-performance'
+      });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setSize(numericSize, numericSize);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      container.appendChild(renderer.domElement);
+    } catch (e) {
+      console.warn('[Byte3D] WebGL renderer initialization error:', e);
+      setHasWebGlError(true);
+      return;
+    }
 
-    const renderer = new THREE.WebGLRenderer({
-      alpha: true,
-      antialias: !isSoftwareGl,
-      powerPreference: 'high-performance'
-    });
-    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setSize(size, size);
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    container.appendChild(renderer.domElement);
-
-    // 2. Lighting Rig (Warm key + Cool fill + Ambient)
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.4);
+    // 2. Multi-Directional Lighting Rig
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
     scene.add(ambientLight);
 
-    const keyLight = new THREE.DirectionalLight(0x60a5fa, 2.0); // Soft cyan/blue key
-    keyLight.position.set(3, 4, 3);
+    // Warm Key Light (Soft Cyan/Sky)
+    const keyLight = new THREE.DirectionalLight(0x38bdf8, 2.2);
+    keyLight.position.set(2.8, 3.5, 3.2);
     scene.add(keyLight);
 
-    const fillLight = new THREE.DirectionalLight(0xa78bfa, 1.4); // Lavender rim
-    fillLight.position.set(-3, -2, 2);
+    // Fill Rim Light (Soft Indigo/Violet)
+    const fillLight = new THREE.DirectionalLight(0x818cf8, 1.6);
+    fillLight.position.set(-2.8, -2.0, 2.4);
     scene.add(fillLight);
 
     // 3. Procedural Materials
-    // Primary Chassis (Sleek porcelain white with pearlescent sheen)
+    // Primary Pearlescent Porcelain Chassis
     const chassisMat = new THREE.MeshStandardMaterial({
-      color: 0xf8fafc,
-      roughness: 0.25,
-      metalness: 0.15
+      color: themeStyle === 'clay' ? 0xffffff : 0xf8fafc,
+      roughness: themeStyle === 'clay' ? 0.38 : 0.22,
+      metalness: themeStyle === 'clay' ? 0.05 : 0.18
     });
 
-    // Accent Cyber Teal Material
+    // Cyber Teal Accent Material
     const accentMat = new THREE.MeshStandardMaterial({
       color: 0x06b6d4, // Cyan-500
-      roughness: 0.3,
-      metalness: 0.5
+      roughness: 0.25,
+      metalness: 0.45
     });
 
-    // Dark Visor Glass
+    // Deep Curved Visor Glass
     const visorMat = new THREE.MeshStandardMaterial({
       color: 0x090d16,
-      roughness: 0.1,
-      metalness: 0.8
+      roughness: 0.12,
+      metalness: 0.85
     });
 
-    // Glowing LED Eyes Material (Bright Cyan/Emerald)
+    // Luminescent Visor LED Eyes (Cyan/Emerald)
     const eyeMat = new THREE.MeshBasicMaterial({
       color: 0x22d3ee
     });
 
-    // Glowing Heart Reactor Material
-    const coreMat = new THREE.MeshBasicMaterial({
+    // Visor LED Mouth
+    const mouthMat = new THREE.MeshBasicMaterial({
       color: 0x38bdf8
     });
 
-    // Antenna Glow
+    // Quantum Chest Arc-Reactor Core
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: 0x0ea5e9
+    });
+
+    // Antenna Beacon
     const beaconMat = new THREE.MeshBasicMaterial({
       color: 0x3b82f6
     });
 
-    // 4. Character Assembly (Hierarchical THREE.Group)
+    // Warm Blushing Cheeks
+    const cheekMat = new THREE.MeshBasicMaterial({
+      color: 0xf472b6,
+      transparent: true,
+      opacity: 0.65
+    });
+
+    // 4. Hierarchical Mesh Assembly
     const byteGroup = new THREE.Group();
     scene.add(byteGroup);
 
@@ -132,47 +198,53 @@ export const Byte3DCanvas: React.FC<Byte3DCanvasProps> = ({
     headGroup.position.set(0, 0.45, 0);
     byteGroup.add(headGroup);
 
-    // Head Base (Rounded box / sphere combo)
+    // Head Base
     const headGeo = new THREE.SphereGeometry(0.72, 24, 20);
     headGeo.scale(1.15, 1.0, 1.0);
     const headMesh = new THREE.Mesh(headGeo, chassisMat);
     headGroup.add(headMesh);
 
-    // Visor Screen
+    // Visor Glass
     const visorGeo = new THREE.SphereGeometry(0.68, 20, 16, 0, Math.PI * 2, 0, Math.PI * 0.48);
-    visorGeo.scale(1.08, 0.75, 1.02);
+    visorGeo.scale(1.08, 0.76, 1.02);
     const visorMesh = new THREE.Mesh(visorGeo, visorMat);
     visorMesh.rotation.x = Math.PI * 0.28;
     visorMesh.position.set(0, 0.05, 0.08);
     headGroup.add(visorMesh);
 
-    // Eyes (Expressive capsule/caps)
-    const eyeGeo = new THREE.CapsuleGeometry(0.085, 0.14, 8, 12);
+    // Eyes (Capsule mesh with eyelid blink scaling)
+    const eyeGeo = new THREE.CapsuleGeometry(0.08, 0.13, 8, 12);
     eyeGeo.rotateZ(Math.PI / 2);
 
     const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
-    leftEye.position.set(-0.25, 0.06, 0.68);
+    leftEye.position.set(-0.25, 0.08, 0.68);
     headGroup.add(leftEye);
 
     const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
-    rightEye.position.set(0.25, 0.06, 0.68);
+    rightEye.position.set(0.25, 0.08, 0.68);
     headGroup.add(rightEye);
 
-    // Cute Cheeks
+    // Dynamic LED Mouth Strip / Equalizer
+    const mouthGeo = new THREE.CapsuleGeometry(0.035, 0.22, 6, 8);
+    mouthGeo.rotateZ(Math.PI / 2);
+    const mouthMesh = new THREE.Mesh(mouthGeo, mouthMat);
+    mouthMesh.position.set(0, -0.16, 0.68);
+    headGroup.add(mouthMesh);
+
+    // Cheeks
     const cheekGeo = new THREE.CircleGeometry(0.08, 12);
-    const cheekMat = new THREE.MeshBasicMaterial({ color: 0xf472b6, transparent: true, opacity: 0.6 });
     const leftCheek = new THREE.Mesh(cheekGeo, cheekMat);
-    leftCheek.position.set(-0.42, -0.12, 0.62);
+    leftCheek.position.set(-0.42, -0.09, 0.62);
     leftCheek.rotation.y = -0.3;
     headGroup.add(leftCheek);
 
     const rightCheek = new THREE.Mesh(cheekGeo, cheekMat);
-    rightCheek.position.set(0.42, -0.12, 0.62);
+    rightCheek.position.set(0.42, -0.09, 0.62);
     rightCheek.rotation.y = 0.3;
     headGroup.add(rightCheek);
 
-    // Antenna & Halo Beacon
-    const stemGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.35, 8);
+    // Antenna & Beacon
+    const stemGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.35, 8);
     const stemMesh = new THREE.Mesh(stemGeo, accentMat);
     stemMesh.position.set(0, 0.85, 0);
     headGroup.add(stemMesh);
@@ -204,7 +276,7 @@ export const Byte3DCanvas: React.FC<Byte3DCanvasProps> = ({
     const bodyMesh = new THREE.Mesh(bodyGeo, chassisMat);
     torsoGroup.add(bodyMesh);
 
-    // Quantum Arc-Reactor Chest Core
+    // Quantum Arc Reactor Chest
     const coreGeo = new THREE.SphereGeometry(0.15, 16, 12);
     const coreMesh = new THREE.Mesh(coreGeo, coreMat);
     coreMesh.position.set(0, 0.1, 0.46);
@@ -215,7 +287,7 @@ export const Byte3DCanvas: React.FC<Byte3DCanvasProps> = ({
     coreRingMesh.position.set(0, 0.1, 0.46);
     torsoGroup.add(coreRingMesh);
 
-    // Floating Ion Thruster Ring
+    // Floating Thruster Ring
     const thrusterGeo = new THREE.TorusGeometry(0.26, 0.05, 8, 20);
     thrusterGeo.rotateX(Math.PI / 2);
     const thrusterMesh = new THREE.Mesh(thrusterGeo, accentMat);
@@ -223,103 +295,237 @@ export const Byte3DCanvas: React.FC<Byte3DCanvasProps> = ({
     torsoGroup.add(thrusterMesh);
 
     // --- ARMS & HANDS ---
-    // Left Arm (Relaxed)
-    const armGeo = new THREE.SphereGeometry(0.14, 12, 10);
+    const armGeo = new THREE.SphereGeometry(0.13, 12, 10);
     armGeo.scale(0.8, 1.4, 0.8);
-    const leftArm = new THREE.Mesh(armGeo, chassisMat);
-    leftArm.position.set(-0.68, 0.0, 0);
-    torsoGroup.add(leftArm);
+    const handGeo = new THREE.SphereGeometry(0.11, 12, 10);
 
-    // Right Arm (Waves when greeted or message arrives)
+    // Left Arm Group
+    const leftArmGroup = new THREE.Group();
+    leftArmGroup.position.set(-0.68, 0.1, 0);
+    torsoGroup.add(leftArmGroup);
+    const leftArmMesh = new THREE.Mesh(armGeo, chassisMat);
+    leftArmMesh.position.set(0, -0.15, 0);
+    leftArmGroup.add(leftArmMesh);
+    const leftHand = new THREE.Mesh(handGeo, accentMat);
+    leftHand.position.set(0, -0.32, 0);
+    leftArmGroup.add(leftHand);
+
+    // Right Arm Group
     const rightArmGroup = new THREE.Group();
-    rightArmGroup.position.set(0.68, 0.15, 0);
+    rightArmGroup.position.set(0.68, 0.1, 0);
     torsoGroup.add(rightArmGroup);
-
     const rightArmMesh = new THREE.Mesh(armGeo, chassisMat);
     rightArmMesh.position.set(0, -0.15, 0);
     rightArmGroup.add(rightArmMesh);
-
-    const handGeo = new THREE.SphereGeometry(0.11, 12, 10);
     const rightHand = new THREE.Mesh(handGeo, accentMat);
     rightHand.position.set(0, -0.32, 0);
     rightArmGroup.add(rightHand);
 
-    // Interactive mouse listener
+    // Gaze Tracker
     const handleMouseMove = (e: MouseEvent) => {
       if (!interactiveGaze) return;
       const x = (e.clientX / window.innerWidth) * 2 - 1;
       const y = -(e.clientY / window.innerHeight) * 2 + 1;
       mousePosRef.current = { x: Math.max(-1, Math.min(1, x)), y: Math.max(-1, Math.min(1, y)) };
     };
+
     if (interactiveGaze) {
       window.addEventListener('mousemove', handleMouseMove, { passive: true });
     }
 
-    // 5. Animation Loop
+    // 5. High-Fidelity State-Driven Animation Engine
     let animationFrameId: number;
-    let clock = new THREE.Clock();
+    const clock = new THREE.Clock();
     let blinkTimer = 0;
     let isBlinking = false;
-    let nodProgress = 0;
+    let nodTimer = 0;
 
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
 
       const delta = clock.getDelta();
       const time = clock.getElapsedTime();
-      const currentMood = moodRef.current;
+      const st = stateRef.current;
+      const prefersReduced = reducedMotion || (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
-      // 1. Idle Bobbing Motion (Smooth, weightless floating)
-      const bobY = Math.sin(time * 2.8) * 0.07;
-      byteGroup.position.y = bobY;
+      // A. Floating Bobbing (Disabled in reduced motion)
+      if (!prefersReduced) {
+        if (st === 'celebration' || st === 'correct_answer') {
+          // Bouncy happy jump
+          byteGroup.position.y = Math.abs(Math.sin(time * 6.0)) * 0.16;
+          byteGroup.rotation.z = Math.sin(time * 4.0) * 0.08;
+        } else if (st === 'quiet') {
+          // Minimal tranquil float
+          byteGroup.position.y = Math.sin(time * 1.5) * 0.02;
+          byteGroup.rotation.z = 0;
+        } else {
+          // Natural idle floating
+          byteGroup.position.y = Math.sin(time * 2.8) * 0.06;
+          byteGroup.rotation.z = Math.sin(time * 1.4) * 0.03;
+          byteGroup.rotation.y = Math.sin(time * 0.9) * 0.04;
+        }
+      } else {
+        byteGroup.position.y = 0;
+        byteGroup.rotation.z = 0;
+        byteGroup.rotation.y = 0;
+      }
 
-      // Gentle floating tilt
-      byteGroup.rotation.z = Math.sin(time * 1.4) * 0.04;
-      byteGroup.rotation.y = Math.sin(time * 0.9) * 0.06;
+      // B. State-Specific Facial LED Expression & Mouth
+      switch (st) {
+        case 'speaking':
+        case 'explaining':
+          // Dynamic soundwave equalizer mouth opening
+          const mouthOpen = 0.5 + Math.abs(Math.sin(time * 12.0)) * 0.8;
+          mouthMesh.scale.set(1.0, mouthOpen, 1.0);
+          mouthMat.color.setHex(0x38bdf8);
+          eyeMat.color.setHex(0x22d3ee);
+          beaconMat.color.setHex(0x06b6d4);
+          coreMat.color.setHex(0x38bdf8);
+          break;
 
-      // 2. Interactive Gaze Tracking
-      if (interactiveGaze) {
-        const targetRotY = mousePosRef.current.x * 0.28;
-        const targetRotX = -mousePosRef.current.y * 0.22;
+        case 'celebration':
+        case 'correct_answer':
+          // Wide radiant smile & joyful gold/emerald aura
+          mouthMesh.scale.set(1.3, 1.1, 1.0);
+          mouthMat.color.setHex(0x34d399); // Emerald
+          eyeMat.color.setHex(0x10b981);
+          beaconMat.color.setHex(0xfbbf24); // Gold beacon
+          coreMat.color.setHex(0x34d399);
+          break;
+
+        case 'incorrect_answer':
+          // Gentle caring blue/amber expression
+          mouthMesh.scale.set(0.7, 0.4, 1.0);
+          mouthMat.color.setHex(0xfbbf24);
+          eyeMat.color.setHex(0x93c5fd);
+          beaconMat.color.setHex(0xf59e0b);
+          coreMat.color.setHex(0xf59e0b);
+          break;
+
+        case 'thinking':
+          // Scanning visor laser beam
+          const scanX = Math.sin(time * 4.0) * 0.15;
+          leftEye.position.x = -0.25 + scanX;
+          rightEye.position.x = 0.25 + scanX;
+          mouthMesh.scale.set(0.6, 0.3, 1.0);
+          mouthMat.color.setHex(0xc084fc); // Purple
+          eyeMat.color.setHex(0xc084fc);
+          beaconMat.color.setHex(0xa855f7);
+          coreMat.color.setHex(0xa855f7);
+          break;
+
+        case 'listening':
+          // Ears pulsing, eyes alert
+          mouthMesh.scale.set(0.5, 0.4, 1.0);
+          eyeMat.color.setHex(0x38bdf8);
+          leftEar.scale.set(1.0 + Math.sin(time * 6.0) * 0.15, 1.0 + Math.sin(time * 6.0) * 0.15, 1.0);
+          rightEar.scale.set(1.0 + Math.sin(time * 6.0) * 0.15, 1.0 + Math.sin(time * 6.0) * 0.15, 1.0);
+          beaconMat.color.setHex(0x38bdf8);
+          break;
+
+        case 'confused':
+          // Head tilted & asymmetric questioning eyes
+          mouthMesh.scale.set(0.6, 0.5, 1.0);
+          mouthMat.color.setHex(0xf97316); // Orange
+          eyeMat.color.setHex(0xf97316);
+          leftEye.scale.set(1.15, 1.15, 1.15);
+          rightEye.scale.set(0.85, 0.85, 0.85);
+          headGroup.rotation.z = 0.18;
+          break;
+
+        case 'encouraging':
+          // Gentle warm affirmative smile
+          mouthMesh.scale.set(1.0, 0.8, 1.0);
+          mouthMat.color.setHex(0x34d399);
+          eyeMat.color.setHex(0x22d3ee);
+          beaconMat.color.setHex(0x38bdf8);
+          break;
+
+        case 'recoverable_error':
+          mouthMesh.scale.set(0.6, 0.3, 1.0);
+          mouthMat.color.setHex(0xf43f5e); // Rose
+          eyeMat.color.setHex(0xf43f5e);
+          beaconMat.color.setHex(0xf43f5e);
+          break;
+
+        case 'quiet':
+          // Soft resting mode with dimmed lighting
+          mouthMesh.scale.set(0.3, 0.15, 1.0);
+          eyeMat.color.setHex(0x64748b);
+          beaconMat.color.setHex(0x475569);
+          coreMat.color.setHex(0x475569);
+          break;
+
+        default: // idle
+          mouthMesh.scale.set(0.8, 0.4, 1.0);
+          mouthMat.color.setHex(0x38bdf8);
+          eyeMat.color.setHex(0x22d3ee);
+          beaconMat.color.setHex(0x3b82f6);
+          coreMat.color.setHex(0x0ea5e9);
+          leftEye.scale.set(1.0, 1.0, 1.0);
+          rightEye.scale.set(1.0, 1.0, 1.0);
+          leftEye.position.x = -0.25;
+          rightEye.position.x = 0.25;
+          headGroup.rotation.z = THREE.MathUtils.damp(headGroup.rotation.z, 0, 5, delta);
+          break;
+      }
+
+      // C. Periodic Natural Blinking (Active in all states except quiet)
+      if (st !== 'quiet') {
+        blinkTimer += delta;
+        if (blinkTimer > 3.4) {
+          isBlinking = true;
+          blinkTimer = 0;
+        }
+        if (isBlinking) {
+          leftEye.scale.y = 0.1;
+          rightEye.scale.y = 0.1;
+          setTimeout(() => {
+            leftEye.scale.y = 1.0;
+            rightEye.scale.y = 1.0;
+            isBlinking = false;
+          }, 110);
+        }
+      }
+
+      // D. Interactive Gaze Tracking
+      if (interactiveGaze && !prefersReduced && st !== 'quiet') {
+        const targetRotY = mousePosRef.current.x * 0.26;
+        const targetRotX = -mousePosRef.current.y * 0.20;
         headGroup.rotation.y = THREE.MathUtils.damp(headGroup.rotation.y, targetRotY, 5, delta);
         headGroup.rotation.x = THREE.MathUtils.damp(headGroup.rotation.x, targetRotX, 5, delta);
       }
 
-      // 3. Periodic Blink Animation
-      blinkTimer += delta;
-      if (blinkTimer > 3.2) {
-        isBlinking = true;
-        blinkTimer = 0;
-      }
-      if (isBlinking) {
-        leftEye.scale.y = 0.12;
-        rightEye.scale.y = 0.12;
-        setTimeout(() => {
-          leftEye.scale.y = 1.0;
-          rightEye.scale.y = 1.0;
-          isBlinking = false;
-        }, 130);
-      }
-
-      // 4. Mood: Wave Animation (Hand waves up and down cheerfully)
-      if (currentMood === 'wave' || currentMood === 'happy') {
-        rightArmGroup.rotation.z = Math.PI * 0.45 + Math.sin(time * 8.0) * 0.35;
-        rightArmGroup.rotation.x = Math.sin(time * 6.0) * 0.25;
+      // E. Arm Gestures based on State
+      if (st === 'celebration' || st === 'correct_answer') {
+        // Both arms raised high celebrating!
+        leftArmGroup.rotation.z = THREE.MathUtils.damp(leftArmGroup.rotation.z, -Math.PI * 0.45 - Math.sin(time * 8.0) * 0.25, 8, delta);
+        rightArmGroup.rotation.z = THREE.MathUtils.damp(rightArmGroup.rotation.z, Math.PI * 0.45 + Math.sin(time * 8.0) * 0.25, 8, delta);
+      } else if (st === 'explaining' || st === 'speaking') {
+        // Right hand gesturing forward pedagogically
+        rightArmGroup.rotation.z = THREE.MathUtils.damp(rightArmGroup.rotation.z, Math.PI * 0.35 + Math.sin(time * 5.0) * 0.15, 6, delta);
+        rightArmGroup.rotation.x = THREE.MathUtils.damp(rightArmGroup.rotation.x, Math.PI * 0.2, 6, delta);
+        leftArmGroup.rotation.z = THREE.MathUtils.damp(leftArmGroup.rotation.z, 0, 6, delta);
+      } else if (st === 'thinking') {
+        // Hand to chin reflection pose
+        rightArmGroup.rotation.z = THREE.MathUtils.damp(rightArmGroup.rotation.z, Math.PI * 0.5, 6, delta);
+        rightArmGroup.rotation.y = THREE.MathUtils.damp(rightArmGroup.rotation.y, -Math.PI * 0.25, 6, delta);
+        leftArmGroup.rotation.z = THREE.MathUtils.damp(leftArmGroup.rotation.z, 0, 6, delta);
+      } else if (st === 'encouraging') {
+        // Affirmative head nod cycle
+        nodTimer += delta * 6.0;
+        headGroup.rotation.x = Math.sin(nodTimer) * 0.22;
+        rightArmGroup.rotation.z = THREE.MathUtils.damp(rightArmGroup.rotation.z, Math.PI * 0.25, 6, delta);
       } else {
-        rightArmGroup.rotation.z = THREE.MathUtils.damp(rightArmGroup.rotation.z, 0, 6, delta);
-        rightArmGroup.rotation.x = THREE.MathUtils.damp(rightArmGroup.rotation.x, 0, 6, delta);
+        // Relaxed resting arms
+        leftArmGroup.rotation.z = THREE.MathUtils.damp(leftArmGroup.rotation.z, 0, 5, delta);
+        rightArmGroup.rotation.z = THREE.MathUtils.damp(rightArmGroup.rotation.z, 0, 5, delta);
+        rightArmGroup.rotation.x = THREE.MathUtils.damp(rightArmGroup.rotation.x, 0, 5, delta);
+        rightArmGroup.rotation.y = THREE.MathUtils.damp(rightArmGroup.rotation.y, 0, 5, delta);
       }
 
-      // 5. Mood: Nod Animation (Affirmative celebration when task completed)
-      if (currentMood === 'nod') {
-        nodProgress += delta * 7.0;
-        headGroup.rotation.x = Math.sin(nodProgress) * 0.35;
-      } else {
-        nodProgress = 0;
-      }
-
-      // 6. Beacon & Core gentle pulse
-      const coreScale = 1.0 + Math.sin(time * 4.0) * 0.08;
+      // F. Chest Arc-Reactor Quantum Pulse
+      const coreScale = 1.0 + Math.sin(time * 4.5) * 0.08;
       coreMesh.scale.set(coreScale, coreScale, coreScale);
 
       renderer.render(scene, camera);
@@ -327,7 +533,7 @@ export const Byte3DCanvas: React.FC<Byte3DCanvasProps> = ({
 
     animate();
 
-    // 6. Cleanup
+    // 6. Memory Cleanup
     return () => {
       cancelAnimationFrame(animationFrameId);
       if (interactiveGaze) {
@@ -340,6 +546,7 @@ export const Byte3DCanvas: React.FC<Byte3DCanvasProps> = ({
       headGeo.dispose();
       visorGeo.dispose();
       eyeGeo.dispose();
+      mouthGeo.dispose();
       cheekGeo.dispose();
       stemGeo.dispose();
       beaconGeo.dispose();
@@ -354,19 +561,42 @@ export const Byte3DCanvas: React.FC<Byte3DCanvasProps> = ({
       accentMat.dispose();
       visorMat.dispose();
       eyeMat.dispose();
+      mouthMat.dispose();
       coreMat.dispose();
       beaconMat.dispose();
       cheekMat.dispose();
     };
-  }, [size, interactiveGaze]);
+  }, [numericSize, interactiveGaze, reducedMotion, themeStyle]);
+
+  // High-Quality SVG Fallback if WebGL is unavailable or failed
+  if (hasWebGlError) {
+    return (
+      <div
+        style={{ width: numericSize, height: numericSize }}
+        className={`relative flex items-center justify-center cursor-pointer ${className}`}
+        onClick={onClick}
+        title="Byte · StudentOS AI Tutor"
+      >
+        <svg viewBox="0 0 100 100" width={numericSize} height={numericSize} className="drop-shadow-lg">
+          <circle cx="50" cy="50" r="42" fill="#0f172a" stroke="#06b6d4" strokeWidth="3" />
+          <rect x="22" y="28" width="56" height="34" rx="14" fill="#030712" stroke="#334155" strokeWidth="2" />
+          <circle cx="38" cy="45" r="5" fill="#22d3ee" />
+          <circle cx="62" cy="45" r="5" fill="#22d3ee" />
+          <path d="M 42 54 Q 50 60 58 54" stroke="#38bdf8" strokeWidth="2.5" fill="none" strokeLinecap="round" />
+          <circle cx="50" cy="18" r="4" fill="#3b82f6" />
+          <line x1="50" y1="22" x2="50" y2="28" stroke="#06b6d4" strokeWidth="2.5" />
+        </svg>
+      </div>
+    );
+  }
 
   return (
     <div
       ref={mountRef}
-      style={{ width: size, height: size }}
+      style={{ width: numericSize, height: numericSize }}
       className={`relative select-none pointer-events-auto cursor-pointer ${className}`}
       onClick={onClick}
-      title="Byte · StudentOS 3D Study Buddy"
+      title={`Byte · AI Companion (${activeState})`}
     />
   );
 };

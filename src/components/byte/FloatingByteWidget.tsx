@@ -25,6 +25,7 @@ import {
   ArrowRight, CheckCircle2, Shield, Heart, Bell
 } from 'lucide-react';
 import { soundService } from '../../lib/soundService';
+import { byteVoiceService } from '../../lib/byteVoiceService';
 
 interface FloatingByteWidgetProps {
   activeTab: string;
@@ -185,20 +186,26 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
     }
   };
 
-  // Speaks aloud with short, friendly voice
+  // Clean up speech on unmount
+  useEffect(() => {
+    return () => {
+      byteVoiceService.stop();
+    };
+  }, []);
+
+  // Speaks aloud with natural Edge TTS voice (Hindi/English neural)
   const speakLine = (text: string) => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    try {
-      if (window.speechSynthesis.speaking) {
-        window.speechSynthesis.cancel();
+    if (!text || !voiceEnabled) return;
+    setCurrentMood('speaking');
+    byteVoiceService.speak(text, {
+      speed: 1.05,
+      onEnd: () => {
+        setCurrentMood('idle');
+      },
+      onError: () => {
+        setCurrentMood('idle');
       }
-      setTimeout(() => {
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = 1.05;
-        utterance.pitch = 1.15; // friendly, upbeat peer tone
-        window.speechSynthesis.speak(utterance);
-      }, 50);
-    } catch (_) {}
+    });
   };
 
   // Mark message as shown in session
@@ -329,7 +336,7 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
     const currentCompleted = tasks.filter(t => t.completed).length;
     if (currentCompleted > prevCompletedTasksCount.current) {
       // Celebratory nod & Duolingo-style streak reward
-      setCurrentMood('nod');
+      setCurrentMood('celebration');
       try {
         soundService.playFlashcardKnowIt(5);
       } catch (_) {}
@@ -356,7 +363,7 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
         text: 'Nice, that task is done! 🔥',
         actionLabel: 'Continue learning',
         actionTab: 'study_hub',
-        mood: 'nod'
+        mood: 'celebration'
       };
       setActiveNudge(celebrateNudge);
       if (voiceEnabled) speakLine(celebrateNudge.text);

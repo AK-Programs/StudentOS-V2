@@ -45,8 +45,10 @@ import {
   Shield, Users, GraduationCap, Key, FileSpreadsheet, Eye, Activity,
   BarChart2, School, Flag, FileText, CheckCircle2, AlertTriangle,
   ArrowRight, RefreshCw, Search, Plus, Filter, Lock, Unlock, Clock,
-  Radio, ChevronRight, Check, X, Calendar, Bell, Download, Layers
+  Radio, ChevronRight, Check, X, Calendar, Bell, Download, Layers,
+  FlaskConical
 } from 'lucide-react';
+import { ExperienceTestingTab } from './admin/ExperienceTestingTab';
 
 export type AdminSubTab =
   | 'overview'
@@ -62,7 +64,8 @@ export type AdminSubTab =
   | 'audit'
   | 'flags'
   | 'releases'
-  | 'whats_new';
+  | 'whats_new'
+  | 'experience_testing';
 
 interface AdminCenterProps {
   currentUser: UserProfile;
@@ -705,7 +708,8 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
               { id: 'spectate', label: 'Spectate Student', icon: Eye },
               { id: 'schools', label: 'School Switcher', icon: School },
               { id: 'audit', label: `Audit Log (${auditLogs.length})`, icon: Shield },
-              { id: 'flags', label: 'Feature Flags', icon: Flag }
+              { id: 'flags', label: 'Feature Flags', icon: Flag },
+              { id: 'experience_testing', label: 'Byte & Experience Lab', icon: FlaskConical }
             ].map(tab => {
               const Icon = tab.icon;
               const active = adminSubTab === tab.id;
@@ -1753,6 +1757,16 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
           currentUser={currentUser}
           showNotification={showNotification}
           onClose={() => setAdminSubTab('overview')}
+        />
+      )}
+
+      {/* =========================================================================
+          VIEW 14: BYTE VOICE, CHARACTER & EXPERIENCE TESTING LAB
+      ========================================================================= */}
+      {isSuperAdmin && adminSubTab === 'experience_testing' && (
+        <ExperienceTestingTab
+          currentUser={currentUser}
+          showNotification={showNotification}
         />
       )}
 

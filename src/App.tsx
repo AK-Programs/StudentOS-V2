@@ -129,6 +129,9 @@ import {
 } from './lib/aiUsageManager';
 import { MOCK_QUIZZES, AI_PERSONAS, INITIAL_ANNOUNCEMENTS, INITIAL_FEEDBACK, INITIAL_MATERIALS, MOCK_SCHEDULES } from './mockData';
 import { FloatingByteWidget } from './components/byte/FloatingByteWidget';
+import { StudentOSOnboardingModal } from './components/onboarding/StudentOSOnboardingModal';
+import { GuidedProductTour } from './components/onboarding/GuidedProductTour';
+import { shouldShowOnboarding } from './lib/onboardingService';
 
 // Stub Integrations
 import {
@@ -495,6 +498,8 @@ export default function App() {
   const [isInstallAppModalOpen, setIsInstallAppModalOpen] = useState<boolean>(false);
   const [isSoundSettingsModalOpen, setIsSoundSettingsModalOpen] = useState<boolean>(false);
   const [isApkInstalled, setIsApkInstalled] = useState<boolean>(() => isApkInstalledOnDevice());
+  const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState<boolean>(false);
+  const [isProductTourOpen, setIsProductTourOpen] = useState<boolean>(false);
 
   useEffect(() => {
     const handleInstallChanged = (e: any) => {
@@ -502,6 +507,27 @@ export default function App() {
     };
     window.addEventListener('studentos_apk_installed_changed', handleInstallChanged);
     return () => window.removeEventListener('studentos_apk_installed_changed', handleInstallChanged);
+  }, []);
+
+  // Check if onboarding should appear for new users or upon explicit restart request
+  useEffect(() => {
+    if (currentUser && !dataLoading && !firebaseLoading) {
+      if (shouldShowOnboarding(currentUser)) {
+        setIsOnboardingModalOpen(true);
+      }
+    }
+  }, [currentUser, dataLoading, firebaseLoading]);
+
+  // Global listeners for manual Onboarding / Product Tour launches
+  useEffect(() => {
+    const handleLaunchOnboarding = () => setIsOnboardingModalOpen(true);
+    const handleLaunchTour = () => setIsProductTourOpen(true);
+    window.addEventListener('studentos_launch_onboarding', handleLaunchOnboarding);
+    window.addEventListener('studentos_launch_tour', handleLaunchTour);
+    return () => {
+      window.removeEventListener('studentos_launch_onboarding', handleLaunchOnboarding);
+      window.removeEventListener('studentos_launch_tour', handleLaunchTour);
+    };
   }, []);
   const [activeTab, setActiveTab] = useState<string>(() => {
     try {
@@ -14074,6 +14100,34 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
         dueCardsCount={dueCardsCount}
         onNavigateTab={handleTabSelect}
       />
+
+      {/* First-Time Guided Onboarding Setup Modal */}
+      {isOnboardingModalOpen && (
+        <StudentOSOnboardingModal
+          currentUser={currentUser}
+          isOpen={isOnboardingModalOpen}
+          onClose={() => setIsOnboardingModalOpen(false)}
+          onStartTour={() => {
+            setIsOnboardingModalOpen(false);
+            setIsProductTourOpen(true);
+          }}
+        />
+      )}
+
+      {/* Role-Aware Spotlight Product Tour */}
+      {isProductTourOpen && (
+        <GuidedProductTour
+          userRole={effectiveRole || 'student'}
+          onNavigateTab={handleTabSelect}
+          onComplete={() => {
+            setIsProductTourOpen(false);
+            showNotification('✓ Tour completed! Byte is here in the bottom corner whenever you need help.');
+          }}
+          onSkip={() => {
+            setIsProductTourOpen(false);
+          }}
+        />
+      )}
 
     </div>
   );

@@ -31,6 +31,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { soundService } from '../../lib/soundService';
+import { byteVoiceService } from '../../lib/byteVoiceService';
 import { StructuredContentRenderer, extractTutorText } from './StructuredContentRenderer';
 import { Byte3DCanvas, Byte3DMood } from '../byte/Byte3DCanvas';
 
@@ -135,9 +136,7 @@ export const AnimatedRobotTeacher: React.FC<AnimatedRobotTeacherProps> = ({
   // Clean up speech synthesis on unmount
   useEffect(() => {
     return () => {
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
+      byteVoiceService.stop();
     };
   }, []);
 
@@ -146,49 +145,22 @@ export const AnimatedRobotTeacher: React.FC<AnimatedRobotTeacherProps> = ({
     return extractTutorText(text);
   };
 
-  // Perform Speech Synthesis
+  // Perform Speech Synthesis using Microsoft Edge Neural TTS with graceful fallback
   const speakText = useCallback((textToSpeak: any) => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-
     const cleaned = cleanSpeechForTTS(textToSpeak);
     if (!cleaned) return;
 
-    window.speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(cleaned);
-    utterance.rate = speechRate;
-    utterance.pitch = 1.08; // Slightly elevated cheerful robotic pitch
-
-    // Select the best available natural/Google/English voice
-    const voices = window.speechSynthesis.getVoices();
-    const preferredVoice = voices.find(
-      v =>
-        v.lang.startsWith('en') &&
-        (v.name.includes('Natural') ||
-          v.name.includes('Google') ||
-          v.name.includes('Samantha') ||
-          v.name.includes('Karen') ||
-          v.name.includes('Ava') ||
-          v.name.includes('Zira'))
-    ) || voices.find(v => v.lang.startsWith('en'));
-
-    if (preferredVoice) utterance.voice = preferredVoice;
-
-    utterance.onstart = () => {
-      setIsSpeaking(true);
-    };
-
-    utterance.onend = () => {
-      setIsSpeaking(false);
-      if (onSpeechEnd) onSpeechEnd();
-    };
-
-    utterance.onerror = () => {
-      setIsSpeaking(false);
-    };
-
-    utteranceRef.current = utterance;
-    window.speechSynthesis.speak(utterance);
+    setIsSpeaking(true);
+    byteVoiceService.speak(cleaned, {
+      speed: speechRate,
+      onEnd: () => {
+        setIsSpeaking(false);
+        if (onSpeechEnd) onSpeechEnd();
+      },
+      onError: () => {
+        setIsSpeaking(false);
+      }
+    });
   }, [speechRate, onSpeechEnd]);
 
   // Auto-speak when speechText changes and autoVoice is enabled
@@ -206,9 +178,7 @@ export const AnimatedRobotTeacher: React.FC<AnimatedRobotTeacherProps> = ({
   // Toggle voice playback manually
   const handleToggleVoice = () => {
     if (isSpeaking) {
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
+      byteVoiceService.stop();
       setIsSpeaking(false);
     } else {
       const targetText = speechText || bubbleMessage || '';
@@ -304,8 +274,11 @@ export const AnimatedRobotTeacher: React.FC<AnimatedRobotTeacherProps> = ({
 
   // Map internal mood to 3D procedural character mood
   const byte3DMood: Byte3DMood =
-    internalMood === 'happy' ? 'happy' :
-    internalMood === 'teaching' || internalMood === 'guiding' || isSpeaking ? 'talking' :
+    internalMood === 'happy' ? 'celebration' :
+    internalMood === 'thinking' || internalMood === 'curious' ? 'thinking' :
+    internalMood === 'guiding' ? 'encouraging' :
+    isSpeaking ? 'speaking' :
+    internalMood === 'teaching' ? 'explaining' :
     'idle';
 
   return (

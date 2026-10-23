@@ -9,6 +9,7 @@ import path from 'path';
 import fs from 'fs';
 import { generateAICompletion, generateAICompletionWithTelemetry, streamAICompletion, classifyTaskComplexity, getApinexApiKey } from './server/aiClient';
 import { generateApinexTTS, transcribeApinexSTT } from './server/voiceService';
+import { synthesizeEdgeSpeech, VERIFIED_EDGE_VOICES, cleanTextForSpeech } from './server/edgeTtsService';
 import { getVerified3DModelsCatalog, getAllThreeDRequests, createThreeDRequest, updateThreeDRequestStatus } from './server/threeDModelService';
 import dotenv from 'dotenv';
 import { WebSocketServer, WebSocket as WSWebSocket } from 'ws';
@@ -628,6 +629,71 @@ app.get('/api/push/debug-status', async (req, res) => {
       updatedAt: new Date(t.updatedAt).toISOString()
     }))
   });
+});
+
+// ========================================================================
+// STUDENTOS MICROSOFT EDGE TTS API ENDPOINTS (/api/tts/*)
+// ========================================================================
+app.get('/api/tts/voices', (req, res) => {
+  return res.json({
+    status: 'ok',
+    provider: 'msedge-tts',
+    voices: VERIFIED_EDGE_VOICES
+  });
+});
+
+app.post('/api/tts/synthesize', async (req, res) => {
+  const { text, voiceId, hindiVoiceId, englishVoiceId, speed, detectMixedLanguage } = req.body || {};
+  if (!text || typeof text !== 'string' || !text.trim()) {
+    return res.status(400).json({ error: 'Text string is required for speech synthesis.' });
+  }
+
+  try {
+    const result = await synthesizeEdgeSpeech({
+      text,
+      voiceId,
+      hindiVoiceId,
+      englishVoiceId,
+      speed: Number(speed) || 1.0,
+      detectMixedLanguage: detectMixedLanguage !== false
+    });
+
+    res.setHeader('Content-Type', result.contentType || 'audio/mpeg');
+    res.setHeader('Content-Length', result.audioBuffer.length);
+    res.setHeader('X-Voice-Id', result.voiceId);
+    res.setHeader('X-Audio-Duration-Ms', String(result.durationMs));
+    res.setHeader('X-Cache-Hit', result.cached ? '1' : '0');
+    res.setHeader('X-TTS-Provider', 'msedge-tts');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.end(result.audioBuffer);
+  } catch (err: any) {
+    console.error('[Edge TTS API Error]:', err?.message || err);
+    return res.status(503).json({
+      error: err?.message || 'Edge TTS synthesis failed',
+      provider: 'msedge-tts',
+      fallback: 'speechSynthesis'
+    });
+  }
+});
+
+app.post('/api/tts/preview', async (req, res) => {
+  const { voiceId, speed } = req.body || {};
+  const voice = VERIFIED_EDGE_VOICES.find(v => v.id === voiceId) || VERIFIED_EDGE_VOICES[0];
+  try {
+    const result = await synthesizeEdgeSpeech({
+      text: voice.sampleText,
+      voiceId: voice.id,
+      speed: Number(speed) || 1.0
+    });
+    res.setHeader('Content-Type', result.contentType || 'audio/mpeg');
+    res.setHeader('Content-Length', result.audioBuffer.length);
+    res.setHeader('X-Voice-Id', result.voiceId);
+    res.setHeader('X-Cache-Hit', result.cached ? '1' : '0');
+    res.setHeader('X-TTS-Provider', 'msedge-tts');
+    return res.end(result.audioBuffer);
+  } catch (err: any) {
+    return res.status(503).json({ error: err?.message || 'Voice preview failed' });
+  }
 });
 
 // ========================================================================

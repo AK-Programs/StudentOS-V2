@@ -990,6 +990,18 @@ class SoundService {
     } catch (_) {}
   }
 
+  public playBadgeCelebration() {
+    this.playAchievementSound();
+  }
+
+  public playStreakFire() {
+    this.playSuccessSound();
+  }
+
+  public playStreakShield() {
+    this.playAchievementSound();
+  }
+
   // ========================================================================
   // 8 OFFICIAL PIXABAY SOUND EFFECTS INTEGRATION (AUDIO + SYNTH DUAL-LAYER)
   // ========================================================================
