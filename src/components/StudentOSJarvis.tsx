@@ -5,6 +5,7 @@ import {
   Layers, Plus, Trash2, CheckCircle, RefreshCw, X, Square, BookOpen, FileText, HelpCircle, Layout, Search, Globe, PenTool
 } from 'lucide-react';
 import { GlassyVideoCarousel, EducationalVideoItem } from './ui/GlassyVideoCarousel';
+import { Orion3DOrb } from './ui/Orion3DOrb';
 import { supabase } from '../lib/supabase';
 import { fetchAllSupabaseUsers } from '../lib/supabaseUsers';
 import { createCompetition, createSchoolEvent, createClub } from '../lib/supabaseLife';
@@ -149,6 +150,16 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
   const [searching, setSearching] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isNotesSaved, setIsNotesSaved] = useState<boolean>(false);
+  const [navigatingTransition, setNavigatingTransition] = useState<{ title: string; tab: string } | null>(null);
+
+  const triggerNavTransition = (title: string, tab: string) => {
+    setNavigatingTransition({ title, tab });
+    setTimeout(() => {
+      setNavigatingTransition(null);
+      setActiveTab(tab as any);
+      if (onClose) onClose();
+    }, 1200);
+  };
 
   // Voice & Input State
   const [isListening, setIsListening] = useState<boolean>(false);
@@ -1127,28 +1138,49 @@ Rules:
     let resolvedFeedback = pipelineRes.combinedSummary;
     let actionTriggered = mappedAction;
 
-    // View / Tab Navigation Helpers
-    if (mappedAction === 'show_pending_assignments' || textLow.includes('pending assignment')) {
-      setActiveTab('assignments');
+    // View / Tab Navigation Helpers with 3D Orb Transition
+    if (textLow.includes('material hub') || textLow.includes('materials')) {
+      triggerNavTransition('Material Hub', 'materials');
+      return;
+    } else if (textLow.includes('attendance') || mappedAction === 'show_attendance' || mappedAction === 'start_attendance') {
+      triggerNavTransition('Attendance Manager', 'attendance_manager');
+      return;
+    } else if (textLow.includes('homework')) {
+      triggerNavTransition('Class Homework', 'homework');
+      return;
+    } else if (textLow.includes('whiteboard')) {
+      triggerNavTransition('Class Whiteboard', 'whiteboard');
+      return;
+    } else if (textLow.includes('study') || textLow.includes('study hub')) {
+      triggerNavTransition('Study Hub', 'study_hub');
+      return;
+    } else if (textLow.includes('notice') || textLow.includes('announcement') || mappedAction === 'show_announcements') {
+      triggerNavTransition('Notices', 'notice_viewer');
+      return;
+    } else if (textLow.includes('dashboard') || textLow.includes('home')) {
+      triggerNavTransition('Dashboard', 'dashboard');
+      return;
+    } else if (mappedAction === 'show_pending_assignments' || textLow.includes('pending assignment')) {
+      triggerNavTransition('Assignment Center', 'assignments');
+      return;
     } else if (mappedAction === 'show_timetable' || textLow.includes('timetable')) {
-      setActiveTab('timetable_viewer');
-    } else if (mappedAction === 'show_attendance' || mappedAction === 'start_attendance' || textLow.includes('attendance')) {
-      setActiveTab('attendance_manager');
-    } else if (mappedAction === 'show_announcements' || textLow.includes('notice')) {
-      setActiveTab('notice_viewer');
+      triggerNavTransition('Timetable', 'timetable_viewer');
     } else if (textLow.includes('studentos life') || textLow.includes('open life')) {
-      setActiveTab('life' as any);
+      triggerNavTransition('StudentOS Life', 'life' as any);
     } else if (textLow.includes('studentos meet') || textLow.includes('open meet')) {
-      setActiveTab('meet' as any);
+      triggerNavTransition('StudentOS Meet', 'meet' as any);
     } else if (mappedAction === 'navigate_tab' && targetVal) {
       const tabVal = targetVal.toLowerCase();
-      if (tabVal.includes('life')) setActiveTab('life' as any);
-      else if (tabVal.includes('meet')) setActiveTab('meet' as any);
-      else if (tabVal.includes('fun')) setActiveTab('funzone' as any);
-      else if (tabVal.includes('assignment')) setActiveTab('assignments');
-      else if (tabVal.includes('attendance')) setActiveTab('attendance_manager');
-      else if (tabVal.includes('timetable') || tabVal.includes('schedule')) setActiveTab('timetable_viewer');
-      else if (tabVal.includes('notice') || tabVal.includes('announcement')) setActiveTab('notice_viewer');
+      if (tabVal.includes('life')) triggerNavTransition('StudentOS Life', 'life' as any);
+      else if (tabVal.includes('meet')) triggerNavTransition('StudentOS Meet', 'meet' as any);
+      else if (tabVal.includes('material')) triggerNavTransition('Material Hub', 'materials');
+      else if (tabVal.includes('attendance')) triggerNavTransition('Attendance Manager', 'attendance_manager');
+      else if (tabVal.includes('homework')) triggerNavTransition('Class Homework', 'homework');
+      else if (tabVal.includes('study')) triggerNavTransition('Study Hub', 'study_hub');
+      else if (tabVal.includes('assignment')) triggerNavTransition('Assignment Center', 'assignments');
+      else if (tabVal.includes('timetable') || tabVal.includes('schedule')) triggerNavTransition('Timetable', 'timetable_viewer');
+      else if (tabVal.includes('notice') || tabVal.includes('announcement')) triggerNavTransition('Notices', 'notice_viewer');
+      else if (tabVal.includes('dashboard')) triggerNavTransition('Dashboard', 'dashboard');
     } else if (mappedAction === 'search_internet' || mappedAction === 'web_search') {
       setSearchQuery(targetVal);
       setSearchResults(resolvedFeedback);
@@ -1231,6 +1263,17 @@ Rules:
 
   return (
     <div className="flex flex-col justify-between overflow-hidden relative transition-all duration-300 h-full p-3 sm:p-6">
+      {navigatingTransition && (
+        <div className="absolute inset-0 z-50 bg-slate-950/95 backdrop-blur-2xl flex flex-col items-center justify-center space-y-6 animate-fadeIn">
+          <Orion3DOrb isProcessing={true} size={160} />
+          <div className="text-center space-y-2">
+            <h3 className="text-2xl font-black text-white font-display uppercase tracking-widest animate-pulse">
+              Opening {navigatingTransition.title}...
+            </h3>
+            <p className="text-xs text-indigo-400 font-mono">Orion Neural Navigation Matrix Active</p>
+          </div>
+        </div>
+      )}
       
       {/* 1. TOP HUD / HEADER */}
       <div className="flex items-center justify-between pb-6 border-b border-white/5 gap-4 flex-wrap relative">
@@ -1245,9 +1288,7 @@ Rules:
         )}
         <div className="flex items-center gap-3 pr-10">
           <div className="relative">
-            <div className="h-10 w-10 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center animate-pulse">
-              <span className="text-xl">🎙️</span>
-            </div>
+            <Orion3DOrb isProcessing={isProcessing || isListening} size={52} />
             {isListening && (
               <span className="absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full bg-red-500 animate-ping border border-slate-950" />
             )}

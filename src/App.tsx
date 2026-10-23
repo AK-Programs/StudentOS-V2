@@ -7406,6 +7406,17 @@ ${roleLabel}: ${userQuery}`;
 
                       {(!collapsedSidebarSections['study'] || !sidebarOpen || q.length > 0) && (
                         <div className="space-y-1">
+                          <button
+                            type="button"
+                            onClick={() => setIsJarvisActive(true)}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider bg-gradient-to-r from-indigo-600/30 via-violet-600/30 to-teal-600/20 hover:from-indigo-600/50 hover:to-teal-600/40 text-white border border-indigo-500/40 shadow-lg shadow-indigo-500/10 transition-all cursor-pointer group mb-1.5"
+                            title="Open Orion AI Copilot & Assistant"
+                          >
+                            <div className="w-5 h-5 rounded-lg bg-indigo-500/30 border border-indigo-400/50 flex items-center justify-center text-indigo-300 group-hover:scale-110 transition-transform shrink-0">
+                              <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                            </div>
+                            {sidebarOpen && <span className="truncate">Orion</span>}
+                          </button>
                           {!presentationMode && matchesFilter('Dashboard Overview', 'home summary stats') && (
                             <button
                               type="button"
@@ -12519,6 +12530,14 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
                           <h2 className="text-sm font-black text-white">Byte — AI Study & Learning Assistant</h2>
+                          <button
+                            onClick={() => setIsJarvisActive(true)}
+                            className="px-3 py-1 rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-black text-[10px] uppercase tracking-wider flex items-center gap-1.5 shadow-lg shadow-indigo-600/30 transition-all cursor-pointer hover:scale-105"
+                            title="Open Orion AI Copilot"
+                          >
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>Open Orion</span>
+                          </button>
                           <button
                             onClick={() => handleTabSelect('study_hub')}
                             className="px-2.5 py-0.5 rounded-full bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 text-[10px] font-extrabold flex items-center gap-1 transition-all cursor-pointer"
