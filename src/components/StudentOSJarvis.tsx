@@ -4,6 +4,7 @@ import {
   BarChart3, Award, Settings, Terminal, Play, RotateCcw, 
   Layers, Plus, Trash2, CheckCircle, RefreshCw, X, Square, BookOpen, FileText, HelpCircle, Layout, Search, Globe, PenTool
 } from 'lucide-react';
+import { GlassyVideoCarousel, EducationalVideoItem } from './ui/GlassyVideoCarousel';
 import { supabase } from '../lib/supabase';
 import { fetchAllSupabaseUsers } from '../lib/supabaseUsers';
 import { createCompetition, createSchoolEvent, createClub } from '../lib/supabaseLife';
@@ -142,6 +143,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchResults, setSearchResults] = useState<string>('');
   const [searchSources, setSearchSources] = useState<{ title: string; uri: string; published_source?: string }[]>([]);
+  const [searchVideos, setSearchVideos] = useState<EducationalVideoItem[]>([]);
   const [generatedNotesContent, setGeneratedNotesContent] = useState<{ title: string; content: string } | null>(null);
   const [localMaterials, setLocalMaterials] = useState<any[]>([]);
   const [searching, setSearching] = useState<boolean>(false);
@@ -521,23 +523,10 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     setJarvisFeedback(`🔍 Orion is searching verified external sources for "${cleanQ}"...`);
 
     try {
-      const response = await fetch('/api/ai/chat', {
+      const response = await fetch('/api/ai/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: `Perform a comprehensive, verified research synthesis on: "${cleanQ}".
-Include:
-1. Executive Overview & Current Facts
-2. Key Educational / Scientific / Practical Breakdown
-3. Classroom or Study Takeaways
-Cite the verified web sources provided in context using [1], [2], etc.`,
-          persona: 'orion',
-          level: 'Secondary',
-          mode: 'explanatory',
-          webSearchMode: 'force',
-          userId: currentUser?.uid || 'guest',
-          userRole: effectiveRole || currentUser?.role || 'student'
-        })
+        body: JSON.stringify({ query: cleanQ })
       });
 
       if (!response.ok) {
@@ -545,31 +534,33 @@ Cite the verified web sources provided in context using [1], [2], etc.`,
         throw new Error(errData.message || `HTTP ${response.status}`);
       }
 
-      const data = await response.json();
-      const textOut = data.text || 'No grounded synthesis returned.';
-      const rawSources = Array.isArray(data.webSources) ? data.webSources : [];
+      const searchData = await response.json();
+      const textOut = searchData.summary || 'No grounded synthesis returned.';
+      const rawSources = Array.isArray(searchData.results) ? searchData.results : [];
       const mappedSources = rawSources.map((s: any) => ({
-        title: s.title || s.domain || 'Web Source',
+        title: s.title || s.published_source || 'Web Source',
         uri: s.url || s.uri || '#',
-        published_source: s.sourceType === 'academic' ? `Academic · ${s.domain}` : s.domain
+        published_source: s.published_source || 'Web Source'
       }));
+      const rawVideos = Array.isArray(searchData.videos) ? searchData.videos : [];
 
       setSearchResults(textOut);
       setSearchSources(mappedSources);
+      setSearchVideos(rawVideos);
       setGeneratedNotesContent({
         title: `${cleanQ} (Orion Web Research)`,
         content: textOut
       });
       setJarvisFeedback(
         mappedSources.length > 0
-          ? `🌐 Synthesized live web intelligence for **"${cleanQ}"** across **${mappedSources.length} verified sources**. View the full research packet & citations in the Discovery Hub.`
+          ? `🌐 Synthesized live web intelligence for **"${cleanQ}"** across **${mappedSources.length} verified sources** & curated educational videos.`
           : textOut
       );
-      if (data.model) setOrionModelUsed(data.model);
     } catch (err: any) {
       console.error('Orion live web search failed:', err);
-      setSearchResults(`⚠️ **Web Search Notice**\n\nCould not reach live external sources right now (${err?.message || 'network timeout'}). Answering from Orion internal knowledge base instead.`);
+      setSearchResults(`⚠️ **Web Search Notice**\n\nCould not reach live external sources right now (${err?.message || 'network timeout'}).`);
       setSearchSources([]);
+      setSearchVideos([]);
     } finally {
       setSearching(false);
     }
@@ -2039,6 +2030,11 @@ Rules:
         {/* PHASE 2 SEARCH AND DISCOVERY PANEL */}
         {activeJarvisSection === 'search' && (
           <div className="space-y-6 animate-fadeIn select-text p-1 h-full flex flex-col">
+
+            {/* Curated Educational Video Suggestions Carousel */}
+            {searchVideos && searchVideos.length > 0 && (
+              <GlassyVideoCarousel videos={searchVideos} queryTopic={searchQuery} />
+            )}
             
             {/* Premium Search Input */}
             <div className="bg-slate-950/40 p-6 rounded-3xl border border-white/5 shadow-2xl relative overflow-hidden group hover:border-indigo-500/30 transition-all duration-500">
