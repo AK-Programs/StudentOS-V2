@@ -369,100 +369,194 @@ async function searchViaFallbackHtml(query: string, signal: AbortSignal): Promis
 }
 
 /**
- * Educational Video Suggestions Generator
+ * Real Educational Video Search Pipeline
+ * 1. Queries DuckDuckGo first for real video candidate links.
+ * 2. Queries YouTube search results as secondary source.
+ * 3. Keeps only links that resolve by validating with YouTube oEmbed endpoint (status 200).
+ * 4. If a link 404s, it is dropped.
+ * 5. If no real video is found, returns empty array [].
  */
-export function generateEducationalVideos(query: string): EducationalVideoItem[] {
-  const q = query.toLowerCase();
-  if (q.includes('newton') || q.includes('motion') || q.includes('force') || q.includes('class 8') || q.includes('physics')) {
-    return [
-      {
-        id: 'kKKm8Y-kAIQ',
-        title: "Newton's Laws of Motion",
-        channel: 'CrashCourse Physics',
-        url: 'https://www.youtube.com/watch?v=kKKm8Y-kAIQ',
-        thumbnail: 'https://img.youtube.com/vi/kKKm8Y-kAIQ/hqdefault.jpg',
-        reason: 'Explains inertia, mass, and acceleration with clear classroom demonstrations.'
-      },
-      {
-        id: 'JsmW2AZq67M',
-        title: "Newton's Three Laws of Motion",
-        channel: 'Science ABC',
-        url: 'https://www.youtube.com/watch?v=JsmW2AZq67M',
-        thumbnail: 'https://img.youtube.com/vi/JsmW2AZq67M/hqdefault.jpg',
-        reason: 'Step-by-step breakdown of action and reaction pairs with everyday examples.'
-      },
-      {
-        id: '5i8l8K9Q15c',
-        title: 'Force and Laws of Motion - Class 8 Science',
-        channel: 'Khan Academy India',
-        url: 'https://www.youtube.com/watch?v=5i8l8K9Q15c',
-        thumbnail: 'https://img.youtube.com/vi/5i8l8K9Q15c/hqdefault.jpg',
-        reason: 'CBSE Class 8 curriculum aligned lesson on balanced and unbalanced forces.'
-      },
-      {
-        id: 'TfLz8rYw_e8',
-        title: "Newton's First Law - Inertia Explained",
-        channel: 'Veritasium',
-        url: 'https://www.youtube.com/watch?v=TfLz8rYw_e8',
-        thumbnail: 'https://img.youtube.com/vi/TfLz8rYw_e8/hqdefault.jpg',
-        reason: 'Real-world visual demonstrations of inertia and frictionless motion.'
-      }
-    ];
-  } else if (q.includes('cell') || q.includes('biology') || q.includes('photosynthesis')) {
-    return [
-      {
-        id: 'cj8dDJHrcIg',
-        title: 'Plant Cell vs Animal Cell',
-        channel: 'Amoeba Sisters',
-        url: 'https://www.youtube.com/watch?v=cj8dDJHrcIg',
-        thumbnail: 'https://img.youtube.com/vi/cj8dDJHrcIg/hqdefault.jpg',
-        reason: 'Engaging animated comparison of cellular structures and organelle functions.'
-      },
-      {
-        id: '0rcbo8IoBvQ',
-        title: 'Photosynthesis and the Teeny Tiny Pigment',
-        channel: 'TED-Ed',
-        url: 'https://www.youtube.com/watch?v=0rcbo8IoBvQ',
-        thumbnail: 'https://img.youtube.com/vi/0rcbo8IoBvQ/hqdefault.jpg',
-        reason: 'Beautiful visual explanation of how plants convert light energy into chemical energy.'
-      },
-      {
-        id: '8IlzKri08kk',
-        title: 'Cellular Respiration and the Mighty Mitochondria',
-        channel: 'Amoeba Sisters',
-        url: 'https://www.youtube.com/watch?v=8IlzKri08kk',
-        thumbnail: 'https://img.youtube.com/vi/8IlzKri08kk/hqdefault.jpg',
-        reason: 'Visual walkthrough of ATP energy generation and cellular powerhouses.'
-      }
-    ];
-  } else {
-    return [
-      {
-        id: 'khan_core',
-        title: `${query} - Educational Overview & Masterclass`,
-        channel: 'Khan Academy',
-        url: `https://www.youtube.com/results?search_query=${encodeURIComponent(query + ' Khan Academy')}`,
-        thumbnail: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?q=80&w=600&auto=format&fit=crop',
-        reason: `Curriculum-aligned concept explanation and problem solving for ${query}.`
-      },
-      {
-        id: 'crashcourse_core',
-        title: `${query} - Visual Concepts & Core Principles`,
-        channel: 'CrashCourse',
-        url: `https://www.youtube.com/results?search_query=${encodeURIComponent(query + ' CrashCourse')}`,
-        thumbnail: 'https://images.unsplash.com/photo-1509062522246-3755977927d7?q=80&w=600&auto=format&fit=crop',
-        reason: 'High-energy visual explanations simplifying intricate academic topics.'
-      },
-      {
-        id: 'ted_ed_core',
-        title: `${query} - Deep Dive & Conceptual Inquiries`,
-        channel: 'TED-Ed',
-        url: `https://www.youtube.com/results?search_query=${encodeURIComponent(query + ' TED-Ed')}`,
-        thumbnail: 'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?q=80&w=600&auto=format&fit=crop',
-        reason: 'Engaging educational animation exploring foundational principles and real-world impact.'
-      }
-    ];
+export async function searchRealEducationalVideos(
+  rawQuery: string,
+  signal?: AbortSignal
+): Promise<EducationalVideoItem[]> {
+  const query = (rawQuery || '').trim();
+  if (!query) return [];
+
+  const stopWords = new Set([
+    'video', 'videos', 'the', 'a', 'an', 'in', 'of', 'on', 'for', 'and', 'to',
+    'with', 'by', 'at', 'from', 'is', 'are', 'what', 'how', 'learn', 'explain',
+    'class', 'grade', 'cbse', 'ncert', 'icse'
+  ]);
+  const queryWords = query
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !stopWords.has(w));
+
+  function matchesRelevance(title: string, description: string, channel: string): boolean {
+    if (queryWords.length === 0) return true;
+    const combined = `${title || ''} ${description || ''} ${channel || ''}`.toLowerCase();
+    return queryWords.some((w) => combined.includes(w));
   }
+
+  interface Candidate {
+    id: string;
+    title: string;
+    channel: string;
+  }
+
+  const candidates: Candidate[] = [];
+  const seenIds = new Set<string>();
+
+  function addCandidate(id: string, title?: string, channel?: string) {
+    if (!id || typeof id !== 'string' || id.length !== 11) return;
+    if (seenIds.has(id)) return;
+    seenIds.add(id);
+    candidates.push({
+      id,
+      title: (title || '').trim(),
+      channel: (channel || '').trim()
+    });
+  }
+
+  // Tier 1: Try DuckDuckGo first
+  try {
+    const initRes = await fetch(
+      `https://duckduckgo.com/?q=${encodeURIComponent(query)}`,
+      {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9'
+        },
+        signal
+      }
+    );
+    if (initRes.ok) {
+      const html = await initRes.text();
+      const vqdMatch = html.match(/vqd=([0-9-]+)/) || html.match(/vqd=[\'\"]([0-9-]+)[\'\"]/);
+      if (vqdMatch && vqdMatch[1]) {
+        const vqd = vqdMatch[1];
+        const videoRes = await fetch(
+          `https://duckduckgo.com/v.js?l=us-en&o=json&q=${encodeURIComponent(query)}&vqd=${vqd}&f=,,,&p=1`,
+          {
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              Referer: 'https://duckduckgo.com/'
+            },
+            signal
+          }
+        );
+        if (videoRes.ok) {
+          const vData: any = await videoRes.json();
+          if (Array.isArray(vData.results)) {
+            for (const item of vData.results) {
+              const contentUrl = item.content || '';
+              const match = contentUrl.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+              if (match && match[1]) {
+                addCandidate(match[1], item.title, item.uploader || item.publisher);
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    // Non-fatal, proceed to YouTube tier
+  }
+
+  // Tier 2: Then YouTube search results (if DDG yielded few candidates)
+  if (candidates.length < 3) {
+    try {
+      const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+      const ytRes = await fetch(ytUrl, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9'
+        },
+        signal
+      });
+      if (ytRes.ok) {
+        const ytHtml = await ytRes.text();
+        const dataMatch =
+          ytHtml.match(/ytInitialData\s*=\s*({.+?});<\/script>/) ||
+          ytHtml.match(/ytInitialData\s*=\s*({.+?});/);
+        if (dataMatch && dataMatch[1]) {
+          try {
+            const ytData = JSON.parse(dataMatch[1]);
+            const traverse = (obj: any) => {
+              if (!obj || typeof obj !== 'object') return;
+              if (obj.videoRenderer && obj.videoRenderer.videoId) {
+                const vr = obj.videoRenderer;
+                const vid = vr.videoId;
+                const title = vr.title?.runs?.[0]?.text || vr.title?.simpleText || '';
+                const channel = vr.ownerText?.runs?.[0]?.text || '';
+                addCandidate(vid, title, channel);
+              }
+              for (const key of Object.keys(obj)) {
+                traverse(obj[key]);
+              }
+            };
+            traverse(ytData);
+          } catch {
+            // Partial JSON parse error handled gracefully
+          }
+        }
+      }
+    } catch {
+      // YouTube search error handled gracefully
+    }
+  }
+
+  // Filter candidates for relevance
+  const filteredCandidates = candidates.filter((c) => matchesRelevance(c.title, '', c.channel));
+  const pool = queryWords.length > 0 ? filteredCandidates : candidates;
+
+  if (pool.length === 0) {
+    return [];
+  }
+
+  // Tier 3: Validation & Verification: keep only links that resolve (status 200 via oEmbed)
+  const verifiedVideos: EducationalVideoItem[] = [];
+  const candidatesToCheck = pool.slice(0, 5);
+
+  for (const c of candidatesToCheck) {
+    try {
+      const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${c.id}`)}&format=json`;
+      const checkRes = await fetch(oembedUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        },
+        signal
+      });
+
+      if (checkRes.status === 200) {
+        const oembedData: any = await checkRes.json();
+        const realTitle = oembedData.title || c.title || 'Curriculum Lesson';
+        const realChannel = oembedData.author_name || c.channel || 'Educational Channel';
+        const realThumbnail =
+          oembedData.thumbnail_url || `https://img.youtube.com/vi/${c.id}/hqdefault.jpg`;
+
+        verifiedVideos.push({
+          id: c.id,
+          title: realTitle,
+          channel: realChannel,
+          url: `https://www.youtube.com/watch?v=${c.id}`,
+          thumbnail: realThumbnail,
+          reason: `Verified educational video on "${realTitle}" by ${realChannel}.`
+        });
+
+        if (verifiedVideos.length >= 4) break;
+      }
+    } catch {
+      // Drop unresolving link
+    }
+  }
+
+  return verifiedVideos;
 }
 
 /**
@@ -526,7 +620,12 @@ export async function performControlledWebSearch(rawQuery: string): Promise<WebS
     });
 
     const topSources = uniqueSources.slice(0, 6);
-    const videos = generateEducationalVideos(rawQuery);
+    let videos: EducationalVideoItem[] = [];
+    try {
+      videos = await searchRealEducationalVideos(rawQuery, abortController.signal);
+    } catch {
+      videos = [];
+    }
 
     if (topSources.length === 0) {
       // Guaranteed fallback educational sources so search never fails
@@ -577,7 +676,7 @@ ${formattedLines.join('\n\n')}
       searchPerformed: true,
       queryUsed,
       sources: fallbackSources,
-      videos: generateEducationalVideos(rawQuery),
+      videos: [],
       formattedContext: `[Fallback Source] ${rawQuery}`,
       latencyMs: Date.now() - startTime
     };

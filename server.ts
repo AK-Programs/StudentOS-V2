@@ -2559,6 +2559,7 @@ ${combinedContext}
   const searchIntent = detectWebSearchIntent(prompt, persona, webSearchMode);
   let webSearchUsed = false;
   let webSources: WebSearchSource[] = [];
+  let webVideos: any[] = [];
   let webSearchError: string | undefined;
 
   // Handle Real-Time Server-Sent Events (SSE) Streaming
@@ -2592,6 +2593,7 @@ ${combinedContext}
         if (searchRes.success && searchRes.sources.length > 0) {
           webSearchUsed = true;
           webSources = searchRes.sources;
+          webVideos = searchRes.videos || [];
           res.write(
             `data: ${JSON.stringify({
               type: 'status',
@@ -2653,7 +2655,8 @@ Do NOT fabricate current news, circulars, or live statistics. After stating that
                 ...meta,
                 webSearchUsed,
                 webSources,
-                webSearchError
+                webSearchError,
+                videos: webVideos
               })}\n\n`
             );
           },
@@ -2680,6 +2683,7 @@ Do NOT fabricate current news, circulars, or live statistics. After stating that
                   webSearchUsed,
                   webSources,
                   webSearchError,
+                  videos: webVideos,
                   usage: {
                     used: updatedUsage.used,
                     limit: updatedUsage.limit,
@@ -3397,6 +3401,11 @@ app.post('/api/ai/search', async (req, res) => {
       });
     } catch (_) {
       summaryText = `Retrieved ${searchResultsList.length} live web sources for "${query}". Review the cited sources below.`;
+    }
+
+    const cleanQ = String(query).toLowerCase();
+    if (cleanQ.includes('video') && (!searchRes.videos || searchRes.videos.length === 0)) {
+      summaryText += '\n\nNote: No verified playable educational videos could be found for this specific query.';
     }
 
     return res.json({

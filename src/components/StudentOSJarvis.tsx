@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Mic, MicOff, Send, Volume2, Sparkles, Sliders, Users, 
   BarChart3, Award, Settings, Terminal, Play, RotateCcw, 
-  Layers, Plus, Trash2, CheckCircle, RefreshCw, X, Square, BookOpen, FileText, HelpCircle, Layout, Search, Globe, PenTool, ExternalLink
+  Layers, Plus, Trash2, CheckCircle, RefreshCw, X, Square, BookOpen, FileText, HelpCircle, Layout, Search, Globe, PenTool, ExternalLink, Video
 } from 'lucide-react';
 import { GlassyVideoCarousel, EducationalVideoItem } from './ui/GlassyVideoCarousel';
 import { Orion3DOrb } from './ui/Orion3DOrb';
@@ -589,11 +589,15 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
         title: `${cleanQ} (Orion Web Research)`,
         content: textOut
       });
-      setJarvisFeedback(
-        mappedSources.length > 0
-          ? `🌐 Synthesized live web intelligence for **"${cleanQ}"** across **${mappedSources.length} verified sources** & curated educational videos.`
-          : textOut
-      );
+      if (cleanQ.toLowerCase().includes('video') && rawVideos.length === 0) {
+        setJarvisFeedback(`🌐 Retrieved verified sources for **"${cleanQ}"**, but no playable educational videos were found for this topic.`);
+      } else {
+        setJarvisFeedback(
+          mappedSources.length > 0
+            ? `🌐 Synthesized live web intelligence for **"${cleanQ}"** across **${mappedSources.length} verified sources**${rawVideos.length > 0 ? ` & ${rawVideos.length} verified educational videos` : ''}.`
+            : textOut
+        );
+      }
     } catch (err: any) {
       console.error('Orion live web search failed:', err);
       setSearchResults(`⚠️ **Web Search Notice**\n\nCould not reach live external sources right now (${err?.message || 'network timeout'}).`);
@@ -1578,11 +1582,16 @@ Rules:
             <div className="text-xs sm:text-sm text-slate-200 leading-relaxed font-sans">
               {renderOrionMarkdown(jarvisFeedback)}
             </div>
-            {searchVideos && searchVideos.length > 0 && (
+            {searchVideos && searchVideos.length > 0 ? (
               <div className="pt-2">
                 <GlassyVideoCarousel videos={searchVideos} queryTopic={searchQuery} />
               </div>
-            )}
+            ) : searchQuery.toLowerCase().includes('video') ? (
+              <div className="p-3 rounded-2xl bg-slate-900/60 border border-white/5 text-xs text-slate-400 flex items-center gap-2">
+                <Video className="w-4 h-4 text-slate-500 shrink-0" />
+                <span>No verified playable educational videos found for "{searchQuery}".</span>
+              </div>
+            ) : null}
             {searchSources && searchSources.length > 0 && (
               <div className="pt-3 border-t border-white/5 space-y-2">
                 <div className="flex items-center justify-between">
