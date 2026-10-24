@@ -1635,6 +1635,14 @@ function generateEducationalVideos(query: string): any[] {
         url: 'https://www.youtube.com/watch?v=5i8l8K9Q15c',
         thumbnail: 'https://img.youtube.com/vi/5i8l8K9Q15c/hqdefault.jpg',
         reason: 'CBSE Class 8 curriculum aligned lesson on balanced and unbalanced forces.'
+      },
+      {
+        id: 'TfLz8rYw_e8',
+        title: "Newton's First Law - Inertia Explained",
+        channel: 'Veritasium',
+        url: 'https://www.youtube.com/watch?v=TfLz8rYw_e8',
+        thumbnail: 'https://img.youtube.com/vi/TfLz8rYw_e8/hqdefault.jpg',
+        reason: 'Real-world visual demonstrations of inertia and frictionless motion.'
       }
     ];
   } else if (q.includes('cell') || q.includes('biology') || q.includes('photosynthesis')) {
@@ -1654,25 +1662,41 @@ function generateEducationalVideos(query: string): any[] {
         url: 'https://www.youtube.com/watch?v=0rcbo8IoBvQ',
         thumbnail: 'https://img.youtube.com/vi/0rcbo8IoBvQ/hqdefault.jpg',
         reason: 'Beautiful visual explanation of how plants convert light energy into chemical energy.'
+      },
+      {
+        id: '8IlzKri08kk',
+        title: 'Cellular Respiration and the Mighty Mitochondria',
+        channel: 'Amoeba Sisters',
+        url: 'https://www.youtube.com/watch?v=8IlzKri08kk',
+        thumbnail: 'https://img.youtube.com/vi/8IlzKri08kk/hqdefault.jpg',
+        reason: 'Visual walkthrough of ATP energy generation and cellular powerhouses.'
       }
     ];
   } else {
     return [
       {
-        id: '2W7boUezVqw',
+        id: 'khan_core',
         title: `${query} - Educational Overview & Masterclass`,
         channel: 'Khan Academy',
-        url: `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`,
+        url: `https://www.youtube.com/results?search_query=${encodeURIComponent(query + ' Khan Academy')}`,
         thumbnail: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?q=80&w=600&auto=format&fit=crop',
-        reason: `Comprehensive curriculum review and concept explanation for ${query}.`
+        reason: `Curriculum-aligned concept explanation and problem solving for ${query}.`
       },
       {
-        id: 'dQw4w9WgXcQ',
-        title: 'Core Concepts & Solved Practice Problems',
+        id: 'crashcourse_core',
+        title: `${query} - Visual Concepts & Core Principles`,
         channel: 'CrashCourse',
-        url: `https://www.youtube.com/results?search_query=${encodeURIComponent(query + ' tutorial')}`,
+        url: `https://www.youtube.com/results?search_query=${encodeURIComponent(query + ' CrashCourse')}`,
         thumbnail: 'https://images.unsplash.com/photo-1509062522246-3755977927d7?q=80&w=600&auto=format&fit=crop',
-        reason: 'Visual problem-solving and foundational masterclass.'
+        reason: 'High-energy visual explanations simplifying intricate academic topics.'
+      },
+      {
+        id: 'ted_ed_core',
+        title: `${query} - Deep Dive & Conceptual Inquiries`,
+        channel: 'TED-Ed',
+        url: `https://www.youtube.com/results?search_query=${encodeURIComponent(query + ' TED-Ed')}`,
+        thumbnail: 'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?q=80&w=600&auto=format&fit=crop',
+        reason: 'Engaging educational animation exploring foundational principles and real-world impact.'
       }
     ];
   }

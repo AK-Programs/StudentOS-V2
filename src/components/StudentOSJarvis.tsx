@@ -2,10 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Mic, MicOff, Send, Volume2, Sparkles, Sliders, Users, 
   BarChart3, Award, Settings, Terminal, Play, RotateCcw, 
-  Layers, Plus, Trash2, CheckCircle, RefreshCw, X, Square, BookOpen, FileText, HelpCircle, Layout, Search, Globe, PenTool
+  Layers, Plus, Trash2, CheckCircle, RefreshCw, X, Square, BookOpen, FileText, HelpCircle, Layout, Search, Globe, PenTool, ExternalLink
 } from 'lucide-react';
 import { GlassyVideoCarousel, EducationalVideoItem } from './ui/GlassyVideoCarousel';
 import { Orion3DOrb } from './ui/Orion3DOrb';
+import { Orion3DPrismBadge } from './ui/Orion3DPrismBadge';
 import { supabase } from '../lib/supabase';
 import { fetchAllSupabaseUsers } from '../lib/supabaseUsers';
 import { createCompetition, createSchoolEvent, createClub } from '../lib/supabaseLife';
@@ -45,8 +46,10 @@ interface StudentOSJarvisProps {
 
 const parseInlineMarkdown = (text: string) => {
   if (!text) return '';
-  const parts = text.split(/(\*\*.*?\*\*|\*.*?\*|`.*?`|\[.*?\]\(.*?\))/g);
+  // Match markdown links [label](url), bare URLs https?://..., bold, italics, inline code
+  const parts = text.split(/(\*\*.*?\*\*|\*.*?\*|`.*?`|\[.*?\]\(.*?\)|\bhttps?:\/\/[^\s<)]+)/g);
   return parts.map((part, index) => {
+    if (!part) return null;
     if (part.startsWith('**') && part.endsWith('**')) {
       return <strong key={index} className="font-extrabold text-white">{part.slice(2, -2)}</strong>;
     }
@@ -54,17 +57,41 @@ const parseInlineMarkdown = (text: string) => {
       return <em key={index} className="italic text-slate-300">{part.slice(1, -1)}</em>;
     }
     if (part.startsWith('`') && part.endsWith('`')) {
-      return <code key={index} className="px-1.5 py-0.5 bg-black/40 text-indigo-350 rounded font-mono text-[10px]">{part.slice(1, -1)}</code>;
+      return <code key={index} className="px-1.5 py-0.5 bg-black/40 text-indigo-300 rounded font-mono text-[10px]">{part.slice(1, -1)}</code>;
     }
     if (part.startsWith('[') && part.includes('](')) {
       const match = part.match(/\[(.*?)\]\((.*?)\)/);
       if (match) {
         return (
-          <a key={index} href={match[2]} target="_blank" rel="noreferrer" className="text-indigo-400 hover:underline font-bold">
-            {match[1]}
+          <a
+            key={index}
+            href={match[2]}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-indigo-400 hover:text-indigo-300 underline font-bold inline-flex items-center gap-1 group/link"
+            title={`Open ${match[1]} in new tab`}
+          >
+            <span>{match[1]}</span>
+            <ExternalLink className="w-3 h-3 inline-block shrink-0 opacity-70 group-hover/link:opacity-100" />
           </a>
         );
       }
+    }
+    if (part.startsWith('http://') || part.startsWith('https://')) {
+      const cleanUrl = part.replace(/[.,;!?]+$/, '');
+      return (
+        <a
+          key={index}
+          href={cleanUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-teal-400 hover:text-teal-300 underline font-semibold break-all inline-flex items-center gap-1 group/link"
+          title={`Open ${cleanUrl} in new tab`}
+        >
+          <span>{cleanUrl.length > 45 ? cleanUrl.slice(0, 42) + '...' : cleanUrl}</span>
+          <ExternalLink className="w-3 h-3 inline-block shrink-0 opacity-70 group-hover/link:opacity-100" />
+        </a>
+      );
     }
     return part;
   });
@@ -788,11 +815,16 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
         cmdLow.includes('search about ') ||
         cmdLow.includes('search the web for ') ||
         cmdLow.includes('search online for ') ||
-        cmdLow.includes('look up information about ')
+        cmdLow.includes('look up information about ') ||
+        cmdLow.includes('newton') ||
+        cmdLow.includes('laws class 8') ||
+        cmdLow.includes('video about') ||
+        cmdLow.startsWith('find a video')
       );
 
       if (isSearchQuery) {
         let queryStr = command
+          .replace(/^(?:find|show|get|recommend|suggest|watch)?\s*(?:a\s+)?(?:videos?|clips?)\s*(?:about|for|on|regarding)?\s*/gi, '')
           .replace(/^search\s+(about|for|the\s+web\s+for|online\s+for)?\s*/gi, '')
           .replace(/^look\s+up\s+(information\s+about|info\s+about)?\s*/gi, '')
           .replace(/^find\s+information\s+about\s*/gi, '')
@@ -866,7 +898,7 @@ Rules:
 }`;
 
       try {
-        const response = await fetch('/api/ai/chat', {
+        const response = await fetch('/api/ai/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -876,6 +908,7 @@ Rules:
             mode: 'explanatory',
             taskType: 'orion_command',
             webSearchMode: 'auto',
+            stream: true,
             history: historyItems.map(item => ({ role: 'user', content: item.prompt })).flatMap(u => [u, { role: 'assistant', content: '...' }]).slice(-6),
             ragContext: ragContext,
             userId: currentUser?.uid || 'guest',
@@ -887,18 +920,83 @@ Rules:
           const errData = await response.json().catch(() => ({}));
           throw new Error(errData.message || errData.error || `HTTP ${response.status}`);
         }
-        const data = await response.json();
-        if (data.error) throw new Error(data.error);
-        aiText = data.text || '';
-        if (data.model) setOrionModelUsed(data.model);
-        if (Array.isArray(data.webSources) && data.webSources.length > 0) {
-          setSearchSources(
-            data.webSources.map((s: any) => ({
-              title: s.title || s.domain || 'Web Source',
-              uri: s.url || s.uri || '#',
-              published_source: s.sourceType === 'academic' ? `Academic · ${s.domain}` : s.domain
-            }))
-          );
+
+        if (response.body) {
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          let accumulated = '';
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              const cleanLine = line.trim();
+              if (!cleanLine.startsWith('data:')) continue;
+              const jsonStr = cleanLine.replace(/^data:\s*/, '').trim();
+              if (!jsonStr || jsonStr === '[DONE]') continue;
+
+              try {
+                const parsed = JSON.parse(jsonStr);
+                if (parsed.type === 'token' && typeof parsed.token === 'string') {
+                  accumulated += parsed.token;
+                  let display = accumulated;
+                  if (display.includes('"responseText":')) {
+                    const match = display.match(/"responseText":\s*"((?:[^"\\]|\\.)*)/);
+                    if (match && match[1]) {
+                      display = match[1]
+                        .replace(/\\n/g, '\n')
+                        .replace(/\\"/g, '"')
+                        .replace(/\\\\/g, '\\')
+                        .replace(/\\t/g, '\t');
+                    }
+                  } else if (display.startsWith('{')) {
+                    display = '⚡ Synthesizing response in real-time...';
+                  }
+                  setJarvisFeedback(display);
+                } else if (parsed.type === 'done') {
+                  if (parsed.text) aiText = parsed.text;
+                  if (parsed.modelUsed) setOrionModelUsed(parsed.modelUsed);
+                  if (Array.isArray(parsed.videos) && parsed.videos.length > 0) {
+                    setSearchVideos(parsed.videos);
+                  }
+                  if (Array.isArray(parsed.webSources) && parsed.webSources.length > 0) {
+                    setSearchSources(
+                      parsed.webSources.map((s: any) => ({
+                        title: s.title || s.domain || 'Web Source',
+                        uri: s.url || s.uri || '#',
+                        published_source: s.sourceType === 'academic' ? `Academic · ${s.domain}` : s.domain
+                      }))
+                    );
+                  }
+                } else if (parsed.type === 'meta') {
+                  if (parsed.modelUsed) setOrionModelUsed(parsed.modelUsed);
+                  if (Array.isArray(parsed.webSources) && parsed.webSources.length > 0) {
+                    setSearchSources(
+                      parsed.webSources.map((s: any) => ({
+                        title: s.title || s.domain || 'Web Source',
+                        uri: s.url || s.uri || '#',
+                        published_source: s.sourceType === 'academic' ? `Academic · ${s.domain}` : s.domain
+                      }))
+                    );
+                  }
+                  if (Array.isArray(parsed.videos) && parsed.videos.length > 0) {
+                    setSearchVideos(parsed.videos);
+                  }
+                }
+              } catch {
+                // Ignore partial JSON chunk parse issues
+              }
+            }
+          }
+
+          if (!aiText && accumulated) {
+            aiText = accumulated;
+          }
         }
         import('../lib/gamification').then(({ awardStudentXP }) => {
           awardStudentXP(currentUser, 'use_ai_study');
@@ -1048,6 +1146,74 @@ Rules:
       }
     }
 
+    // 0. Immediate Navigation Intercept with 3D Orb Transition
+    if (textLow.startsWith('open ') || textLow.startsWith('go to ') || textLow.startsWith('launch ') || textLow.startsWith('switch to ') || textLow.includes('material hub') || textLow.includes('materials hub')) {
+      if (textLow.includes('material') || textLow.includes('hub')) {
+        triggerNavTransition('Material Hub', 'materials');
+        setIsProcessing(false);
+        return;
+      }
+      if (textLow.includes('attendance')) {
+        triggerNavTransition('Attendance', 'attendance_manager');
+        setIsProcessing(false);
+        return;
+      }
+      if (textLow.includes('homework')) {
+        triggerNavTransition('Homework', 'homework');
+        setIsProcessing(false);
+        return;
+      }
+      if (textLow.includes('whiteboard')) {
+        triggerNavTransition('Whiteboard', 'whiteboard');
+        setIsProcessing(false);
+        return;
+      }
+      if (textLow.includes('study')) {
+        triggerNavTransition('Study', 'study_hub');
+        setIsProcessing(false);
+        return;
+      }
+      if (textLow.includes('notice') || textLow.includes('announcement')) {
+        triggerNavTransition('Notices', 'notice_viewer');
+        setIsProcessing(false);
+        return;
+      }
+      if (textLow.includes('dashboard') || textLow.includes('home')) {
+        triggerNavTransition('Dashboard', 'dashboard');
+        setIsProcessing(false);
+        return;
+      }
+    }
+
+    // 0.5. Immediate Educational Video Intent Intercept
+    const isExplicitVideoQuery = (
+      textLow.includes('find a video') ||
+      textLow.includes('show a video') ||
+      textLow.includes('video about') ||
+      textLow.includes('videos for') ||
+      textLow.includes('educational video') ||
+      textLow.startsWith('video ') ||
+      /\b(?:find|show|get|recommend|suggest|give|watch)?\s*(?:a\s+)?videos?\s*(?:about|on|for|regarding)?\b/i.test(textLow)
+    );
+
+    if (isExplicitVideoQuery) {
+      const cleanVideoQuery = textLow
+        .replace(/\b(?:find|show|get|recommend|suggest|give|watch)?\s*(?:a\s+)?videos?\s*(?:about|on|for|regarding)?\s*/gi, '')
+        .replace(/[?.!]+$/, '')
+        .trim();
+      const finalTopic = cleanVideoQuery || textToParse;
+      await handleRunInternetSearch(finalTopic);
+      setIsProcessing(false);
+      return;
+    }
+
+    // 0.6. Direct Educational Search Query Intercept
+    if (textLow.includes('newton') && (textLow.includes('law') || textLow.includes('class 8') || textLow.includes('physics'))) {
+      await handleRunInternetSearch(textToParse);
+      setIsProcessing(false);
+      return;
+    }
+
     // 2. Resolve Context Pronouns ("it", "that") using lastEntityRef
     if ((textLow.includes(' it ') || textLow.endsWith(' it') || textLow.includes(' that ')) && lastEntityRef.current) {
       textToParse = textToParse.replace(/\b(it|that)\b/gi, lastEntityRef.current.title);
@@ -1194,6 +1360,10 @@ Rules:
           }))
         );
       }
+      const resultVideos = pipelineRes.results?.find(r => r.data?.videos)?.data?.videos;
+      if (Array.isArray(resultVideos) && resultVideos.length > 0) {
+        setSearchVideos(resultVideos);
+      }
     } else if (mappedAction === 'generate_notes') {
       setActiveTab('notes');
       handleGenerateNotes(targetVal);
@@ -1264,11 +1434,11 @@ Rules:
   return (
     <div className="flex flex-col justify-between overflow-hidden relative transition-all duration-300 h-full p-3 sm:p-6">
       {navigatingTransition && (
-        <div className="absolute inset-0 z-50 bg-slate-950/95 backdrop-blur-2xl flex flex-col items-center justify-center space-y-6 animate-fadeIn">
+        <div className="fixed inset-0 z-[9999] bg-slate-950/95 backdrop-blur-2xl flex flex-col items-center justify-center space-y-6 animate-fadeIn">
           <Orion3DOrb isProcessing={true} size={160} />
           <div className="text-center space-y-2">
             <h3 className="text-2xl font-black text-white font-display uppercase tracking-widest animate-pulse">
-              Opening {navigatingTransition.title}...
+              Opening {navigatingTransition.title}
             </h3>
             <p className="text-xs text-indigo-400 font-mono">Orion Neural Navigation Matrix Active</p>
           </div>
@@ -1388,28 +1558,124 @@ Rules:
         {/* A. GENERAL DOCK (ACTIVE LISTEN / INSTRUCTIONS) */}
         <div className="smart-glass p-4 rounded-2xl bg-slate-950/45 border border-indigo-500/10 flex items-start gap-3 relative overflow-hidden backdrop-blur-md">
           {/* Neon background light flare */}
-          <div className="absolute right-0 top-0 h-20 w-20 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none" />
+          <div className="absolute right-0 top-0 h-24 w-24 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
           
-          <div className="h-8 w-8 rounded-full bg-indigo-500/25 border border-indigo-400/35 flex items-center justify-center text-indigo-300 mt-0.5 flex-shrink-0 animate-pulse">
-            <Volume2 className="w-4 h-4" />
+          <div className="flex items-center justify-center shrink-0 mt-0.5">
+            <Orion3DPrismBadge size={34} />
           </div>
-          <div className="space-y-1.5 flex-1 select-text">
+          <div className="space-y-2 flex-1 min-w-0 select-text">
             <div className="flex items-center justify-between gap-2 flex-wrap">
-              <span className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest font-mono">Orion Guidance & Intelligence System</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black text-indigo-300 uppercase tracking-widest font-mono">Orion Neural Intelligence</span>
+                <span className="text-[9px] px-2 py-0.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-mono font-bold">Live AI</span>
+              </div>
               {orionModelUsed && (
                 <span className="text-[9px] px-2 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 font-mono">
                   ⚡ {orionModelUsed.split('/').pop()}
                 </span>
               )}
             </div>
-            <div className="text-xs text-slate-200 leading-relaxed font-sans">
+            <div className="text-xs sm:text-sm text-slate-200 leading-relaxed font-sans">
               {renderOrionMarkdown(jarvisFeedback)}
             </div>
+            {searchVideos && searchVideos.length > 0 && (
+              <div className="pt-2">
+                <GlassyVideoCarousel videos={searchVideos} queryTopic={searchQuery} />
+              </div>
+            )}
+            {searchSources && searchSources.length > 0 && (
+              <div className="pt-3 border-t border-white/5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-teal-400 font-extrabold uppercase font-mono tracking-widest flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5" />
+                    Verified Grounding Sources ({searchSources.length})
+                  </span>
+                  <span className="text-[9px] text-slate-500 font-mono">Click to open in new tab</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {searchSources.slice(0, 4).map((src, idx) => (
+                    <a
+                      key={idx}
+                      href={src.uri}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="group flex items-center justify-between p-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-850 border border-white/5 hover:border-indigo-500/40 transition-all text-left shadow-sm hover:scale-[1.01]"
+                      title={`Open ${src.title} in new tab`}
+                    >
+                      <div className="overflow-hidden pr-2">
+                        <span className="text-xs font-semibold text-slate-200 group-hover:text-white truncate block">
+                          {src.title}
+                        </span>
+                        <span className="text-[10px] text-slate-400 truncate block">
+                          {src.published_source || 'Reference'}
+                        </span>
+                      </div>
+                      <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400 shrink-0 transition-colors" />
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
             {orionMathWidget && (
               <div className="pt-2">
                 <InteractiveMathWidget widgetType={orionMathWidget} />
               </div>
             )}
+            {/* Quick One-Tap Navigation Shortcuts */}
+            <div className="pt-2 border-t border-white/5">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[9px] font-mono text-slate-400 font-bold uppercase">Jump to:</span>
+                <button
+                  type="button"
+                  onClick={() => triggerNavTransition('Material Hub', 'materials')}
+                  className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] font-bold text-slate-300 hover:text-white border border-white/5 transition-all cursor-pointer"
+                >
+                  📂 Material Hub
+                </button>
+                <button
+                  type="button"
+                  onClick={() => triggerNavTransition('Attendance', 'attendance_manager')}
+                  className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] font-bold text-slate-300 hover:text-white border border-white/5 transition-all cursor-pointer"
+                >
+                  📋 Attendance
+                </button>
+                <button
+                  type="button"
+                  onClick={() => triggerNavTransition('Homework', 'homework')}
+                  className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] font-bold text-slate-300 hover:text-white border border-white/5 transition-all cursor-pointer"
+                >
+                  📝 Homework
+                </button>
+                <button
+                  type="button"
+                  onClick={() => triggerNavTransition('Whiteboard', 'whiteboard')}
+                  className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] font-bold text-slate-300 hover:text-white border border-white/5 transition-all cursor-pointer"
+                >
+                  🎨 Whiteboard
+                </button>
+                <button
+                  type="button"
+                  onClick={() => triggerNavTransition('Study', 'study_hub')}
+                  className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] font-bold text-slate-300 hover:text-white border border-white/5 transition-all cursor-pointer"
+                >
+                  📚 Study
+                </button>
+                <button
+                  type="button"
+                  onClick={() => triggerNavTransition('Notices', 'notice_viewer')}
+                  className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] font-bold text-slate-300 hover:text-white border border-white/5 transition-all cursor-pointer"
+                >
+                  📢 Notices
+                </button>
+                <button
+                  type="button"
+                  onClick={() => triggerNavTransition('Dashboard', 'dashboard')}
+                  className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] font-bold text-slate-300 hover:text-white border border-white/5 transition-all cursor-pointer"
+                >
+                  📊 Dashboard
+                </button>
+              </div>
+            </div>
             {isListening && (
               <div className="flex items-center gap-1 bg-red-500/10 text-red-400 border border-red-500/20 py-1 px-2.5 rounded-lg text-[10px] font-bold w-fit animate-pulse font-mono">
                 <span className="h-1.5 w-1.5 bg-red-500 rounded-full animate-ping" />

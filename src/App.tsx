@@ -7387,6 +7387,28 @@ ${roleLabel}: ${userQuery}`;
 
                 return (
                   <>
+                    {/* ORION COPILOT BUTTON — GLOBAL FOR ALL ROLES */}
+                    {matchesFilter('Orion AI Copilot Assistant', 'orion ai copilot voice assistant 3d') && (
+                      <div className="pb-1">
+                        <button
+                          type="button"
+                          onClick={() => setIsJarvisActive(true)}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider bg-gradient-to-r from-indigo-600/35 via-violet-600/35 to-teal-600/25 hover:from-indigo-600/60 hover:to-teal-600/50 text-white border border-indigo-400/40 shadow-lg shadow-indigo-500/15 transition-all cursor-pointer group"
+                          title="Open Orion AI Copilot & School Assistant"
+                        >
+                          <div className="w-5 h-5 rounded-lg bg-indigo-500/30 border border-indigo-300/50 flex items-center justify-center text-cyan-300 group-hover:scale-110 transition-transform shrink-0">
+                            <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                          </div>
+                          {sidebarOpen && (
+                            <div className="flex items-center justify-between flex-1 min-w-0">
+                              <span className="truncate font-black tracking-wider text-white">Orion</span>
+                              <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-indigo-500/30 text-indigo-200 font-mono font-extrabold uppercase">3D</span>
+                            </div>
+                          )}
+                        </button>
+                      </div>
+                    )}
+
                     {/* SECTION 1: STUDY SUITE */}
                     <div className="space-y-1">
                       {sidebarOpen && (
@@ -7406,17 +7428,6 @@ ${roleLabel}: ${userQuery}`;
 
                       {(!collapsedSidebarSections['study'] || !sidebarOpen || q.length > 0) && (
                         <div className="space-y-1">
-                          <button
-                            type="button"
-                            onClick={() => setIsJarvisActive(true)}
-                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider bg-gradient-to-r from-indigo-600/30 via-violet-600/30 to-teal-600/20 hover:from-indigo-600/50 hover:to-teal-600/40 text-white border border-indigo-500/40 shadow-lg shadow-indigo-500/10 transition-all cursor-pointer group mb-1.5"
-                            title="Open Orion AI Copilot & Assistant"
-                          >
-                            <div className="w-5 h-5 rounded-lg bg-indigo-500/30 border border-indigo-400/50 flex items-center justify-center text-indigo-300 group-hover:scale-110 transition-transform shrink-0">
-                              <Sparkles className="w-3.5 h-3.5 animate-pulse" />
-                            </div>
-                            {sidebarOpen && <span className="truncate">Orion</span>}
-                          </button>
                           {!presentationMode && matchesFilter('Dashboard Overview', 'home summary stats') && (
                             <button
                               type="button"
@@ -12723,6 +12734,14 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                         >
                           <Plus className="w-3.5 h-3.5" />
                           <span className="hidden sm:inline">New</span>
+                        </button>
+                        <button
+                          onClick={() => setIsJarvisActive(true)}
+                          className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white flex items-center gap-1.5 text-xs font-black uppercase tracking-wider transition-all shadow-md active:scale-95 cursor-pointer"
+                          title="Open Orion AI Copilot"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-cyan-300 animate-pulse" />
+                          <span>Orion</span>
                         </button>
                       </div>
 

@@ -272,7 +272,9 @@ export const CONSEQUENTIAL_ACTIONS: OrionActionType[] = [
   'delete_assignment',
   'delete_homework',
   'delete_item',
-  'create_calendar_event'
+  'create_calendar_event',
+  'mark_attendance',
+  'start_attendance'
 ];
 
 export const DESTRUCTIVE_ACTIONS: OrionActionType[] = [
@@ -326,6 +328,7 @@ export function buildConsequentialActionPreview(actionObj: OrionAction): OrionDr
   else if (act.includes('meeting')) badgeLabel = 'Draft StudentOS Meet';
   else if (act.includes('event') || act.includes('calendar')) badgeLabel = 'Draft Calendar Event';
   else if (act.includes('competition')) badgeLabel = 'Draft Competition';
+  else if (act === 'mark_attendance' || act === 'start_attendance') badgeLabel = 'Classroom Attendance Submission';
   else if (isDestructiveAction(act)) badgeLabel = 'Permanent Deletion';
 
   return {
@@ -1926,7 +1929,11 @@ export async function executeOrionActionPipeline(
       const targetTitle = draftPreview.title;
       const promptText = isDestructiveAction(act.action)
         ? `⚠️ Confirm permanent deletion of "${targetTitle}" from StudentOS database?`
-        : `I drafted this ${draftPreview.badgeLabel.replace(/^Draft\s+/i, '')} for ${draftPreview.targetAudience}: "${targetTitle}". Please confirm to execute.`;
+        : (act.action === 'mark_attendance' || act.action === 'start_attendance')
+          ? `📋 Confirm submitting classroom attendance for ${draftPreview.targetAudience}?`
+          : (act.action === 'notify_all' || act.action === 'notify_users' || act.action === 'create_broadcast')
+            ? `📢 Confirm sending notification/broadcast to ${draftPreview.targetAudience}: "${targetTitle}"?`
+            : `I drafted this ${draftPreview.badgeLabel.replace(/^Draft\s+/i, '')} for ${draftPreview.targetAudience}: "${targetTitle}". Please confirm to execute.`;
 
       pendingConfirmationData = {
         action: act.action,
@@ -2103,6 +2110,10 @@ export async function executeOrionActionPipeline(
               action: 'web_search',
               message: `Retrieved ${sources.length} live web sources`,
               summaryText: summaryBody,
+              data: {
+                sources,
+                videos: searchData.videos || []
+              },
               structuredCard: {
                 title: `🌐 Web Intelligence: ${searchQuery.slice(0, 48)}`,
                 subtitle: 'External Web Sources vs. Internal StudentOS Context',
