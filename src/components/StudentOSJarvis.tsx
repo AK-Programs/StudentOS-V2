@@ -556,7 +556,6 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     const cleanQ = query.trim();
     setSearching(true);
     setSearchQuery(cleanQ);
-    setActiveJarvisSection('search');
     setGeneratedNotesContent(null);
     setIsNotesSaved(false);
     setSearchResults(`🔍 **Searching verified web & academic sources for "${cleanQ}"...**`);
@@ -614,7 +613,6 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     if (!query || !query.trim()) return;
     setSearching(true);
     setSearchQuery(query);
-    setActiveJarvisSection('search');
     try {
       // 1. Local database query
       const { data: matchedMaterials, error } = await supabase
@@ -663,7 +661,6 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     if (!topic || !topic.trim()) return;
     setSearching(true);
     setSearchQuery(topic);
-    setActiveJarvisSection('search');
     try {
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
@@ -703,7 +700,6 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     if (!topic || !topic.trim()) return;
     setSearching(true);
     setSearchQuery(topic);
-    setActiveJarvisSection('search');
     
     const typeLabels = {
       detailed_notes: 'Comprehensive Lecture Notes',
@@ -1766,45 +1762,61 @@ Rules:
             {/* Bottom: Videos Carousel & Answers */}
             <div className="space-y-4 pt-2">
               {searchVideos && searchVideos.length > 0 && (
-                <div className="p-4 rounded-2xl bg-slate-900/80 border border-teal-500/30 shadow-lg space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-teal-300 uppercase tracking-wider font-mono flex items-center gap-1.5">
+                <div className="p-5 rounded-2xl bg-slate-900/90 border border-teal-500/40 shadow-2xl space-y-3">
+                  <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                    <span className="text-xs font-bold text-teal-300 uppercase tracking-wider font-mono flex items-center gap-2">
                       <Video className="w-4 h-4 text-teal-400" />
-                      Verified Educational Videos ({searchVideos.length})
+                      Curated Educational Videos ({searchVideos.length})
                     </span>
+                    <span className="text-[10px] text-slate-400 font-mono">100% Verified Playable Links</span>
                   </div>
                   <GlassyVideoCarousel videos={searchVideos} queryTopic={searchQuery} />
                 </div>
               )}
 
-              {/* Answer Box */}
-              <div className="p-4 rounded-2xl bg-slate-900/60 border border-white/10 space-y-2">
-                <div className="text-xs text-slate-200 leading-relaxed font-sans">
-                  {renderOrionMarkdown(jarvisFeedback)}
+              {/* Orion Synthesis / Answer Box */}
+              {(searchResults || jarvisFeedback) && (
+                <div className="p-5 rounded-2xl bg-slate-900/80 border border-white/15 space-y-3 shadow-2xl">
+                  <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                    <span className="text-xs font-bold text-indigo-300 uppercase tracking-wider font-mono">
+                      ✨ Orion Synthesis & Guidance
+                    </span>
+                    {searchQuery && (
+                      <span className="text-[10px] bg-indigo-500/10 text-indigo-300 px-2 py-0.5 rounded font-mono">
+                        Topic: {searchQuery}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-sm text-slate-100 leading-relaxed font-sans max-h-[600px] overflow-y-auto custom-scrollbar pr-2 select-text">
+                    {renderOrionMarkdown(searchResults || jarvisFeedback)}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Grounding Sources */}
               {searchSources && searchSources.length > 0 && (
-                <div className="p-4 rounded-2xl bg-slate-900/60 border border-white/10 space-y-2">
-                  <span className="text-xs font-bold text-indigo-300 uppercase tracking-wider font-mono flex items-center gap-1.5">
-                    <Globe className="w-3.5 h-3.5 text-indigo-400" />
-                    Sources ({searchSources.length})
-                  </span>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="p-5 rounded-2xl bg-slate-900/70 border border-white/10 space-y-3">
+                  <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                    <span className="text-xs font-bold text-teal-400 uppercase tracking-wider font-mono flex items-center gap-2">
+                      <Globe className="w-4 h-4 text-teal-400" />
+                      Verified Grounding Sources ({searchSources.length})
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-mono">Click to open</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     {searchSources.map((src, idx) => (
                       <a
                         key={idx}
                         href={src.uri}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="p-2.5 rounded-xl bg-slate-950/80 hover:bg-slate-950 border border-white/5 hover:border-indigo-500/30 flex items-center justify-between transition-all"
+                        className="p-3 rounded-xl bg-slate-950/80 hover:bg-slate-950 border border-white/5 hover:border-indigo-500/40 flex items-center justify-between transition-all group"
                       >
                         <div className="overflow-hidden pr-2">
-                          <span className="text-xs font-medium text-slate-200 truncate block">{src.title}</span>
+                          <span className="text-xs font-semibold text-slate-200 group-hover:text-white truncate block">{src.title}</span>
                           <span className="text-[10px] text-slate-400 truncate block">{src.published_source || 'Web'}</span>
                         </div>
-                        <ExternalLink className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                        <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400 shrink-0" />
                       </a>
                     ))}
                   </div>
