@@ -10,7 +10,7 @@ import {
   Triangle, Minus, ChevronDown, Trash2, Sliders, Settings2, Plus, Copy,
   ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, ArrowUp, ArrowDown, Type, Sparkles,
   Undo2, Redo2, Image as ImageIcon, StickyNote, FileText, Box, Layers, Hand, RotateCcw, Eye, Tag, HelpCircle,
-  Play, Rotate3d, FolderOpen, Save, Upload, Cloud
+  Play, Rotate3d, FolderOpen, Save, Upload, Cloud, LogOut
 } from 'lucide-react';
 import { InteractiveThreeDViewer, Educational3DScene } from './InteractiveThreeDViewer';
 import { ThreeDLibraryAndRequestModal } from './ThreeDLibraryAndRequestModal';
