@@ -4,7 +4,7 @@
  * 
  * StudentOS Document & Attachment Extraction Engine
  * - Extracts text from PDF using PDF.js
- * - Fallbacks to Page 1 Canvas Image Rendering for image-based/scanned PDFs (e.g. DrainQA.pdf)
+ * - Fallbacks to Page 1 Canvas Image Slicing for tall or image-based PDFs (e.g. DrainQA.pdf)
  * - Extracts text from DOCX and PPTX using JSZip + XML parsing
  * - Extracts text from legacy DOC / PPT using binary text recovery
  * - Extracts text from plain text formats (MD, TXT, CSV, JSON)
@@ -23,6 +23,7 @@ export interface ExtractedAttachment {
   isImage: boolean;
   extractionError?: string;
   wasRenderedFromScannedPdf?: boolean;
+  imageChunks?: { name: string; dataUrl: string; cleanBase64: string; mimeType: string }[];
 }
 
 /**
@@ -67,10 +68,14 @@ export async function ensurePdfJsLoaded(): Promise<any> {
 }
 
 /**
- * Render Page 1 of a PDF to a PNG image using PDF.js canvas
- * - Capped scale/dimensions (max 2200px) so payload stays compact for Gemini multimodal processing
+ * Render Page 1 of a PDF to high-resolution PNG image chunks if the page is tall
+ * - Slices tall pages (aspectRatio > 1.6) into 2-4 horizontal image chunks
+ * - Keeps each chunk wide and legible (width ~900-1100px) instead of shrinking the whole page
  */
-export async function renderPdfPageToImage(pdfOrFile: any, fileRef?: File): Promise<{ dataUrl: string; cleanBase64: string; mimeType: string }> {
+export async function renderPdfPageToImages(
+  pdfOrFile: any,
+  fileRef?: File
+): Promise<{ chunks: { name: string; dataUrl: string; cleanBase64: string; mimeType: string }[] }> {
   let pdf = pdfOrFile;
   if (!pdf || typeof pdf.getPage !== 'function') {
     const pdfjsLib = await ensurePdfJsLoaded();
@@ -81,23 +86,27 @@ export async function renderPdfPageToImage(pdfOrFile: any, fileRef?: File): Prom
 
   const page = await pdf.getPage(1);
   const unscaledViewport = page.getViewport({ scale: 1.0 });
-  const maxDim = Math.max(unscaledViewport.width, unscaledViewport.height);
-  
-  let scale = 1.5;
-  if (maxDim * scale > 2200) {
-    scale = 2200 / maxDim;
+  const width = unscaledViewport.width || 1;
+  const height = unscaledViewport.height || 1;
+  const aspectRatio = height / width;
+
+  // Scale so text stays sharp and wide (target width ~ 900-1100px)
+  let scale = 2.0;
+  if (width * scale > 1200) {
+    scale = 1200 / width;
+  } else if (width * scale < 700) {
+    scale = 700 / width;
   }
-  if (scale < 0.5) scale = 0.5;
 
   const viewport = page.getViewport({ scale });
-  const canvas = document.createElement('canvas');
-  const context = canvas.getContext('2d');
+  const fullCanvas = document.createElement('canvas');
+  const context = fullCanvas.getContext('2d');
   if (!context) {
     throw new Error('Canvas 2D context unavailable for PDF rendering.');
   }
 
-  canvas.width = Math.floor(viewport.width);
-  canvas.height = Math.floor(viewport.height);
+  fullCanvas.width = Math.floor(viewport.width);
+  fullCanvas.height = Math.floor(viewport.height);
 
   const renderContext = {
     canvasContext: context,
@@ -106,14 +115,52 @@ export async function renderPdfPageToImage(pdfOrFile: any, fileRef?: File): Prom
 
   await page.render(renderContext).promise;
 
-  const dataUrl = canvas.toDataURL('image/png');
-  const cleanBase64 = dataUrl.replace(/^data:image\/png;base64,/, '');
+  // Determine number of horizontal chunks based on aspect ratio
+  const numChunks = aspectRatio > 4.5 ? 4 : aspectRatio > 2.2 ? 3 : aspectRatio > 1.6 ? 2 : 1;
+  const chunks: { name: string; dataUrl: string; cleanBase64: string; mimeType: string }[] = [];
+  const fileName = fileRef?.name || 'Document.pdf';
 
-  return {
-    dataUrl,
-    cleanBase64,
-    mimeType: 'image/png'
-  };
+  if (numChunks === 1) {
+    const dataUrl = fullCanvas.toDataURL('image/png');
+    const cleanBase64 = dataUrl.replace(/^data:image\/png;base64,/, '');
+    chunks.push({
+      name: fileName,
+      dataUrl,
+      cleanBase64,
+      mimeType: 'image/png'
+    });
+  } else {
+    const totalH = fullCanvas.height;
+    const chunkH = Math.floor(totalH / numChunks);
+    const overlap = 50; // Overlap to preserve text spanning chunk boundaries
+
+    for (let i = 0; i < numChunks; i++) {
+      const srcY = Math.max(0, i * chunkH - (i > 0 ? overlap : 0));
+      const srcH = Math.min(totalH - srcY, chunkH + (i > 0 ? overlap : 0) + (i < numChunks - 1 ? overlap : 0));
+
+      const chunkCanvas = document.createElement('canvas');
+      chunkCanvas.width = fullCanvas.width;
+      chunkCanvas.height = srcH;
+      const chunkCtx = chunkCanvas.getContext('2d');
+      if (chunkCtx) {
+        chunkCtx.drawImage(
+          fullCanvas,
+          0, srcY, fullCanvas.width, srcH,
+          0, 0, fullCanvas.width, srcH
+        );
+        const dataUrl = chunkCanvas.toDataURL('image/png');
+        const cleanBase64 = dataUrl.replace(/^data:image\/png;base64,/, '');
+        chunks.push({
+          name: `${fileName} (Part ${i + 1} of ${numChunks})`,
+          dataUrl,
+          cleanBase64,
+          mimeType: 'image/png'
+        });
+      }
+    }
+  }
+
+  return { chunks };
 }
 
 /**
@@ -346,7 +393,7 @@ export async function readImageFile(file: File): Promise<{ dataUrl: string; clea
 /**
  * Universal extractor dispatch:
  * - Text PDFs return clean extracted text
- * - Image-based/Scanned PDFs (< 20 text chars) automatically fall back to rendering Page 1 as an image
+ * - Image-based/Scanned PDFs (< 20 text chars) automatically fall back to rendering Page 1 as high-clarity horizontal image chunks
  */
 export async function extractAttachmentContent(file: File): Promise<ExtractedAttachment> {
   const lowerName = file.name.toLowerCase();
@@ -408,23 +455,29 @@ export async function extractAttachmentContent(file: File): Promise<ExtractedAtt
 
       const trimmedText = entireText.trim();
 
-      // Scanned or Image-based PDF (e.g. DrainQA.pdf) -> Fallback to rendering Page 1 as an image
+      // Scanned or Image-based PDF (e.g. DrainQA.pdf) -> Fallback to rendering Page 1 as horizontal image chunks
       if (!trimmedText || trimmedText.length < 20) {
-        console.log(`[PDF Engine] "${file.name}" has no text layer (${trimmedText.length} chars). Fallback rendering page 1 as an image...`);
+        console.log(`[PDF Engine] "${file.name}" has no text layer (${trimmedText.length} chars). Fallback rendering page 1 as images...`);
         try {
-          const renderedImg = await renderPdfPageToImage(pdf, file);
+          const rendered = await renderPdfPageToImages(pdf, file);
+          if (!rendered.chunks || rendered.chunks.length === 0) {
+            throw new Error('Image rendering produced empty output.');
+          }
+
+          const primary = rendered.chunks[0];
           return {
-            name: file.name,
+            name: primary.name,
             size: file.size,
             type: 'image/png',
-            content: renderedImg.dataUrl,
+            content: primary.dataUrl,
             mimeType: 'image/png',
-            base64Data: renderedImg.cleanBase64,
+            base64Data: primary.cleanBase64,
             isImage: true,
-            wasRenderedFromScannedPdf: true
+            wasRenderedFromScannedPdf: true,
+            imageChunks: rendered.chunks
           };
         } catch (renderErr: any) {
-          throw new Error(`PDF has no text layer and image rendering failed (${renderErr?.message || 'canvas error'}).`);
+          throw new Error(`PDF could not be read: no text layer and image render failed (${renderErr?.message || 'canvas error'}).`);
         }
       }
 

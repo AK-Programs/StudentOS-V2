@@ -264,7 +264,7 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
   return (
     <div className="space-y-6 max-w-7xl mx-auto animate-fadeIn w-full">
       {/* Top Main Banner & Sub-Navigation */}
-      <div className="smart-glass p-3.5 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl space-y-6 border border-white/10 relative overflow-hidden">
+      <div className="smart-glass p-3.5 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl space-y-6 border border-white/10 relative overflow-visible">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 relative z-10">
           <div>
             <div className="flex items-center gap-2">

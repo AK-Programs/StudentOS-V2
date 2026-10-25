@@ -5393,32 +5393,43 @@ Date: ${new Date().toLocaleDateString()}
         try {
           const extracted = await extractAttachmentContent(file);
           if (extracted.extractionError) {
-            showNotification(`❌ "${file.name}": ${extracted.extractionError}`);
+            showNotification(`❌ PDF could not be read: "${file.name}". ${extracted.extractionError}`);
             continue;
           }
 
           if (extracted.wasRenderedFromScannedPdf) {
-            showNotification(`This PDF has no text layer. Reading it as an image.`);
+            showNotification('This PDF has no text layer. Reading it as images.');
           } else {
             showNotification(`✓ File linked perfectly: "${file.name}"`);
           }
 
-          const payloadFile = {
-            name: extracted.name,
-            size: extracted.size,
-            type: extracted.type,
-            content: extracted.content,
-            base64Data: extracted.base64Data,
-            mimeType: extracted.mimeType,
-            isImage: extracted.isImage,
-            wasRenderedFromScannedPdf: extracted.wasRenderedFromScannedPdf
-          };
+          const itemsToAttach = (extracted.imageChunks && extracted.imageChunks.length > 0)
+            ? extracted.imageChunks.map(chk => ({
+                name: chk.name,
+                size: Math.round(file.size / extracted.imageChunks!.length),
+                type: 'image/png',
+                content: chk.dataUrl,
+                base64Data: chk.cleanBase64,
+                mimeType: 'image/png',
+                isImage: true,
+                wasRenderedFromScannedPdf: true
+              }))
+            : [{
+                name: extracted.name,
+                size: extracted.size,
+                type: extracted.type,
+                content: extracted.content,
+                base64Data: extracted.base64Data,
+                mimeType: extracted.mimeType,
+                isImage: extracted.isImage,
+                wasRenderedFromScannedPdf: extracted.wasRenderedFromScannedPdf
+              }];
 
           setAttachedFiles(prev => {
-            const updated = [...prev, payloadFile];
+            const updated = [...prev, ...itemsToAttach];
             setAiThreads(threads => threads.map(t => {
               if (t.id === targetThreadId) {
-                return { ...t, attachedFiles: updated, attachedFile: payloadFile };
+                return { ...t, attachedFiles: updated, attachedFile: itemsToAttach[0] };
               }
               return t;
             }));
