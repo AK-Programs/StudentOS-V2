@@ -38,6 +38,7 @@ import {
   formatMathematicalText,
   extractTopicTeachingIntent
 } from './lib/studentosAiEngine';
+import { extractAttachmentContent } from './lib/documentExtractor';
 import { AITopicTutorModal } from './components/syllabus/AITopicTutorModal';
 import { GamificationRewardToast, DashboardGamificationCard } from './components/StudentGamificationHub';
 import { 
@@ -361,6 +362,10 @@ export default function App() {
       return null;
     }
   });
+  const currentUserRef = useRef<UserProfile | null>(currentUser);
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
   const [firebaseLoading, setFirebaseLoading] = useState<boolean>(true);
   const [dataLoading, setDataLoading] = useState<boolean>(true);
   const [firebaseOnboardingUser, setFirebaseOnboardingUser] = useState<any>(null);
@@ -1211,6 +1216,17 @@ export default function App() {
   const [aiReasoningMode, setAiReasoningMode] = useState<boolean>(false);
   const [showScrollBottomBtn, setShowScrollBottomBtn] = useState<boolean>(false);
   const aiFileInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const el = aiFileInputRef.current;
+    if (!el) return;
+    const handleCancel = () => {
+      setTimeout(() => {
+        (window as any).__studentos_file_picker_active__ = false;
+      }, 1000);
+    };
+    el.addEventListener('cancel', handleCancel);
+    return () => el.removeEventListener('cancel', handleCancel);
+  }, []);
 
   function detectTeachingIntent(query: string): string | null {
     const lower = query.toLowerCase().trim();
@@ -1969,6 +1985,20 @@ export default function App() {
     }
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      // Byte Bug 1: While file picker is open or active, ignore auth session changes and do not restore another account
+      if ((window as any).__studentos_file_picker_active__) {
+        console.log('[Auth] File picker is active: ignoring onAuthStateChange event to keep active account locked.');
+        return;
+      }
+
+      // Keep currentUser locked to account A until the user explicitly switches or logs out
+      if (currentUserRef.current && !session && !(window as any).__studentos_explicit_logout__) {
+        console.log('[Auth] Ignoring empty session; keeping active account locked:', currentUserRef.current.name);
+        setFirebaseLoading(false);
+        setDataLoading(false);
+        return;
+      }
+
       const isAuthInProgress = window.location.hash.includes('access_token=') || 
                                window.location.search.includes('code=') || 
                                window.location.hash.includes('id_token=');
@@ -2108,6 +2138,14 @@ export default function App() {
         }
       } else {
         if (!isAuthInProgress) {
+          // Keep active account locked unless user explicitly clicked logout
+          if (currentUserRef.current && !(window as any).__studentos_explicit_logout__) {
+            console.log('[Auth] Preserving active account across transient empty session:', currentUserRef.current.name);
+            setFirebaseLoading(false);
+            setDataLoading(false);
+            return;
+          }
+
           const cachedUserStr = localStorage.getItem('s_os_user');
           let isDemoUser = false;
           if (cachedUserStr) {
@@ -2118,13 +2156,13 @@ export default function App() {
               }
             } catch (_) {}
           }
-          if (!isDemoUser) {
+          if (!isDemoUser && (window as any).__studentos_explicit_logout__) {
             setFirebaseOnboardingUser(null);
             setCurrentUser(null);
             localStorage.removeItem('s_os_user');
             setDataLoading(false);
           } else {
-            // Keep demo user active
+            // Keep user active
             setFirebaseLoading(false);
             setDataLoading(false);
           }
@@ -2137,10 +2175,20 @@ export default function App() {
       }
     });
 
+    const handleWindowFocus = () => {
+      if ((window as any).__studentos_file_picker_active__) {
+        setTimeout(() => {
+          (window as any).__studentos_file_picker_active__ = false;
+        }, 1200);
+      }
+    };
+    window.addEventListener('focus', handleWindowFocus);
+
     return () => {
       clearTimeout(safetyTimer);
       subscription.unsubscribe();
       window.removeEventListener('message', handleAuthMessage);
+      window.removeEventListener('focus', handleWindowFocus);
     };
   }, []);
 
@@ -2574,10 +2622,7 @@ What can I clarify today?` }
     });
   }, [currentUser?.uid]);
 
-  const currentUserRef = useRef<UserProfile | null>(currentUser);
-  useEffect(() => {
-    currentUserRef.current = currentUser;
-  }, [currentUser]);
+
 
   // --- Supabase Realtime Sync Client ---
   useEffect(() => {
@@ -3504,6 +3549,7 @@ ${resultText}
 
   const handleLogout = async () => {
     try {
+      (window as any).__studentos_explicit_logout__ = true;
       await supabase.auth.signOut();
       localStorage.removeItem('s_os_user');
       localStorage.removeItem('s_os_active_tab');
@@ -5366,75 +5412,59 @@ ${pageText}
       }
     }
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      
-      // Limit file size to 15MB
-      if (file.size > 15 * 1024 * 1024) {
-        showNotification(`❌ File too large: "${file.name}" limits exceeded.`);
-        continue;
-      }
-      
-      showNotification(`Scanning attachment: "${file.name}"...`);
-      
-      try {
-        let contentText = '';
-        if (file.name.toLowerCase().endsWith('.pdf')) {
-          try {
-            contentText = await extractPDFText(file);
-          } catch (pdfErr: any) {
-            showNotification(`❌ PDF could not be read: ${pdfErr.message || pdfErr}`);
-            continue;
-          }
-        } else if (file.type.startsWith('image/')) {
-          try {
-            contentText = await readImageAsBase64(file);
-          } catch (imgErr) {
-            showNotification(`❌ Image could not be read.`);
-            continue;
-          }
-        } else if (
-          file.name.toLowerCase().endsWith('.md') ||
-          file.name.toLowerCase().endsWith('.txt') ||
-          file.name.toLowerCase().endsWith('.json') ||
-          file.name.toLowerCase().endsWith('.csv') ||
-          file.type.startsWith('text/')
-        ) {
-          contentText = await new Promise<string>((resolve, reject) => {
-            const r = new FileReader();
-            r.onload = (ev) => resolve(ev.target?.result as string || '');
-            r.onerror = () => reject(new Error('Reader error'));
-            r.readAsText(file);
-          });
-        } else {
-          contentText = `[Document Metadata - Name: ${file.name}, format support active, Type: ${file.type || 'Office File'}]`;
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        
+        // Limit file size to 15MB
+        if (file.size > 15 * 1024 * 1024) {
+          showNotification(`❌ File too large: "${file.name}" limits exceeded.`);
+          continue;
         }
+        
+        showNotification(`Scanning attachment: "${file.name}"...`);
+        
+        try {
+          const extracted = await extractAttachmentContent(file);
+          if (extracted.extractionError) {
+            showNotification(`❌ File could not be read: "${file.name}" (${extracted.extractionError})`);
+          }
 
-        const payloadFile = {
-          name: file.name,
-          size: file.size,
-          type: file.type || 'text/plain',
-          content: contentText
-        };
+          const payloadFile = {
+            name: extracted.name,
+            size: extracted.size,
+            type: extracted.type,
+            content: extracted.content,
+            base64Data: extracted.base64Data,
+            mimeType: extracted.mimeType,
+            isImage: extracted.isImage,
+            extractionError: extracted.extractionError
+          };
 
-        setAttachedFiles(prev => {
-          const updated = [...prev, payloadFile];
-          setAiThreads(threads => threads.map(t => {
-            if (t.id === targetThreadId) {
-              return { ...t, attachedFiles: updated, attachedFile: payloadFile };
-            }
-            return t;
-          }));
-          return updated;
-        });
+          setAttachedFiles(prev => {
+            const updated = [...prev, payloadFile];
+            setAiThreads(threads => threads.map(t => {
+              if (t.id === targetThreadId) {
+                return { ...t, attachedFiles: updated, attachedFile: payloadFile };
+              }
+              return t;
+            }));
+            return updated;
+          });
 
-        showNotification(`✓ File linked perfectly: "${file.name}"`);
-      } catch (err: any) {
-        showNotification(`❌ Upload failed: ${err.message || err}`);
+          if (!extracted.extractionError) {
+            showNotification(`✓ File linked perfectly: "${file.name}"`);
+          }
+        } catch (err: any) {
+          showNotification(`❌ File could not be read: "${file.name}"`);
+        }
       }
+    } finally {
+      setTimeout(() => {
+        (window as any).__studentos_file_picker_active__ = false;
+      }, 1000);
+      e.target.value = '';
     }
-    
-    e.target.value = '';
   };
 
   const handleRemoveAttachedFile = (fileName: string) => {
@@ -5677,29 +5707,45 @@ ${pageText}
       content: userQuery,
       files: currentAttachedFiles
     };
+
+    // Separate image attachments for real multimodal parts from document text
+    const imagePayload = currentAttachedFiles
+      .filter((file: any) => file.isImage || (file.type && file.type.startsWith('image/')) || /\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name))
+      .map((file: any) => ({
+        name: file.name,
+        mimeType: file.mimeType || file.type || 'image/jpeg',
+        data: (file.base64Data || (typeof file.content === 'string' ? file.content.replace(/^data:[^;]+;base64,/, '') : '')).trim()
+      }))
+      .filter(img => img.data && img.data.length > 0);
     
     let promptWithContext = userQuery;
     if (currentAttachedFiles.length > 0) {
-      const fileContextString = currentAttachedFiles.map(file => {
-        if (file.type.startsWith('image/')) {
-          return `[Attached Diagram/Image: ${file.name} (Base64 data url size ${(file.size / 1024).toFixed(1)} KB)]
-Image Data: ${file.content}`;
+      const fileContextString = currentAttachedFiles.map((file: any) => {
+        if (file.isImage || (file.type && file.type.startsWith('image/')) || /\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name)) {
+          return `[Attached Diagram/Image: ${file.name} (${(file.size / 1024).toFixed(1)} KB)]`;
+        } else if (file.extractionError) {
+          return `[Attached Document: ${file.name} (${(file.size / 1024).toFixed(1)} KB)]
+Status: The file content could not be read (${file.extractionError}).`;
         } else {
           return `[Attached Document: ${file.name} (${(file.size / 1024).toFixed(1)} KB)]
-Content:
+Content from ${file.name}:
 """
 ${file.content}
 """`;
         }
-      }).join('');
+      }).join('\n\n');
       
       let roleLabel = 'Student Inquiry';
       if (currentUser?.role) {
          roleLabel = currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1) + ' Inquiry';
       }
+      
+      const fileNamesList = currentAttachedFiles.map(f => `"${f.name}"`).join(', ');
       promptWithContext = `${fileContextString}
 
-${roleLabel}: ${userQuery}`;
+${roleLabel}: ${userQuery}
+
+[Directive: The student attached the following file(s): ${fileNamesList}. You MUST explicitly mention the file name(s) in your answer so the user can verify their attached study materials were read and referenced.]`;
     }
 
     const targetThreadId = activeThreadId;
@@ -5767,7 +5813,8 @@ ${roleLabel}: ${userQuery}`;
           userId: userIdKey,
           userRole: userRoleKey,
           modelOverride: aiModelOverride || undefined,
-          webSearchMode: aiWebSearchMode
+          webSearchMode: aiWebSearchMode,
+          images: imagePayload.length > 0 ? imagePayload : undefined
         },
         {
           signal: abortCtrl.signal,
@@ -13237,9 +13284,12 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => aiFileInputRef.current?.click()}
+                          onClick={() => {
+                            (window as any).__studentos_file_picker_active__ = true;
+                            aiFileInputRef.current?.click();
+                          }}
                           className="p-3 rounded-xl bg-slate-900 hover:bg-slate-850 border border-white/10 text-slate-400 hover:text-indigo-400 transition-all shrink-0 active:scale-95"
-                          title="Attach study files (PDF, DOCX, Images, Notes)"
+                          title="Attach study files (PDF, DOC, DOCX, PPT, PPTX, Images, Notes)"
                         >
                           <Paperclip className="w-4 h-4" />
                         </button>

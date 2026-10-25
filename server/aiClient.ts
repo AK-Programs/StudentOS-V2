@@ -61,6 +61,7 @@ export interface AICompletionOptions {
   persona?: string;
   contextLength?: number;
   reasoningMode?: boolean;
+  images?: { name?: string; mimeType: string; data: string }[];
 }
 
 // API Key Getters
@@ -393,17 +394,10 @@ export function extractStreamingToken(choice: any): string {
 function buildMessagesArray(
   systemInstruction: string,
   prompt: string,
-  history: { role: 'user' | 'assistant'; content: string }[] = []
+  history: { role: 'user' | 'assistant'; content: string }[] = [],
+  images?: { name?: string; mimeType: string; data: string }[]
 ): any[] {
-  let imageUrl: string | null = null;
   let cleanPrompt = prompt;
-
-  const imageMatch = prompt.match(/Image Data: (data:(image\/[a-zA-Z+.-]+);base64,([A-Za-z0-9+/=\s\r\n]+))/);
-  if (imageMatch) {
-    imageUrl = imageMatch[1].trim();
-    cleanPrompt = prompt.replace(/Image Data: data:image\/[a-zA-Z+.-]+;base64,[A-Za-z0-9+/=\s\r\n]+/, '[Attached Diagram/Image]');
-  }
-
   const messages: any[] = [];
   if (systemInstruction) {
     messages.push({ role: 'system', content: systemInstruction });
@@ -419,15 +413,42 @@ function buildMessagesArray(
     }
   }
 
-  messages.push({
-    role: 'user',
-    content: imageUrl
-      ? [
+  if (images && images.length > 0) {
+    const userContentParts: any[] = [
+      { type: 'text', text: cleanPrompt }
+    ];
+    for (const img of images) {
+      const dataUrl = img.data.startsWith('data:')
+        ? img.data
+        : `data:${img.mimeType || 'image/jpeg'};base64,${img.data}`;
+      userContentParts.push({
+        type: 'image_url',
+        image_url: { url: dataUrl }
+      });
+    }
+    messages.push({
+      role: 'user',
+      content: userContentParts
+    });
+  } else {
+    const imageMatch = prompt.match(/Image Data: (data:(image\/[a-zA-Z+.-]+);base64,([A-Za-z0-9+/=\s\r\n]+))/);
+    if (imageMatch) {
+      const imageUrl = imageMatch[1].trim();
+      cleanPrompt = prompt.replace(/Image Data: data:image\/[a-zA-Z+.-]+;base64,[A-Za-z0-9+/=\s\r\n]+/, '[Attached Diagram/Image]');
+      messages.push({
+        role: 'user',
+        content: [
           { type: 'text', text: cleanPrompt },
           { type: 'image_url', image_url: { url: imageUrl } }
         ]
-      : cleanPrompt
-  });
+      });
+    } else {
+      messages.push({
+        role: 'user',
+        content: cleanPrompt
+      });
+    }
+  }
 
   return messages;
 }
@@ -491,7 +512,8 @@ export async function generateAICompletionWithTelemetry(
     userRole,
     mode,
     persona,
-    contextLength
+    contextLength,
+    images
   } = options;
 
   const requestStart = Date.now();
@@ -509,7 +531,7 @@ export async function generateAICompletionWithTelemetry(
   let model = routing.model;
   let retries = 0;
 
-  const messages = buildMessagesArray(systemInstruction, prompt, history);
+  const messages = buildMessagesArray(systemInstruction, prompt, history, images);
   const isNaraOrComplex = routing.tier === 'complex' || provider === 'nara_router';
   const effectiveMaxTokens = isNaraOrComplex
     ? Math.max(maxTokens || 0, 16384)
@@ -533,8 +555,15 @@ export async function generateAICompletionWithTelemetry(
     (provider === 'ministral' && hasMinistralKey) ||
     (provider === 'apinex' && hasApinexKey);
 
-  if (gemini && (!providerKeyAvailable || modelOverride?.toLowerCase().includes('gemini'))) {
+  if (gemini && (!providerKeyAvailable || modelOverride?.toLowerCase().includes('gemini') || (images && images.length > 0))) {
     try {
+      const imageParts = (images || []).map(img => ({
+        inlineData: {
+          mimeType: img.mimeType || 'image/jpeg',
+          data: (img.data || '').replace(/^data:[^;]+;base64,/, '')
+        }
+      }));
+
       const contents = [
         ...history.slice(-8).map(h => ({
           role: h.role === 'assistant' ? 'model' : 'user',
@@ -542,7 +571,10 @@ export async function generateAICompletionWithTelemetry(
         })),
         {
           role: 'user',
-          parts: [{ text: prompt }]
+          parts: [
+            ...imageParts,
+            { text: prompt }
+          ]
         }
       ];
 
@@ -828,7 +860,8 @@ export async function streamAICompletion(
     userRole,
     mode,
     persona,
-    contextLength
+    contextLength,
+    images
   } = options;
 
   const requestStart = Date.now();
@@ -846,7 +879,7 @@ export async function streamAICompletion(
   let activeModel = routing.model;
   let retries = 0;
 
-  const messages = buildMessagesArray(systemInstruction, prompt, history);
+  const messages = buildMessagesArray(systemInstruction, prompt, history, images);
   const isNaraOrComplexStream = routing.tier === 'complex' || activeProvider === 'nara_router';
   const effectiveMaxTokens = isNaraOrComplexStream
     ? Math.max(maxTokens || 0, 12288)
@@ -872,9 +905,16 @@ export async function streamAICompletion(
     (activeProvider === 'ministral' && hasMinistralKey) ||
     (activeProvider === 'apinex' && hasApinexKey);
 
-  if (gemini && (!providerKeyAvailable || modelOverride?.toLowerCase().includes('gemini'))) {
+  if (gemini && (!providerKeyAvailable || modelOverride?.toLowerCase().includes('gemini') || (images && images.length > 0))) {
     try {
       callbacks.onMeta?.({ requestId, provider: 'gemini', model: 'gemini-2.5-flash', tier: routing.tier });
+      const imageParts = (images || []).map(img => ({
+        inlineData: {
+          mimeType: img.mimeType || 'image/jpeg',
+          data: (img.data || '').replace(/^data:[^;]+;base64,/, '')
+        }
+      }));
+
       const contents = [
         ...history.slice(-8).map(h => ({
           role: h.role === 'assistant' ? 'model' : 'user',
@@ -882,7 +922,10 @@ export async function streamAICompletion(
         })),
         {
           role: 'user',
-          parts: [{ text: prompt }]
+          parts: [
+            ...imageParts,
+            { text: prompt }
+          ]
         }
       ];
 

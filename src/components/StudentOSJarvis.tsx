@@ -1187,20 +1187,18 @@ Rules:
       }
     }
 
-    // 0.5. Immediate Educational Video Intent Intercept
+    // 0.5. Immediate Educational Video Intent Intercept (Routes strictly to /api/ai/search, never invents links)
     const isExplicitVideoQuery = (
-      textLow.includes('find a video') ||
-      textLow.includes('show a video') ||
-      textLow.includes('video about') ||
-      textLow.includes('videos for') ||
-      textLow.includes('educational video') ||
-      textLow.startsWith('video ') ||
+      textLow.includes('video') ||
+      textLow.includes('videos') ||
+      textLow.includes('youtube') ||
       /\b(?:find|show|get|recommend|suggest|give|watch)?\s*(?:a\s+)?videos?\s*(?:about|on|for|regarding)?\b/i.test(textLow)
     );
 
     if (isExplicitVideoQuery) {
       const cleanVideoQuery = textLow
         .replace(/\b(?:find|show|get|recommend|suggest|give|watch)?\s*(?:a\s+)?videos?\s*(?:about|on|for|regarding)?\s*/gi, '')
+        .replace(/\b(?:on|from|in)\s+youtube\b/gi, '')
         .replace(/[?.!]+$/, '')
         .trim();
       const finalTopic = cleanVideoQuery || textToParse;
@@ -1442,7 +1440,7 @@ Rules:
             <h3 className="text-2xl font-black text-white font-display uppercase tracking-widest animate-pulse">
               Opening {navigatingTransition.title}
             </h3>
-            <p className="text-xs text-indigo-400 font-mono">Orion Neural Navigation Matrix Active</p>
+            <p className="text-xs text-indigo-400 font-mono">Opening page</p>
           </div>
         </div>
       )}
@@ -2174,7 +2172,7 @@ Rules:
                   </div>
                   {searching && (
                     <span className="text-xs text-teal-400 font-bold animate-pulse flex items-center gap-2 font-mono bg-teal-500/10 px-3 py-1 rounded-full border border-teal-500/20">
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Querying Neural Net...
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Searching
                     </span>
                   )}
                 </div>

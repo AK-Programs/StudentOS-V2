@@ -470,7 +470,12 @@ function extractTextFromChoiceMessage(choice: any, rootData?: any): string {
   return '';
 }
 
-function buildChatMessages(systemPrompt: string | undefined, history: any[], prompt: string): any[] {
+function buildChatMessages(
+  systemPrompt: string | undefined,
+  history: any[],
+  prompt: string,
+  images?: { name?: string; mimeType: string; data: string }[]
+): any[] {
   const messages: any[] = [];
   if (systemPrompt) {
     messages.push({ role: 'system', content: systemPrompt });
@@ -483,7 +488,25 @@ function buildChatMessages(systemPrompt: string | undefined, history: any[], pro
       });
     }
   }
-  messages.push({ role: 'user', content: prompt });
+
+  if (images && images.length > 0) {
+    const userParts: any[] = [
+      { type: 'text', text: prompt }
+    ];
+    for (const img of images) {
+      const dataUrl = img.data.startsWith('data:')
+        ? img.data
+        : `data:${img.mimeType || 'image/jpeg'};base64,${img.data}`;
+      userParts.push({
+        type: 'image_url',
+        image_url: { url: dataUrl }
+      });
+    }
+    messages.push({ role: 'user', content: userParts });
+  } else {
+    messages.push({ role: 'user', content: prompt });
+  }
+
   return messages;
 }
 
@@ -1155,6 +1178,7 @@ async function callRoutedCompletion(
     endpointName?: string;
     mode?: string;
     contextLength?: number;
+    images?: { name?: string; mimeType: string; data: string }[];
   }
 ): Promise<{
   text: string;
@@ -1209,7 +1233,7 @@ async function callRoutedCompletion(
   }
 
   const start = Date.now();
-  const messages = buildChatMessages(systemPrompt, history, prompt);
+  const messages = buildChatMessages(systemPrompt, history, prompt, options?.images);
 
   const effectiveMaxTokens = options?.maxTokens
     ? Math.max(options.maxTokens, 300)
@@ -1301,6 +1325,7 @@ async function streamRoutedCompletion(
     maxTokens?: number;
     mode?: string;
     contextLength?: number;
+    images?: { name?: string; mimeType: string; data: string }[];
   },
   res: any
 ) {
@@ -1367,7 +1392,7 @@ async function streamRoutedCompletion(
   }
 
   const start = Date.now();
-  const messages = buildChatMessages(systemPrompt, history, prompt);
+  const messages = buildChatMessages(systemPrompt, history, prompt, options.images);
   const effectiveMaxTokens = options.maxTokens
     ? Math.max(options.maxTokens, 300)
     : (tier === 'fast' || tier === 'short' ? 1200 : 2048);
@@ -2256,7 +2281,8 @@ You MUST output valid raw JSON ONLY, with no markdown code blocks or surrounding
       taskType,
       contextLength: bodyContextLength,
       maxTokens,
-      stream = false
+      stream = false,
+      images
     } = body;
 
     if (!prompt) {
@@ -2266,6 +2292,9 @@ You MUST output valid raw JSON ONLY, with no markdown code blocks or surrounding
     const isStreaming = Boolean(stream || pathname.includes('/stream'));
 
     let systemPrompt = `You are StudentOS ${persona === 'orion' ? 'Orion Intelligence Layer' : 'AI Buddy'} (persona: ${persona}, grade: ${level}, mode: ${mode}). Provide clear, accurate, structured educational assistance.`;
+    if (persona === 'orion') {
+      systemPrompt += `\n\nVIDEO SAFETY RULE: When asked for videos or tutorials, NEVER invent, guess, or synthesize YouTube URLs or IDs (e.g. watch?v=...). Only present videos that are explicitly provided in verified web search results. If no verified video results are provided, state clearly: "No verified educational videos were found for this topic." Do not invent fake video links.`;
+    }
 
     const mathRegex = /\b(line|lines|angle|angles|triangle|triangles|equation|equations|geometry|algebra|graph|formula|theorem|pythagoras|trigonometry|calculus|derivative|integral|quadratic|linear|slope|parallel|perpendicular|polygon|circle)\b/i;
     if (mathRegex.test(prompt)) {
@@ -2307,7 +2336,8 @@ ${combinedContext}
           requestId,
           maxTokens,
           mode,
-          contextLength: effectiveContextLength
+          contextLength: effectiveContextLength,
+          images
         },
         res
       );
@@ -2328,7 +2358,8 @@ ${combinedContext}
           requestId,
           maxTokens,
           mode,
-          contextLength: effectiveContextLength
+          contextLength: effectiveContextLength,
+          images
         }
       );
 

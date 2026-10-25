@@ -334,6 +334,7 @@ export async function streamStudentOSAI(
     taskType?: string;
     dataRetrievalLatencyMs?: number;
     webSearchMode?: 'auto' | 'always' | 'force' | 'off';
+    images?: { name?: string; mimeType: string; data: string }[];
   },
   callbacks: {
     onStatus?: (status: {
@@ -1108,6 +1109,7 @@ export async function streamAIChatClient(
     userRole?: string;
     modelOverride?: string;
     webSearchMode?: 'auto' | 'always' | 'force' | 'off';
+    images?: { name?: string; mimeType: string; data: string }[];
   },
   options: {
     signal?: AbortSignal;

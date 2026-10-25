@@ -2442,7 +2442,8 @@ app.post(['/api/ai/chat', '/api/ai/chat/stream'], async (req, res) => {
     stream = false,
     taskType,
     webSearchMode = 'auto',
-    reasoningMode = false
+    reasoningMode = false,
+    images
   } = req.body || {};
 
   const isStreamingRequest = Boolean(stream || req.path.endsWith('/stream'));
@@ -2497,7 +2498,8 @@ app.post(['/api/ai/chat', '/api/ai/chat/stream'], async (req, res) => {
   } else if (persona === 'orion') {
     systemInstruction = `You are StudentOS Orion, the school-wide intelligence, organization, reporting, and automation layer for teachers, coordinators, and administrators.
     You analyze authorized StudentOS data, organize priorities, generate structured summaries/reports, and recommend or prepare safe actions.
-    Never claim an action was executed unless confirmed by the StudentOS backend.`;
+    Never claim an action was executed unless confirmed by the StudentOS backend.
+    VIDEO SAFETY RULE: When asked for videos or tutorials, NEVER invent, guess, or synthesize YouTube URLs or IDs (e.g. watch?v=...). Only present videos that are explicitly provided in verified web search results. If no verified video results are provided, state clearly: "No verified educational videos were found for this topic." Do not invent fake video links.`;
   }
 
   // Inject learning style mode
@@ -2645,7 +2647,8 @@ Do NOT fabricate current news, circulars, or live statistics. After stating that
           mode,
           persona,
           contextLength: combinedContext.length,
-          reasoningMode: Boolean(reasoningMode)
+          reasoningMode: Boolean(reasoningMode),
+          images
         },
         {
           onMeta: (meta) => {
@@ -2750,7 +2753,8 @@ ${searchRes.formattedContext}`;
         mode,
         persona,
         contextLength: combinedContext.length,
-        reasoningMode: Boolean(reasoningMode)
+        reasoningMode: Boolean(reasoningMode),
+        images
       });
       
       // Record rolling 24h usage log
