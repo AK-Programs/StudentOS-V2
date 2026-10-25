@@ -10005,7 +10005,7 @@ ${activeNote.content}`);
               {/* Tab: Performance Analytics (Unified Overview, Gradebook, Report Cards, and Attendance) */}
               {(activeTab === 'analytics' || activeTab === 'gradebook' || activeTab === 'report_cards') && (
                 <PerformanceAnalytics 
-                  key={currentUser?.uid || currentUser?.email || 'analytics'}
+                  key={`${currentUser?.uid || 'guest'}-${activeTab}`}
                   currentUser={currentUser} 
                   effectiveRole={effectiveRole} 
                   initialSubTab={activeTab === 'gradebook' ? 'gradebook' : activeTab === 'report_cards' ? 'report_cards' : 'overview'}

@@ -407,7 +407,7 @@ export default function DigitalGradebook({ currentUser, effectiveRole }: Digital
     const studentGpaPct = maxPossiblePoints > 0 ? Math.round((totalStudentPoints / maxPossiblePoints) * 100) : 0;
 
     return (
-      <div className="smart-glass p-3.5 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl space-y-4 sm:space-y-6 max-w-6xl mx-auto animate-fadeIn w-full">
+      <div className="smart-glass p-3.5 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl space-y-4 sm:space-y-6 w-full">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
             <div className="flex items-center gap-2">
@@ -502,7 +502,7 @@ export default function DigitalGradebook({ currentUser, effectiveRole }: Digital
 
   // TEACHER / ADMIN / COORDINATOR VIEW
   return (
-    <div className="smart-glass p-3.5 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl space-y-6 max-w-7xl mx-auto animate-fadeIn w-full">
+    <div className="smart-glass p-3.5 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl space-y-6 w-full">
       {/* Header Bar */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
@@ -550,14 +550,14 @@ export default function DigitalGradebook({ currentUser, effectiveRole }: Digital
       </div>
 
       {savedSuccess && (
-        <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold flex items-center gap-2 animate-fadeIn">
+        <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 shrink-0" />
           <span>Grades saved successfully! Marks are synchronized and accessible in student dashboards and report cards.</span>
         </div>
       )}
 
       {validationError && (
-        <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-bold flex items-center gap-2 animate-fadeIn">
+        <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-bold flex items-center gap-2">
           <AlertCircle className="w-4 h-4 shrink-0" />
           <span>{validationError}</span>
         </div>
@@ -833,7 +833,7 @@ export default function DigitalGradebook({ currentUser, effectiveRole }: Digital
 
       {/* MODAL: CREATE ASSESSMENT */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="w-full max-w-md bg-slate-900 border border-white/10 rounded-3xl p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <h4 className="text-lg font-black text-white">Create Assessment</h4>

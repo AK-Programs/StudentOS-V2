@@ -130,7 +130,7 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
 
   useEffect(() => {
     loadPerformanceData();
-  }, [currentUser, effectiveRole]);
+  }, [currentUser?.uid, effectiveRole]);
 
   // Derived Performance Metrics
   const metrics = useMemo(() => {
@@ -261,7 +261,14 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
   }, [gradeEntries, assessments, reportCards, attendanceRecords, isStudent, allStudentsCount]);
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto animate-fadeIn w-full">
+    <div className="space-y-6 w-full flex flex-col min-h-0">
+      {loading && gradeEntries.length === 0 && (
+        <div className="flex flex-col items-center justify-center p-20 space-y-4">
+          <RefreshCw className="w-10 h-10 text-indigo-500 animate-spin" />
+          <p className="text-slate-400 font-bold text-sm">Synchronizing Academic Analytics...</p>
+        </div>
+      )}
+
       {/* Top Main Banner & Sub-Navigation */}
       <div className="smart-glass p-3.5 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl space-y-6 border border-white/10 relative overflow-hidden">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 relative z-10">
@@ -363,7 +370,7 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
 
       {/* SUB-TAB 1: OVERVIEW & TRENDS */}
       {subTab === 'overview' && (
-        <div className="space-y-6 animate-fadeIn">
+        <div className="space-y-6">
           {/* Top Quick Metrics Stat Bar */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
             <div className="p-4 sm:p-5 bg-slate-900/80 border border-white/10 rounded-2xl text-center backdrop-blur-md">
@@ -535,23 +542,22 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
         </div>
       )}
 
-      {/* SUB-TAB 2: DIGITAL GRADEBOOK */}
       {subTab === 'gradebook' && (
-        <div className="animate-fadeIn">
+        <div>
           <DigitalGradebook currentUser={currentUser} effectiveRole={effectiveRole} />
         </div>
       )}
 
       {/* SUB-TAB 3: DIGITAL REPORT CARDS */}
       {subTab === 'report_cards' && (
-        <div className="animate-fadeIn">
+        <div>
           <DigitalReportCards currentUser={currentUser} effectiveRole={effectiveRole} />
         </div>
       )}
 
       {/* SUB-TAB 4: ATTENDANCE METRICS */}
       {subTab === 'attendance' && (
-        <div className="smart-glass p-3.5 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl space-y-6 border border-white/10 animate-fadeIn">
+        <div className="smart-glass p-3.5 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl space-y-6 border border-white/10">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div>
               <h3 className="text-xl sm:text-2xl font-black text-white tracking-tight">Institutional Attendance Analytics</h3>
