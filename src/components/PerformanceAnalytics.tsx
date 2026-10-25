@@ -3,7 +3,6 @@ import { UserProfile, UserRole, GradebookEntry, GradebookAssessment, ReportCard 
 import { supabase } from '../lib/supabase';
 import DigitalGradebook, { computeLetterGrade } from './DigitalGradebook';
 import DigitalReportCards from './DigitalReportCards';
-import { ProfessionalTabDropdown, TabDropdownOption } from './ProfessionalTabDropdown';
 import { 
   BarChart3, BookOpen, FileText, CalendarCheck, TrendingUp, Award, 
   CheckCircle2, AlertTriangle, Sparkles, PieChart, Users, ArrowUpRight,
@@ -264,7 +263,7 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
   return (
     <div className="space-y-6 max-w-7xl mx-auto animate-fadeIn w-full">
       {/* Top Main Banner & Sub-Navigation */}
-      <div className="smart-glass p-3.5 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl space-y-6 border border-white/10 relative overflow-visible">
+      <div className="smart-glass p-3.5 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl space-y-6 border border-white/10 relative overflow-hidden">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 relative z-10">
           <div>
             <div className="flex items-center gap-2">
@@ -298,50 +297,66 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
           </div>
         </div>
 
-        {/* Integrated Sub-Tabs Dropdown Navigation */}
-        <div className="relative z-20">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-2.5 bg-slate-950/70 border border-white/10 rounded-2xl">
-            <div className="w-full sm:max-w-md">
-              <ProfessionalTabDropdown
-                options={[
-                  {
-                    id: 'overview',
-                    label: 'Overview & Trends',
-                    icon: <TrendingUp className="w-4 h-4" />,
-                    description: isStudent ? 'GPA, subject metrics & trajectory' : 'Class averages & academic trends'
-                  },
-                  {
-                    id: 'gradebook',
-                    label: isStudent ? 'My Grades & Assessments' : 'Digital Gradebook',
-                    icon: <BookOpen className="w-4 h-4" />,
-                    badge: gradeEntries.length > 0 ? gradeEntries.length : undefined,
-                    description: isStudent ? 'Itemized marks & weighted evaluations' : 'Manage student grades and rubrics'
-                  },
-                  {
-                    id: 'report_cards',
-                    label: isStudent ? 'Official Report Card' : 'Term Report Cards',
-                    icon: <FileText className="w-4 h-4" />,
-                    badge: reportCards.length > 0 ? reportCards.length : undefined,
-                    description: 'Term performance, evaluations & verified remarks'
-                  },
-                  {
-                    id: 'attendance',
-                    label: 'Attendance Metrics',
-                    icon: <CalendarCheck className="w-4 h-4" />,
-                    description: 'Presence records, punctuality & excused sessions'
-                  }
-                ]}
-                selectedId={subTab}
-                onSelect={(id) => setSubTab(id as any)}
-                size="md"
-              />
-            </div>
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-white/5 rounded-xl border border-white/5 text-xs text-slate-300">
-              <span className="text-slate-500 font-medium">Active View:</span>
-              <span className="font-bold text-indigo-400 capitalize">
-                {subTab.replace('_', ' ')}
-              </span>
-            </div>
+        {/* Integrated Sub-Tabs Navigation */}
+        <div className="relative">
+          <div className="flex flex-wrap items-center gap-2 p-1.5 bg-slate-950/70 border border-white/10 rounded-2xl">
+            <button
+              onClick={() => setSubTab('overview')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl transition-all cursor-pointer ${
+                subTab === 'overview' 
+                  ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 font-bold' 
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent'
+              }`}
+            >
+              <TrendingUp className="w-4 h-4" />
+              <span className="text-[10px] font-black uppercase tracking-widest">Overview</span>
+            </button>
+
+            <button
+              onClick={() => setSubTab('gradebook')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl transition-all cursor-pointer ${
+                subTab === 'gradebook' 
+                  ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 font-bold' 
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent'
+              }`}
+            >
+              <BookOpen className="w-4 h-4" />
+              <span className="text-[10px] font-black uppercase tracking-widest">{isStudent ? 'Grades' : 'Gradebook'}</span>
+              {gradeEntries.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-indigo-500/30 text-indigo-300 text-[9px] font-mono font-bold border border-indigo-500/20">
+                  {gradeEntries.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => setSubTab('report_cards')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl transition-all cursor-pointer ${
+                subTab === 'report_cards' 
+                  ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 font-bold' 
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent'
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              <span className="text-[10px] font-black uppercase tracking-widest">Reports</span>
+              {reportCards.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-indigo-500/30 text-indigo-300 text-[9px] font-mono font-bold border border-indigo-500/20">
+                  {reportCards.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => setSubTab('attendance')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl transition-all cursor-pointer ${
+                subTab === 'attendance' 
+                  ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 font-bold' 
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-white/5 border border-transparent'
+              }`}
+            >
+              <CalendarCheck className="w-4 h-4" />
+              <span className="text-[10px] font-black uppercase tracking-widest">Attendance</span>
+            </button>
           </div>
         </div>
       </div>
