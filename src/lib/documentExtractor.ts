@@ -4,6 +4,7 @@
  * 
  * StudentOS Document & Attachment Extraction Engine
  * - Extracts text from PDF using PDF.js
+ * - Fallbacks to Page 1 Canvas Image Rendering for image-based/scanned PDFs (e.g. DrainQA.pdf)
  * - Extracts text from DOCX and PPTX using JSZip + XML parsing
  * - Extracts text from legacy DOC / PPT using binary text recovery
  * - Extracts text from plain text formats (MD, TXT, CSV, JSON)
@@ -21,6 +22,7 @@ export interface ExtractedAttachment {
   base64Data?: string; // clean base64 without data URI scheme
   isImage: boolean;
   extractionError?: string;
+  wasRenderedFromScannedPdf?: boolean;
 }
 
 /**
@@ -65,10 +67,59 @@ export async function ensurePdfJsLoaded(): Promise<any> {
 }
 
 /**
+ * Render Page 1 of a PDF to a PNG image using PDF.js canvas
+ * - Capped scale/dimensions (max 2200px) so payload stays compact for Gemini multimodal processing
+ */
+export async function renderPdfPageToImage(pdfOrFile: any, fileRef?: File): Promise<{ dataUrl: string; cleanBase64: string; mimeType: string }> {
+  let pdf = pdfOrFile;
+  if (!pdf || typeof pdf.getPage !== 'function') {
+    const pdfjsLib = await ensurePdfJsLoaded();
+    const arrayBuffer = await (fileRef || pdfOrFile).arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    pdf = await loadingTask.promise;
+  }
+
+  const page = await pdf.getPage(1);
+  const unscaledViewport = page.getViewport({ scale: 1.0 });
+  const maxDim = Math.max(unscaledViewport.width, unscaledViewport.height);
+  
+  let scale = 1.5;
+  if (maxDim * scale > 2200) {
+    scale = 2200 / maxDim;
+  }
+  if (scale < 0.5) scale = 0.5;
+
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('Canvas 2D context unavailable for PDF rendering.');
+  }
+
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+
+  const renderContext = {
+    canvasContext: context,
+    viewport: viewport
+  };
+
+  await page.render(renderContext).promise;
+
+  const dataUrl = canvas.toDataURL('image/png');
+  const cleanBase64 = dataUrl.replace(/^data:image\/png;base64,/, '');
+
+  return {
+    dataUrl,
+    cleanBase64,
+    mimeType: 'image/png'
+  };
+}
+
+/**
  * Extract text from PDF using PDF.js
- * - Joins text items with a space and handles EOL line breaks cleanly (never join(''))
- * - Rejects text under 20 characters (scanned PDFs)
- * - Caps total length at a safe limit while preserving the start of document
+ * - Joins text items with a space and handles EOL line breaks cleanly
+ * - Capped at safe length (15,000 chars) preserving document start
  */
 export async function extractPDFText(file: File): Promise<string> {
   const arrayBuffer = await file.arrayBuffer();
@@ -76,20 +127,9 @@ export async function extractPDFText(file: File): Promise<string> {
     throw new Error('PDF file is empty.');
   }
 
-  let pdfjsLib: any;
-  try {
-    pdfjsLib = await ensurePdfJsLoaded();
-  } catch (err: any) {
-    throw new Error('PDF could not be read: engine failed to initialize.');
-  }
-
-  let pdf: any;
-  try {
-    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-    pdf = await loadingTask.promise;
-  } catch (pdfErr: any) {
-    throw new Error(`PDF could not be read: ${pdfErr?.message || 'invalid or corrupted PDF file'}.`);
-  }
+  const pdfjsLib = await ensurePdfJsLoaded();
+  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+  const pdf = await loadingTask.promise;
 
   let entireText = '';
 
@@ -124,10 +164,9 @@ export async function extractPDFText(file: File): Promise<string> {
 
   const trimmed = entireText.trim();
   if (!trimmed || trimmed.length < 20) {
-    throw new Error('This PDF has no readable text. Please provide a text PDF or upload a photo/image of the page.');
+    throw new Error('PDF has no text layer.');
   }
 
-  // Cap at safe length (15,000 chars) while preserving start of document
   const MAX_CAP = 15000;
   if (trimmed.length > MAX_CAP) {
     return trimmed.slice(0, MAX_CAP) + '\n\n[...Remainder of PDF text truncated for performance...]';
@@ -246,7 +285,6 @@ export async function extractLegacyDocPptText(file: File): Promise<string> {
   const bytes = new Uint8Array(arrayBuffer);
   let text = '';
 
-  // 1. Try UTF-16LE extraction
   try {
     const decoder16 = new TextDecoder('utf-16le');
     const raw16 = decoder16.decode(bytes);
@@ -257,7 +295,6 @@ export async function extractLegacyDocPptText(file: File): Promise<string> {
     }
   } catch (_) {}
 
-  // 2. Try Latin-1 extraction if UTF-16 didn't produce enough words
   if (!text) {
     try {
       const decoder = new TextDecoder('latin1');
@@ -307,7 +344,9 @@ export async function readImageFile(file: File): Promise<{ dataUrl: string; clea
 }
 
 /**
- * Universal extractor dispatch
+ * Universal extractor dispatch:
+ * - Text PDFs return clean extracted text
+ * - Image-based/Scanned PDFs (< 20 text chars) automatically fall back to rendering Page 1 as an image
  */
 export async function extractAttachmentContent(file: File): Promise<ExtractedAttachment> {
   const lowerName = file.name.toLowerCase();
@@ -326,11 +365,97 @@ export async function extractAttachmentContent(file: File): Promise<ExtractedAtt
     };
   }
 
+  if (lowerName.endsWith('.pdf')) {
+    try {
+      const pdfjsLib = await ensurePdfJsLoaded();
+      const arrayBuffer = await file.arrayBuffer();
+      if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+        throw new Error('PDF file is empty.');
+      }
+
+      const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+      const pdf = await loadingTask.promise;
+
+      let entireText = '';
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        
+        let pageLines: string[] = [];
+        let currentLineItems: string[] = [];
+
+        for (const item of textContent.items) {
+          const str = (item.str || '').trim();
+          if (str) {
+            currentLineItems.push(str);
+          }
+          if (item.hasEOL) {
+            if (currentLineItems.length > 0) {
+              pageLines.push(currentLineItems.join(' '));
+              currentLineItems = [];
+            }
+          }
+        }
+        if (currentLineItems.length > 0) {
+          pageLines.push(currentLineItems.join(' '));
+        }
+
+        const pageText = pageLines.join('\n').trim();
+        if (pageText) {
+          entireText += `[Page ${i}]\n${pageText}\n\n`;
+        }
+      }
+
+      const trimmedText = entireText.trim();
+
+      // Scanned or Image-based PDF (e.g. DrainQA.pdf) -> Fallback to rendering Page 1 as an image
+      if (!trimmedText || trimmedText.length < 20) {
+        console.log(`[PDF Engine] "${file.name}" has no text layer (${trimmedText.length} chars). Fallback rendering page 1 as an image...`);
+        try {
+          const renderedImg = await renderPdfPageToImage(pdf, file);
+          return {
+            name: file.name,
+            size: file.size,
+            type: 'image/png',
+            content: renderedImg.dataUrl,
+            mimeType: 'image/png',
+            base64Data: renderedImg.cleanBase64,
+            isImage: true,
+            wasRenderedFromScannedPdf: true
+          };
+        } catch (renderErr: any) {
+          throw new Error(`PDF has no text layer and image rendering failed (${renderErr?.message || 'canvas error'}).`);
+        }
+      }
+
+      // Normal Text PDF
+      const MAX_CAP = 15000;
+      const finalText = trimmedText.length > MAX_CAP
+        ? trimmedText.slice(0, MAX_CAP) + '\n\n[...Remainder of PDF text truncated for performance...]'
+        : trimmedText;
+
+      return {
+        name: file.name,
+        size: file.size,
+        type: file.type || 'application/pdf',
+        content: finalText,
+        isImage: false
+      };
+    } catch (err: any) {
+      return {
+        name: file.name,
+        size: file.size,
+        type: file.type || 'application/pdf',
+        content: `[PDF "${file.name}" could not be read: ${err.message || 'Unknown read error'}]`,
+        isImage: false,
+        extractionError: err.message || 'PDF could not be read'
+      };
+    }
+  }
+
   let text = '';
   try {
-    if (lowerName.endsWith('.pdf')) {
-      text = await extractPDFText(file);
-    } else if (lowerName.endsWith('.docx')) {
+    if (lowerName.endsWith('.docx')) {
       text = await extractDocxText(file);
     } else if (lowerName.endsWith('.pptx')) {
       text = await extractPptxText(file);
@@ -351,7 +476,6 @@ export async function extractAttachmentContent(file: File): Promise<ExtractedAtt
         r.readAsText(file);
       });
     } else {
-      // Try DOCX/PPTX via JSZip in case extension was omitted
       try {
         text = await extractDocxText(file);
       } catch {

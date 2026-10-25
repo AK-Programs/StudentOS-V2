@@ -5397,6 +5397,12 @@ Date: ${new Date().toLocaleDateString()}
             continue;
           }
 
+          if (extracted.wasRenderedFromScannedPdf) {
+            showNotification(`This PDF has no text layer. Reading it as an image.`);
+          } else {
+            showNotification(`✓ File linked perfectly: "${file.name}"`);
+          }
+
           const payloadFile = {
             name: extracted.name,
             size: extracted.size,
@@ -5404,7 +5410,8 @@ Date: ${new Date().toLocaleDateString()}
             content: extracted.content,
             base64Data: extracted.base64Data,
             mimeType: extracted.mimeType,
-            isImage: extracted.isImage
+            isImage: extracted.isImage,
+            wasRenderedFromScannedPdf: extracted.wasRenderedFromScannedPdf
           };
 
           setAttachedFiles(prev => {
@@ -5417,8 +5424,6 @@ Date: ${new Date().toLocaleDateString()}
             }));
             return updated;
           });
-
-          showNotification(`✓ File linked perfectly: "${file.name}"`);
         } catch (err: any) {
           showNotification(`❌ PDF could not be read: "${file.name}".`);
         }
