@@ -636,6 +636,28 @@ export default function App() {
       window.removeEventListener('studentos_whats_new_updated', handleUpdate);
     };
   }, [currentUser?.uid, effectiveRole]);
+
+  // Halloween 2026 Visitor Badge Logic (Target: Oct 29 – Nov 1)
+  useEffect(() => {
+    if (currentUser && currentUser.uid && !dataLoading && !firebaseLoading) {
+      const now = new Date();
+      const month = now.getMonth(); // 9 = October, 10 = November
+      const day = now.getDate();
+      const isHalloweenRange = (month === 9 && day >= 29) || (month === 10 && day <= 1);
+      
+      if (isHalloweenRange) {
+        const currentBadges = currentUser.badges || [];
+        if (!currentBadges.includes('Halloween 2026')) {
+          const updatedUser = {
+            ...currentUser,
+            badges: [...currentBadges, 'Halloween 2026']
+          };
+          setCurrentUser(updatedUser);
+          saveSupabaseUserProfile(updatedUser).catch(() => {});
+        }
+      }
+    }
+  }, [currentUser?.uid, dataLoading, firebaseLoading]);
   const [assignmentSearchQuery, setAssignmentSearchQuery] = useState<string>('');
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
@@ -8469,6 +8491,15 @@ ${roleLabel}: ${userQuery}
                     }`}
                   >
                     <BorderBeam size={220} duration={14} colorFrom="#6366f1" colorTo="#ec4899" />
+                    {currentUser.raw_data?.theme === 'halloween' && (
+                      <motion.div 
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 0.15, scale: 1 }}
+                        className="absolute -top-6 -right-6 text-8xl pointer-events-none select-none"
+                      >
+                        🎃
+                      </motion.div>
+                    )}
                     <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-6">
                       <div className="space-y-1.5">
                         <div className="flex items-center gap-2 text-xs text-indigo-400 font-semibold">

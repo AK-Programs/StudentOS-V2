@@ -1,6 +1,8 @@
 import { supabase } from '../lib/supabase';
 import React, { useState, useEffect } from 'react';
 import { Calendar, Users, ShieldAlert, Check, Plus, Trash2, ArrowRight, Bell, Clock, BookOpen , X } from 'lucide-react';
+import { SyllabusTimetableService } from '../lib/syllabusTimetableService';
+import { OfficialClassTimetable } from '../types/syllabusTimetable';
 
 export interface SubstituteAssignment {
   id: string;
@@ -125,6 +127,68 @@ export const SubstituteHub = ({ currentUser, effectiveRole, showNotification }: 
       window.dispatchEvent(new CustomEvent('s_os_notification_created', {
         detail: { title: '🚨 Emergency Leave Request', message: 'An emergency cover request has been submitted.', type: 'substitute' }
       }));
+    }
+  };
+
+  const handleApproveEmergencyLeave = async (leaveReq: any) => {
+    // 1. Update the status in SubstituteHub state
+    const updatedEmergencies = emergencies.map(x => 
+      x.id === leaveReq.id ? { ...x, status: 'approved' } : x
+    );
+    await saveEmergencies(updatedEmergencies);
+
+    // 2. Synchronize with Official School Timetable
+    try {
+      const schoolId = 'default_school';
+      // The leaveReq.classGrade might be "Grade 10 Solara" or similar. 
+      // We need to extract the Grade part to match the timetable service keys.
+      const gradeMatch = leaveReq.classGrade.match(/Grade \d+/i);
+      const grade = gradeMatch ? gradeMatch[0] : 'Grade 10';
+      
+      const timetable = await SyllabusTimetableService.getOfficialTimetable(schoolId, grade);
+      
+      const updatedSchedule = timetable.schedule.map(daySch => {
+        // Find matching day
+        // leaveReq.date -> day of week
+        const leaveDate = new Date(leaveReq.date);
+        const dayNames: any[] = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const targetDay = dayNames[leaveDate.getDay()];
+        
+        if (daySch.day === targetDay) {
+          return {
+            ...daySch,
+            periods: daySch.periods.map(p => {
+              // Match period number or time if possible
+              // leaveReq.period might be "Period 3 (10:45 - 11:45)"
+              const pNumMatch = leaveReq.period.match(/Period (\d+)/i);
+              const targetPNum = pNumMatch ? parseInt(pNumMatch[1]) : -1;
+              
+              if (p.periodNumber === targetPNum && p.subject === leaveReq.subject) {
+                return {
+                  ...p,
+                  substitutionTeacherName: leaveReq.subTeacher,
+                  changeNote: `Substitution for ${leaveReq.origTeacher}: ${leaveReq.reason}`
+                };
+              }
+              return p;
+            })
+          };
+        }
+        return daySch;
+      });
+
+      const updatedTimetable: OfficialClassTimetable = {
+        ...timetable,
+        schedule: updatedSchedule,
+        version: timetable.version + 1,
+        publishedBy: 'System (Leave Approval)',
+        publishedAt: new Date().toISOString()
+      };
+
+      await SyllabusTimetableService.saveOfficialTimetable(schoolId, grade, updatedTimetable);
+      showNotification?.(`✓ Timetable updated for ${leaveReq.classGrade}: ${leaveReq.subTeacher} assigned as substitute.`);
+    } catch (err) {
+      console.warn('[SubstituteHub] Failed to sync leave with timetable:', err);
     }
   };
 
@@ -443,7 +507,7 @@ export const SubstituteHub = ({ currentUser, effectiveRole, showNotification }: 
                 onChange={e => setAbsentTeacher(e.target.value)}
                 className="bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white"
               >
-                {DEFAULT_TEACHERS.map(t => <option key={t} value={t}>{t}</option>)}
+                {dynamicTeachers.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
 
@@ -454,7 +518,7 @@ export const SubstituteHub = ({ currentUser, effectiveRole, showNotification }: 
                 onChange={e => setSubTeacher(e.target.value)}
                 className="bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white"
               >
-                {DEFAULT_TEACHERS.map(t => <option key={t} value={t}>{t}</option>)}
+                {dynamicTeachers.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
 
@@ -692,7 +756,7 @@ export const SubstituteHub = ({ currentUser, effectiveRole, showNotification }: 
                     </span>
                     {canManage && em.status === 'pending' && (
                       <div className="flex gap-2 ml-4">
-                        <button onClick={() => { const u = emergencies.map(x => x.id === em.id ? {...x, status: 'approved'} : x); saveEmergencies(u); showNotification('Approved emergency leave'); }} className="text-emerald-400 hover:text-emerald-300"><Check className="w-4 h-4" /></button>
+                        <button onClick={() => handleApproveEmergencyLeave(em)} className="text-emerald-400 hover:text-emerald-300"><Check className="w-4 h-4" /></button>
                         <button onClick={() => { const u = emergencies.map(x => x.id === em.id ? {...x, status: 'denied'} : x); saveEmergencies(u); showNotification('Denied emergency leave'); }} className="text-rose-400 hover:text-rose-300"><X className="w-4 h-4" /></button>
                       </div>
                     )}

@@ -221,6 +221,40 @@ body {
   backdrop-filter: blur(16px) !important;
   border-color: rgba(255, 255, 255, 0.15) !important;
 }
+/* 8. Halloween Theme (Midnight Pumpkin & Cursed Purple) */
+.theme-halloween, .theme-halloween body {
+  background-color: #0c0211 !important;
+  color: #f8fafc !important;
+}
+.theme-halloween .smart-glass {
+  background: rgba(28, 10, 42, 0.75) !important;
+  border-color: rgba(249, 115, 22, 0.3) !important;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8), 0 0 15px rgba(249, 115, 22, 0.1) !important;
+}
+.theme-halloween .bg-slate-950,
+.theme-halloween .bg-slate-900,
+.theme-halloween .bg-slate-900\/60,
+.theme-halloween .bg-slate-900\/50 {
+  background-color: #160822 !important;
+  border-color: rgba(249, 115, 22, 0.2) !important;
+}
+.theme-halloween .bg-slate-800 {
+  background-color: #240d36 !important;
+}
+.theme-halloween .border-white\/5,
+.theme-halloween .border-white\/10 {
+  border-color: rgba(249, 115, 22, 0.15) !important;
+}
+.theme-halloween .text-indigo-400,
+.theme-halloween .text-indigo-300 {
+  color: #f97316 !important;
+}
+.theme-halloween .bg-indigo-600 {
+  background-color: #f97316 !important;
+}
+.theme-halloween .hover\:bg-indigo-500:hover {
+  background-color: #ea580c !important;
+}
 
 .light-theme .bg-slate-950,
 .light-theme .bg-slate-900,

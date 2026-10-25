@@ -72,7 +72,31 @@ export const OfficialTimetableViewer: React.FC<OfficialTimetableViewerProps> = (
     conflicts: Array<{ day: string; period: number; type: 'teacher' | 'room'; details: string }>;
   }>({ hasConflict: false, conflicts: [] });
 
+  const [showMyScheduleOnly, setShowMyScheduleOnly] = useState<boolean>(false);
+
+  const [showAddModal, setShowAddPeriodModal] = useState(false);
+  const [allTeachers, setAllTeachers] = useState<string[]>([]);
+  const [newPeriodData, setNewPeriodData] = useState<Partial<TimetablePeriod>>({
+    periodNumber: 1,
+    subject: 'Mathematics',
+    teacherName: '',
+    room: 'Room 101',
+    startTime: '08:30',
+    endTime: '09:20'
+  });
+
   const daysList: DayTimetable['day'][] = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+
+  useEffect(() => {
+    async function fetchTeachers() {
+      try {
+        const { data } = await SyllabusTimetableService.getOfficialSyllabuses(schoolId, selectedGrade); // Just to warm up
+        const { data: users } = await supabase.from('user_profiles').select('name').in('role', ['teacher', 'coordinator', 'admin', 'super_admin']);
+        if (users) setAllTeachers(users.map(u => u.name).filter(Boolean));
+      } catch (e) {}
+    }
+    fetchTeachers();
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -101,6 +125,40 @@ export const OfficialTimetableViewer: React.FC<OfficialTimetableViewerProps> = (
   const activeDaySchedule = (isEditing ? tempSchedule : timetable?.schedule || []).find(
     s => s.day === selectedDay
   );
+
+  const handleAddPeriod = () => {
+    if (!newPeriodData.subject || !newPeriodData.teacherName) {
+      showNotification?.('Please fill in subject and teacher name.');
+      return;
+    }
+
+    const updatedSchedule = tempSchedule.map(daySch => {
+      if (daySchedule.day === selectedDay) {
+        return {
+          ...daySch,
+          periods: [...daySch.periods, { ...newPeriodData, name: `Period ${newPeriodData.periodNumber}` } as TimetablePeriod].sort((a, b) => a.periodNumber - b.periodNumber)
+        };
+      }
+      return daySch;
+    });
+
+    // If day doesn't exist in schedule yet
+    if (!updatedSchedule.find(s => s.day === selectedDay)) {
+       updatedSchedule.push({
+         day: selectedDay,
+         periods: [{ ...newPeriodData, name: `Period ${newPeriodData.periodNumber}` } as TimetablePeriod]
+       });
+    }
+
+    setTempSchedule(updatedSchedule);
+    setShowAddPeriodModal(false);
+    
+    const validation = SyllabusTimetableService.validateTimetableConflicts(updatedSchedule);
+    setConflictReport(validation);
+    if (validation.hasConflict) {
+      showNotification?.('⚠️ Conflict detected with the new period!');
+    }
+  };
 
   // Save changes
   const handleSaveTimetable = async () => {
@@ -183,25 +241,51 @@ export const OfficialTimetableViewer: React.FC<OfficialTimetableViewerProps> = (
         <div className="flex items-center gap-3">
           {/* Grade Selector (for Staff) */}
           {!isStudent && (
-            <select
-              value={selectedGrade}
-              onChange={e => {
-                setSelectedGrade(e.target.value);
-                soundService.playButtonClick();
-              }}
-              className="text-xs px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-white font-bold"
-            >
-              <option value="Grade 10">Grade 10 Section A</option>
-              <option value="Grade 11">Grade 11 Science</option>
-              <option value="Grade 12">Grade 12 Advanced</option>
-              <option value="Grade 9">Grade 9 Foundational</option>
-            </select>
+            <div className="flex items-center gap-2">
+              {isTeacher && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMyScheduleOnly(!showMyScheduleOnly);
+                    soundService.playButtonClick();
+                  }}
+                  className={`px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all border ${
+                    showMyScheduleOnly 
+                      ? 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-600/20' 
+                      : 'bg-slate-900 border-white/10 text-slate-300 hover:text-white'
+                  }`}
+                >
+                  {showMyScheduleOnly ? 'Showing My Periods' : 'Show All Periods'}
+                </button>
+              )}
+              <select
+                value={selectedGrade}
+                onChange={e => {
+                  setSelectedGrade(e.target.value);
+                  soundService.playButtonClick();
+                }}
+                className="text-xs px-3.5 py-2.5 rounded-xl bg-slate-900 border border-white/10 text-white font-bold"
+              >
+                <option value="Grade 10">Grade 10 Section A</option>
+                <option value="Grade 11">Grade 11 Science</option>
+                <option value="Grade 12">Grade 12 Advanced</option>
+                <option value="Grade 9">Grade 9 Foundational</option>
+              </select>
+            </div>
           )}
 
           {canEdit && (
-            <div>
+            <div className="flex gap-2">
               {isEditing ? (
                 <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddPeriodModal(true)}
+                    className="px-3.5 py-2 rounded-xl bg-orange-600 hover:bg-orange-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Period</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => {
@@ -238,6 +322,101 @@ export const OfficialTimetableViewer: React.FC<OfficialTimetableViewerProps> = (
           )}
         </div>
       </div>
+
+      {/* Add Period Modal */}
+      <AnimatePresence>
+        {showAddModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-md bg-slate-900 border border-white/10 rounded-3xl p-6 shadow-2xl space-y-4"
+            >
+              <h3 className="text-lg font-black text-white">Add New Period to {selectedDay}</h3>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Period Number</label>
+                  <input 
+                    type="number" 
+                    value={newPeriodData.periodNumber} 
+                    onChange={e => setNewPeriodData({...newPeriodData, periodNumber: parseInt(e.target.value)})}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Subject</label>
+                  <input 
+                    type="text" 
+                    value={newPeriodData.subject} 
+                    onChange={e => setNewPeriodData({...newPeriodData, subject: e.target.value})}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Assigned Teacher</label>
+                <select 
+                  value={newPeriodData.teacherName} 
+                  onChange={e => setNewPeriodData({...newPeriodData, teacherName: e.target.value})}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
+                >
+                  <option value="">Select Teacher</option>
+                  {allTeachers.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Room / Lab</label>
+                <input 
+                  type="text" 
+                  value={newPeriodData.room} 
+                  onChange={e => setNewPeriodData({...newPeriodData, room: e.target.value})}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Start Time</label>
+                  <input 
+                    type="time" 
+                    value={newPeriodData.startTime} 
+                    onChange={e => setNewPeriodData({...newPeriodData, startTime: e.target.value})}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">End Time</label>
+                  <input 
+                    type="time" 
+                    value={newPeriodData.endTime} 
+                    onChange={e => setNewPeriodData({...newPeriodData, endTime: e.target.value})}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button 
+                  onClick={() => setShowAddPeriodModal(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleAddPeriod}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-black uppercase tracking-wider"
+                >
+                  Add Period
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Conflict Alert Banner (If Any Detected) */}
       {conflictReport.hasConflict && (
@@ -277,11 +456,19 @@ export const OfficialTimetableViewer: React.FC<OfficialTimetableViewerProps> = (
 
       {/* Periods Grid / Matrix */}
       <div className="space-y-3">
-        {activeDaySchedule?.periods.map((period, idx) => {
-          const isBreak = period.isBreak;
-          const isMyTeachingPeriod =
-            isTeacher &&
-            period.teacherName?.toLowerCase().includes(userName.toLowerCase());
+        {activeDaySchedule?.periods
+          .filter(p => {
+            if (isTeacher && showMyScheduleOnly) {
+              if (p.isBreak) return false;
+              return p.teacherName?.toLowerCase().includes(userName.toLowerCase());
+            }
+            return true;
+          })
+          .map((period, idx) => {
+            const isBreak = period.isBreak;
+            const isMyTeachingPeriod =
+              isTeacher &&
+              period.teacherName?.toLowerCase().includes(userName.toLowerCase());
 
           return (
             <motion.div

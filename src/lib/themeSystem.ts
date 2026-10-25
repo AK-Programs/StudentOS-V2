@@ -233,6 +233,27 @@ export const STUDENTOS_THEMES: Record<ThemeId, ThemeDefinition> = {
       themeColor: '#030712'
     },
     previewGradient: 'from-blue-950 via-slate-950 to-indigo-950'
+  },
+  halloween: {
+    id: 'halloween',
+    name: 'Halloween Spook',
+    tagline: 'Midnight Pumpkin & Cursed Purple',
+    isDark: true,
+    colors: {
+      background: '#0c0211',
+      surface: 'rgba(28, 10, 42, 0.75)',
+      surfaceSecondary: '#160822',
+      surfaceTertiary: '#240d36',
+      text: '#f8fafc',
+      textMuted: '#d8b4fe',
+      textSubtle: '#a855f7',
+      primary: '#f97316',
+      primaryHover: '#ea580c',
+      border: 'rgba(249, 115, 22, 0.15)',
+      accent: '#9333ea',
+      themeColor: '#0c0211'
+    },
+    previewGradient: 'from-orange-950 via-purple-950 to-black'
   }
 };
 
