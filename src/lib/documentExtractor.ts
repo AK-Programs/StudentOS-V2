@@ -24,7 +24,51 @@ export interface ExtractedAttachment {
 }
 
 /**
+ * Ensures PDF.js library and CDN worker are loaded reliably.
+ */
+export async function ensurePdfJsLoaded(): Promise<any> {
+  let pdfjsLib = (window as any).pdfjsLib;
+
+  if (!pdfjsLib) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const existingScript = document.querySelector('script[src*="pdf.min.js"]');
+        if (existingScript) {
+          existingScript.addEventListener('load', () => resolve());
+          existingScript.addEventListener('error', () => reject(new Error('Failed loading PDF.js script.')));
+          return;
+        }
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js';
+        script.async = true;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error('Failed loading PDF.js script from CDN.'));
+        document.head.appendChild(script);
+      });
+      pdfjsLib = (window as any).pdfjsLib;
+    } catch (err) {
+      throw new Error('PDF.js engine could not be loaded from CDN.');
+    }
+  }
+
+  if (!pdfjsLib) {
+    throw new Error('PDF.js engine is unavailable.');
+  }
+
+  try {
+    if (pdfjsLib.GlobalWorkerOptions) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+    }
+  } catch (_) {}
+
+  return pdfjsLib;
+}
+
+/**
  * Extract text from PDF using PDF.js
+ * - Joins text items with a space and handles EOL line breaks cleanly (never join(''))
+ * - Rejects text under 20 characters (scanned PDFs)
+ * - Caps total length at a safe limit while preserving the start of document
  */
 export async function extractPDFText(file: File): Promise<string> {
   const arrayBuffer = await file.arrayBuffer();
@@ -32,28 +76,63 @@ export async function extractPDFText(file: File): Promise<string> {
     throw new Error('PDF file is empty.');
   }
 
-  const pdfjsLib = (window as any).pdfjsLib;
-  if (!pdfjsLib) {
-    throw new Error('PDF.js engine is still loading. Please try again in a moment.');
+  let pdfjsLib: any;
+  try {
+    pdfjsLib = await ensurePdfJsLoaded();
+  } catch (err: any) {
+    throw new Error('PDF could not be read: engine failed to initialize.');
   }
 
-  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-  const pdf = await loadingTask.promise;
+  let pdf: any;
+  try {
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    pdf = await loadingTask.promise;
+  } catch (pdfErr: any) {
+    throw new Error(`PDF could not be read: ${pdfErr?.message || 'invalid or corrupted PDF file'}.`);
+  }
+
   let entireText = '';
 
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const textContent = await page.getTextContent();
-    const pageText = textContent.items.map((item: any) => item.str).join(' ');
-    if (pageText.trim()) {
-      entireText += `[Page ${i}]\n${pageText.trim()}\n\n`;
+    
+    let pageLines: string[] = [];
+    let currentLineItems: string[] = [];
+
+    for (const item of textContent.items) {
+      const str = (item.str || '').trim();
+      if (str) {
+        currentLineItems.push(str);
+      }
+      if (item.hasEOL) {
+        if (currentLineItems.length > 0) {
+          pageLines.push(currentLineItems.join(' '));
+          currentLineItems = [];
+        }
+      }
+    }
+    if (currentLineItems.length > 0) {
+      pageLines.push(currentLineItems.join(' '));
+    }
+
+    const pageText = pageLines.join('\n').trim();
+    if (pageText) {
+      entireText += `[Page ${i}]\n${pageText}\n\n`;
     }
   }
 
   const trimmed = entireText.trim();
-  if (!trimmed) {
-    throw new Error('PDF appears to be scanned or contains no extractable text.');
+  if (!trimmed || trimmed.length < 20) {
+    throw new Error('This PDF has no readable text. Please provide a text PDF or upload a photo/image of the page.');
   }
+
+  // Cap at safe length (15,000 chars) while preserving start of document
+  const MAX_CAP = 15000;
+  if (trimmed.length > MAX_CAP) {
+    return trimmed.slice(0, MAX_CAP) + '\n\n[...Remainder of PDF text truncated for performance...]';
+  }
+
   return trimmed;
 }
 

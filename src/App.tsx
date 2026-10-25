@@ -5331,41 +5331,7 @@ Date: ${new Date().toLocaleDateString()}
     showNotification(`Feedback status updated to: ${nextStatus.toUpperCase()}`);
   };
 
-  // Extract text from PDF in exact page order
-  const extractPDFText = async (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        try {
-          const arrayBuffer = e.target?.result as ArrayBuffer;
-          if (!arrayBuffer) {
-            return reject(new Error('ArrayBuffer is empty'));
-          }
-          const pdfjsLib = (window as any).pdfjsLib;
-          if (!pdfjsLib) {
-            return reject(new Error('PDF.js engine is currently loading from CDN...'));
-          }
-          const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-          const pdf = await loadingTask.promise;
-          let entireText = '';
-          for (let i = 1; i <= pdf.numPages; i++) {
-            const page = await pdf.getPage(i);
-            const textContent = await page.getTextContent();
-            const pageText = textContent.items.map((item: any) => item.str).join('');
-            entireText += `[Page ${i}]
-${pageText}
 
-`;
-          }
-          resolve(entireText.trim());
-        } catch (err) {
-          reject(err);
-        }
-      };
-      reader.onerror = () => reject(new Error('Failed reading PDF stream.'));
-      reader.readAsArrayBuffer(file);
-    });
-  };
 
   const readImageAsBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -5427,7 +5393,8 @@ ${pageText}
         try {
           const extracted = await extractAttachmentContent(file);
           if (extracted.extractionError) {
-            showNotification(`❌ File could not be read: "${file.name}" (${extracted.extractionError})`);
+            showNotification(`❌ "${file.name}": ${extracted.extractionError}`);
+            continue;
           }
 
           const payloadFile = {
@@ -5437,8 +5404,7 @@ ${pageText}
             content: extracted.content,
             base64Data: extracted.base64Data,
             mimeType: extracted.mimeType,
-            isImage: extracted.isImage,
-            extractionError: extracted.extractionError
+            isImage: extracted.isImage
           };
 
           setAttachedFiles(prev => {
@@ -5452,11 +5418,9 @@ ${pageText}
             return updated;
           });
 
-          if (!extracted.extractionError) {
-            showNotification(`✓ File linked perfectly: "${file.name}"`);
-          }
+          showNotification(`✓ File linked perfectly: "${file.name}"`);
         } catch (err: any) {
-          showNotification(`❌ File could not be read: "${file.name}"`);
+          showNotification(`❌ PDF could not be read: "${file.name}".`);
         }
       }
     } finally {
@@ -5727,10 +5691,14 @@ ${pageText}
           return `[Attached Document: ${file.name} (${(file.size / 1024).toFixed(1)} KB)]
 Status: The file content could not be read (${file.extractionError}).`;
         } else {
+          let safeDocText = String(file.content || '').trim();
+          if (safeDocText.length > 15000) {
+            safeDocText = safeDocText.slice(0, 15000) + '\n\n[...Remainder of document text truncated for performance...]';
+          }
           return `[Attached Document: ${file.name} (${(file.size / 1024).toFixed(1)} KB)]
 Content from ${file.name}:
 """
-${file.content}
+${safeDocText}
 """`;
         }
       }).join('\n\n');
@@ -5745,7 +5713,7 @@ ${file.content}
 
 ${roleLabel}: ${userQuery}
 
-[Directive: The student attached the following file(s): ${fileNamesList}. You MUST explicitly mention the file name(s) in your answer so the user can verify their attached study materials were read and referenced.]`;
+[Directive: The student attached the following file(s): ${fileNamesList}. You MUST explicitly mention the file name(s) (${fileNamesList}) in your response to demonstrate that the document content was reviewed.]`;
     }
 
     const targetThreadId = activeThreadId;
