@@ -4382,9 +4382,80 @@ const getSupabaseAdmin = () => {
   });
 };
 
+const getResetSecret = (): string => {
+  return (
+    process.env.RESET_SECRET ||
+    process.env.RESEND_API_KEY ||
+    process.env.VITE_RESEND_API_KEY ||
+    'studentos-fallback-crypto-reset-secret-key-2026'
+  ).trim();
+};
+
+interface ResetTokenPayload {
+  email: string;
+  expiresAt: number;
+}
+
+function createSignedResetToken(email: string, expiryMs = 3600000): string {
+  const secret = getResetSecret();
+  const payload: ResetTokenPayload = {
+    email: email.trim().toLowerCase(),
+    expiresAt: Date.now() + expiryMs
+  };
+  const payloadBase64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto
+    .createHmac('sha256', secret)
+    .update(payloadBase64)
+    .digest('base64url');
+  return `${payloadBase64}.${signature}`;
+}
+
+function verifySignedResetToken(tokenString: string): { valid: boolean; email?: string; error?: string } {
+  if (!tokenString || typeof tokenString !== 'string' || !tokenString.includes('.')) {
+    return { valid: false, error: 'This reset link is invalid or malformed.' };
+  }
+
+  const parts = tokenString.trim().split('.');
+  if (parts.length !== 2) {
+    return { valid: false, error: 'This reset link is invalid or malformed.' };
+  }
+
+  const [payloadBase64, providedSignature] = parts;
+  const secret = getResetSecret();
+
+  const expectedSignature = crypto
+    .createHmac('sha256', secret)
+    .update(payloadBase64)
+    .digest('base64url');
+
+  const providedBuf = Buffer.from(providedSignature);
+  const expectedBuf = Buffer.from(expectedSignature);
+
+  if (providedBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(providedBuf, expectedBuf)) {
+    return { valid: false, error: 'This reset link signature is invalid or has been tampered with.' };
+  }
+
+  try {
+    const payloadJson = Buffer.from(payloadBase64, 'base64url').toString('utf-8');
+    const payload: ResetTokenPayload = JSON.parse(payloadJson);
+
+    if (!payload || !payload.email || typeof payload.expiresAt !== 'number') {
+      return { valid: false, error: 'Invalid reset token payload structure.' };
+    }
+
+    if (payload.expiresAt < Date.now()) {
+      return { valid: false, error: 'This reset link has expired. Please request a new one.' };
+    }
+
+    return { valid: true, email: payload.email.trim().toLowerCase() };
+  } catch {
+    return { valid: false, error: 'Failed to decode reset link.' };
+  }
+}
+
 const RESEND_FROM_EMAIL = (process.env.RESEND_FROM_EMAIL || '').trim() || 'StudentOS <onboarding@resend.dev>';
 
-// 1. Password Reset Request Route: email in, creates one-time token, stores hash in password_resets, sends link via Resend
+// 1. Password Reset Request Route: email in, creates HMAC-signed token, sends link via Resend only (No Supabase dependency)
 async function handlePasswordResetRequest(req: express.Request, res: express.Response) {
   const { email } = req.body || {};
   if (!email || typeof email !== 'string' || !email.includes('@')) {
@@ -4401,63 +4472,11 @@ async function handlePasswordResetRequest(req: express.Request, res: express.Res
     });
   }
 
-  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
-  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
-
   try {
-    // 1. Generate secure one-time token and store its SHA-256 hash in password_resets table
-    const token = crypto.randomBytes(32).toString('hex');
-    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
-    const expiresAt = Date.now() + 3600000; // 1 hour expiry
+    // 1. Create stateless signed reset token (contains email + 1-hour expiry signed with server secret)
+    const token = createSignedResetToken(normEmail, 3600000);
 
-    // 2. Store row in password_resets using anon key
-    let storeRes = await fetch(`${supabaseUrl}/rest/v1/password_resets`, {
-      method: 'POST',
-      headers: {
-        apikey: supabaseKey,
-        Authorization: `Bearer ${supabaseKey}`,
-        'Content-Type': 'application/json',
-        Prefer: 'return=minimal'
-      },
-      body: JSON.stringify({
-        email: normEmail,
-        token_hash: hashedToken,
-        expires_at: expiresAt,
-        used: false
-      })
-    });
-
-    // Fallback to global_data if password_resets table does not exist in schema yet
-    if (!storeRes.ok) {
-      const errText = await storeRes.text().catch(() => '');
-      if (storeRes.status === 404 || errText.includes('PGRST205') || errText.includes('password_resets')) {
-        storeRes = await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
-          method: 'POST',
-          headers: {
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`,
-            'Content-Type': 'application/json',
-            Prefer: 'resolution=merge-duplicates'
-          },
-          body: JSON.stringify({
-            id: `auth_reset:${hashedToken}`,
-            data: { email: normEmail, expiresAt, used: false },
-            updated_at: new Date().toISOString()
-          })
-        });
-      }
-
-      if (!storeRes.ok) {
-        const fallbackErr = await storeRes.text().catch(() => '');
-        const realError = fallbackErr || errText || storeRes.statusText;
-        return res.status(500).json({
-          success: false,
-          error: `Supabase reset session error: ${realError}`
-        });
-      }
-    }
-
-    // 3. Send reset link via Resend only
+    // 2. Send reset link via Resend only
     const origin = req.get('origin') || `${req.protocol}://${req.get('host')}` || 'http://localhost:3000';
     const resetLink = `${origin}?reset_token=${token}`;
 
@@ -4501,7 +4520,7 @@ async function handlePasswordResetRequest(req: express.Request, res: express.Res
   }
 }
 
-// 2. Password Reset Confirm Route: token + new password in, verifies token, updates password, marks token used
+// 2. Password Reset Confirm Route: verifies HMAC token & expiry, updates password without Supabase token storage
 async function handlePasswordResetConfirm(req: express.Request, res: express.Response) {
   const { token, resetToken, password, newPassword } = req.body || {};
   const activeToken = token || resetToken;
@@ -4514,96 +4533,25 @@ async function handlePasswordResetConfirm(req: express.Request, res: express.Res
     });
   }
 
-  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
-  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
-
   try {
-    const hashedToken = crypto.createHash('sha256').update(String(activeToken).trim()).digest('hex');
-    const tokenId = `auth_reset:${hashedToken}`;
-
-    // 1. Fetch token record from password_resets table
-    let tokenData: { email: string; expiresAt?: number; expires_at?: number; used?: boolean } | null = null;
-    let isFromPasswordResetsTable = false;
-
-    const prRes = await fetch(`${supabaseUrl}/rest/v1/password_resets?token_hash=eq.${hashedToken}&select=*`, {
-      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
-    });
-
-    if (prRes.ok) {
-      const prRows = await prRes.json();
-      if (Array.isArray(prRows) && prRows.length > 0) {
-        const row = prRows[0];
-        tokenData = {
-          email: row.email,
-          expires_at: row.expires_at || row.expiresAt,
-          used: Boolean(row.used)
-        };
-        isFromPasswordResetsTable = true;
-      }
-    } else {
-      const err = await prRes.text().catch(() => '');
-      if (prRes.status === 401 || prRes.status === 403) {
-        return res.status(500).json({ success: false, error: `Supabase token verification error: ${err || prRes.statusText}` });
-      }
-    }
-
-    // Fallback: check global_data if record not found in password_resets
-    if (!tokenData) {
-      const gdRes = await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.${tokenId}&select=*`, {
-        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
-      });
-      if (gdRes.ok) {
-        const gdRows = await gdRes.json();
-        if (Array.isArray(gdRows) && gdRows.length > 0) {
-          const rec = gdRows[0];
-          const parsed = rec.data || (rec.content ? JSON.parse(rec.content) : null);
-          if (parsed && parsed.email) {
-            tokenData = {
-              email: parsed.email,
-              expires_at: parsed.expiresAt || parsed.expires_at,
-              used: Boolean(parsed.used)
-            };
-          }
-        }
-      }
-    }
-
-    if (!tokenData || !tokenData.email) {
+    // 1. Verify HMAC token signature & expiry without calling Supabase for token lookups
+    const verification = verifySignedResetToken(String(activeToken).trim());
+    if (!verification.valid || !verification.email) {
       return res.status(400).json({
         success: false,
-        error: 'This reset link is invalid or has already been used.'
-      });
-    }
-
-    if (tokenData.used) {
-      return res.status(400).json({
-        success: false,
-        error: 'This reset link has already been used.'
-      });
-    }
-
-    const expiresAt = tokenData.expires_at || tokenData.expiresAt;
-    if (expiresAt && expiresAt < Date.now()) {
-      // Mark token as used
-      if (isFromPasswordResetsTable) {
-        await fetch(`${supabaseUrl}/rest/v1/password_resets?token_hash=eq.${hashedToken}`, {
-          method: 'PATCH',
-          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ used: true })
-        }).catch(() => {});
-      }
-      return res.status(400).json({
-        success: false,
-        error: 'This reset link has expired. Please request a new one.'
+        error: verification.error || 'This reset link is invalid or has expired.'
       });
     }
 
     const cleanPassword = String(activePassword).trim();
     const newHash = hashPin(cleanPassword);
-    const normEmail = String(tokenData.email).trim().toLowerCase();
+    const normEmail = verification.email;
 
-    // 2. Update user_profiles raw_data with new password hash using anon key
+    // 2. Update user_profiles raw_data with new password hash if user_profiles exists
     try {
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+      const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+
       const profileResp = await fetch(`${supabaseUrl}/rest/v1/user_profiles?email=eq.${encodeURIComponent(normEmail)}&select=*`, {
         headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
       });
@@ -4621,29 +4569,11 @@ async function handlePasswordResetConfirm(req: express.Request, res: express.Res
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({ raw_data: rawData, updated_at: new Date().toISOString() })
-          });
+          }).catch(() => {});
         }
       }
     } catch (profErr) {
       console.warn('[user_profiles password_hash update warning]:', profErr);
-    }
-
-    // 3. Mark token as used
-    if (isFromPasswordResetsTable) {
-      await fetch(`${supabaseUrl}/rest/v1/password_resets?token_hash=eq.${hashedToken}`, {
-        method: 'PATCH',
-        headers: {
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ used: true })
-      }).catch(() => {});
-    } else {
-      await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.${tokenId}`, {
-        method: 'DELETE',
-        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
-      }).catch(() => {});
     }
 
     console.log(`[Auth Reset] Successfully updated password for user: ${normEmail}`);
