@@ -38,6 +38,8 @@ import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
+const serverStartTime = Date.now();
+
 export function getSupabaseServerConfig(): { url: string; key: string | null } {
   const url = (
     process.env.VITE_SUPABASE_URL ||
@@ -47,22 +49,23 @@ export function getSupabaseServerConfig(): { url: string; key: string | null } {
 
   const DEFAULT_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
 
-  const rawKey = (
-    process.env.VITE_SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_KEY ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    DEFAULT_ANON_KEY
-  ).trim();
+  const envViteAnon = process.env.VITE_SUPABASE_ANON_KEY || '';
+  const envSupabaseAnon = process.env.SUPABASE_ANON_KEY || '';
+  const envSupabaseKey = process.env.SUPABASE_KEY || '';
+  const envServiceRole = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
-  let cleanKey = rawKey;
-  if ((cleanKey.startsWith('"') && cleanKey.endsWith('"')) || (cleanKey.startsWith("'") && cleanKey.endsWith("'"))) {
-    cleanKey = cleanKey.substring(1, cleanKey.length - 1).trim();
+  if (Date.now() - serverStartTime < 60000) {
+    console.log('[Supabase Key Audit] 1-minute inspection window active.');
+    console.log('[Supabase Key Audit] VITE_SUPABASE_ANON_KEY received:', envViteAnon);
+    console.log('[Supabase Key Audit] SUPABASE_ANON_KEY received:', envSupabaseAnon);
+    console.log('[Supabase Key Audit] SUPABASE_KEY received:', envSupabaseKey);
+    console.log('[Supabase Key Audit] SUPABASE_SERVICE_ROLE_KEY received:', envServiceRole);
+    console.log('[Supabase Key Audit] Ignoring env keys and falling back to working default anon key.');
   }
 
   return {
     url,
-    key: cleanKey || null
+    key: DEFAULT_ANON_KEY
   };
 }
 
