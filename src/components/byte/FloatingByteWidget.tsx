@@ -66,6 +66,10 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
   dueCardsCount = 0,
   onNavigateTab
 }) => {
+  if (!currentUser) {
+    return null;
+  }
+
   // 1. Minimized state (defaults to true; student toggle remembered in localStorage)
   const [isMinimized, setIsMinimized] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;

@@ -4229,24 +4229,42 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const sec = await fetchAuthoritativeSecurity();
-    const storedHash = profile?.raw_data?.password_hash || sec.pin_hash || userMasterHash;
 
     const cleanPassword = String(password).trim();
     let isMatch = false;
 
-    if (cleanPassword === userMasterHash || cleanPassword === storedHash) {
-      isMatch = true;
-    } else if (
-      verifyPinHash(cleanPassword, storedHash) ||
-      verifyPinHash(cleanPassword, userMasterHash) ||
-      (sec.pin_hash && verifyPinHash(cleanPassword, sec.pin_hash))
-    ) {
-      isMatch = true;
-    } else {
-      // Check legacy SHA-256
-      const sha256 = crypto.createHash('sha256').update(cleanPassword).digest('hex');
-      if (sha256 === storedHash) {
+    // Check user-specific password hash from user_profiles raw_data
+    const userSavedHash = profile?.raw_data?.password_hash || profile?.raw_data?.pin_hash;
+    const userLegacySha = profile?.raw_data?.legacy_sha256;
+
+    if (userSavedHash) {
+      // Strict match against user's specific saved password hash
+      if (
+        cleanPassword === userSavedHash ||
+        verifyPinHash(cleanPassword, userSavedHash)
+      ) {
         isMatch = true;
+      } else {
+        const computedSha = crypto.createHash('sha256').update(cleanPassword).digest('hex');
+        if (computedSha === userSavedHash || (userLegacySha && computedSha === userLegacySha)) {
+          isMatch = true;
+        }
+      }
+    } else {
+      // Fallback only if user has no saved password hash in profile raw_data
+      const fallbackHash = sec.pin_hash;
+      if (fallbackHash) {
+        if (
+          cleanPassword === fallbackHash ||
+          verifyPinHash(cleanPassword, fallbackHash)
+        ) {
+          isMatch = true;
+        } else {
+          const computedSha = crypto.createHash('sha256').update(cleanPassword).digest('hex');
+          if (computedSha === fallbackHash) {
+            isMatch = true;
+          }
+        }
       }
     }
 
@@ -4547,33 +4565,53 @@ async function handlePasswordResetConfirm(req: express.Request, res: express.Res
     const newHash = hashPin(cleanPassword);
     const normEmail = verification.email;
 
-    // 2. Update user_profiles raw_data with new password hash if user_profiles exists
-    try {
-      const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
-      const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+    // 2. Update user_profiles raw_data with new password hash in Supabase
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+    const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
 
-      const profileResp = await fetch(`${supabaseUrl}/rest/v1/user_profiles?email=eq.${encodeURIComponent(normEmail)}&select=*`, {
-        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+    const profileResp = await fetch(`${supabaseUrl}/rest/v1/user_profiles?email=eq.${encodeURIComponent(normEmail)}&select=*`, {
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+    });
+
+    if (!profileResp.ok) {
+      const errText = await profileResp.text().catch(() => '');
+      return res.status(500).json({
+        success: false,
+        error: `Failed to fetch user profile from Supabase: ${errText || profileResp.statusText}`
       });
-      if (profileResp.ok) {
-        const pRows = await profileResp.json();
-        if (Array.isArray(pRows) && pRows.length > 0) {
-          const rawData = pRows[0].raw_data || {};
-          rawData.password_hash = newHash;
-          rawData.pin_hash = newHash;
-          await fetch(`${supabaseUrl}/rest/v1/user_profiles?email=eq.${encodeURIComponent(normEmail)}`, {
-            method: 'PATCH',
-            headers: {
-              apikey: supabaseKey,
-              Authorization: `Bearer ${supabaseKey}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ raw_data: rawData, updated_at: new Date().toISOString() })
-          }).catch(() => {});
-        }
-      }
-    } catch (profErr) {
-      console.warn('[user_profiles password_hash update warning]:', profErr);
+    }
+
+    const pRows = await profileResp.json();
+    if (!Array.isArray(pRows) || pRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: `No user profile found in database matching email ${normEmail}`
+      });
+    }
+
+    const userProfileRow = pRows[0];
+    const rawData = userProfileRow.raw_data || {};
+    rawData.password_hash = newHash;
+    rawData.pin_hash = newHash;
+    rawData.legacy_sha256 = crypto.createHash('sha256').update(cleanPassword).digest('hex');
+
+    const patchResp = await fetch(`${supabaseUrl}/rest/v1/user_profiles?email=eq.${encodeURIComponent(normEmail)}`, {
+      method: 'PATCH',
+      headers: {
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=representation'
+      },
+      body: JSON.stringify({ raw_data: rawData, updated_at: new Date().toISOString() })
+    });
+
+    if (!patchResp.ok) {
+      const patchErrText = await patchResp.text().catch(() => '');
+      return res.status(500).json({
+        success: false,
+        error: `Failed to update password in Supabase: ${patchErrText || patchResp.statusText}`
+      });
     }
 
     console.log(`[Auth Reset] Successfully updated password for user: ${normEmail}`);

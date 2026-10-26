@@ -6716,7 +6716,7 @@ ${roleLabel}: ${userQuery}
       )}
 
       {/* Absolute Dynamic Alert Center */}
-      <div className="fixed top-4 sm:top-6 right-4 sm:right-6 left-4 sm:left-auto z-50 flex flex-col gap-2.5 sm:max-w-sm pointer-events-none">
+      <div className="fixed top-4 sm:top-6 right-4 sm:right-6 left-4 sm:left-auto z-[9999] flex flex-col gap-2.5 sm:max-w-sm pointer-events-none">
         {toasts.map(t => (
           <div key={t.id} className="smart-glass animate-bounce text-xs font-semibold px-4 py-3.5 rounded-xl border border-white/10 text-white shadow-xl flex items-center gap-2 pointer-events-auto bg-slate-900/90">
             <Sparkles className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
@@ -14338,16 +14338,18 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
         )}
       </AnimatePresence>
 
-      {/* Floating Duolingo-style Byte Widget with Procedural 3D Character */}
-      <FloatingByteWidget
-        activeTab={activeTab}
-        currentUser={currentUser}
-        tasks={tasks}
-        homeworkList={homeworkList}
-        announcements={announcements}
-        dueCardsCount={dueCardsCount}
-        onNavigateTab={handleTabSelect}
-      />
+      {/* Floating Duolingo-style Byte Widget with Procedural 3D Character — hidden on auth / sign up page */}
+      {currentUser && (
+        <FloatingByteWidget
+          activeTab={activeTab}
+          currentUser={currentUser}
+          tasks={tasks}
+          homeworkList={homeworkList}
+          announcements={announcements}
+          dueCardsCount={dueCardsCount}
+          onNavigateTab={handleTabSelect}
+        />
+      )}
 
       {/* First-Time Guided Onboarding Setup Modal */}
       {isOnboardingModalOpen && (
