@@ -4382,6 +4382,29 @@ const getSupabaseAdmin = () => {
   });
 };
 
+const getServerSupabaseKey = (): string => {
+  return (
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_KEY ||
+    ''
+  ).trim();
+};
+
+const isSupabaseKeyRejected = (status: number, responseText: string): boolean => {
+  if (status === 401 || status === 403) return true;
+  const lower = (responseText || '').toLowerCase();
+  return (
+    lower.includes('invalid api key') ||
+    lower.includes('jwt') ||
+    lower.includes('unauthorized') ||
+    lower.includes('forbidden') ||
+    lower.includes('invalid_grant') ||
+    lower.includes('apikey')
+  );
+};
+
 const RESEND_FROM_EMAIL = (process.env.RESEND_FROM_EMAIL || '').trim() || 'StudentOS <onboarding@resend.dev>';
 
 // 1. Password Reset Request Route: email in, creates one-time token, stores hash, sends link via Resend only
@@ -4402,7 +4425,13 @@ async function handlePasswordResetRequest(req: express.Request, res: express.Res
   }
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
-  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+  const supabaseKey = getServerSupabaseKey();
+  if (!supabaseKey) {
+    return res.status(500).json({
+      success: false,
+      error: 'Supabase server key is invalid.'
+    });
+  }
 
   try {
     // 1. Attempt user lookup in user_profiles to bind userId
@@ -4416,8 +4445,18 @@ async function handlePasswordResetRequest(req: express.Request, res: express.Res
         if (Array.isArray(users) && users.length > 0) {
           userId = users[0].id;
         }
+      } else {
+        const userErrText = await userRes.text().catch(() => '');
+        if (isSupabaseKeyRejected(userRes.status, userErrText)) {
+          return res.status(500).json({
+            success: false,
+            error: 'Supabase server key is invalid.'
+          });
+        }
       }
-    } catch (_) {}
+    } catch (lookupErr: any) {
+      console.warn('[User profile lookup warning]:', lookupErr?.message || lookupErr);
+    }
 
     // 2. Generate secure one-time token and store its hash with 1-hour expiry
     const token = crypto.randomBytes(32).toString('hex');
@@ -4442,7 +4481,16 @@ async function handlePasswordResetRequest(req: express.Request, res: express.Res
 
     if (!storeRes.ok) {
       const errText = await storeRes.text().catch(() => '');
-      throw new Error(`Failed to persist reset session: ${errText || storeRes.statusText}`);
+      if (isSupabaseKeyRejected(storeRes.status, errText)) {
+        return res.status(500).json({
+          success: false,
+          error: 'Supabase server key is invalid.'
+        });
+      }
+      return res.status(500).json({
+        success: false,
+        error: `Failed to persist reset session: ${errText || storeRes.statusText}`
+      });
     }
 
     // 4. Send reset email via Resend only using verified from address
@@ -4482,9 +4530,16 @@ async function handlePasswordResetRequest(req: express.Request, res: express.Res
     });
   } catch (err: any) {
     console.error('[Auth Reset Error]:', err);
+    const msg = err?.message || '';
+    if (isSupabaseKeyRejected(500, msg)) {
+      return res.status(500).json({
+        success: false,
+        error: 'Supabase server key is invalid.'
+      });
+    }
     return res.status(500).json({
       success: false,
-      error: err.message || 'Internal security server error during reset dispatch.'
+      error: msg || 'Internal security server error during reset dispatch.'
     });
   }
 }
@@ -4503,7 +4558,13 @@ async function handlePasswordResetConfirm(req: express.Request, res: express.Res
   }
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
-  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+  const supabaseKey = getServerSupabaseKey();
+  if (!supabaseKey) {
+    return res.status(500).json({
+      success: false,
+      error: 'Supabase server key is invalid.'
+    });
+  }
 
   try {
     const hashedToken = crypto.createHash('sha256').update(String(activeToken).trim()).digest('hex');
@@ -4516,7 +4577,16 @@ async function handlePasswordResetConfirm(req: express.Request, res: express.Res
 
     if (!tokenRes.ok) {
       const err = await tokenRes.text().catch(() => '');
-      throw new Error(`Token verification failed: ${err}`);
+      if (isSupabaseKeyRejected(tokenRes.status, err)) {
+        return res.status(500).json({
+          success: false,
+          error: 'Supabase server key is invalid.'
+        });
+      }
+      return res.status(500).json({
+        success: false,
+        error: `Token verification failed: ${err || tokenRes.statusText}`
+      });
     }
 
     const rows = await tokenRes.json();
@@ -4601,9 +4671,16 @@ async function handlePasswordResetConfirm(req: express.Request, res: express.Res
     });
   } catch (err: any) {
     console.error('[Reset Confirmation Error]:', err);
+    const msg = err?.message || '';
+    if (isSupabaseKeyRejected(500, msg)) {
+      return res.status(500).json({
+        success: false,
+        error: 'Supabase server key is invalid.'
+      });
+    }
     return res.status(500).json({
       success: false,
-      error: err.message || 'An error occurred while updating your password.'
+      error: msg || 'An error occurred while updating your password.'
     });
   }
 }
