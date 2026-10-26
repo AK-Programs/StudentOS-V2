@@ -38,6 +38,32 @@ import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
+export function getSupabaseServerConfig(): { url: string; key: string | null } {
+  const url = (
+    process.env.VITE_SUPABASE_URL ||
+    process.env.SUPABASE_URL ||
+    'https://zwpoutanhsujezglbson.supabase.co'
+  ).trim();
+
+  const rawKey = (
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_KEY ||
+    ''
+  ).trim();
+
+  let cleanKey = rawKey;
+  if ((cleanKey.startsWith('"') && cleanKey.endsWith('"')) || (cleanKey.startsWith("'") && cleanKey.endsWith("'"))) {
+    cleanKey = cleanKey.substring(1, cleanKey.length - 1).trim();
+  }
+
+  return {
+    url,
+    key: cleanKey || null
+  };
+}
+
 export const app = express();
 const PORT = 3000;
 
@@ -4207,24 +4233,24 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const normEmail = String(email).trim().toLowerCase();
-    const userMasterHash = 'scrypt$1e9c43e83d8945376923444187e27229$b70e8bac14e8fa197c6a42702e8ae97ed88c9ba413d85c77cfdf95a3a4b11bb62f5579cd00ccbf51300f4667a738aa9b428304a89257ddd8645bcd0a091e2db3';
 
-    const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
-    const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
-
-    // Fetch user profile from Supabase user_profiles
-    const profileResp = await fetch(`${supabaseUrl}/rest/v1/user_profiles?email=eq.${encodeURIComponent(normEmail)}&select=*`, {
-      headers: {
-        apikey: supabaseKey,
-        Authorization: `Bearer ${supabaseKey}`
-      }
-    });
+    const { url: supabaseUrl, key: supabaseKey } = getSupabaseServerConfig();
 
     let profile: any = null;
-    if (profileResp.ok) {
-      const rows = await profileResp.json();
-      if (Array.isArray(rows) && rows.length > 0) {
-        profile = rows[0];
+    if (supabaseKey) {
+      // Fetch user profile from Supabase user_profiles
+      const profileResp = await fetch(`${supabaseUrl}/rest/v1/user_profiles?email=eq.${encodeURIComponent(normEmail)}&select=*`, {
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`
+        }
+      });
+
+      if (profileResp.ok) {
+        const rows = await profileResp.json();
+        if (Array.isArray(rows) && rows.length > 0) {
+          profile = rows[0];
+        }
       }
     }
 
@@ -4565,23 +4591,52 @@ async function handlePasswordResetConfirm(req: express.Request, res: express.Res
     const newHash = hashPin(cleanPassword);
     const normEmail = verification.email;
 
-    // 2. Update user_profiles raw_data with new password hash in Supabase
-    const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
-    const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+    // 2. Resolve Supabase config dynamically from env
+    const { url: supabaseUrl, key: supabaseKey } = getSupabaseServerConfig();
+
+    if (!supabaseKey) {
+      return res.status(500).json({
+        success: false,
+        error: 'Supabase key is invalid'
+      });
+    }
 
     const profileResp = await fetch(`${supabaseUrl}/rest/v1/user_profiles?email=eq.${encodeURIComponent(normEmail)}&select=*`, {
       headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
     });
 
+    const errText = await profileResp.text().catch(() => '');
+
+    if (
+      profileResp.status === 401 ||
+      profileResp.status === 403 ||
+      errText.toLowerCase().includes('invalid api key') ||
+      errText.toLowerCase().includes('invalid_api_key') ||
+      errText.toLowerCase().includes('jwt')
+    ) {
+      return res.status(500).json({
+        success: false,
+        error: 'Supabase key is invalid'
+      });
+    }
+
     if (!profileResp.ok) {
-      const errText = await profileResp.text().catch(() => '');
       return res.status(500).json({
         success: false,
         error: `Failed to fetch user profile from Supabase: ${errText || profileResp.statusText}`
       });
     }
 
-    const pRows = await profileResp.json();
+    let pRows: any[] = [];
+    try {
+      pRows = JSON.parse(errText);
+    } catch {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to parse user profile response from Supabase'
+      });
+    }
+
     if (!Array.isArray(pRows) || pRows.length === 0) {
       return res.status(404).json({
         success: false,
@@ -4606,15 +4661,52 @@ async function handlePasswordResetConfirm(req: express.Request, res: express.Res
       body: JSON.stringify({ raw_data: rawData, updated_at: new Date().toISOString() })
     });
 
+    const patchErrText = await patchResp.text().catch(() => '');
+
+    if (
+      patchResp.status === 401 ||
+      patchResp.status === 403 ||
+      patchErrText.toLowerCase().includes('invalid api key') ||
+      patchErrText.toLowerCase().includes('invalid_api_key') ||
+      patchErrText.toLowerCase().includes('jwt')
+    ) {
+      return res.status(500).json({
+        success: false,
+        error: 'Supabase key is invalid'
+      });
+    }
+
     if (!patchResp.ok) {
-      const patchErrText = await patchResp.text().catch(() => '');
       return res.status(500).json({
         success: false,
         error: `Failed to update password in Supabase: ${patchErrText || patchResp.statusText}`
       });
     }
 
-    console.log(`[Auth Reset] Successfully updated password for user: ${normEmail}`);
+    // 3. Verify the updated password hash in Supabase before returning success
+    const verifyResp = await fetch(`${supabaseUrl}/rest/v1/user_profiles?email=eq.${encodeURIComponent(normEmail)}&select=*`, {
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+    });
+
+    if (!verifyResp.ok) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to verify updated user profile in Supabase.'
+      });
+    }
+
+    const vRows = await verifyResp.json().catch(() => []);
+    const verifyProfile = Array.isArray(vRows) && vRows.length > 0 ? vRows[0] : null;
+    const savedHash = verifyProfile?.raw_data?.password_hash || verifyProfile?.raw_data?.pin_hash;
+
+    if (savedHash !== newHash) {
+      return res.status(500).json({
+        success: false,
+        error: 'Password update verification failed in Supabase.'
+      });
+    }
+
+    console.log(`[Auth Reset] Successfully updated password and verified in Supabase for user: ${normEmail}`);
 
     // NEVER return password_hash in response
     return res.json({
