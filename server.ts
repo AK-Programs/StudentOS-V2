@@ -4382,32 +4382,9 @@ const getSupabaseAdmin = () => {
   });
 };
 
-const getServerSupabaseKey = (): string => {
-  return (
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    process.env.VITE_SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_KEY ||
-    ''
-  ).trim();
-};
-
-const isSupabaseKeyRejected = (status: number, responseText: string): boolean => {
-  if (status === 401 || status === 403) return true;
-  const lower = (responseText || '').toLowerCase();
-  return (
-    lower.includes('invalid api key') ||
-    lower.includes('jwt') ||
-    lower.includes('unauthorized') ||
-    lower.includes('forbidden') ||
-    lower.includes('invalid_grant') ||
-    lower.includes('apikey')
-  );
-};
-
 const RESEND_FROM_EMAIL = (process.env.RESEND_FROM_EMAIL || '').trim() || 'StudentOS <onboarding@resend.dev>';
 
-// 1. Password Reset Request Route: email in, creates one-time token, stores hash, sends link via Resend only
+// 1. Password Reset Request Route: email in, creates one-time token, stores hash in password_resets, sends link via Resend
 async function handlePasswordResetRequest(req: express.Request, res: express.Response) {
   const { email } = req.body || {};
   if (!email || typeof email !== 'string' || !email.includes('@')) {
@@ -4425,75 +4402,62 @@ async function handlePasswordResetRequest(req: express.Request, res: express.Res
   }
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
-  const supabaseKey = getServerSupabaseKey();
-  if (!supabaseKey) {
-    return res.status(500).json({
-      success: false,
-      error: 'Supabase server key is invalid.'
-    });
-  }
+  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
 
   try {
-    // 1. Attempt user lookup in user_profiles to bind userId
-    let userId: string | null = null;
-    try {
-      const userRes = await fetch(`${supabaseUrl}/rest/v1/user_profiles?email=eq.${encodeURIComponent(normEmail)}&select=id`, {
-        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
-      });
-      if (userRes.ok) {
-        const users = await userRes.json();
-        if (Array.isArray(users) && users.length > 0) {
-          userId = users[0].id;
-        }
-      } else {
-        const userErrText = await userRes.text().catch(() => '');
-        if (isSupabaseKeyRejected(userRes.status, userErrText)) {
-          return res.status(500).json({
-            success: false,
-            error: 'Supabase server key is invalid.'
-          });
-        }
-      }
-    } catch (lookupErr: any) {
-      console.warn('[User profile lookup warning]:', lookupErr?.message || lookupErr);
-    }
-
-    // 2. Generate secure one-time token and store its hash with 1-hour expiry
+    // 1. Generate secure one-time token and store its SHA-256 hash in password_resets table
     const token = crypto.randomBytes(32).toString('hex');
     const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
-    const expiresAt = Date.now() + 3600000; // 1 hour
+    const expiresAt = Date.now() + 3600000; // 1 hour expiry
 
-    // 3. Store in Supabase global_data
-    const storeRes = await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
+    // 2. Store row in password_resets using anon key
+    let storeRes = await fetch(`${supabaseUrl}/rest/v1/password_resets`, {
       method: 'POST',
       headers: {
         apikey: supabaseKey,
         Authorization: `Bearer ${supabaseKey}`,
         'Content-Type': 'application/json',
-        Prefer: 'resolution=merge-duplicates'
+        Prefer: 'return=minimal'
       },
       body: JSON.stringify({
-        id: `auth_reset:${hashedToken}`,
-        data: { email: normEmail, userId, expiresAt },
-        updated_at: new Date().toISOString()
+        email: normEmail,
+        token_hash: hashedToken,
+        expires_at: expiresAt,
+        used: false
       })
     });
 
+    // Fallback to global_data if password_resets table does not exist in schema yet
     if (!storeRes.ok) {
       const errText = await storeRes.text().catch(() => '');
-      if (isSupabaseKeyRejected(storeRes.status, errText)) {
-        return res.status(500).json({
-          success: false,
-          error: 'Supabase server key is invalid.'
+      if (storeRes.status === 404 || errText.includes('PGRST205') || errText.includes('password_resets')) {
+        storeRes = await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
+          method: 'POST',
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+            Prefer: 'resolution=merge-duplicates'
+          },
+          body: JSON.stringify({
+            id: `auth_reset:${hashedToken}`,
+            data: { email: normEmail, expiresAt, used: false },
+            updated_at: new Date().toISOString()
+          })
         });
       }
-      return res.status(500).json({
-        success: false,
-        error: `Failed to persist reset session: ${errText || storeRes.statusText}`
-      });
+
+      if (!storeRes.ok) {
+        const fallbackErr = await storeRes.text().catch(() => '');
+        const realError = fallbackErr || errText || storeRes.statusText;
+        return res.status(500).json({
+          success: false,
+          error: `Supabase reset session error: ${realError}`
+        });
+      }
     }
 
-    // 4. Send reset email via Resend only using verified from address
+    // 3. Send reset link via Resend only
     const origin = req.get('origin') || `${req.protocol}://${req.get('host')}` || 'http://localhost:3000';
     const resetLink = `${origin}?reset_token=${token}`;
 
@@ -4529,22 +4493,15 @@ async function handlePasswordResetRequest(req: express.Request, res: express.Res
       message: 'Check your email for the reset link.'
     });
   } catch (err: any) {
-    console.error('[Auth Reset Error]:', err);
-    const msg = err?.message || '';
-    if (isSupabaseKeyRejected(500, msg)) {
-      return res.status(500).json({
-        success: false,
-        error: 'Supabase server key is invalid.'
-      });
-    }
+    console.error('[Auth Reset Request Error]:', err);
     return res.status(500).json({
       success: false,
-      error: msg || 'Internal security server error during reset dispatch.'
+      error: err?.message || 'Internal security server error during reset dispatch.'
     });
   }
 }
 
-// 2. Password Reset Confirm Route: token + new password in, verifies token, updates password, expires token
+// 2. Password Reset Confirm Route: token + new password in, verifies token, updates password, marks token used
 async function handlePasswordResetConfirm(req: express.Request, res: express.Response) {
   const { token, resetToken, password, newPassword } = req.body || {};
   const activeToken = token || resetToken;
@@ -4558,80 +4515,94 @@ async function handlePasswordResetConfirm(req: express.Request, res: express.Res
   }
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
-  const supabaseKey = getServerSupabaseKey();
-  if (!supabaseKey) {
-    return res.status(500).json({
-      success: false,
-      error: 'Supabase server key is invalid.'
-    });
-  }
+  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
 
   try {
     const hashedToken = crypto.createHash('sha256').update(String(activeToken).trim()).digest('hex');
     const tokenId = `auth_reset:${hashedToken}`;
 
-    // 1. Fetch token data from global_data
-    const tokenRes = await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.${tokenId}&select=*`, {
+    // 1. Fetch token record from password_resets table
+    let tokenData: { email: string; expiresAt?: number; expires_at?: number; used?: boolean } | null = null;
+    let isFromPasswordResetsTable = false;
+
+    const prRes = await fetch(`${supabaseUrl}/rest/v1/password_resets?token_hash=eq.${hashedToken}&select=*`, {
       headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
     });
 
-    if (!tokenRes.ok) {
-      const err = await tokenRes.text().catch(() => '');
-      if (isSupabaseKeyRejected(tokenRes.status, err)) {
-        return res.status(500).json({
-          success: false,
-          error: 'Supabase server key is invalid.'
-        });
+    if (prRes.ok) {
+      const prRows = await prRes.json();
+      if (Array.isArray(prRows) && prRows.length > 0) {
+        const row = prRows[0];
+        tokenData = {
+          email: row.email,
+          expires_at: row.expires_at || row.expiresAt,
+          used: Boolean(row.used)
+        };
+        isFromPasswordResetsTable = true;
       }
-      return res.status(500).json({
+    } else {
+      const err = await prRes.text().catch(() => '');
+      if (prRes.status === 401 || prRes.status === 403) {
+        return res.status(500).json({ success: false, error: `Supabase token verification error: ${err || prRes.statusText}` });
+      }
+    }
+
+    // Fallback: check global_data if record not found in password_resets
+    if (!tokenData) {
+      const gdRes = await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.${tokenId}&select=*`, {
+        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+      });
+      if (gdRes.ok) {
+        const gdRows = await gdRes.json();
+        if (Array.isArray(gdRows) && gdRows.length > 0) {
+          const rec = gdRows[0];
+          const parsed = rec.data || (rec.content ? JSON.parse(rec.content) : null);
+          if (parsed && parsed.email) {
+            tokenData = {
+              email: parsed.email,
+              expires_at: parsed.expiresAt || parsed.expires_at,
+              used: Boolean(parsed.used)
+            };
+          }
+        }
+      }
+    }
+
+    if (!tokenData || !tokenData.email) {
+      return res.status(400).json({
         success: false,
-        error: `Token verification failed: ${err || tokenRes.statusText}`
+        error: 'This reset link is invalid or has already been used.'
       });
     }
 
-    const rows = await tokenRes.json();
-    if (!Array.isArray(rows) || rows.length === 0) {
-      return res.status(400).json({ success: false, error: 'This reset link is invalid or has already been used.' });
+    if (tokenData.used) {
+      return res.status(400).json({
+        success: false,
+        error: 'This reset link has already been used.'
+      });
     }
 
-    const tokenRecord = rows[0];
-    const tokenData = tokenRecord.data || (tokenRecord.content ? JSON.parse(tokenRecord.content) : null);
-
-    if (!tokenData || !tokenData.email) {
-      return res.status(400).json({ success: false, error: 'Invalid or incomplete reset session data.' });
-    }
-
-    if (tokenData.expiresAt && tokenData.expiresAt < Date.now()) {
-      await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.${tokenId}`, {
-        method: 'DELETE',
-        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
-      }).catch(() => {});
-      return res.status(400).json({ success: false, error: 'This reset link has expired. Please request a new one.' });
+    const expiresAt = tokenData.expires_at || tokenData.expiresAt;
+    if (expiresAt && expiresAt < Date.now()) {
+      // Mark token as used
+      if (isFromPasswordResetsTable) {
+        await fetch(`${supabaseUrl}/rest/v1/password_resets?token_hash=eq.${hashedToken}`, {
+          method: 'PATCH',
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ used: true })
+        }).catch(() => {});
+      }
+      return res.status(400).json({
+        success: false,
+        error: 'This reset link has expired. Please request a new one.'
+      });
     }
 
     const cleanPassword = String(activePassword).trim();
     const newHash = hashPin(cleanPassword);
     const normEmail = String(tokenData.email).trim().toLowerCase();
 
-    // 2. Update Supabase Auth if service role admin key is configured
-    const supabaseAdmin = getSupabaseAdmin();
-    if (supabaseAdmin) {
-      try {
-        let authUserId = tokenData.userId;
-        if (!authUserId) {
-          const { data: { users: authUsers } } = await supabaseAdmin.auth.admin.listUsers();
-          const matched = authUsers?.find((u: any) => u.email?.toLowerCase() === normEmail);
-          if (matched) authUserId = matched.id;
-        }
-        if (authUserId) {
-          await supabaseAdmin.auth.admin.updateUserById(authUserId, { password: cleanPassword });
-        }
-      } catch (authErr) {
-        console.warn('[Supabase Auth Admin update warning]:', authErr);
-      }
-    }
-
-    // 3. Update password_hash in user_profiles raw_data for local session authentication
+    // 2. Update user_profiles raw_data with new password hash using anon key
     try {
       const profileResp = await fetch(`${supabaseUrl}/rest/v1/user_profiles?email=eq.${encodeURIComponent(normEmail)}&select=*`, {
         headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
@@ -4641,6 +4612,7 @@ async function handlePasswordResetConfirm(req: express.Request, res: express.Res
         if (Array.isArray(pRows) && pRows.length > 0) {
           const rawData = pRows[0].raw_data || {};
           rawData.password_hash = newHash;
+          rawData.pin_hash = newHash;
           await fetch(`${supabaseUrl}/rest/v1/user_profiles?email=eq.${encodeURIComponent(normEmail)}`, {
             method: 'PATCH',
             headers: {
@@ -4648,7 +4620,7 @@ async function handlePasswordResetConfirm(req: express.Request, res: express.Res
               Authorization: `Bearer ${supabaseKey}`,
               'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ raw_data: rawData })
+            body: JSON.stringify({ raw_data: rawData, updated_at: new Date().toISOString() })
           });
         }
       }
@@ -4656,13 +4628,26 @@ async function handlePasswordResetConfirm(req: express.Request, res: express.Res
       console.warn('[user_profiles password_hash update warning]:', profErr);
     }
 
-    // 4. Invalidate single-use token immediately
-    await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.${tokenId}`, {
-      method: 'DELETE',
-      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
-    });
+    // 3. Mark token as used
+    if (isFromPasswordResetsTable) {
+      await fetch(`${supabaseUrl}/rest/v1/password_resets?token_hash=eq.${hashedToken}`, {
+        method: 'PATCH',
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ used: true })
+      }).catch(() => {});
+    } else {
+      await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.${tokenId}`, {
+        method: 'DELETE',
+        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+      }).catch(() => {});
+    }
 
     console.log(`[Auth Reset] Successfully updated password for user: ${normEmail}`);
+
     // NEVER return password_hash in response
     return res.json({
       success: true,
@@ -4671,16 +4656,9 @@ async function handlePasswordResetConfirm(req: express.Request, res: express.Res
     });
   } catch (err: any) {
     console.error('[Reset Confirmation Error]:', err);
-    const msg = err?.message || '';
-    if (isSupabaseKeyRejected(500, msg)) {
-      return res.status(500).json({
-        success: false,
-        error: 'Supabase server key is invalid.'
-      });
-    }
     return res.status(500).json({
       success: false,
-      error: msg || 'An error occurred while updating your password.'
+      error: err?.message || 'An error occurred while updating your password.'
     });
   }
 }
