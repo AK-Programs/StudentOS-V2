@@ -4663,7 +4663,7 @@ async function handlePasswordResetConfirm(req: express.Request, res: express.Res
         'Content-Type': 'application/json',
         Prefer: 'return=representation'
       },
-      body: JSON.stringify({ raw_data: rawData, updated_at: new Date().toISOString() })
+      body: JSON.stringify({ raw_data: rawData, updated_at: Date.now() })
     });
 
     const patchErrText = await patchResp.text().catch(() => '');
