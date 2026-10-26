@@ -12,7 +12,7 @@ import { supabase } from './supabase';
 import { UserProfile } from '../types';
 import { saveSupabaseUserProfile } from './supabaseUsers';
 
-export type ThemeId = 'default' | 'midnight' | 'ocean' | 'aurora' | 'paper' | 'claymorphism' | 'glassmorphism';
+export type ThemeId = 'default' | 'midnight' | 'ocean' | 'aurora' | 'paper' | 'claymorphism' | 'glassmorphism' | 'halloween';
 export type ThemeAccent = 'indigo' | 'emerald' | 'amber' | 'rose';
 
 export interface ThemeAccentConfig {

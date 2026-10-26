@@ -35,6 +35,7 @@ import {
 } from '../types/syllabusTimetable';
 import { SyllabusTimetableService } from '../lib/syllabusTimetableService';
 import { soundService } from '../lib/soundService';
+import { supabase } from '../lib/supabase';
 
 interface OfficialTimetableViewerProps {
   currentUser: UserProfile;
@@ -90,7 +91,6 @@ export const OfficialTimetableViewer: React.FC<OfficialTimetableViewerProps> = (
   useEffect(() => {
     async function fetchTeachers() {
       try {
-        const { data } = await SyllabusTimetableService.getOfficialSyllabuses(schoolId, selectedGrade); // Just to warm up
         const { data: users } = await supabase.from('user_profiles').select('name').in('role', ['teacher', 'coordinator', 'admin', 'super_admin']);
         if (users) setAllTeachers(users.map(u => u.name).filter(Boolean));
       } catch (e) {}
@@ -133,7 +133,7 @@ export const OfficialTimetableViewer: React.FC<OfficialTimetableViewerProps> = (
     }
 
     const updatedSchedule = tempSchedule.map(daySch => {
-      if (daySchedule.day === selectedDay) {
+      if (daySch.day === selectedDay) {
         return {
           ...daySch,
           periods: [...daySch.periods, { ...newPeriodData, name: `Period ${newPeriodData.periodNumber}` } as TimetablePeriod].sort((a, b) => a.periodNumber - b.periodNumber)

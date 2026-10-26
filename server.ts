@@ -33,6 +33,8 @@ import {
   revokeClassroomPanel,
   getRealClassroomMetadata
 } from './server/panelBoardService';
+import { Resend } from 'resend';
+import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
@@ -4413,6 +4415,188 @@ let globalAnnouncementsState: any[] = [];
 let globalHomeworkState: any[] = [];
 
 // Configure Vite middleware in development or static serving in production
+// ========================================================================
+// AUTHENTICATION & PASSWORD RESET API (RESEND POWERED)
+// ========================================================================
+const getResendClient = () => {
+  const apiKey = process.env.VITE_RESEND_API_KEY;
+  if (!apiKey || apiKey.startsWith('re_123456789')) return null;
+  return new Resend(apiKey);
+};
+
+const getSupabaseAdmin = () => {
+  const url = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!serviceKey) return null;
+  return createClient(url, serviceKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  });
+};
+
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const { email } = req.body;
+  if (!email || !email.includes('@')) {
+    return res.status(400).json({ error: 'Valid school email is required.' });
+  }
+
+  const resend = getResendClient();
+  if (!resend) {
+    return res.status(503).json({ error: 'Email service is not configured (RESEND_API_KEY missing).' });
+  }
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+
+  try {
+    // 1. Verify user exists in user_profiles
+    const userRes = await fetch(`${supabaseUrl}/rest/v1/user_profiles?email=eq.${encodeURIComponent(email.toLowerCase())}&select=id`, {
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+    });
+    
+    if (!userRes.ok) {
+       const err = await userRes.text();
+       throw new Error(`Profile lookup failed: ${err}`);
+    }
+    
+    const users = await userRes.json();
+    if (!Array.isArray(users) || users.length === 0) {
+      return res.status(404).json({ error: 'No account found with this institutional email.' });
+    }
+    const userId = users[0].id;
+
+    // 2. Generate token
+    const token = crypto.randomBytes(32).toString('hex');
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+    const expiresAt = Date.now() + 3600000; // 1 hour
+
+    // 3. Store in global_data
+    const storeRes = await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
+      method: 'POST',
+      headers: {
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({
+        id: `auth_reset:${hashedToken}`,
+        data: { email: email.toLowerCase(), userId, expiresAt },
+        updated_at: new Date().toISOString()
+      })
+    });
+
+    if (!storeRes.ok) {
+      const err = await storeRes.text();
+      throw new Error(`Failed to persist reset session: ${err}`);
+    }
+
+    // 4. Send email
+    const origin = req.get('origin') || 'http://localhost:3000';
+    const resetLink = `${origin}?reset_token=${token}`;
+
+    const { data, error } = await resend.emails.send({
+      from: 'StudentOS Security <security@studentos.internal>',
+      to: email.toLowerCase(),
+      subject: 'Reset your StudentOS account password',
+      html: `
+        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; background-color: #ffffff;">
+          <h2 style="color: #4f46e5; margin-top: 0;">StudentOS Password Reset</h2>
+          <p style="color: #334155;">We received a request to reset your password. Click the button below to proceed:</p>
+          <div style="text-align: center; margin: 35px 0;">
+            <a href="${resetLink}" style="background-color: #4f46e5; color: white !important; padding: 14px 28px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">Reset My Password</a>
+          </div>
+          <p style="color: #64748b; font-size: 14px; line-height: 1.5;">This link will expire in 60 minutes. If you did not request this, you can safely ignore this email.</p>
+          <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 25px 0;" />
+          <p style="color: #94a3b8; font-size: 12px; text-align: center;">StudentOS Institutional Security · Authorized Campus Access Only</p>
+        </div>
+      `
+    });
+
+    if (error) {
+      return res.status(500).json({ error: `Resend dispatch failed: ${error.message}` });
+    }
+
+    return res.json({ status: 'ok', message: 'Reset link dispatched. Please check your school email inbox.' });
+  } catch (err: any) {
+    console.error('[Auth Reset Error]:', err);
+    return res.status(500).json({ error: err.message || 'Internal security server error during reset dispatch.' });
+  }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  const { token, password } = req.body;
+  if (!token || !password || password.length < 6) {
+    return res.status(400).json({ error: 'Valid token and new password (min 6 characters) are required.' });
+  }
+
+  const supabaseAdmin = getSupabaseAdmin();
+  if (!supabaseAdmin) {
+     return res.status(503).json({ error: 'Server is not authorized for administrative auth updates (SUPABASE_SERVICE_ROLE_KEY missing).' });
+  }
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
+  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+
+  try {
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+    const tokenId = `auth_reset:${hashedToken}`;
+
+    // 1. Fetch token data from global_data
+    const tokenRes = await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.${tokenId}&select=*`, {
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+    });
+    
+    if (!tokenRes.ok) {
+       const err = await tokenRes.text();
+       throw new Error(`Token verification failed: ${err}`);
+    }
+    
+    const rows = await tokenRes.json();
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: 'This reset link is invalid or has already been used.' });
+    }
+
+    const tokenRecord = rows[0];
+    const tokenData = tokenRecord.data || (tokenRecord.content ? JSON.parse(tokenRecord.content) : null);
+    
+    if (!tokenData || !tokenData.userId) {
+       return res.status(400).json({ error: 'Corrupt reset session data.' });
+    }
+
+    if (tokenData.expiresAt < Date.now()) {
+      return res.status(400).json({ error: 'This reset link has expired. Please request a new one.' });
+    }
+
+    const { userId } = tokenData;
+
+    // 2. Perform the password update via Supabase Admin SDK
+    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+      password: password
+    });
+    
+    if (updateError) {
+      console.error('[Supabase Auth Admin Error]:', updateError);
+      return res.status(400).json({ error: updateError.message });
+    }
+
+    // 3. Securely invalidate the single-use token
+    await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.${tokenId}`, {
+      method: 'DELETE',
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+    });
+
+    console.log(`[Auth Reset] Successfully updated password for user: ${userId}`);
+    return res.json({ status: 'ok', message: 'Your password has been updated. Please sign in with your new credentials.' });
+  } catch (err: any) {
+    console.error('[Reset Confirmation Error]:', err);
+    return res.status(500).json({ error: err.message || 'An error occurred while updating your password.' });
+  }
+});
+
+
 async function startServer() {
   if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
     const vitePkg = 'vite';

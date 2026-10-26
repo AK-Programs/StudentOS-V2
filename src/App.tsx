@@ -14,7 +14,8 @@ import {
   PenTool, Eraser, Share2, LogOut, AlertTriangle, Activity, RefreshCw,
   Heart, Bookmark, X, Bell, Zap, Gift, Smartphone, Paperclip, History, Brain, Globe,
   LayoutDashboard, Layers, Video, HelpCircle, GraduationCap, Shield, Compass,
-  PanelLeftClose, PanelLeftOpen, ClipboardList, CheckSquare, Monitor, Tv, Cpu, Trophy, Swords
+  PanelLeftClose, PanelLeftOpen, ClipboardList, CheckSquare, Monitor, Tv, Cpu, Trophy, Swords,
+  Key, ArrowLeft
 } from 'lucide-react';
 import { 
   UserRole, HouseType, SectionType, UserProfile, HouseStats, 
@@ -695,7 +696,11 @@ export default function App() {
   const [requestedAccountType, setRequestedAccountType] = useState<'student' | 'teacher' | 'coordinator' | 'admin'>('student');
 
   // Redesigned Sign Up Flow States
-  const [regStep, setRegStep] = useState<'login' | 'role' | 'profile' | 'submit'>('role');
+  const [regStep, setRegStep] = useState<'login' | 'role' | 'profile' | 'submit' | 'reset-password'>('role');
+  const [resetToken, setResetToken] = useState<string | null>(null);
+  const [newResetPassword, setNewResetPassword] = useState('');
+  const [confirmResetPassword, setConfirmResetPassword] = useState('');
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
   const regStepRef = useRef(regStep);
   useEffect(() => {
     regStepRef.current = regStep;
@@ -1598,6 +1603,82 @@ export default function App() {
     }, 1000);
     return () => clearInterval(tInterval);
   }, []);
+
+  // Detect and initialize Password Reset flow from email link
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = urlParams.get('reset_token');
+    if (token) {
+      setResetToken(token);
+      setRegStep('reset-password');
+      // Clean URL for aesthetics and security
+      window.history.replaceState(null, '', window.location.pathname);
+      showNotification('🔑 Reset token detected. Please set your new password.');
+    }
+  }, []);
+
+  const handleForgotPassword = async () => {
+    if (!loginEmail.trim()) {
+      showNotification('Please enter your school email first.');
+      return;
+    }
+    
+    try {
+      const resp = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: loginEmail.trim() })
+      });
+      
+      const data = await resp.json();
+      if (resp.ok) {
+        showNotification('✅ ' + data.message);
+      } else {
+        showNotification('⚠️ ' + (data.error || 'Failed to send reset link.'));
+      }
+    } catch (err) {
+      showNotification('⚠️ Network error. Please try again.');
+    }
+  };
+
+  const handleConfirmResetPassword = async () => {
+    if (!resetToken || !newResetPassword) return;
+    if (newResetPassword.length < 6) {
+      showNotification('⚠️ Password must be at least 6 characters long.');
+      return;
+    }
+    if (newResetPassword !== confirmResetPassword) {
+      showNotification('⚠️ Passwords do not match.');
+      return;
+    }
+
+    setIsResettingPassword(true);
+    try {
+      const resp = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: resetToken,
+          password: newResetPassword
+        })
+      });
+
+      const data = await resp.json();
+      if (resp.ok) {
+        showNotification('✅ ' + data.message);
+        setRegStep('login');
+        setResetToken(null);
+        setNewResetPassword('');
+        setConfirmResetPassword('');
+      } else {
+        showNotification('⚠️ ' + (data.error || 'Failed to reset password.'));
+      }
+    } catch (err) {
+      showNotification('⚠️ Connection error. Please try again.');
+    } finally {
+      setIsResettingPassword(false);
+    }
+  };
 
   // Restore persisted Pomodoro state on mount or PWA reopen
   useEffect(() => {
@@ -6818,13 +6899,7 @@ ${roleLabel}: ${userQuery}
                         </label>
                         <button
                           type="button"
-                          onClick={() => {
-                            if (!loginEmail.trim()) {
-                              showNotification('Enter your school email above first, or use Continue with Google.');
-                            } else {
-                              showNotification(`Password reset instructions requested for ${loginEmail.trim()}. Contact your school admin if you use an institutional key.`);
-                            }
-                          }}
+                          onClick={handleForgotPassword}
                           className="text-[11px] font-semibold text-indigo-400 hover:text-indigo-300 cursor-pointer"
                         >
                           Forgot password?
@@ -6906,6 +6981,76 @@ ${roleLabel}: ${userQuery}
                       </div>
                     </div>
                   )}
+                </motion.div>
+              )}
+
+              {/* PASSWORD RESET SCREEN */}
+              {regStep === 'reset-password' && (
+                <motion.div
+                  key="reset-password"
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.16 }}
+                  className="space-y-4 text-left"
+                >
+                  <div className="flex items-center gap-3 pb-1">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-500/20 flex items-center justify-center text-indigo-400 shadow-inner">
+                      <Key className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-white">Security Update</h3>
+                      <p className="text-[10px] text-slate-400">Establish a secure new account credential.</p>
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-3.5">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 ml-1">
+                        New Passcode
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        value={newResetPassword}
+                        onChange={(e) => setNewResetPassword(e.target.value)}
+                        placeholder="Minimum 6 characters"
+                        className="w-full text-xs px-3.5 py-3 rounded-xl bg-slate-900/90 border border-white/10 focus:outline-none focus:border-indigo-500 text-white placeholder-slate-600 transition-all"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 ml-1">
+                        Confirm Passcode
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        value={confirmResetPassword}
+                        onChange={(e) => setConfirmResetPassword(e.target.value)}
+                        placeholder="Verify your new password"
+                        className="w-full text-xs px-3.5 py-3 rounded-xl bg-slate-900/90 border border-white/10 focus:outline-none focus:border-indigo-500 text-white placeholder-slate-600 transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-2">
+                    <button
+                      onClick={handleConfirmResetPassword}
+                      disabled={isResettingPassword || !newResetPassword || newResetPassword !== confirmResetPassword || newResetPassword.length < 6}
+                      className="uiverse-btn-primary w-full py-3 px-4 rounded-xl text-white font-bold text-xs transition-all disabled:opacity-50 shadow-lg shadow-indigo-600/20 active:scale-[0.98] cursor-pointer"
+                    >
+                      {isResettingPassword ? 'Updating Vault...' : 'Apply Security Update'}
+                    </button>
+                    
+                    <button
+                      type="button"
+                      onClick={() => setRegStep('login')}
+                      className="w-full mt-3 py-1 text-[11px] font-semibold text-slate-500 hover:text-slate-300 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <ArrowLeft className="w-3 h-3" />
+                      Abort & Back to Sign In
+                    </button>
+                  </div>
                 </motion.div>
               )}
 
