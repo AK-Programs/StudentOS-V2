@@ -45,12 +45,14 @@ export function getSupabaseServerConfig(): { url: string; key: string | null } {
     'https://zwpoutanhsujezglbson.supabase.co'
   ).trim();
 
+  const DEFAULT_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+
   const rawKey = (
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
     process.env.VITE_SUPABASE_ANON_KEY ||
     process.env.SUPABASE_ANON_KEY ||
     process.env.SUPABASE_KEY ||
-    ''
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    DEFAULT_ANON_KEY
   ).trim();
 
   let cleanKey = rawKey;
