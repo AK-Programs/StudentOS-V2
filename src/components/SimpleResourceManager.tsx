@@ -133,10 +133,18 @@ export default function SimpleResourceManager({
   };
 
   const handleMoveToFolder = async (itemId: string, folderId: string | null) => {
+    if (folderId) {
+      const targetFolder = folders.find(f => f.id === folderId);
+      if (targetFolder && targetFolder.type !== 'materials') {
+        showNotification('⚠️ Material Hub items can only be moved into Material Hub folders.');
+        setItemHoldMenu(null);
+        return;
+      }
+    }
     const tableName = type === 'assignment' ? 'assignments' : 'school_resources';
     try {
       await supabase.from(tableName).update({ folder_id: folderId }).eq('id', itemId);
-      showNotification('Moved to folder');
+      showNotification(folderId ? '📁 Moved item to folder' : '📂 Moved item to root');
       fetchItems();
     } catch (_) {}
     setItemHoldMenu(null);

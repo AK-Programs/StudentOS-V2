@@ -383,12 +383,21 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
   };
 
   const handleMoveToFolder = async (noteId: string, folderId: string | null) => {
+    if (folderId) {
+      const targetFolder = folders.find(f => f.id === folderId);
+      if (targetFolder && targetFolder.type !== 'notes') {
+        showToast('⚠️ Personal notes can only be moved into Personal Notes folders.');
+        setHoldMenu(null);
+        return;
+      }
+    }
     const updated = notesList.map(n => n.id === noteId ? { ...n, folder_id: folderId } : n);
     setNotesList(updated);
     persistLocalNotes(updated);
     try {
       await supabase.from('lecture_notes').update({ folder_id: folderId }).eq('id', noteId);
       await supabase.from('notes').update({ folder_id: folderId }).eq('id', noteId);
+      showToast(folderId ? '📁 Moved note to folder' : '📂 Moved note to root');
     } catch (_) {}
     setHoldMenu(null);
   };

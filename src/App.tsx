@@ -1033,11 +1033,20 @@ export default function App() {
   };
 
   const handleMoveVaultNoteToFolder = async (noteId: string, folderId: string | null) => {
+    if (folderId) {
+      const targetFolder = vaultFolders.find(f => f.id === folderId);
+      if (targetFolder && targetFolder.type !== 'notes') {
+        showNotification('⚠️ Personal notes can only be moved into Personal Notes folders.');
+        setVaultItemHoldMenu(null);
+        return;
+      }
+    }
     const note = vaultNotes.find(n => n.id === noteId);
     if (!note) return;
     const updated = vaultNotes.map(n => n.id === noteId ? { ...n, folder_id: folderId } : n);
     setVaultNotes(updated);
     await saveVaultNoteToSupabase({ ...note, folder_id: folderId });
+    showNotification(folderId ? '📁 Moved note to folder' : '📂 Moved note to root');
     setVaultItemHoldMenu(null);
   };
 
