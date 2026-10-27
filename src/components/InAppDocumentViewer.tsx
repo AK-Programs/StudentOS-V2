@@ -512,13 +512,18 @@ export const InAppDocumentViewer: React.FC<InAppDocumentViewerProps> = ({
       onDownload();
       return;
     }
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName || cleanTitle || 'download';
-    a.target = '_blank';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const name = fileName || cleanTitle || 'download';
+    if (typeof (window as any).openExternalDownload === 'function') {
+      (window as any).openExternalDownload(url, name);
+    } else {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
     if (showNotification) showNotification('Downloading document...');
   };
 

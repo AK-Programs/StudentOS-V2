@@ -109,14 +109,26 @@ export function exportWhiteboardDocumentFile(fileName: string, slides: Slide[]):
 
   const jsonStr = JSON.stringify(doc, null, 2);
   const blob = new Blob([jsonStr], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${cleanName}${WHITEBOARD_FILE_EXTENSION}`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  const filename = `${cleanName}${WHITEBOARD_FILE_EXTENSION}`;
+
+  if (typeof (window as any).downloadAIVoice === 'function') {
+    (window as any).downloadAIVoice(blob, filename);
+  } else {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = reader.result as string;
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = filename;
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        if (a.parentNode) a.parentNode.removeChild(a);
+      }, 500);
+    };
+    reader.readAsDataURL(blob);
+  }
 
   return cleanName;
 }

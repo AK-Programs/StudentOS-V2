@@ -222,14 +222,20 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
       rows.push([date, u.name, u.email, selectedGrade, selectedSection, selectedSubject, att, `${hist}%`]);
     });
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + rows.map(e => e.join(',')).join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Attendance_${selectedGrade}_${selectedSection}_${date}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const filename = `Attendance_${selectedGrade}_${selectedSection}_${date}.csv`;
+    const csvBlob = new Blob([rows.map(e => e.join(',')).join('\n')], { type: 'text/csv' });
+    if (typeof (window as any).downloadAIVoice === 'function') {
+      (window as any).downloadAIVoice(csvBlob, filename);
+    } else {
+      const csvContent = 'data:text/csv;charset=utf-8,' + rows.map(e => e.join(',')).join('\n');
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement('a');
+      link.setAttribute('href', encodedUri);
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
   };
 
   const canExport = canUserExport(effectiveRole || currentUser.role);

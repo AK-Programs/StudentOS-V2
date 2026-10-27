@@ -1392,11 +1392,15 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
     });
 
     const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Attendance_${activeMeeting.id}.csv`;
-    a.click();
+    const filename = `Attendance_${activeMeeting.id}.csv`;
+    if (typeof (window as any).downloadAIVoice === 'function') {
+      (window as any).downloadAIVoice(blob, filename);
+    } else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+    }
   };
 
   const copyJoinLink = (link: string) => {
@@ -2510,11 +2514,15 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
                           onClick={() => {
                             const txt = captionTranscript.map(t => `[${t.time}] ${t.speaker}: ${t.text}`).join('\n');
                             const blob = new Blob([txt], { type: 'text/plain' });
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = `Transcript_${activeMeeting.id}.txt`;
-                            a.click();
+                            const filename = `Transcript_${activeMeeting.id}.txt`;
+                            if (typeof (window as any).downloadAIVoice === 'function') {
+                              (window as any).downloadAIVoice(blob, filename);
+                            } else {
+                              const a = document.createElement('a');
+                              a.href = URL.createObjectURL(blob);
+                              a.download = filename;
+                              a.click();
+                            }
                           }}
                           className="p-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 rounded-lg"
                           title="Download Transcript (.txt)"

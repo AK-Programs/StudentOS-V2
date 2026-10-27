@@ -1744,6 +1744,9 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                                   </a>
                                   <a 
                                     href={att.url} 
+                                    data-url={att.url}
+                                    target="_blank"
+                                    rel="noreferrer"
                                     download={att.name || 'download'} 
                                     className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-[10px] font-bold shrink-0 flex items-center gap-1"
                                   >
@@ -1755,6 +1758,9 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                                 <div className="flex justify-end pt-1">
                                   <a 
                                     href={att.url} 
+                                    data-url={att.url}
+                                    target="_blank"
+                                    rel="noreferrer"
                                     download={att.name || 'download'} 
                                     className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-slate-200 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors"
                                   >
@@ -2618,6 +2624,9 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
               <div className="flex items-center gap-2">
                 <a
                   href={activeMediaPreview.url}
+                  data-url={activeMediaPreview.url}
+                  target="_blank"
+                  rel="noreferrer"
                   download={activeMediaPreview.name}
                   className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
                 >

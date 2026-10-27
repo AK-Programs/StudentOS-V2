@@ -462,10 +462,15 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
 
   const handleExportMarkdown = () => {
     const blob = new Blob([`# ${title}\nSubject: ${currentSubject}\n\n${content}`], { type: 'text/markdown' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `${(title || 'lecture_notes').replace(/\s+/g, '_').toLowerCase()}.md`;
-    link.click();
+    const filename = `${(title || 'lecture_notes').replace(/\s+/g, '_').toLowerCase()}.md`;
+    if (typeof (window as any).downloadAIVoice === 'function') {
+      (window as any).downloadAIVoice(blob, filename);
+    } else {
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      link.click();
+    }
     showToast('⬇️ Downloaded Markdown file (.md)');
   };
 

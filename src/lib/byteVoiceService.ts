@@ -305,10 +305,20 @@ class ByteVoiceService {
       }
 
       const audioBlob = await response.blob();
-      const objectUrl = URL.createObjectURL(audioBlob);
-      this.currentObjectUrl = objectUrl;
+      let dataUrl = '';
+      if (typeof (window as any).blobToBase64 === 'function') {
+        dataUrl = await (window as any).blobToBase64(audioBlob);
+      } else {
+        dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(audioBlob);
+        });
+      }
+      this.currentObjectUrl = dataUrl;
 
-      const audio = new Audio(objectUrl);
+      const audio = new Audio(dataUrl);
       this.currentAudio = audio;
       audio.playbackRate = 1.0; // Speed already tuned by Edge TTS server
 

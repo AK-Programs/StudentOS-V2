@@ -2653,12 +2653,17 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     if (!stageRef.current) return;
     if (trRef.current) trRef.current.nodes([]);
     const dataUrl = stageRef.current.toDataURL({ pixelRatio: 2 });
-    const link = document.createElement('a');
-    link.download = `whiteboard_slide_${activeSlideIdx + 1}.png`;
-    link.href = dataUrl;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const filename = `whiteboard_slide_${activeSlideIdx + 1}.png`;
+    if (typeof (window as any).downloadAIVoice === 'function') {
+      (window as any).downloadAIVoice(dataUrl, filename);
+    } else {
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = dataUrl;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
     setAiTip(`🖼️ Exported Slide ${activeSlideIdx + 1} as PNG`);
   };
 
@@ -2666,12 +2671,17 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     if (!stageRef.current) return;
     if (trRef.current) trRef.current.nodes([]);
     const dataUrl = stageRef.current.toDataURL({ pixelRatio: 2 });
-    const link = document.createElement('a');
-    link.download = `whiteboard_slide_${activeSlideIdx + 1}.png`;
-    link.href = dataUrl;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const filename = `whiteboard_slide_${activeSlideIdx + 1}.png`;
+    if (typeof (window as any).downloadAIVoice === 'function') {
+      (window as any).downloadAIVoice(dataUrl, filename);
+    } else {
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = dataUrl;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
     setAiTip(`🖼️ Exported current slide PNG. Total slides: ${slides.length}`);
   };
 

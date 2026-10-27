@@ -384,10 +384,16 @@ export const MeetWhiteboard: React.FC<MeetWhiteboardProps> = ({
   const handleDownload = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const link = document.createElement('a');
-    link.download = `StudentOS-Meet-Whiteboard-${meetingId}.png`;
-    link.href = canvas.toDataURL('image/png');
-    link.click();
+    const filename = `StudentOS-Meet-Whiteboard-${meetingId}.png`;
+    const dataUrl = canvas.toDataURL('image/png');
+    if (typeof (window as any).downloadAIVoice === 'function') {
+      (window as any).downloadAIVoice(dataUrl, filename);
+    } else {
+      const link = document.createElement('a');
+      link.download = filename;
+      link.href = dataUrl;
+      link.click();
+    }
   };
 
   return (

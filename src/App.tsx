@@ -4464,13 +4464,18 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
   const handleDownloadMaterial = async (mat: MaterialResource) => {
     const finalUrl = mat.url || mat.fileUrl || mat.file_url || mat.attachment_url;
     if (finalUrl) {
-      const a = document.createElement('a');
-      a.href = finalUrl;
-      a.download = mat.fileName || mat.title || 'material';
-      a.target = '_blank';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      const name = mat.fileName || mat.title || 'material';
+      if (typeof (window as any).openExternalDownload === 'function') {
+        (window as any).openExternalDownload(finalUrl, name);
+      } else {
+        const a = document.createElement('a');
+        a.href = finalUrl;
+        a.download = name;
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
 
       // Increment downloads
       const updatedDownloads = (mat.downloads || 0) + 1;
@@ -4830,13 +4835,18 @@ Date: ${new Date().toLocaleDateString()}
     
     if (format === 'txt') {
       const fileContent = baseHeader + aiActionResultText;
-      const element = document.createElement("a");
       const file = new Blob([fileContent], { type: 'text/plain;charset=utf-8' });
-      element.href = URL.createObjectURL(file);
-      element.download = `${mat.title.replace(/\s+/g, "_")}_AI_${aiActionType}.txt`;
-      document.body.appendChild(element);
-      element.click();
-      document.body.removeChild(element);
+      const filename = `${mat.title.replace(/\s+/g, "_")}_AI_${aiActionType}.txt`;
+      if (typeof (window as any).downloadAIVoice === 'function') {
+        (window as any).downloadAIVoice(file, filename);
+      } else {
+        const element = document.createElement("a");
+        element.href = URL.createObjectURL(file);
+        element.download = filename;
+        document.body.appendChild(element);
+        element.click();
+        document.body.removeChild(element);
+      }
       showNotification('Notes saved as plain document!');
     } else if (format === 'html') {
       const richHtml = `
@@ -4862,13 +4872,18 @@ Date: ${new Date().toLocaleDateString()}
         </body>
         </html>
       `;
-      const element = document.createElement("a");
       const file = new Blob([richHtml], { type: 'text/html;charset=utf-8' });
-      element.href = URL.createObjectURL(file);
-      element.download = `${mat.title.replace(/\s+/g, "_")}_AI_${aiActionType}.html`;
-      document.body.appendChild(element);
-      element.click();
-      document.body.removeChild(element);
+      const filename = `${mat.title.replace(/\s+/g, "_")}_AI_${aiActionType}.html`;
+      if (typeof (window as any).downloadAIVoice === 'function') {
+        (window as any).downloadAIVoice(file, filename);
+      } else {
+        const element = document.createElement("a");
+        element.href = URL.createObjectURL(file);
+        element.download = filename;
+        document.body.appendChild(element);
+        element.click();
+        document.body.removeChild(element);
+      }
       showNotification('Notes saved as rich styled webpage HTML!');
     } else if (format === 'pdf') {
       const printWindow = window.open('', '_blank');
@@ -9644,10 +9659,15 @@ ${roleLabel}: ${userQuery}
                                     <button
                                       onClick={() => {
                                         const blob = new Blob([activeNote.content], { type: 'text/markdown' });
-                                        const link = document.createElement('a');
-                                        link.href = URL.createObjectURL(blob);
-                                        link.download = `${activeNote.title || 'Note'}.md`;
-                                        link.click();
+                                        const filename = `${activeNote.title || 'Note'}.md`;
+                                        if (typeof (window as any).downloadAIVoice === 'function') {
+                                          (window as any).downloadAIVoice(blob, filename);
+                                        } else {
+                                          const link = document.createElement('a');
+                                          link.href = URL.createObjectURL(blob);
+                                          link.download = filename;
+                                          link.click();
+                                        }
                                       }}
                                       className="px-2 py-1 rounded bg-indigo-900/30 text-indigo-400 text-[10px] font-bold hover:bg-indigo-800/40" title="Export as MD"
                                     >⬇️ .MD</button>
@@ -13895,10 +13915,15 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                       if (canvas) {
                         try {
                           const url = canvas.toDataURL('image/png');
-                          const link = document.createElement('a');
-                          link.download = `whiteboard-snapshot-${Date.now()}.png`;
-                          link.href = url;
-                          link.click();
+                          const filename = `whiteboard-snapshot-${Date.now()}.png`;
+                          if (typeof (window as any).downloadAIVoice === 'function') {
+                            (window as any).downloadAIVoice(url, filename);
+                          } else {
+                            const link = document.createElement('a');
+                            link.download = filename;
+                            link.href = url;
+                            link.click();
+                          }
                           showNotification('✓ Whiteboard snapshot compiled and downloaded successfully!');
                         } catch (e) {
                           showNotification('Failed to generate blackboard snapshot.');
@@ -14262,11 +14287,16 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
           showNotification={showNotification}
           onClose={() => setInAppViewerDoc(null)}
           onDownload={() => {
-            const link = document.createElement('a');
-            link.href = inAppViewerDoc.url;
-            link.download = inAppViewerDoc.fileName || inAppViewerDoc.title || 'document';
-            link.target = '_blank';
-            link.click();
+            const name = inAppViewerDoc.fileName || inAppViewerDoc.title || 'document';
+            if (typeof (window as any).openExternalDownload === 'function') {
+              (window as any).openExternalDownload(inAppViewerDoc.url, name);
+            } else {
+              const link = document.createElement('a');
+              link.href = inAppViewerDoc.url;
+              link.download = name;
+              link.target = '_blank';
+              link.click();
+            }
           }}
           onShareToChat={() => {
             showNotification('Shared document link to active chat stream.');

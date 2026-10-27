@@ -225,6 +225,11 @@ export function triggerApkDownload(): void {
   // Mark APK as installed/downloaded
   markApkInstalledOnDevice(true);
 
+  if (typeof (window as any).openExternalDownload === 'function') {
+    (window as any).openExternalDownload(currentUrl, currentFileName);
+    return;
+  }
+
   const link = document.createElement('a');
   link.href = currentUrl;
   link.download = currentFileName;
