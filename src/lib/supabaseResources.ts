@@ -46,6 +46,7 @@ function mapMaterialToRow(mat: MaterialResource) {
     question_paper_year: mat.questionPaperYear || null,
     ai_summary: mat.aiSummary || null,
     ai_quiz: mat.aiQuiz || null,
+    folder_id: (mat as any).folder_id || null,
     raw_data: mat // Store the whole object as backup
   };
 }
@@ -93,6 +94,7 @@ function mapRowToMaterial(row: any): MaterialResource {
     questionPaperYear: row.question_paper_year || backup.questionPaperYear,
     aiSummary: row.ai_summary || backup.aiSummary,
     aiQuiz: row.ai_quiz || backup.aiQuiz,
+    folder_id: row.folder_id || backup.folder_id || null,
   };
 }
 
@@ -343,6 +345,7 @@ function mapResourceToRow(res: any) {
     file_name: res.fileName || null,
     created_at: createdAtMs,
     author: res.author || 'Teacher',
+    folder_id: res.folder_id || null,
     raw_data: res
   };
 }
@@ -368,7 +371,8 @@ function mapRowToResource(row: any): any {
     fileName: row.file_name || backup.fileName,
     createdAt: row.created_at || backup.createdAt,
     created_at: row.created_at || backup.created_at,
-    author: row.author || backup.author
+    author: row.author || backup.author,
+    folder_id: row.folder_id || backup.folder_id || null
   };
 }
 

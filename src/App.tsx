@@ -1023,6 +1023,8 @@ export default function App() {
   const [vaultItemHoldMenu, setVaultItemHoldMenu] = useState<{ noteId: string, x: number, y: number } | null>(null);
   const [showVaultFolderModal, setShowVaultFolderModal] = useState<boolean>(false);
   const [newVaultFolderName, setNewVaultFolderName] = useState<string>('');
+  const [renameVaultFolderModal, setRenameVaultFolderModal] = useState<{ id: string; name: string } | null>(null);
+  const [renameVaultInput, setRenameVaultInput] = useState<string>('');
 
   const handlePinVaultNote = async (noteId: string) => {
     const note = vaultNotes.find(n => n.id === noteId);
@@ -1031,6 +1033,58 @@ export default function App() {
     setVaultNotes(updated);
     await saveVaultNoteToSupabase({ ...note, isPinned: !(note as any).isPinned } as any);
     setVaultItemHoldMenu(null);
+  };
+
+  const handleRenameVaultNote = async (noteId: string) => {
+    const note = vaultNotes.find(n => n.id === noteId);
+    if (!note) return;
+    const newTitle = window.prompt('Enter new title for note:', note.title);
+    if (newTitle && newTitle.trim()) {
+      const updated = { ...note, title: newTitle.trim() };
+      setVaultNotes(prev => prev.map(n => n.id === noteId ? updated : n));
+      await saveVaultNoteToSupabase(updated);
+      showNotification('Note title updated.');
+    }
+    setVaultItemHoldMenu(null);
+  };
+
+  const handleShareVaultNote = (noteId: string) => {
+    const note = vaultNotes.find(n => n.id === noteId);
+    if (!note) return;
+    const collabCode = (note as any).collabCode || Math.floor(100000 + Math.random() * 900000).toString();
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(collabCode);
+      showNotification(`Copied 6-digit Collab Code (${collabCode}) to clipboard!`);
+    } else {
+      showNotification(`Collab Code: ${collabCode}`);
+    }
+    setVaultItemHoldMenu(null);
+  };
+
+  const handleRenameVaultFolder = async () => {
+    if (!renameVaultFolderModal || !renameVaultInput.trim()) return;
+    try {
+      await renameFolder(renameVaultFolderModal.id, renameVaultInput.trim());
+      setVaultFolders(prev => prev.map(f => f.id === renameVaultFolderModal.id ? { ...f, name: renameVaultInput.trim() } : f));
+      showNotification('✓ Folder renamed');
+      setRenameVaultFolderModal(null);
+      setRenameVaultInput('');
+    } catch (err: any) {
+      showNotification(`⚠️ Failed to rename folder: ${err.message || 'Error'}`);
+    }
+  };
+
+  const handleDeleteVaultFolder = async (folderId: string, folderName: string) => {
+    if (!confirm(`Delete folder "${folderName}"? Notes inside will be moved to Root.`)) return;
+    try {
+      await deleteFolder(folderId);
+      setVaultFolders(prev => prev.filter(f => f.id !== folderId));
+      if (activeVaultFolderId === folderId) setActiveVaultFolderId(null);
+      setVaultNotes(prev => prev.map(n => n.folder_id === folderId ? { ...n, folder_id: null } : n));
+      showNotification('🗑️ Folder deleted');
+    } catch (err: any) {
+      showNotification(`⚠️ Failed to delete folder: ${err.message || 'Error'}`);
+    }
   };
 
   const handleMoveVaultNoteToFolder = async (noteId: string, folderId: string | null) => {
@@ -1055,6 +1109,7 @@ export default function App() {
     if (!currentUser?.uid) return;
     setVaultNotes(prev => prev.filter(n => n.id !== noteId));
     await deleteVaultNoteFromSupabase(noteId, currentUser.uid);
+    showNotification('Lecture note deleted from Supabase.');
     setVaultItemHoldMenu(null);
     if (selectedNoteId === noteId) setSelectedNoteId(null);
   };
@@ -1278,6 +1333,8 @@ export default function App() {
     }
     setAiThreadHoldMenu(null);
   };
+
+
 
 
 
@@ -3964,7 +4021,8 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
       createdAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       icon: defaultIcon,
       coverBg: defaultCover,
-      userId: uid
+      userId: uid,
+      folder_id: activeVaultFolderId || null
     };
     try {
       const updated = [...vaultNotes, newNote];
@@ -9512,91 +9570,181 @@ ${roleLabel}: ${userQuery}
                         <span className="absolute left-3 top-3 text-[10px]">🔍</span>
                       </div>
 
-                      {/* Folders Navigation */}
-                      <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none no-scrollbar mb-2 border-b border-white/5">
-                        <button
-                          onClick={() => setActiveVaultFolderId(null)}
-                          className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider border transition-all shrink-0 ${!activeVaultFolderId ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/20' : 'bg-slate-950/60 border-white/5 text-slate-400 hover:bg-slate-900'}`}
-                        >
-                          All Notes
-                        </button>
-                        {vaultFolders.map(f => (
-                          <button
-                            key={f.id}
-                            onClick={() => setActiveVaultFolderId(f.id)}
-                            className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider border transition-all shrink-0 ${activeVaultFolderId === f.id ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/20' : 'bg-slate-950/60 border-white/5 text-slate-400 hover:bg-slate-900'}`}
-                          >
-                            📁 {f.name}
-                          </button>
-                        ))}
-                        <button
-                          onClick={() => setShowVaultFolderModal(true)}
-                          className="p-1.5 rounded-xl bg-slate-950/60 border border-dashed border-white/20 text-slate-500 hover:text-indigo-400 hover:border-indigo-500/40 transition-all shrink-0"
-                        >
-                          <FolderPlus className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-
-                      {/* list of pages */}
-                      <div className="space-y-1.5 max-h-[480px] overflow-y-auto pr-1">
-                        {vaultNotes
-                          .filter(n => (!activeVaultFolderId || n.folder_id === activeVaultFolderId) && (!newNoteTitle.trim() || n.title.toLowerCase().includes(newNoteTitle.toLowerCase()) || n.subject.toLowerCase().includes(newNoteTitle.toLowerCase())))
+                      {/* File Manager Breadcrumb & Action Bar */}
+                      {(() => {
+                        const activeVaultFolder = vaultFolders.find(f => f.id === activeVaultFolderId);
+                        const currentNotes = vaultNotes
+                          .filter(n => {
+                            if (activeVaultFolderId) {
+                              return n.folder_id === activeVaultFolderId;
+                            }
+                            return !n.folder_id;
+                          })
+                          .filter(n => !newNoteTitle.trim() || n.title.toLowerCase().includes(newNoteTitle.toLowerCase()) || n.subject.toLowerCase().includes(newNoteTitle.toLowerCase()))
                           .sort((a, b) => {
                             if ((a as any).isPinned && !(b as any).isPinned) return -1;
                             if (!(a as any).isPinned && (b as any).isPinned) return 1;
                             return 0;
-                          })
-                          .map(note => {
-                            const isActive = selectedNoteId === note.id;
-                            return (
-                              <button
-                                key={note.id}
-                                onClick={() => {
-                                  setSelectedNoteId(note.id);
-                                  setNoteEditMode(true);
-                                }}
-                                onMouseDown={(e) => {
-                                  const x = e.clientX;
-                                  const y = e.clientY;
-                                  holdTimerRef.current = setTimeout(() => {
-                                    setVaultItemHoldMenu({ noteId: note.id, x, y });
-                                  }, 1000);
-                                }}
-                                onMouseUp={() => clearTimeout(holdTimerRef.current)}
-                                onMouseLeave={() => clearTimeout(holdTimerRef.current)}
-                                onTouchStart={(e) => {
-                                  const x = e.touches[0].clientX;
-                                  const y = e.touches[0].clientY;
-                                  holdTimerRef.current = setTimeout(() => {
-                                    setVaultItemHoldMenu({ noteId: note.id, x, y });
-                                  }, 1000);
-                                }}
-                                onTouchEnd={() => clearTimeout(holdTimerRef.current)}
-                                className={`w-full text-left p-3 rounded-xl border transition-all flex items-center justify-between relative ${isActive ? 'bg-indigo-600/15 border-indigo-500/20 text-white' : 'border-white/5 bg-slate-900/40 hover:bg-white/5 text-slate-300'}`}
-                              >
-                                {(note as any).isPinned && <Pin className="w-2 h-2 text-amber-400 absolute top-1 right-1 rotate-45" />}
-                                <div className="flex items-center gap-2.5 min-w-0">
-                                  <span className="text-base flex-shrink-0">{note.icon || '📝'}</span>
-                                  <div className="min-w-0">
-                                    <p className="text-xs font-bold truncate leading-snug">{note.title || 'Untitled Note'}</p>
-                                    <div className="flex items-center gap-1.5 mt-1">
-                                      <span className="text-[8px] uppercase tracking-wider font-extrabold text-indigo-400 bg-indigo-500/10 px-1.5 py-0.2 rounded">
-                                        {note.subject}
-                                      </span>
-                                      <span className="text-[8px] text-slate-500 font-mono">{note.createdAt}</span>
-                                    </div>
-                                  </div>
-                                </div>
-                                <span className={`text-[10px] transition-transform ${isActive ? 'translate-x-1 opacity-100' : 'opacity-0'}`}>👉</span>
-                              </button>
-                            );
-                          })}
+                          });
 
-                        {vaultNotes.length === 0 && (
-                          <div className="text-center py-10 text-xs text-slate-500 font-medium">
-                            No pages found. Click "➕ New" to build your first page.
-                          </div>
-                        )}
+                        return (
+                          <>
+                            {/* Breadcrumb Navigation Bar */}
+                            <div className="flex items-center justify-between gap-1.5 p-2 bg-slate-950/70 border border-white/5 rounded-2xl text-[11px]">
+                              <div className="flex items-center gap-1 overflow-x-auto scrollbar-none no-scrollbar min-w-0">
+                                <button
+                                  onClick={() => setActiveVaultFolderId(null)}
+                                  className={`px-2.5 py-1 rounded-lg font-bold transition-all flex items-center gap-1 shrink-0 ${!activeVaultFolderId ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                                >
+                                  <span>🏠 Root</span>
+                                </button>
+                                {activeVaultFolder && (
+                                  <>
+                                    <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
+                                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 truncate max-w-[120px]">
+                                      <span>📁 {activeVaultFolder.name}</span>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-1 shrink-0">
+                                {activeVaultFolderId && (
+                                  <button
+                                    onClick={() => setActiveVaultFolderId(null)}
+                                    className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-all"
+                                    title="Back to Root Folders"
+                                  >
+                                    ↑ Up
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => setShowVaultFolderModal(true)}
+                                  className="px-2 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/25 font-bold text-[10px] flex items-center gap-1 transition-all"
+                                  title="Create Personal Notes Folder"
+                                >
+                                  <FolderPlus className="w-3 h-3" />
+                                  <span>+ Folder</span>
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Windows / Android-Like File Manager: Folder Cards Grid (at Root Level) */}
+                            {!activeVaultFolderId && vaultFolders.length > 0 && (
+                              <div className="space-y-1.5">
+                                <div className="flex items-center justify-between px-1">
+                                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1">
+                                    <span>📁 Folders ({vaultFolders.length})</span>
+                                  </span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  {vaultFolders.map(f => {
+                                    const noteCount = vaultNotes.filter(n => n.folder_id === f.id).length;
+                                    return (
+                                      <div
+                                        key={f.id}
+                                        onClick={() => setActiveVaultFolderId(f.id)}
+                                        className="p-2.5 rounded-xl bg-slate-900/80 hover:bg-slate-850 border border-white/5 hover:border-amber-500/40 transition-all cursor-pointer group flex flex-col justify-between space-y-1.5 shadow-sm active:scale-[0.98]"
+                                      >
+                                        <div className="flex items-center justify-between gap-1">
+                                          <span className="text-lg">📁</span>
+                                          <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                                            <button
+                                              onClick={() => {
+                                                setRenameVaultFolderModal({ id: f.id, name: f.name });
+                                                setRenameVaultInput(f.name);
+                                              }}
+                                              className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white"
+                                              title="Rename Folder"
+                                            >
+                                              <Edit2 size={11} />
+                                            </button>
+                                            <button
+                                              onClick={() => handleDeleteVaultFolder(f.id, f.name)}
+                                              className="p-1 hover:bg-rose-500/20 rounded text-slate-400 hover:text-rose-400"
+                                              title="Delete Folder"
+                                            >
+                                              <Trash2 size={11} />
+                                            </button>
+                                          </div>
+                                        </div>
+                                        <div>
+                                          <p className="text-xs font-bold text-white group-hover:text-amber-300 truncate">{f.name}</p>
+                                          <p className="text-[9px] text-slate-400">{noteCount} {noteCount === 1 ? 'note' : 'notes'}</p>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Section Header: Notes */}
+                            <div className="flex items-center justify-between px-1 pt-1">
+                              <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                                {activeVaultFolder ? `Notes in "${activeVaultFolder.name}"` : 'Notes at Root'} ({currentNotes.length})
+                              </span>
+                            </div>
+
+                            {/* List of notes */}
+                            <div className="space-y-1.5 max-h-[480px] overflow-y-auto pr-1">
+                              {currentNotes.map(note => {
+                                const isActive = selectedNoteId === note.id;
+                                return (
+                                  <button
+                                    key={note.id}
+                                    onClick={() => {
+                                      setSelectedNoteId(note.id);
+                                      setNoteEditMode(true);
+                                    }}
+                                    onMouseDown={(e) => {
+                                      const x = e.clientX;
+                                      const y = e.clientY;
+                                      holdTimerRef.current = setTimeout(() => {
+                                        setVaultItemHoldMenu({ noteId: note.id, x, y });
+                                      }, 2000);
+                                    }}
+                                    onMouseUp={() => clearTimeout(holdTimerRef.current)}
+                                    onMouseLeave={() => clearTimeout(holdTimerRef.current)}
+                                    onTouchStart={(e) => {
+                                      const x = e.touches[0].clientX;
+                                      const y = e.touches[0].clientY;
+                                      holdTimerRef.current = setTimeout(() => {
+                                        setVaultItemHoldMenu({ noteId: note.id, x, y });
+                                      }, 2000);
+                                    }}
+                                    onTouchEnd={() => clearTimeout(holdTimerRef.current)}
+                                    className={`w-full text-left p-3 rounded-xl border transition-all flex items-center justify-between relative ${isActive ? 'bg-indigo-600/15 border-indigo-500/20 text-white' : 'border-white/5 bg-slate-900/40 hover:bg-white/5 text-slate-300'}`}
+                                  >
+                                    {(note as any).isPinned && <Pin className="w-2 h-2 text-amber-400 absolute top-1 right-1 rotate-45" />}
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                      <span className="text-base flex-shrink-0">{note.icon || '📝'}</span>
+                                      <div className="min-w-0">
+                                        <p className="text-xs font-bold truncate leading-snug">{note.title || 'Untitled Note'}</p>
+                                        <div className="flex items-center gap-1.5 mt-1">
+                                          <span className="text-[8px] uppercase tracking-wider font-extrabold text-indigo-400 bg-indigo-500/10 px-1.5 py-0.2 rounded">
+                                            {note.subject}
+                                          </span>
+                                          <span className="text-[8px] text-slate-500 font-mono">{note.createdAt}</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <span className={`text-[10px] transition-transform ${isActive ? 'translate-x-1 opacity-100' : 'opacity-0'}`}>👉</span>
+                                  </button>
+                                );
+                              })}
+
+                              {currentNotes.length === 0 && (
+                                <div className="text-center py-8 text-xs text-slate-500 font-medium bg-slate-950/40 rounded-2xl border border-dashed border-white/5 p-4">
+                                  {activeVaultFolder 
+                                    ? `Folder "${activeVaultFolder.name}" has no notes. Click "➕ New" or hold any note to move it here.`
+                                    : 'No notes at root. Click "➕ New" to build your first note.'}
+                                </div>
+                              )}
+                            </div>
+                          </>
+                        );
+                      })()}
                         
                         {vaultNotes.length > 0 && vaultNotes.filter(n => !newNoteTitle.trim() || n.title.toLowerCase().includes(newNoteTitle.toLowerCase())).length === 0 && (
                           <div className="text-center py-6 text-xs text-slate-500">
@@ -9604,7 +9752,6 @@ ${roleLabel}: ${userQuery}
                           </div>
                         )}
                       </div>
-                    </div>
 
                     {/* Notion Main Document Container Workspace: 8 Cols */}
                     <div className="lg:col-span-8 space-y-6">
@@ -14566,32 +14713,46 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
       {/* Vault Item Hold Menu */}
       {vaultItemHoldMenu && (
         <div 
-          className="fixed z-[100] w-48 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-1.5 animate-in fade-in zoom-in duration-150"
-          style={{ left: Math.min(window.innerWidth - 200, vaultItemHoldMenu.x), top: Math.min(window.innerHeight - 300, vaultItemHoldMenu.y) }}
+          className="fixed z-[100] w-52 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-1.5 animate-in fade-in zoom-in duration-150"
+          style={{ left: Math.min(window.innerWidth - 220, vaultItemHoldMenu.x), top: Math.min(window.innerHeight - 340, vaultItemHoldMenu.y) }}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex flex-col gap-1">
             <button
               onClick={() => handlePinVaultNote(vaultItemHoldMenu.noteId)}
-              className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
+              className="flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
             >
               <Pin className="w-3.5 h-3.5 text-amber-400" />
               {vaultNotes.find(n => n.id === vaultItemHoldMenu.noteId)?.isPinned ? 'Unpin Note' : 'Pin Note'}
+            </button>
+            <button
+              onClick={() => handleRenameVaultNote(vaultItemHoldMenu.noteId)}
+              className="flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
+            >
+              <Edit2 className="w-3.5 h-3.5 text-indigo-400" />
+              Rename Note
+            </button>
+            <button
+              onClick={() => handleShareVaultNote(vaultItemHoldMenu.noteId)}
+              className="flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
+            >
+              <Share2 className="w-3.5 h-3.5 text-cyan-400" />
+              Share (6-digit Collab)
             </button>
             <div className="h-px bg-white/5 my-1" />
             <div className="px-3 py-1 text-[9px] font-black text-slate-500 uppercase">Move to Folder</div>
             <button
               onClick={() => handleMoveVaultNoteToFolder(vaultItemHoldMenu.noteId, null)}
-              className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
+              className="flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
             >
               <Move className="w-3.5 h-3.5 text-slate-400" />
-              Root
+              Root (No Folder)
             </button>
             {vaultFolders.map(f => (
               <button
                 key={f.id}
                 onClick={() => handleMoveVaultNoteToFolder(vaultItemHoldMenu.noteId, f.id)}
-                className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
+                className="flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
               >
                 <Move className="w-3.5 h-3.5 text-indigo-400" />
                 {f.name}
@@ -14600,7 +14761,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
             <div className="h-px bg-white/5 my-1" />
             <button
               onClick={() => handleDeleteVaultNote(vaultItemHoldMenu.noteId)}
-              className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all"
+              className="flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all"
             >
               <Trash2 className="w-3.5 h-3.5" />
               Delete Note
@@ -14616,15 +14777,30 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
           <div className="w-full max-w-sm bg-slate-900 border border-white/10 rounded-3xl p-6 shadow-2xl">
             <h3 className="text-lg font-black text-white mb-4 flex items-center gap-2">
               <FolderPlus className="w-5 h-5 text-indigo-400" />
-              New Vault Folder
+              New Personal Notes Folder
             </h3>
             <input
               type="text"
               value={newVaultFolderName}
               onChange={(e) => setNewVaultFolderName(e.target.value)}
-              placeholder="Folder Name"
+              placeholder="e.g. Physics Formulae & Derivations"
               className="w-full px-4 py-3 bg-slate-950 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
               autoFocus
+              onKeyDown={async (e) => {
+                if (e.key === 'Enter' && newVaultFolderName.trim() && currentUser?.uid) {
+                  try {
+                    const f = await createFolder(newVaultFolderName.trim(), 'notes', currentUser.uid);
+                    if (f) {
+                      setVaultFolders(prev => [f, ...prev]);
+                      setNewVaultFolderName('');
+                      setShowVaultFolderModal(false);
+                      showNotification('📁 Personal Notes folder created!');
+                    }
+                  } catch (err: any) {
+                    showNotification(`⚠️ Failed to create folder: ${err.message || 'Database error'}`);
+                  }
+                }
+              }}
             />
             <div className="flex items-center gap-3 mt-6">
               <button
@@ -14651,6 +14827,42 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                 className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg hover:bg-indigo-500 transition-colors"
               >
                 Create Folder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Vault Folder Rename Modal */}
+      {renameVaultFolderModal && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-slate-900 border border-white/10 rounded-3xl p-5 shadow-2xl space-y-3.5">
+            <h3 className="text-base font-black text-white flex items-center gap-2">
+              <Edit2 className="w-4 h-4 text-amber-400" />
+              <span>Rename Personal Notes Folder</span>
+            </h3>
+            <input
+              type="text"
+              value={renameVaultInput}
+              onChange={(e) => setRenameVaultInput(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-slate-950 border border-white/10 rounded-xl text-white text-xs focus:outline-none focus:border-indigo-500"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleRenameVaultFolder();
+              }}
+            />
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                onClick={() => setRenameVaultFolderModal(null)}
+                className="flex-1 px-3 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRenameVaultFolder}
+                className="flex-1 px-3 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg hover:bg-indigo-500 transition-colors"
+              >
+                Save
               </button>
             </div>
           </div>

@@ -103,7 +103,9 @@ export async function getVaultNotes(userId: string): Promise<VaultNote[]> {
           subject: n.subject || '',
           icon: n.icon || '📝',
           coverBg: n.cover_bg || 'bg-gradient-to-r from-violet-600 to-indigo-900',
-          userId: n.user_id
+          userId: n.user_id,
+          folder_id: n.folder_id || null,
+          isPinned: Boolean(n.is_pinned)
         }));
       const mergedMap = new Map<string, VaultNote>();
       for (const ln of localNotes) mergedMap.set(ln.id, ln);

@@ -6,7 +6,8 @@ import { supabase } from '../lib/supabase';
 import { 
   Plus, Trash2, FileText, Image as ImageIcon, Eye, Search, 
   ArrowLeft, Calendar, Sparkles, X, Loader2, Filter, FolderPlus,
-  Edit2, Folder as FolderIcon, ChevronRight, Move
+  Edit2, Folder as FolderIcon, ChevronRight, Move, CornerDownRight,
+  FolderOpen, HardDrive, Download, MoreVertical
 } from 'lucide-react';
 import { AssignmentUploadForm } from './AssignmentUploadForm';
 import { getSupabaseResources, saveSupabaseResource, deleteSupabaseResource } from '../lib/supabaseResources';
@@ -26,13 +27,19 @@ export default function SimpleResourceManager({
   const [aiCompanionOutput, setAiCompanionOutput] = useState<{ title: string; text: string } | null>(null);
   const [generatingAiId, setGeneratingAiId] = useState<string | null>(null);
 
+  // Folder states
   const [folders, setFolders] = useState<Folder[]>([]);
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
 
+  // Rename folder states
   const [renameFolderModal, setRenameFolderModal] = useState<{ id: string; name: string } | null>(null);
   const [renameInput, setRenameInput] = useState('');
+
+  // Move item dialog
+  const [moveItemModal, setMoveItemModal] = useState<{ itemId: string; currentFolderId?: string | null } | null>(null);
 
   const [itemHoldMenu, setItemHoldMenu] = useState<{ itemId: string, x: number, y: number } | null>(null);
   const holdTimerRef = useRef<any>(null);
@@ -110,17 +117,25 @@ export default function SimpleResourceManager({
   };
 
   const handleCreateFolder = async () => {
-    if (!newFolderName.trim() || !currentUser?.uid) return;
+    const trimmed = newFolderName.trim();
+    if (!trimmed || !currentUser?.uid) return;
+    setIsCreatingFolder(true);
     try {
-      const f = await createFolder(newFolderName.trim(), 'materials', currentUser.uid);
-      if (f) {
-        setFolders(prev => [f, ...prev]);
+      // Create folder in Supabase; do not add to state until insert returns real row
+      const saved = await createFolder(trimmed, 'materials', currentUser.uid);
+      if (saved && saved.id) {
+        setFolders(prev => [saved, ...prev]);
         setNewFolderName('');
         setShowFolderModal(false);
-        showNotification('📁 Folder created successfully!');
+        showNotification('📁 Folder created and synced to Supabase!');
+      } else {
+        throw new Error('Supabase did not return a valid folder ID.');
       }
     } catch (err: any) {
-      showNotification(`⚠️ Folder creation failed: ${err.message || 'Error'}`);
+      console.error('[FOLDERS] Creation failed:', err);
+      showNotification(`⚠️ Failed to create folder: ${err.message || 'Database error'}`);
+    } finally {
+      setIsCreatingFolder(false);
     }
   };
 
@@ -167,30 +182,42 @@ export default function SimpleResourceManager({
     }
   };
 
-  const handleMoveToFolder = async (itemId: string, folderId: string | null) => {
-    if (folderId) {
-      const targetFolder = folders.find(f => f.id === folderId);
+  const handleMoveToFolder = async (itemId: string, targetFolderId: string | null) => {
+    if (targetFolderId) {
+      const targetFolder = folders.find(f => f.id === targetFolderId);
       if (targetFolder && targetFolder.type !== 'materials') {
         showNotification('⚠️ Material Hub items can only be moved into Material Hub folders.');
         setItemHoldMenu(null);
+        setMoveItemModal(null);
         return;
       }
     }
     const tableName = type === 'assignment' ? 'assignments' : 'school_resources';
     try {
-      await supabase.from(tableName).update({ folder_id: folderId }).eq('id', itemId);
-      showNotification(folderId ? '📁 Moved item to folder' : '📂 Moved item to root');
-      fetchItems();
-    } catch (_) {}
-    setItemHoldMenu(null);
+      // 1. Update in Supabase
+      const { error } = await supabase.from(tableName).update({ folder_id: targetFolderId }).eq('id', itemId);
+      if (error && error.code !== '42P01') {
+        showNotification(`⚠️ Move error: ${error.message}`);
+        return;
+      }
+
+      // 2. Update in local state
+      setItems(prev => prev.map(item => item.id === itemId ? { ...item, folder_id: targetFolderId } : item));
+      showNotification(targetFolderId ? '📁 Item moved into folder' : '📂 Item moved to root');
+    } catch (err: any) {
+      showNotification(`⚠️ Move failed: ${err.message}`);
+    } finally {
+      setItemHoldMenu(null);
+      setMoveItemModal(null);
+    }
   };
 
   const renderFileIcon = (fileName: string) => {
-    if (!fileName) return <FileText size={16} className="text-indigo-400" />;
+    if (!fileName) return <FileText size={18} className="text-indigo-400" />;
     const ext = fileName.split('.').pop()?.toLowerCase();
-    if (ext === 'pdf') return <FileText size={16} className="text-rose-400" />;
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext || '')) return <ImageIcon size={16} className="text-cyan-400" />;
-    return <FileText size={16} className="text-indigo-400" />;
+    if (ext === 'pdf') return <FileText size={18} className="text-rose-400" />;
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext || '')) return <ImageIcon size={18} className="text-cyan-400" />;
+    return <FileText size={18} className="text-indigo-400" />;
   };
 
   const filteredItems = useMemo(() => {
@@ -237,41 +264,52 @@ export default function SimpleResourceManager({
     }
   };
 
+  // Items currently displayed based on folder context
+  const currentViewItems = useMemo(() => {
+    return filteredItems.filter(item => {
+      if (activeFolderId) {
+        return item.folder_id === activeFolderId;
+      }
+      // When at root, show items that have no folder or folder_id is null
+      return !item.folder_id;
+    });
+  }, [filteredItems, activeFolderId]);
+
   return (
-    <div className="space-y-6 max-w-5xl mx-auto pb-12">
+    <div className="space-y-4 max-w-5xl mx-auto pb-12 font-sans">
       {/* Header Bar */}
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        className="bento-card p-6 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+        className="bento-card p-4 sm:p-5 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md"
       >
-        <div className="flex items-center gap-3.5">
+        <div className="flex items-center gap-3">
           <button
             onClick={goBack}
-            className="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer"
+            className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer shrink-0"
             title="Back to Assignment Center"
           >
             <ArrowLeft size={16} />
           </button>
           <div>
-            <div className="flex items-center gap-2 text-xs text-indigo-400 font-semibold">
-              <span>Assignment Center</span>
+            <div className="flex items-center gap-2 text-[11px] text-indigo-400 font-bold uppercase tracking-wider">
+              <span>{emoji || '📚'} Material Hub</span>
               <span aria-hidden="true">·</span>
-              <span>{items.length} {items.length === 1 ? 'entry' : 'entries'}</span>
+              <span>{items.length} {items.length === 1 ? 'file' : 'files'}</span>
             </div>
-            <h3 className="text-xl sm:text-2xl font-black text-white font-display tracking-tight">
+            <h3 className="text-lg sm:text-xl font-black text-white font-display tracking-tight leading-tight">
               {title}
             </h3>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => setShowFolderModal(true)}
-            className="px-3.5 py-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 hover:text-white text-xs font-bold flex items-center gap-2 transition-all active:scale-95 cursor-pointer"
+            className="px-3 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-sm"
             title="Create New Hub Folder"
           >
-            <FolderPlus size={15} />
+            <FolderPlus size={14} className="text-amber-400" />
             <span>New Folder</span>
           </button>
 
@@ -281,34 +319,34 @@ export default function SimpleResourceManager({
                 setEditingId(null); 
                 setIsFormOpen(prev => !prev); 
               }}
-              className="uiverse-btn-primary px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer"
+              className="uiverse-btn-primary px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
             >
-              <Plus size={15} />
-              <span>{isFormOpen ? 'Close Form' : `Publish ${title}`}</span>
+              <Plus size={14} />
+              <span>{isFormOpen ? 'Close' : `Publish ${title}`}</span>
             </button>
           )}
         </div>
       </motion.div>
 
-      {/* Search & Filter Controls */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 p-2 bg-slate-900/70 border border-white/10 rounded-2xl">
-        <div className="relative flex-1">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+      {/* Compact Filters UI Component */}
+      <div className="flex flex-col sm:flex-row items-center gap-2 p-1.5 bg-slate-900/80 border border-white/10 rounded-2xl text-xs">
+        <div className="relative flex-1 w-full">
+          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={`Search ${title.toLowerCase()} by title, instructions, or teacher...`}
-            className="w-full pl-10 pr-4 py-2 bg-transparent text-xs sm:text-sm text-white placeholder:text-slate-500 focus:outline-none"
+            placeholder={`Search ${title.toLowerCase()}...`}
+            className="w-full pl-8 pr-3 py-1.5 bg-transparent text-xs text-white placeholder:text-slate-500 focus:outline-none"
           />
         </div>
         {effectiveRole !== 'student' && (
-          <div className="flex items-center gap-2 px-2">
-            <Filter className="w-3.5 h-3.5 text-slate-400" />
+          <div className="flex items-center gap-1 px-2 border-t sm:border-t-0 sm:border-l border-white/10 pt-1 sm:pt-0 w-full sm:w-auto">
+            <Filter className="w-3 h-3 text-slate-400 shrink-0" />
             <select
               value={selectedGradeFilter}
               onChange={(e) => setSelectedGradeFilter(e.target.value)}
-              className="bg-slate-950 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-slate-200 font-semibold focus:outline-none"
+              className="bg-slate-950 border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-200 font-semibold focus:outline-none"
             >
               <option value="All">All Grades</option>
               <option value="All Grades">School-wide</option>
@@ -320,89 +358,114 @@ export default function SimpleResourceManager({
         )}
       </div>
 
-      {/* Active Folder Header Banner if inside a folder */}
-      {activeFolder ? (
-        <div className="p-4 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-indigo-600/30 text-indigo-300">
-              <FolderIcon className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-[10px] text-indigo-400 uppercase font-black tracking-wider">Active Folder View</p>
-              <h4 className="text-base font-black text-white">{activeFolder.name}</h4>
-            </div>
-          </div>
+      {/* Folder Navigation Button & Breadcrumbs Bar Below Filters */}
+      <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-slate-950/70 border border-white/10 rounded-2xl">
+        {/* Windows / Android File Manager Breadcrumbs */}
+        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-300 overflow-x-auto scrollbar-none no-scrollbar">
           <button
             onClick={() => setActiveFolderId(null)}
-            className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all flex items-center gap-1.5"
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg transition-all ${!activeFolderId ? 'bg-indigo-600 text-white shadow' : 'hover:bg-white/10 text-slate-400 hover:text-white'}`}
           >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Back to All Folders</span>
+            <HardDrive size={13} className="text-indigo-300" />
+            <span>Root / All</span>
+          </button>
+
+          {activeFolder && (
+            <>
+              <ChevronRight size={13} className="text-slate-600" />
+              <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                <FolderOpen size={13} className="text-amber-400" />
+                <span className="truncate max-w-[150px]">{activeFolder.name}</span>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Back and Action Buttons */}
+        <div className="flex items-center gap-1.5">
+          {activeFolderId && (
+            <button
+              onClick={() => setActiveFolderId(null)}
+              className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold flex items-center gap-1 transition-all"
+            >
+              <ArrowLeft size={12} />
+              <span>Up to Root</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => setShowFolderModal(true)}
+            className="px-2.5 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 text-[11px] font-bold flex items-center gap-1 transition-all border border-indigo-500/20"
+          >
+            <FolderPlus size={12} />
+            <span>+ Folder ({folders.length})</span>
           </button>
         </div>
-      ) : (
-        /* File Manager: Folders Grid view at Root */
-        folders.length > 0 && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-black uppercase text-slate-400 tracking-wider flex items-center gap-2">
-                <FolderIcon className="w-4 h-4 text-indigo-400" />
-                <span>Resource Folders ({folders.length})</span>
-              </h4>
-              <button
-                onClick={() => setShowFolderModal(true)}
-                className="text-xs text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1"
-              >
-                + Create Folder
-              </button>
-            </div>
+      </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-              {folders.map(f => {
-                const count = items.filter(i => i.folder_id === f.id).length;
-                return (
-                  <div
-                    key={f.id}
-                    onClick={() => setActiveFolderId(f.id)}
-                    className="p-4 rounded-2xl bg-slate-900/80 hover:bg-slate-800/90 border border-white/10 hover:border-indigo-500/40 transition-all cursor-pointer group flex flex-col justify-between space-y-3 shadow-md"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="p-2 rounded-xl bg-indigo-600/20 text-indigo-400 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
-                        <FolderIcon className="w-5 h-5" />
-                      </div>
+      {/* Windows / Android-Like File Manager: Folders Cards Grid (shown at Root level) */}
+      {!activeFolderId && folders.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-[11px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1.5">
+              <FolderIcon className="w-3.5 h-3.5 text-amber-400" />
+              <span>Folders ({folders.length})</span>
+            </span>
+          </div>
 
-                      <div className="flex items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
-                        <button
-                          onClick={() => {
-                            setRenameFolderModal({ id: f.id, name: f.name });
-                            setRenameInput(f.name);
-                          }}
-                          className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white"
-                          title="Rename Folder"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteFolderSubmit(f.id, f.name)}
-                          className="p-1 hover:bg-rose-500/20 rounded text-slate-400 hover:text-rose-400"
-                          title="Delete Folder"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+            {folders.map(f => {
+              const fileCount = items.filter(i => i.folder_id === f.id).length;
+              return (
+                <div
+                  key={f.id}
+                  onClick={() => setActiveFolderId(f.id)}
+                  className="p-3.5 rounded-2xl bg-slate-900/90 hover:bg-slate-850 border border-white/10 hover:border-amber-500/40 transition-all cursor-pointer group flex flex-col justify-between space-y-2.5 shadow-sm active:scale-[0.99]"
+                >
+                  <div className="flex items-start justify-between gap-1.5">
+                    <div className="p-2 rounded-xl bg-amber-500/15 text-amber-400 group-hover:bg-amber-500 group-hover:text-slate-950 transition-colors">
+                      <FolderIcon size={20} fill="currentColor" fillOpacity={0.2} />
                     </div>
 
-                    <div>
-                      <p className="text-xs font-bold text-white group-hover:text-indigo-300 truncate">{f.name}</p>
-                      <p className="text-[10px] text-slate-400 mt-0.5">{count} {count === 1 ? 'file' : 'files'}</p>
+                    <div className="flex items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                      <button
+                        onClick={() => {
+                          setRenameFolderModal({ id: f.id, name: f.name });
+                          setRenameInput(f.name);
+                        }}
+                        className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white"
+                        title="Rename Folder"
+                      >
+                        <Edit2 size={12} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteFolderSubmit(f.id, f.name)}
+                        className="p-1 hover:bg-rose-500/20 rounded text-slate-400 hover:text-rose-400"
+                        title="Delete Folder"
+                      >
+                        <Trash2 size={12} />
+                      </button>
                     </div>
                   </div>
-                );
-              })}
-            </div>
+
+                  <div>
+                    <p className="text-xs font-bold text-white group-hover:text-amber-300 truncate">{f.name}</p>
+                    <p className="text-[10px] text-slate-400">{fileCount} {fileCount === 1 ? 'file' : 'files'}</p>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        )
+        </div>
       )}
+
+      {/* Files Section Header */}
+      <div className="flex items-center justify-between px-1 pt-1">
+        <span className="text-[11px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1.5">
+          <FileText className="w-3.5 h-3.5 text-indigo-400" />
+          <span>{activeFolder ? `Files in "${activeFolder.name}"` : 'Files at Root'} ({currentViewItems.length})</span>
+        </span>
+      </div>
 
       {/* Upload Form Drawer */}
       <AnimatePresence>
@@ -411,19 +474,21 @@ export default function SimpleResourceManager({
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
-            className="bento-card border-indigo-500/30 p-6 rounded-3xl space-y-4"
+            className="bento-card border-indigo-500/30 p-5 rounded-3xl space-y-3"
           >
-            <div className="flex justify-between items-center border-b border-white/10 pb-3">
+            <div className="flex justify-between items-center border-b border-white/10 pb-2.5">
               <div>
-                <h4 className="font-bold text-white text-base">{editingId ? 'Update Resource' : `Publish New ${title}`}</h4>
-                <p className="text-xs text-slate-400">Attach PDFs, worksheets, or images and assign to a class section.</p>
+                <h4 className="font-bold text-white text-sm">{editingId ? 'Update Resource' : `Publish New ${title}`}</h4>
+                <p className="text-[11px] text-slate-400">
+                  {activeFolder ? `Saving directly into folder "${activeFolder.name}"` : 'Attach documents, worksheets, or PDFs.'}
+                </p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsFormOpen(false)}
-                className="p-2 hover:bg-white/5 text-slate-400 hover:text-white rounded-xl"
+                className="p-1.5 hover:bg-white/5 text-slate-400 hover:text-white rounded-xl"
               >
-                <X size={16} />
+                <X size={15} />
               </button>
             </div>
             <AssignmentUploadForm category={type} folderId={activeFolderId} onSuccess={() => { setIsFormOpen(false); fetchItems(); }} />
@@ -438,65 +503,66 @@ export default function SimpleResourceManager({
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
-            className="bento-card border-indigo-500/30 p-6 rounded-3xl space-y-3"
+            className="bento-card border-indigo-500/30 p-5 rounded-3xl space-y-2.5"
           >
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div className="flex items-center gap-2 text-indigo-300 font-bold text-sm">
-                <Sparkles className="w-4 h-4" />
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <div className="flex items-center gap-2 text-indigo-300 font-bold text-xs">
+                <Sparkles className="w-3.5 h-3.5" />
                 <span>Study Companion Notes — {aiCompanionOutput.title}</span>
               </div>
               <button
                 onClick={() => setAiCompanionOutput(null)}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg"
+                className="p-1 text-slate-400 hover:text-white rounded-lg"
               >
-                <X className="w-4 h-4" />
+                <X className="w-3.5 h-3.5" />
               </button>
             </div>
-            <div className="text-xs sm:text-sm text-slate-200 whitespace-pre-wrap leading-relaxed max-h-80 overflow-y-auto pr-2">
+            <div className="text-xs text-slate-200 whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto pr-1">
               {aiCompanionOutput.text}
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* List Content */}
+      {/* List Content: Windows/Android File Manager Row List */}
       {loading ? (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {[1, 2, 3].map(n => (
-            <div key={n} className="bento-card p-5 rounded-2xl h-28 animate-pulse" />
+            <div key={n} className="bento-card p-4 rounded-2xl h-20 animate-pulse" />
           ))}
         </div>
-      ) : filteredItems.filter(i => activeFolderId ? i.folder_id === activeFolderId : !i.folder_id).length === 0 ? (
-        <div className="bento-card text-center py-12 px-6 rounded-3xl space-y-2">
-          <p className="text-sm font-bold text-white">No {title.toLowerCase()} found {activeFolder ? `in folder "${activeFolder.name}"` : ''}</p>
-          <p className="text-xs text-slate-400 max-w-md mx-auto">
-            {searchQuery
-              ? `No items matched "${searchQuery}". Try clearing your search filter.`
-              : activeFolder
-              ? `This folder is currently empty. Hold an item anywhere to move it into "${activeFolder.name}".`
-              : `There are currently no published ${title.toLowerCase()} at root selection.`}
+      ) : currentViewItems.length === 0 ? (
+        <div className="bento-card text-center py-10 px-4 rounded-3xl space-y-2">
+          <div className="p-3 w-12 h-12 mx-auto rounded-2xl bg-white/5 flex items-center justify-center text-slate-400">
+            {activeFolder ? <FolderOpen size={24} className="text-amber-400" /> : <FileText size={24} />}
+          </div>
+          <p className="text-xs font-bold text-white">
+            {activeFolder ? `Folder "${activeFolder.name}" is empty` : `No files found at Root`}
+          </p>
+          <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+            {activeFolder 
+              ? 'Move files here by tapping "Move" on any file card, or publish new resources directly.'
+              : 'Create a folder or publish resources to populate your Hub.'}
           </p>
         </div>
       ) : (
-        <div className="space-y-3.5">
-          {filteredItems
-            .filter(i => activeFolderId ? i.folder_id === activeFolderId : !i.folder_id)
-            .map((item, idx) => (
+        <div className="space-y-2.5">
+          {currentViewItems.map((item, idx) => (
             <motion.div
               key={item.id}
-              initial={{ opacity: 0, y: 8 }}
+              initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2, delay: Math.min(idx * 0.03, 0.2) }}
-              className="bento-card p-5 rounded-2xl flex flex-col md:flex-row gap-4 justify-between group relative"
+              transition={{ duration: 0.15, delay: Math.min(idx * 0.02, 0.15) }}
+              className="bento-card p-4 rounded-2xl flex flex-col md:flex-row gap-3 justify-between group relative hover:border-indigo-500/30 transition-all shadow-sm"
               onMouseDown={(e) => handleLongPress(e, item.id)}
               onMouseUp={cancelHold}
               onMouseLeave={cancelHold}
               onTouchStart={(e) => handleLongPress(e, item.id)}
               onTouchEnd={cancelHold}
             >
-              <div className="space-y-2 flex-1 min-w-0">
-                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                  <span className="font-semibold text-indigo-400">
+              <div className="space-y-1.5 flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400">
+                  <span className="font-bold text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded">
                     {item.targetGrade || 'All Grades'}
                   </span>
                   {item.targetSection && item.targetSection !== 'All Sections' && (
@@ -509,23 +575,21 @@ export default function SimpleResourceManager({
                     <>
                       <span aria-hidden="true">·</span>
                       <span className="text-rose-400 font-medium flex items-center gap-1">
-                        <Calendar className="w-3 h-3" /> Due {item.dueDate}
+                        <Calendar className="w-2.5 h-2.5" /> Due {item.dueDate}
                       </span>
                     </>
                   )}
                   <span aria-hidden="true">·</span>
                   <span>By {item.author || 'Faculty'}</span>
-                  {item.createdAt && (
-                    <>
-                      <span aria-hidden="true">·</span>
-                      <span className="font-mono">{new Date(item.createdAt).toLocaleDateString()}</span>
-                    </>
-                  )}
                 </div>
 
-                <h4 className="text-base sm:text-lg font-bold text-white">{item.title}</h4>
+                <div className="flex items-center gap-2">
+                  {renderFileIcon(item.fileName)}
+                  <h4 className="text-sm sm:text-base font-bold text-white truncate">{item.title}</h4>
+                </div>
+
                 {item.content && (
-                  <p className="text-xs sm:text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">
+                  <p className="text-xs text-slate-300 line-clamp-2 leading-relaxed">
                     {item.content}
                   </p>
                 )}
@@ -533,68 +597,105 @@ export default function SimpleResourceManager({
                 {item.fileData && type !== 'gallery' && (
                   <div 
                     onClick={() => setViewingDoc({ url: item.fileData, title: item.title, fileName: item.fileName })}
-                    className="mt-2 inline-flex items-center gap-2 bg-slate-950/80 hover:bg-slate-900 px-3.5 py-2 rounded-xl border border-white/10 cursor-pointer transition-colors"
+                    className="inline-flex items-center gap-1.5 bg-slate-950/80 hover:bg-slate-900 px-2.5 py-1.5 rounded-lg border border-white/10 cursor-pointer transition-colors text-xs"
                   >
-                    {renderFileIcon(item.fileName)}
-                    <span className="text-xs text-slate-200 font-medium truncate max-w-[220px]">{item.fileName || 'Attached Document'}</span>
-                    <span className="text-xs text-indigo-400 font-semibold ml-1">Preview →</span>
+                    <span className="text-[11px] text-slate-200 font-medium truncate max-w-[200px]">{item.fileName || 'Document'}</span>
+                    <span className="text-[10px] text-indigo-400 font-bold ml-1">Open →</span>
                   </div>
                 )}
-
-                {item.galleryUrls && item.galleryUrls.length > 0 && type === 'gallery' && (
-                  <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
-                    {item.galleryUrls.map((gObj: any, gIdx: number) => (
-                      <div
-                        key={gIdx}
-                        onClick={() => setViewingDoc({ url: gObj.url, title: gObj.name || item.title, fileName: gObj.name })}
-                        className="block relative aspect-square rounded-xl overflow-hidden border border-white/10 group/gallery cursor-pointer"
-                      >
-                        <img src={gObj.url} alt={gObj.name} className="object-cover w-full h-full transition-transform duration-300 group-hover/gallery:scale-105" />
-                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/gallery:opacity-100 transition-opacity flex items-center justify-center">
-                          <Eye size={18} className="text-white" />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div className="pt-2 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={generatingAiId === item.id}
-                    onClick={() => handleGenerateCompanion(item)}
-                    className="px-3 py-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/25 text-indigo-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
-                  >
-                    {generatingAiId === item.id ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Sparkles className="w-3.5 h-3.5" />
-                    )}
-                    <span>Study Summary & Practice Questions</span>
-                  </button>
-                </div>
               </div>
 
-              <div className="flex md:flex-col gap-2 items-end justify-between shrink-0">
+              {/* Action Buttons */}
+              <div className="flex items-center md:flex-col gap-1.5 justify-end shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-white/5">
+                <button
+                  onClick={() => setMoveItemModal({ itemId: item.id, currentFolderId: item.folder_id })}
+                  className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer border border-white/5"
+                  title="Move to Folder"
+                >
+                  <Move size={12} className="text-indigo-400" />
+                  <span>Move</span>
+                </button>
+
                 {item.fileData && type !== 'gallery' && (
                   <button
                     onClick={() => setViewingDoc({ url: item.fileData, title: item.title, fileName: item.fileName })}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
                   >
-                    <Eye size={14} /> Open File
+                    <Eye size={12} />
+                    <span>View</span>
                   </button>
                 )}
+
                 {canEdit && (
                   <button
                     onClick={() => handleDelete(item.id)}
-                    className="px-3 py-1.5 text-rose-400 border border-rose-500/20 hover:bg-rose-500/15 rounded-xl flex items-center gap-1.5 text-xs font-semibold transition-colors cursor-pointer"
+                    className="p-1.5 text-rose-400 hover:bg-rose-500/15 rounded-lg transition-colors cursor-pointer"
+                    title="Delete item"
                   >
-                    <Trash2 size={13} /> Delete
+                    <Trash2 size={13} />
                   </button>
                 )}
               </div>
             </motion.div>
           ))}
+        </div>
+      )}
+
+      {/* Move to Folder Modal Dialog */}
+      {moveItemModal && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-slate-900 border border-white/10 rounded-3xl p-5 shadow-2xl space-y-3.5 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+              <h4 className="text-sm font-black text-white flex items-center gap-2">
+                <Move className="w-4 h-4 text-indigo-400" />
+                <span>Move to Material Hub Folder</span>
+              </h4>
+              <button onClick={() => setMoveItemModal(null)} className="p-1 text-slate-400 hover:text-white">
+                <X size={15} />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400">Choose destination folder for this resource:</p>
+
+            <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+              <button
+                onClick={() => handleMoveToFolder(moveItemModal.itemId, null)}
+                className={`w-full text-left p-2.5 rounded-xl border flex items-center justify-between text-xs font-bold transition-all ${!moveItemModal.currentFolderId ? 'bg-indigo-600/20 border-indigo-500/40 text-white' : 'border-white/5 bg-slate-950/40 hover:bg-white/5 text-slate-300'}`}
+              >
+                <div className="flex items-center gap-2">
+                  <HardDrive size={15} className="text-slate-400" />
+                  <span>Root (No Folder)</span>
+                </div>
+                {!moveItemModal.currentFolderId && <span className="text-[10px] text-indigo-400 font-extrabold">Current</span>}
+              </button>
+
+              {folders.map(f => {
+                const isSelected = moveItemModal.currentFolderId === f.id;
+                return (
+                  <button
+                    key={f.id}
+                    onClick={() => handleMoveToFolder(moveItemModal.itemId, f.id)}
+                    className={`w-full text-left p-2.5 rounded-xl border flex items-center justify-between text-xs font-bold transition-all ${isSelected ? 'bg-amber-500/20 border-amber-500/40 text-white' : 'border-white/5 bg-slate-950/40 hover:bg-white/5 text-slate-300'}`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FolderIcon size={15} className="text-amber-400 shrink-0" />
+                      <span className="truncate">{f.name}</span>
+                    </div>
+                    {isSelected && <span className="text-[10px] text-amber-400 font-extrabold shrink-0">Current</span>}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => setMoveItemModal(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -609,18 +710,18 @@ export default function SimpleResourceManager({
             <div className="px-3 py-1 text-[9px] font-black text-slate-500 uppercase tracking-wider">Move to Folder</div>
             <button
               onClick={() => handleMoveToFolder(itemHoldMenu.itemId, null)}
-              className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
+              className="flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
             >
-              <Move className="w-3.5 h-3.5 text-slate-400" />
-              Root (No Folder)
+              <HardDrive className="w-3.5 h-3.5 text-slate-400" />
+              Root
             </button>
             {folders.map(f => (
               <button
                 key={f.id}
                 onClick={() => handleMoveToFolder(itemHoldMenu.itemId, f.id)}
-                className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
+                className="flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
               >
-                <FolderIcon className="w-3.5 h-3.5 text-indigo-400" />
+                <FolderIcon className="w-3.5 h-3.5 text-amber-400" />
                 <span className="truncate">{f.name}</span>
               </button>
             ))}
@@ -629,10 +730,10 @@ export default function SimpleResourceManager({
                 <div className="h-px bg-white/5 my-1" />
                 <button
                   onClick={() => handleDelete(itemHoldMenu.itemId)}
-                  className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all"
+                  className="flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
-                  Delete Entry
+                  Delete Resource
                 </button>
               </>
             )}
@@ -644,32 +745,45 @@ export default function SimpleResourceManager({
       {/* Folder Creation Modal */}
       {showFolderModal && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="w-full max-w-sm bg-slate-900 border border-white/10 rounded-3xl p-6 shadow-2xl space-y-4">
-            <h3 className="text-lg font-black text-white flex items-center gap-2">
-              <FolderPlus className="w-5 h-5 text-indigo-400" />
-              Create Material Hub Folder
+          <div className="w-full max-w-sm bg-slate-900 border border-white/10 rounded-3xl p-5 shadow-2xl space-y-3.5">
+            <h3 className="text-base font-black text-white flex items-center gap-2">
+              <FolderPlus className="w-5 h-5 text-amber-400" />
+              <span>Create Material Hub Folder</span>
             </h3>
-            <p className="text-xs text-slate-400">Create a folder to group and organize your worksheets, documents, and resources.</p>
+            <p className="text-xs text-slate-400">Folders help organize syllabus documents, revision sheets, and past question papers.</p>
             <input
               type="text"
               value={newFolderName}
               onChange={(e) => setNewFolderName(e.target.value)}
-              placeholder="Folder Name (e.g. Science Fair 2026)"
-              className="w-full px-4 py-3 bg-slate-950 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
+              placeholder="e.g. Physics Formulae & Lab Sheets"
+              className="w-full px-3.5 py-2.5 bg-slate-950 border border-white/10 rounded-xl text-white text-xs focus:outline-none focus:border-indigo-500"
               autoFocus
+              disabled={isCreatingFolder}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleCreateFolder();
+              }}
             />
-            <div className="flex items-center gap-3 pt-2">
+            <div className="flex items-center gap-2 pt-1">
               <button
                 onClick={() => setShowFolderModal(false)}
-                className="flex-1 px-4 py-2.5 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold"
+                disabled={isCreatingFolder}
+                className="flex-1 px-3 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold"
               >
                 Cancel
               </button>
               <button
                 onClick={handleCreateFolder}
-                className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg hover:bg-indigo-500 transition-colors"
+                disabled={isCreatingFolder || !newFolderName.trim()}
+                className="flex-1 px-3 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg hover:bg-indigo-500 transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
               >
-                Create Folder
+                {isCreatingFolder ? (
+                  <>
+                    <Loader2 size={13} className="animate-spin" />
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  <span>Create Folder</span>
+                )}
               </button>
             </div>
           </div>
@@ -679,30 +793,33 @@ export default function SimpleResourceManager({
       {/* Rename Folder Modal */}
       {renameFolderModal && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="w-full max-w-sm bg-slate-900 border border-white/10 rounded-3xl p-6 shadow-2xl space-y-4">
-            <h3 className="text-lg font-black text-white flex items-center gap-2">
-              <Edit2 className="w-5 h-5 text-indigo-400" />
-              Rename Folder
+          <div className="w-full max-w-sm bg-slate-900 border border-white/10 rounded-3xl p-5 shadow-2xl space-y-3.5">
+            <h3 className="text-base font-black text-white flex items-center gap-2">
+              <Edit2 className="w-4 h-4 text-amber-400" />
+              <span>Rename Folder</span>
             </h3>
             <input
               type="text"
               value={renameInput}
               onChange={(e) => setRenameInput(e.target.value)}
-              className="w-full px-4 py-3 bg-slate-950 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
+              className="w-full px-3.5 py-2.5 bg-slate-950 border border-white/10 rounded-xl text-white text-xs focus:outline-none focus:border-indigo-500"
               autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleRenameFolderSubmit();
+              }}
             />
-            <div className="flex items-center gap-3 pt-2">
+            <div className="flex items-center gap-2 pt-1">
               <button
                 onClick={() => setRenameFolderModal(null)}
-                className="flex-1 px-4 py-2.5 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold"
+                className="flex-1 px-3 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold"
               >
                 Cancel
               </button>
               <button
                 onClick={handleRenameFolderSubmit}
-                className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg hover:bg-indigo-500 transition-colors"
+                className="flex-1 px-3 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg hover:bg-indigo-500 transition-colors"
               >
-                Save Name
+                Save
               </button>
             </div>
           </div>

@@ -5,10 +5,11 @@ import { ResourceCategory } from '../types';
 
 interface Props {
   category: ResourceCategory;
+  folderId?: string | null;
   onSuccess: () => void;
 }
 
-export const AssignmentUploadForm: React.FC<Props> = ({ category, onSuccess }) => {
+export const AssignmentUploadForm: React.FC<Props> = ({ category, folderId, onSuccess }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [classGrade, setClassGrade] = useState('');
@@ -57,7 +58,8 @@ export const AssignmentUploadForm: React.FC<Props> = ({ category, onSuccess }) =
         fileName: file?.name || null,
         createdAt: Date.now(),
         created_at: Date.now(),
-        author: 'Teacher'
+        author: 'Teacher',
+        folder_id: folderId || null
       };
 
       console.log("MODULE DATA", dataToSave);
