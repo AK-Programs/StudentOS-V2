@@ -14636,14 +14636,19 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
               <button
                 onClick={async () => {
                   if (!newVaultFolderName.trim() || !currentUser?.uid) return;
-                  const f = await createFolder(newVaultFolderName, 'notes', currentUser.uid);
-                  if (f) {
-                    setVaultFolders([f, ...vaultFolders]);
-                    setNewVaultFolderName('');
-                    setShowVaultFolderModal(false);
+                  try {
+                    const f = await createFolder(newVaultFolderName.trim(), 'notes', currentUser.uid);
+                    if (f) {
+                      setVaultFolders(prev => [f, ...prev]);
+                      setNewVaultFolderName('');
+                      setShowVaultFolderModal(false);
+                      showNotification('📁 Personal Notes folder created!');
+                    }
+                  } catch (err: any) {
+                    showNotification(`⚠️ Failed to create folder: ${err.message || 'Database error'}`);
                   }
                 }}
-                className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg"
+                className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg hover:bg-indigo-500 transition-colors"
               >
                 Create Folder
               </button>

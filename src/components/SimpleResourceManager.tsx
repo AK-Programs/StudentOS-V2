@@ -5,13 +5,13 @@ import { uploadFileToStorage } from '../lib/storageHelper';
 import { supabase } from '../lib/supabase';
 import { 
   Plus, Trash2, FileText, Image as ImageIcon, Eye, Search, 
-  ArrowLeft, Calendar, Sparkles, X, Loader2, Filter
+  ArrowLeft, Calendar, Sparkles, X, Loader2, Filter, FolderPlus,
+  Edit2, Folder as FolderIcon, ChevronRight, Move
 } from 'lucide-react';
 import { AssignmentUploadForm } from './AssignmentUploadForm';
 import { getSupabaseResources, saveSupabaseResource, deleteSupabaseResource } from '../lib/supabaseResources';
 import { InAppDocumentViewer } from './InAppDocumentViewer';
 import { getFolders, Folder, createFolder, renameFolder, deleteFolder } from '../lib/supabaseFolders';
-import { FolderPlus, MoreVertical, Pin, Share2, Move, Edit2, Lock, Unlock, Hash } from 'lucide-react';
 
 export default function SimpleResourceManager({ 
   type, title, emoji, currentUser, effectiveRole, showNotification, goBack 
@@ -31,6 +31,9 @@ export default function SimpleResourceManager({
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
 
+  const [renameFolderModal, setRenameFolderModal] = useState<{ id: string; name: string } | null>(null);
+  const [renameInput, setRenameInput] = useState('');
+
   const [itemHoldMenu, setItemHoldMenu] = useState<{ itemId: string, x: number, y: number } | null>(null);
   const holdTimerRef = useRef<any>(null);
 
@@ -39,7 +42,9 @@ export default function SimpleResourceManager({
   useEffect(() => {
     fetchItems();
     if (currentUser?.uid) {
-      getFolders(currentUser.uid, 'materials').then(setFolders);
+      getFolders(currentUser.uid, 'materials').then(setFolders).catch(err => {
+        console.error('[FOLDERS] Load error:', err);
+      });
     }
 
     const channel = supabase.channel('materials_hub_channel');
@@ -106,12 +111,42 @@ export default function SimpleResourceManager({
 
   const handleCreateFolder = async () => {
     if (!newFolderName.trim() || !currentUser?.uid) return;
-    const f = await createFolder(newFolderName, 'materials', currentUser.uid);
-    if (f) {
-      setFolders([f, ...folders]);
-      setNewFolderName('');
-      setShowFolderModal(false);
-      showNotification('📁 Folder created');
+    try {
+      const f = await createFolder(newFolderName.trim(), 'materials', currentUser.uid);
+      if (f) {
+        setFolders(prev => [f, ...prev]);
+        setNewFolderName('');
+        setShowFolderModal(false);
+        showNotification('📁 Folder created successfully!');
+      }
+    } catch (err: any) {
+      showNotification(`⚠️ Folder creation failed: ${err.message || 'Error'}`);
+    }
+  };
+
+  const handleRenameFolderSubmit = async () => {
+    if (!renameFolderModal || !renameInput.trim()) return;
+    try {
+      await renameFolder(renameFolderModal.id, renameInput.trim());
+      setFolders(prev => prev.map(f => f.id === renameFolderModal.id ? { ...f, name: renameInput.trim() } : f));
+      showNotification('✓ Folder renamed');
+      setRenameFolderModal(null);
+      setRenameInput('');
+    } catch (err: any) {
+      showNotification(`⚠️ Failed to rename folder: ${err.message || 'Error'}`);
+    }
+  };
+
+  const handleDeleteFolderSubmit = async (folderId: string, folderName: string) => {
+    if (!confirm(`Delete folder "${folderName}"? Items inside will be moved to Root.`)) return;
+    try {
+      await deleteFolder(folderId);
+      setFolders(prev => prev.filter(f => f.id !== folderId));
+      if (activeFolderId === folderId) setActiveFolderId(null);
+      showNotification('🗑️ Folder deleted');
+      fetchItems();
+    } catch (err: any) {
+      showNotification(`⚠️ Failed to delete folder: ${err.message || 'Error'}`);
     }
   };
 
@@ -174,6 +209,10 @@ export default function SimpleResourceManager({
     });
   }, [items, selectedGradeFilter, searchQuery]);
 
+  const activeFolder = useMemo(() => {
+    return folders.find(f => f.id === activeFolderId);
+  }, [folders, activeFolderId]);
+
   const handleGenerateCompanion = async (item: any) => {
     setGeneratingAiId(item.id);
     showNotification('Generating study summary and practice questions...');
@@ -226,7 +265,16 @@ export default function SimpleResourceManager({
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            onClick={() => setShowFolderModal(true)}
+            className="px-3.5 py-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 hover:text-white text-xs font-bold flex items-center gap-2 transition-all active:scale-95 cursor-pointer"
+            title="Create New Hub Folder"
+          >
+            <FolderPlus size={15} />
+            <span>New Folder</span>
+          </button>
+
           {canEdit && (
             <button 
               onClick={() => { 
@@ -272,6 +320,90 @@ export default function SimpleResourceManager({
         )}
       </div>
 
+      {/* Active Folder Header Banner if inside a folder */}
+      {activeFolder ? (
+        <div className="p-4 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-indigo-600/30 text-indigo-300">
+              <FolderIcon className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-[10px] text-indigo-400 uppercase font-black tracking-wider">Active Folder View</p>
+              <h4 className="text-base font-black text-white">{activeFolder.name}</h4>
+            </div>
+          </div>
+          <button
+            onClick={() => setActiveFolderId(null)}
+            className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all flex items-center gap-1.5"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Back to All Folders</span>
+          </button>
+        </div>
+      ) : (
+        /* File Manager: Folders Grid view at Root */
+        folders.length > 0 && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-black uppercase text-slate-400 tracking-wider flex items-center gap-2">
+                <FolderIcon className="w-4 h-4 text-indigo-400" />
+                <span>Resource Folders ({folders.length})</span>
+              </h4>
+              <button
+                onClick={() => setShowFolderModal(true)}
+                className="text-xs text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1"
+              >
+                + Create Folder
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+              {folders.map(f => {
+                const count = items.filter(i => i.folder_id === f.id).length;
+                return (
+                  <div
+                    key={f.id}
+                    onClick={() => setActiveFolderId(f.id)}
+                    className="p-4 rounded-2xl bg-slate-900/80 hover:bg-slate-800/90 border border-white/10 hover:border-indigo-500/40 transition-all cursor-pointer group flex flex-col justify-between space-y-3 shadow-md"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="p-2 rounded-xl bg-indigo-600/20 text-indigo-400 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                        <FolderIcon className="w-5 h-5" />
+                      </div>
+
+                      <div className="flex items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                        <button
+                          onClick={() => {
+                            setRenameFolderModal({ id: f.id, name: f.name });
+                            setRenameInput(f.name);
+                          }}
+                          className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white"
+                          title="Rename Folder"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteFolderSubmit(f.id, f.name)}
+                          className="p-1 hover:bg-rose-500/20 rounded text-slate-400 hover:text-rose-400"
+                          title="Delete Folder"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-xs font-bold text-white group-hover:text-indigo-300 truncate">{f.name}</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">{count} {count === 1 ? 'file' : 'files'}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )
+      )}
+
       {/* Upload Form Drawer */}
       <AnimatePresence>
         {isFormOpen && canEdit && (
@@ -294,7 +426,7 @@ export default function SimpleResourceManager({
                 <X size={16} />
               </button>
             </div>
-            <AssignmentUploadForm category={type} onSuccess={() => { setIsFormOpen(false); fetchItems(); }} />
+            <AssignmentUploadForm category={type} folderId={activeFolderId} onSuccess={() => { setIsFormOpen(false); fetchItems(); }} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -327,34 +459,6 @@ export default function SimpleResourceManager({
         )}
       </AnimatePresence>
 
-      {/* Folders Navigation */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none no-scrollbar">
-        <button
-          onClick={() => setActiveFolderId(null)}
-          className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all ${!activeFolderId ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/20' : 'bg-slate-950/60 border-white/5 text-slate-400 hover:bg-slate-900'}`}
-        >
-          All {title}
-        </button>
-        {folders.map(f => (
-          <button
-            key={f.id}
-            onClick={() => setActiveFolderId(f.id)}
-            className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all ${activeFolderId === f.id ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/20' : 'bg-slate-950/60 border-white/5 text-slate-400 hover:bg-slate-900'}`}
-          >
-            📁 {f.name}
-          </button>
-        ))}
-        {canEdit && (
-          <button
-            onClick={() => setShowFolderModal(true)}
-            className="p-1.5 rounded-xl bg-slate-950/60 border border-dashed border-white/20 text-slate-500 hover:text-indigo-400 hover:border-indigo-500/40 transition-all"
-            title="Create Folder"
-          >
-            <FolderPlus className="w-4 h-4" />
-          </button>
-        )}
-      </div>
-
       {/* List Content */}
       {loading ? (
         <div className="space-y-3">
@@ -362,19 +466,21 @@ export default function SimpleResourceManager({
             <div key={n} className="bento-card p-5 rounded-2xl h-28 animate-pulse" />
           ))}
         </div>
-      ) : filteredItems.filter(i => !activeFolderId || i.folder_id === activeFolderId).length === 0 ? (
+      ) : filteredItems.filter(i => activeFolderId ? i.folder_id === activeFolderId : !i.folder_id).length === 0 ? (
         <div className="bento-card text-center py-12 px-6 rounded-3xl space-y-2">
-          <p className="text-sm font-bold text-white">No {title.toLowerCase()} found</p>
+          <p className="text-sm font-bold text-white">No {title.toLowerCase()} found {activeFolder ? `in folder "${activeFolder.name}"` : ''}</p>
           <p className="text-xs text-slate-400 max-w-md mx-auto">
             {searchQuery
               ? `No items matched "${searchQuery}". Try clearing your search filter.`
-              : `There are currently no published ${title.toLowerCase()} for this selection.`}
+              : activeFolder
+              ? `This folder is currently empty. Hold an item anywhere to move it into "${activeFolder.name}".`
+              : `There are currently no published ${title.toLowerCase()} at root selection.`}
           </p>
         </div>
       ) : (
         <div className="space-y-3.5">
           {filteredItems
-            .filter(i => !activeFolderId || i.folder_id === activeFolderId)
+            .filter(i => activeFolderId ? i.folder_id === activeFolderId : !i.folder_id)
             .map((item, idx) => (
             <motion.div
               key={item.id}
@@ -495,8 +601,8 @@ export default function SimpleResourceManager({
       {/* Item Hold Menu */}
       {itemHoldMenu && (
         <div 
-          className="fixed z-[100] w-48 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-1.5 animate-in fade-in zoom-in duration-150"
-          style={{ left: Math.min(window.innerWidth - 200, itemHoldMenu.x), top: Math.min(window.innerHeight - 300, itemHoldMenu.y) }}
+          className="fixed z-[100] w-52 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-2 animate-in fade-in zoom-in duration-150"
+          style={{ left: Math.min(window.innerWidth - 220, itemHoldMenu.x), top: Math.min(window.innerHeight - 320, itemHoldMenu.y) }}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex flex-col gap-1">
@@ -506,7 +612,7 @@ export default function SimpleResourceManager({
               className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
             >
               <Move className="w-3.5 h-3.5 text-slate-400" />
-              Root
+              Root (No Folder)
             </button>
             {folders.map(f => (
               <button
@@ -514,8 +620,8 @@ export default function SimpleResourceManager({
                 onClick={() => handleMoveToFolder(itemHoldMenu.itemId, f.id)}
                 className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
               >
-                <Move className="w-3.5 h-3.5 text-indigo-400" />
-                {f.name}
+                <FolderIcon className="w-3.5 h-3.5 text-indigo-400" />
+                <span className="truncate">{f.name}</span>
               </button>
             ))}
             {canEdit && (
@@ -538,20 +644,21 @@ export default function SimpleResourceManager({
       {/* Folder Creation Modal */}
       {showFolderModal && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="w-full max-w-sm bg-slate-900 border border-white/10 rounded-3xl p-6 shadow-2xl">
-            <h3 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+          <div className="w-full max-w-sm bg-slate-900 border border-white/10 rounded-3xl p-6 shadow-2xl space-y-4">
+            <h3 className="text-lg font-black text-white flex items-center gap-2">
               <FolderPlus className="w-5 h-5 text-indigo-400" />
-              Create Hub Folder
+              Create Material Hub Folder
             </h3>
+            <p className="text-xs text-slate-400">Create a folder to group and organize your worksheets, documents, and resources.</p>
             <input
               type="text"
               value={newFolderName}
               onChange={(e) => setNewFolderName(e.target.value)}
-              placeholder="Folder Name (e.g. Science Fair)"
+              placeholder="Folder Name (e.g. Science Fair 2026)"
               className="w-full px-4 py-3 bg-slate-950 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
               autoFocus
             />
-            <div className="flex items-center gap-3 mt-6">
+            <div className="flex items-center gap-3 pt-2">
               <button
                 onClick={() => setShowFolderModal(false)}
                 className="flex-1 px-4 py-2.5 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold"
@@ -560,9 +667,42 @@ export default function SimpleResourceManager({
               </button>
               <button
                 onClick={handleCreateFolder}
-                className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg"
+                className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg hover:bg-indigo-500 transition-colors"
               >
                 Create Folder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rename Folder Modal */}
+      {renameFolderModal && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-slate-900 border border-white/10 rounded-3xl p-6 shadow-2xl space-y-4">
+            <h3 className="text-lg font-black text-white flex items-center gap-2">
+              <Edit2 className="w-5 h-5 text-indigo-400" />
+              Rename Folder
+            </h3>
+            <input
+              type="text"
+              value={renameInput}
+              onChange={(e) => setRenameInput(e.target.value)}
+              className="w-full px-4 py-3 bg-slate-950 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
+              autoFocus
+            />
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                onClick={() => setRenameFolderModal(null)}
+                className="flex-1 px-4 py-2.5 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRenameFolderSubmit}
+                className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg hover:bg-indigo-500 transition-colors"
+              >
+                Save Name
               </button>
             </div>
           </div>
