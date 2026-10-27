@@ -633,33 +633,6 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     }
   };
 
-  const handleEndClass = () => {
-    if (!confirm('Are you sure you want to end this class session? All local board data will be cleared and you will return to the start screen.')) return;
-    
-    // 1. Clear Whiteboard Local Storage
-    try {
-      localStorage.removeItem('studentos_smartboard_slides_v3');
-      localStorage.removeItem('studentos_whiteboard_recovery');
-      // Clear secondary session data
-      localStorage.removeItem('s_os_chat_cache');
-    } catch (e) {}
-
-    // 2. Reset Local Component State
-    setSlides([{ id: 'slide_1', shapes: [], lines: [], stickies: [] }]);
-    setActiveSlideIdx(0);
-    setUndoStack([]);
-    setRedoStack([]);
-    
-    // 3. Exit Whiteboard
-    if (onClose) {
-      onClose();
-    }
-    
-    // 4. Trigger global session cleanup event if needed
-    window.dispatchEvent(new CustomEvent('studentos_class_ended'));
-    
-    soundService.playLevelUp();
-  };
 
   // Rehydrate SVG & 3D shapes from svgRaw/scene3D when loading slides
   useEffect(() => {
@@ -3031,14 +3004,6 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
              <span className="hidden xl:inline text-[10px] uppercase font-black">PDF</span>
            </button>
 
-           <button 
-             onClick={handleEndClass}
-             className="p-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl transition-all flex items-center gap-1.5 text-xs font-black uppercase tracking-wider shadow-lg"
-             title="End Class Session & Clear Board"
-           >
-             <LogOut className="w-4 h-4" />
-             <span>End Class</span>
-           </button>
 
            {confirmClearOpen ? (
              <div className="flex items-center gap-1 bg-rose-950/90 border border-rose-500/40 px-2 py-1 rounded-xl">

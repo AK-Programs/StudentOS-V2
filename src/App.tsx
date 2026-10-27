@@ -15,7 +15,7 @@ import {
   Heart, Bookmark, X, Bell, Zap, Gift, Smartphone, Paperclip, History, Brain, Globe,
   LayoutDashboard, Layers, Video, HelpCircle, GraduationCap, Shield, Compass,
   PanelLeftClose, PanelLeftOpen, ClipboardList, CheckSquare, Monitor, Tv, Cpu, Trophy, Swords,
-  Key, ArrowLeft
+  Key, ArrowLeft, FolderPlus, Pin, Edit2, Move, Folder
 } from 'lucide-react';
 import { 
   UserRole, HouseType, SectionType, UserProfile, HouseStats, 
@@ -49,6 +49,7 @@ import {
   clearChatCache
 } from './lib/supabaseChat';
 import { saveSupabaseMaterial, getSupabaseMaterials, deleteSupabaseMaterial } from './lib/supabaseResources';
+import { getFolders, Folder as FolderType, createFolder, renameFolder, deleteFolder } from './lib/supabaseFolders';
 import { PdfCanvasViewer } from './components/PdfCanvasViewer';
 import { InAppDocumentViewer } from './components/InAppDocumentViewer';
 import { PanelBoardSetupDialog } from './components/panel/PanelBoardSetupDialog';
@@ -1015,11 +1016,44 @@ export default function App() {
   const [noteFont, setNoteFont] = useState<'sans' | 'serif' | 'mono'>('sans');
 
   const [homeworkList, setHomeworkList] = useState<Homework[]>([]);
+
+  const [vaultFolders, setVaultFolders] = useState<FolderType[]>([]);
+  const [activeVaultFolderId, setActiveVaultFolderId] = useState<string | null>(null);
+  const [vaultItemHoldMenu, setVaultItemHoldMenu] = useState<{ noteId: string, x: number, y: number } | null>(null);
+  const [showVaultFolderModal, setShowVaultFolderModal] = useState<boolean>(false);
+  const [newVaultFolderName, setNewVaultFolderName] = useState<string>('');
+
+  const handlePinVaultNote = async (noteId: string) => {
+    const note = vaultNotes.find(n => n.id === noteId);
+    if (!note) return;
+    const updated = vaultNotes.map(n => n.id === noteId ? { ...n, isPinned: !(n as any).isPinned } : n);
+    setVaultNotes(updated);
+    await saveVaultNoteToSupabase({ ...note, isPinned: !(note as any).isPinned } as any);
+    setVaultItemHoldMenu(null);
+  };
+
+  const handleMoveVaultNoteToFolder = async (noteId: string, folderId: string | null) => {
+    const note = vaultNotes.find(n => n.id === noteId);
+    if (!note) return;
+    const updated = vaultNotes.map(n => n.id === noteId ? { ...n, folder_id: folderId } : n);
+    setVaultNotes(updated);
+    await saveVaultNoteToSupabase({ ...note, folder_id: folderId });
+    setVaultItemHoldMenu(null);
+  };
+
+  const handleDeleteVaultNote = async (noteId: string) => {
+    if (!currentUser?.uid) return;
+    setVaultNotes(prev => prev.filter(n => n.id !== noteId));
+    await deleteVaultNoteFromSupabase(noteId, currentUser.uid);
+    setVaultItemHoldMenu(null);
+    if (selectedNoteId === noteId) setSelectedNoteId(null);
+  };
   
   // --- Core State Expansion for Multi-User Real-time Sync & Custom Tools ---
   const socketRef = useRef<any>(null);
   const lastXRef = useRef<number>(0);
   const lastYRef = useRef<number>(0);
+  const holdTimerRef = useRef<any>(null);
   const startXRef = useRef<number>(0);
   const startYRef = useRef<number>(0);
   const whiteboardHistory = useRef<string[]>([]);
@@ -1157,7 +1191,6 @@ export default function App() {
   const [aiLoading, setAiLoading] = useState<boolean>(false);
   const [aiMode, setAiMode] = useState<'explanatory' | 'socratic' | 'coder' | 'quiz_gen'>('explanatory');
 
-  // Multi-thread AI Session History with Persistent Local Storage state
   const [aiThreads, setAiThreads] = useState<{
     id: string;
     title: string;
@@ -1174,6 +1207,7 @@ export default function App() {
     attachedFiles?: any[];
     userId?: string;
     createdAt?: number;
+    isPinned?: boolean;
   }[]>(() => {
     try {
       const cached = localStorage.getItem('s_os_ai_threads');
@@ -1209,6 +1243,33 @@ export default function App() {
     } catch (e) {}
     return '';
   });
+
+  const [aiThreadHoldMenu, setAiThreadHoldMenu] = useState<{ threadId: string, x: number, y: number } | null>(null);
+
+  const handlePinThread = (threadId: string) => {
+    setAiThreads(prev => {
+      const updated = prev.map(t => t.id === threadId ? { ...t, isPinned: !t.isPinned } : t);
+      return updated.sort((a, b) => {
+        if (a.isPinned && !b.isPinned) return -1;
+        if (!a.isPinned && b.isPinned) return 1;
+        return (b.createdAt || 0) - (a.createdAt || 0);
+      });
+    });
+    setAiThreadHoldMenu(null);
+  };
+
+  const handleRenameThread = async (threadId: string) => {
+    const thread = aiThreads.find(t => t.id === threadId);
+    if (!thread) return;
+    const newTitle = window.prompt('Enter new title:', thread.title);
+    if (newTitle && newTitle.trim() && currentUser?.uid) {
+      setAiThreads(prev => prev.map(t => t.id === threadId ? { ...t, title: newTitle } : t));
+      await renameAiBuddyChat(threadId, newTitle, currentUser.uid);
+    }
+    setAiThreadHoldMenu(null);
+  };
+
+
 
   // Derived current thread state helper
   const activeThread = aiThreads.find(t => t.id === activeThreadId) || aiThreads[0] || {
@@ -2468,9 +2529,15 @@ export default function App() {
     const loadNotes = async () => {
       try {
         const uid = currentUser.uid || currentUser.email || 'guest';
-        const dbNotes = await getVaultNotes(uid);
+        const [dbNotes, fetchedFolders] = await Promise.all([
+          getVaultNotes(uid),
+          getFolders(uid, 'notes')
+        ]);
         setVaultNotes(dbNotes);
-        setSelectedNoteId(dbNotes[0]?.id || null);
+        setVaultFolders(fetchedFolders);
+        if (!selectedNoteId) {
+          setSelectedNoteId(dbNotes[0]?.id || null);
+        }
       } catch (err) {
         console.error('[Sync] Failed to parse notes:', err);
         setVaultNotes([]);
@@ -5639,18 +5706,20 @@ Date: ${new Date().toLocaleDateString()}
     showNotification(`Active mode set to ${mode.toUpperCase()}`);
   };
 
-  const handleDeleteThread = (threadId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleDeleteThread = (threadId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     if (aiThreads.length <= 1) {
       showNotification('At least one chat sequence must remain intact.');
       return;
     }
     if (currentUser?.uid) {
-      deleteAiBuddyChat(threadId, currentUser?.uid || "").catch(error => {
+      deleteAiBuddyChat(threadId, currentUser.uid).catch(error => {
         console.error("Error deleting AI buddy chat:", error);
       });
     }
     const nextThreads = aiThreads.filter(t => t.id !== threadId);
+    setAiThreads(nextThreads);
+    
     if (activeThreadId === threadId && nextThreads.length > 0) {
       const fallbackThread = nextThreads[0];
       setActiveThreadId(fallbackThread.id);
@@ -5665,6 +5734,7 @@ Date: ${new Date().toLocaleDateString()}
       }
     }
     showNotification('Chat thread discarded.');
+    setAiThreadHoldMenu(null);
   };
 
   const handleClearThreadHistory = () => {
@@ -6730,14 +6800,6 @@ ${roleLabel}: ${userQuery}
       )}
 
       {/* Absolute Dynamic Alert Center */}
-      <div className="fixed top-4 sm:top-6 right-4 sm:right-6 left-4 sm:left-auto z-[9999] flex flex-col gap-2.5 sm:max-w-sm pointer-events-none">
-        {toasts.map(t => (
-          <div key={t.id} className="smart-glass animate-bounce text-xs font-semibold px-4 py-3.5 rounded-xl border border-white/10 text-white shadow-xl flex items-center gap-2 pointer-events-auto bg-slate-900/90">
-            <Sparkles className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
-            <span className="break-words min-w-0">{t.msg}</span>
-          </div>
-        ))}
-      </div>
 
       {/* Onboarding Authentication Modal Gate — Compact Single-Viewport Layout */}
       {!currentUser && !firebaseLoading && !dataLoading && (
@@ -9448,10 +9510,40 @@ ${roleLabel}: ${userQuery}
                         <span className="absolute left-3 top-3 text-[10px]">🔍</span>
                       </div>
 
+                      {/* Folders Navigation */}
+                      <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none no-scrollbar mb-2 border-b border-white/5">
+                        <button
+                          onClick={() => setActiveVaultFolderId(null)}
+                          className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider border transition-all shrink-0 ${!activeVaultFolderId ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/20' : 'bg-slate-950/60 border-white/5 text-slate-400 hover:bg-slate-900'}`}
+                        >
+                          All Notes
+                        </button>
+                        {vaultFolders.map(f => (
+                          <button
+                            key={f.id}
+                            onClick={() => setActiveVaultFolderId(f.id)}
+                            className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider border transition-all shrink-0 ${activeVaultFolderId === f.id ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/20' : 'bg-slate-950/60 border-white/5 text-slate-400 hover:bg-slate-900'}`}
+                          >
+                            📁 {f.name}
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => setShowVaultFolderModal(true)}
+                          className="p-1.5 rounded-xl bg-slate-950/60 border border-dashed border-white/20 text-slate-500 hover:text-indigo-400 hover:border-indigo-500/40 transition-all shrink-0"
+                        >
+                          <FolderPlus className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
                       {/* list of pages */}
                       <div className="space-y-1.5 max-h-[480px] overflow-y-auto pr-1">
                         {vaultNotes
-                          .filter(n => !newNoteTitle.trim() || n.title.toLowerCase().includes(newNoteTitle.toLowerCase()) || n.subject.toLowerCase().includes(newNoteTitle.toLowerCase()))
+                          .filter(n => (!activeVaultFolderId || n.folder_id === activeVaultFolderId) && (!newNoteTitle.trim() || n.title.toLowerCase().includes(newNoteTitle.toLowerCase()) || n.subject.toLowerCase().includes(newNoteTitle.toLowerCase())))
+                          .sort((a, b) => {
+                            if ((a as any).isPinned && !(b as any).isPinned) return -1;
+                            if (!(a as any).isPinned && (b as any).isPinned) return 1;
+                            return 0;
+                          })
                           .map(note => {
                             const isActive = selectedNoteId === note.id;
                             return (
@@ -9461,8 +9553,26 @@ ${roleLabel}: ${userQuery}
                                   setSelectedNoteId(note.id);
                                   setNoteEditMode(true);
                                 }}
-                                className={`w-full text-left p-3 rounded-xl border transition-all flex items-center justify-between ${isActive ? 'bg-indigo-600/15 border-indigo-500/20 text-white' : 'border-white/5 bg-slate-900/40 hover:bg-white/5 text-slate-300'}`}
+                                onMouseDown={(e) => {
+                                  const x = e.clientX;
+                                  const y = e.clientY;
+                                  holdTimerRef.current = setTimeout(() => {
+                                    setVaultItemHoldMenu({ noteId: note.id, x, y });
+                                  }, 1000);
+                                }}
+                                onMouseUp={() => clearTimeout(holdTimerRef.current)}
+                                onMouseLeave={() => clearTimeout(holdTimerRef.current)}
+                                onTouchStart={(e) => {
+                                  const x = e.touches[0].clientX;
+                                  const y = e.touches[0].clientY;
+                                  holdTimerRef.current = setTimeout(() => {
+                                    setVaultItemHoldMenu({ noteId: note.id, x, y });
+                                  }, 1000);
+                                }}
+                                onTouchEnd={() => clearTimeout(holdTimerRef.current)}
+                                className={`w-full text-left p-3 rounded-xl border transition-all flex items-center justify-between relative ${isActive ? 'bg-indigo-600/15 border-indigo-500/20 text-white' : 'border-white/5 bg-slate-900/40 hover:bg-white/5 text-slate-300'}`}
                               >
+                                {(note as any).isPinned && <Pin className="w-2 h-2 text-amber-400 absolute top-1 right-1 rotate-45" />}
                                 <div className="flex items-center gap-2.5 min-w-0">
                                   <span className="text-base flex-shrink-0">{note.icon || '📝'}</span>
                                   <div className="min-w-0">
@@ -12891,6 +13001,23 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                               aiThreads.map(t => (
                                 <div
                                   key={t.id}
+                                  onMouseDown={(e) => {
+                                    const x = e.clientX;
+                                    const y = e.clientY;
+                                    holdTimerRef.current = setTimeout(() => {
+                                      setAiThreadHoldMenu({ threadId: t.id, x, y });
+                                    }, 1000);
+                                  }}
+                                  onMouseUp={() => clearTimeout(holdTimerRef.current)}
+                                  onMouseLeave={() => clearTimeout(holdTimerRef.current)}
+                                  onTouchStart={(e) => {
+                                    const x = e.touches[0].clientX;
+                                    const y = e.touches[0].clientY;
+                                    holdTimerRef.current = setTimeout(() => {
+                                      setAiThreadHoldMenu({ threadId: t.id, x, y });
+                                    }, 1000);
+                                  }}
+                                  onTouchEnd={() => clearTimeout(holdTimerRef.current)}
                                   onClick={() => {
                                     setActiveThreadId(t.id);
                                     setSelectedPersona(t.personaId);
@@ -12904,12 +13031,13 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                                     }
                                     setShowAiHistoryDrawer(false);
                                   }}
-                                  className={`group flex items-center justify-between p-2.5 rounded-xl border text-left cursor-pointer transition-all ${
+                                  className={`group flex items-center justify-between p-2.5 rounded-xl border text-left cursor-pointer transition-all relative ${
                                     activeThreadId === t.id
                                       ? 'border-indigo-500 bg-indigo-500/15 shadow-sm'
                                       : 'border-white/5 bg-slate-900/40 hover:bg-slate-900 hover:border-white/10'
                                   }`}
                                 >
+                                  {t.isPinned && <Pin className="w-2.5 h-2.5 text-amber-400 absolute -top-1 -right-1 rotate-45" />}
                                   <div className="flex items-center gap-2.5 truncate max-w-[82%]">
                                     <span className="text-sm shrink-0">
                                       {AI_PERSONAS.find(p => p.id === t.personaId)?.avatarChar || '💬'}
@@ -12919,13 +13047,6 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                                       <span className="text-[9px] text-slate-400 capitalize">{t.mode}</span>
                                     </div>
                                   </div>
-                                  <button
-                                    onClick={(e) => handleDeleteThread(t.id, e)}
-                                    className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 p-1.5 rounded hover:bg-white/10 text-slate-400 hover:text-red-400 transition-all shrink-0"
-                                    title="Delete conversation"
-                                  >
-                                    <Trash className="w-3.5 h-3.5" />
-                                  </button>
                                 </div>
                               ))
                             )}
@@ -14368,7 +14489,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
       </AnimatePresence>
 
       {/* Floating Duolingo-style Byte Widget with Procedural 3D Character — hidden on auth / sign up page */}
-      {currentUser && (
+      {currentUser && !isOnboardingModalOpen && (
         <FloatingByteWidget
           activeTab={activeTab}
           currentUser={currentUser}
@@ -14407,6 +14528,142 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
           }}
         />
       )}
+
+      {/* AI Thread Hold Menu */}
+      {aiThreadHoldMenu && (
+        <div 
+          className="fixed z-[100] w-48 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-1.5 animate-in fade-in zoom-in duration-150"
+          style={{ left: Math.min(window.innerWidth - 200, aiThreadHoldMenu.x), top: Math.min(window.innerHeight - 300, aiThreadHoldMenu.y) }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex flex-col gap-1">
+            <button
+              onClick={() => handlePinThread(aiThreadHoldMenu.threadId)}
+              className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
+            >
+              <Pin className="w-3.5 h-3.5 text-amber-400" />
+              {aiThreads.find(t => t.id === aiThreadHoldMenu.threadId)?.isPinned ? 'Unpin Session' : 'Pin Session'}
+            </button>
+            <button
+              onClick={() => handleRenameThread(aiThreadHoldMenu.threadId)}
+              className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
+            >
+              <Edit2 className="w-3.5 h-3.5 text-indigo-400" />
+              Rename
+            </button>
+            <div className="h-px bg-white/5 my-1" />
+            <button
+              onClick={(e) => {
+                handleDeleteThread(aiThreadHoldMenu.threadId);
+              }}
+              className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete Session
+            </button>
+          </div>
+        </div>
+      )}
+      {aiThreadHoldMenu && <div className="fixed inset-0 z-[99]" onClick={() => setAiThreadHoldMenu(null)} />}
+
+      {/* Vault Item Hold Menu */}
+      {vaultItemHoldMenu && (
+        <div 
+          className="fixed z-[100] w-48 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-1.5 animate-in fade-in zoom-in duration-150"
+          style={{ left: Math.min(window.innerWidth - 200, vaultItemHoldMenu.x), top: Math.min(window.innerHeight - 300, vaultItemHoldMenu.y) }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex flex-col gap-1">
+            <button
+              onClick={() => handlePinVaultNote(vaultItemHoldMenu.noteId)}
+              className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
+            >
+              <Pin className="w-3.5 h-3.5 text-amber-400" />
+              {vaultNotes.find(n => n.id === vaultItemHoldMenu.noteId)?.isPinned ? 'Unpin Note' : 'Pin Note'}
+            </button>
+            <div className="h-px bg-white/5 my-1" />
+            <div className="px-3 py-1 text-[9px] font-black text-slate-500 uppercase">Move to Folder</div>
+            <button
+              onClick={() => handleMoveVaultNoteToFolder(vaultItemHoldMenu.noteId, null)}
+              className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
+            >
+              <Move className="w-3.5 h-3.5 text-slate-400" />
+              Root
+            </button>
+            {vaultFolders.map(f => (
+              <button
+                key={f.id}
+                onClick={() => handleMoveVaultNoteToFolder(vaultItemHoldMenu.noteId, f.id)}
+                className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
+              >
+                <Move className="w-3.5 h-3.5 text-indigo-400" />
+                {f.name}
+              </button>
+            ))}
+            <div className="h-px bg-white/5 my-1" />
+            <button
+              onClick={() => handleDeleteVaultNote(vaultItemHoldMenu.noteId)}
+              className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete Note
+            </button>
+          </div>
+        </div>
+      )}
+      {vaultItemHoldMenu && <div className="fixed inset-0 z-[99]" onClick={() => setVaultItemHoldMenu(null)} />}
+
+      {/* Vault Folder Creation Modal */}
+      {showVaultFolderModal && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-slate-900 border border-white/10 rounded-3xl p-6 shadow-2xl">
+            <h3 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+              <FolderPlus className="w-5 h-5 text-indigo-400" />
+              New Vault Folder
+            </h3>
+            <input
+              type="text"
+              value={newVaultFolderName}
+              onChange={(e) => setNewVaultFolderName(e.target.value)}
+              placeholder="Folder Name"
+              className="w-full px-4 py-3 bg-slate-950 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
+              autoFocus
+            />
+            <div className="flex items-center gap-3 mt-6">
+              <button
+                onClick={() => setShowVaultFolderModal(false)}
+                className="flex-1 px-4 py-2.5 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (!newVaultFolderName.trim() || !currentUser?.uid) return;
+                  const f = await createFolder(newVaultFolderName, 'notes', currentUser.uid);
+                  if (f) {
+                    setVaultFolders([f, ...vaultFolders]);
+                    setNewVaultFolderName('');
+                    setShowVaultFolderModal(false);
+                  }
+                }}
+                className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg"
+              >
+                Create Folder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Absolute Dynamic Alert Center */}
+      <div className="fixed top-4 sm:top-6 right-4 sm:right-6 left-4 sm:left-auto z-[99999] flex flex-col gap-2.5 sm:max-w-sm pointer-events-none">
+        {toasts.map(t => (
+          <div key={t.id} className="smart-glass animate-bounce text-xs font-semibold px-4 py-3.5 rounded-xl border border-white/10 text-white shadow-xl flex items-center gap-2 pointer-events-auto bg-slate-900/90">
+            <Sparkles className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
+            <span className="break-words min-w-0">{t.msg}</span>
+          </div>
+        ))}
+      </div>
 
     </div>
   );

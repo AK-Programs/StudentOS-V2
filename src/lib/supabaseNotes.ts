@@ -138,7 +138,9 @@ export async function saveVaultNoteToSupabase(note: VaultNote): Promise<void> {
        icon: note.icon,
        cover_bg: note.coverBg,
        user_id: note.userId,
-       created_at: note.createdAt
+       created_at: note.createdAt,
+       folder_id: (note as any).folder_id || null,
+       is_pinned: (note as any).isPinned || false
     });
     if (error && error.code !== '42P01') throw error;
   } catch (err) {

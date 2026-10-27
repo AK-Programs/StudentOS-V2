@@ -1,15 +1,17 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { sendNotificationToUsers } from '../firebase';
 import { uploadFileToStorage } from '../lib/storageHelper';
+import { supabase } from '../lib/supabase';
 import { 
   Plus, Trash2, FileText, Image as ImageIcon, Eye, Search, 
   ArrowLeft, Calendar, Sparkles, X, Loader2, Filter
 } from 'lucide-react';
 import { AssignmentUploadForm } from './AssignmentUploadForm';
 import { getSupabaseResources, saveSupabaseResource, deleteSupabaseResource } from '../lib/supabaseResources';
-import { supabase } from '../lib/supabase';
 import { InAppDocumentViewer } from './InAppDocumentViewer';
+import { getFolders, Folder, createFolder, renameFolder, deleteFolder } from '../lib/supabaseFolders';
+import { FolderPlus, MoreVertical, Pin, Share2, Move, Edit2, Lock, Unlock, Hash } from 'lucide-react';
 
 export default function SimpleResourceManager({ 
   type, title, emoji, currentUser, effectiveRole, showNotification, goBack 
@@ -24,10 +26,21 @@ export default function SimpleResourceManager({
   const [aiCompanionOutput, setAiCompanionOutput] = useState<{ title: string; text: string } | null>(null);
   const [generatingAiId, setGeneratingAiId] = useState<string | null>(null);
 
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+  const [showFolderModal, setShowFolderModal] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+
+  const [itemHoldMenu, setItemHoldMenu] = useState<{ itemId: string, x: number, y: number } | null>(null);
+  const holdTimerRef = useRef<any>(null);
+
   const canEdit = ['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole);
 
   useEffect(() => {
     fetchItems();
+    if (currentUser?.uid) {
+      getFolders(currentUser.uid, 'materials').then(setFolders);
+    }
 
     const channel = supabase.channel('materials_hub_channel');
     channel.on('broadcast', { event: 'materials_updated' }, () => {
@@ -84,10 +97,49 @@ export default function SimpleResourceManager({
       await deleteSupabaseResource(tableName, id);
       showNotification('Resource removed.');
       fetchItems();
+      setItemHoldMenu(null);
     } catch (err) {
       showNotification('Error deleting item.');
       console.error(err);
     }
+  };
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim() || !currentUser?.uid) return;
+    const f = await createFolder(newFolderName, 'materials', currentUser.uid);
+    if (f) {
+      setFolders([f, ...folders]);
+      setNewFolderName('');
+      setShowFolderModal(false);
+      showNotification('📁 Folder created');
+    }
+  };
+
+  const handleLongPress = (e: React.MouseEvent | React.TouchEvent, itemId: string) => {
+    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
+
+    holdTimerRef.current = setTimeout(() => {
+      setItemHoldMenu({ itemId, x: clientX, y: clientY });
+      if (navigator.vibrate) navigator.vibrate(50);
+    }, 1000);
+  };
+
+  const cancelHold = () => {
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+  };
+
+  const handleMoveToFolder = async (itemId: string, folderId: string | null) => {
+    const tableName = type === 'assignment' ? 'assignments' : 'school_resources';
+    try {
+      await supabase.from(tableName).update({ folder_id: folderId }).eq('id', itemId);
+      showNotification('Moved to folder');
+      fetchItems();
+    } catch (_) {}
+    setItemHoldMenu(null);
   };
 
   const renderFileIcon = (fileName: string) => {
@@ -267,6 +319,34 @@ export default function SimpleResourceManager({
         )}
       </AnimatePresence>
 
+      {/* Folders Navigation */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none no-scrollbar">
+        <button
+          onClick={() => setActiveFolderId(null)}
+          className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all ${!activeFolderId ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/20' : 'bg-slate-950/60 border-white/5 text-slate-400 hover:bg-slate-900'}`}
+        >
+          All {title}
+        </button>
+        {folders.map(f => (
+          <button
+            key={f.id}
+            onClick={() => setActiveFolderId(f.id)}
+            className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all ${activeFolderId === f.id ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/20' : 'bg-slate-950/60 border-white/5 text-slate-400 hover:bg-slate-900'}`}
+          >
+            📁 {f.name}
+          </button>
+        ))}
+        {canEdit && (
+          <button
+            onClick={() => setShowFolderModal(true)}
+            className="p-1.5 rounded-xl bg-slate-950/60 border border-dashed border-white/20 text-slate-500 hover:text-indigo-400 hover:border-indigo-500/40 transition-all"
+            title="Create Folder"
+          >
+            <FolderPlus className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+
       {/* List Content */}
       {loading ? (
         <div className="space-y-3">
@@ -274,24 +354,31 @@ export default function SimpleResourceManager({
             <div key={n} className="bento-card p-5 rounded-2xl h-28 animate-pulse" />
           ))}
         </div>
-      ) : filteredItems.length === 0 ? (
+      ) : filteredItems.filter(i => !activeFolderId || i.folder_id === activeFolderId).length === 0 ? (
         <div className="bento-card text-center py-12 px-6 rounded-3xl space-y-2">
           <p className="text-sm font-bold text-white">No {title.toLowerCase()} found</p>
           <p className="text-xs text-slate-400 max-w-md mx-auto">
             {searchQuery
               ? `No items matched "${searchQuery}". Try clearing your search filter.`
-              : `There are currently no published ${title.toLowerCase()} for this class selection.`}
+              : `There are currently no published ${title.toLowerCase()} for this selection.`}
           </p>
         </div>
       ) : (
         <div className="space-y-3.5">
-          {filteredItems.map((item, idx) => (
+          {filteredItems
+            .filter(i => !activeFolderId || i.folder_id === activeFolderId)
+            .map((item, idx) => (
             <motion.div
               key={item.id}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.2, delay: Math.min(idx * 0.03, 0.2) }}
-              className="bento-card p-5 rounded-2xl flex flex-col md:flex-row gap-4 justify-between group"
+              className="bento-card p-5 rounded-2xl flex flex-col md:flex-row gap-4 justify-between group relative"
+              onMouseDown={(e) => handleLongPress(e, item.id)}
+              onMouseUp={cancelHold}
+              onMouseLeave={cancelHold}
+              onTouchStart={(e) => handleLongPress(e, item.id)}
+              onTouchEnd={cancelHold}
             >
               <div className="space-y-2 flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
@@ -394,6 +481,83 @@ export default function SimpleResourceManager({
               </div>
             </motion.div>
           ))}
+        </div>
+      )}
+
+      {/* Item Hold Menu */}
+      {itemHoldMenu && (
+        <div 
+          className="fixed z-[100] w-48 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-1.5 animate-in fade-in zoom-in duration-150"
+          style={{ left: Math.min(window.innerWidth - 200, itemHoldMenu.x), top: Math.min(window.innerHeight - 300, itemHoldMenu.y) }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex flex-col gap-1">
+            <div className="px-3 py-1 text-[9px] font-black text-slate-500 uppercase tracking-wider">Move to Folder</div>
+            <button
+              onClick={() => handleMoveToFolder(itemHoldMenu.itemId, null)}
+              className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
+            >
+              <Move className="w-3.5 h-3.5 text-slate-400" />
+              Root
+            </button>
+            {folders.map(f => (
+              <button
+                key={f.id}
+                onClick={() => handleMoveToFolder(itemHoldMenu.itemId, f.id)}
+                className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
+              >
+                <Move className="w-3.5 h-3.5 text-indigo-400" />
+                {f.name}
+              </button>
+            ))}
+            {canEdit && (
+              <>
+                <div className="h-px bg-white/5 my-1" />
+                <button
+                  onClick={() => handleDelete(itemHoldMenu.itemId)}
+                  className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete Entry
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+      {itemHoldMenu && <div className="fixed inset-0 z-[99]" onClick={() => setItemHoldMenu(null)} />}
+
+      {/* Folder Creation Modal */}
+      {showFolderModal && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-slate-900 border border-white/10 rounded-3xl p-6 shadow-2xl">
+            <h3 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+              <FolderPlus className="w-5 h-5 text-indigo-400" />
+              Create Hub Folder
+            </h3>
+            <input
+              type="text"
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              placeholder="Folder Name (e.g. Science Fair)"
+              className="w-full px-4 py-3 bg-slate-950 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
+              autoFocus
+            />
+            <div className="flex items-center gap-3 mt-6">
+              <button
+                onClick={() => setShowFolderModal(false)}
+                className="flex-1 px-4 py-2.5 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateFolder}
+                className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg"
+              >
+                Create Folder
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

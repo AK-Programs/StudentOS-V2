@@ -238,6 +238,8 @@ export interface VaultNote {
   icon?: string; // e.g. "📝", "💡", "🧪"
   coverBg?: string; // e.g. "bg-gradient-to-r from-blue-600 to-indigo-900"
   userId?: string;
+  folder_id?: string | null;
+  isPinned?: boolean;
 }
 
 export interface Homework {
@@ -330,6 +332,8 @@ export interface MaterialResource {
   aiExplain?: string;
   aiRevisionNotes?: string;
   aiImportantQuestions?: string;
+  folder_id?: string | null;
+  isPinned?: boolean;
 }
 
 export interface QuizQuestion {

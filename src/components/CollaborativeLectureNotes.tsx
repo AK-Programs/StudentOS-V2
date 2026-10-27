@@ -8,6 +8,9 @@ import { supabase } from '../lib/supabase';
 import { sendRealtimeEvent, subscribeRealtimeEvents } from '../lib/wsHelper';
 import { saveStudyOutputToFlashcards, formatMathematicalText } from '../lib/studentosAiEngine';
 import { startSchoolCall } from '../lib/callService';
+import { generateFormattedPdf } from '../lib/pdfGenerator';
+import { getFolders, Folder, createFolder, renameFolder, deleteFolder } from '../lib/supabaseFolders';
+import { FolderPlus, MoreVertical, Pin, Share2, Move, Edit2, Lock, Unlock, Hash } from 'lucide-react';
 
 interface CollaborativeLectureNotesProps {
   currentUser: UserProfile | null;
@@ -24,6 +27,9 @@ interface LectureNoteItem {
   updatedAt: string;
   authorName?: string;
   userId?: string;
+  folder_id?: string | null;
+  collab_code?: string | null;
+  isPinned?: boolean;
 }
 
 const AVAILABLE_SUBJECTS = [
@@ -52,25 +58,15 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
       const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch (_) {}
-    return [
-      {
-        id: lectureId,
-        title: lectureTitle,
-        content: '# Lecture Overview\n\nStart typing live classroom notes, formulas, and key definitions here.\n\n> 💡 **Tip:** Use the AI Study tools above to summarize or convert notes into flashcards.',
-        subject,
-        updatedAt: new Date().toISOString(),
-        authorName: currentUser?.name || 'Instructor',
-        userId: currentUser?.uid || 'shared'
-      }
-    ];
+    return [];
   });
 
-  const [activeNoteId, setActiveNoteId] = useState<string>(lectureId);
+  const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [content, setContent] = useState<string>('');
-  const [title, setTitle] = useState<string>(lectureTitle);
+  const [title, setTitle] = useState<string>('');
   const [currentSubject, setCurrentSubject] = useState<string>(subject);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [subjectFilter, setSubjectFilter] = useState<string>('All Subjects');
@@ -82,6 +78,21 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState<string | null>(null);
   const [statusToast, setStatusToast] = useState<string | null>(null);
+
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+  const [showFolderModal, setShowFolderModal] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+
+  const [holdMenu, setHoldMenu] = useState<{
+    noteId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const holdTimerRef = useRef<any>(null);
+
+  const [joinCode, setJoinCode] = useState('');
+  const [showJoinModal, setShowJoinModal] = useState(false);
 
   const debounceTimerRef = useRef<any>(null);
   const channelRef = useRef<any>(null);
@@ -104,6 +115,11 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
     let mounted = true;
     const loadAllLectureNotes = async () => {
       try {
+        if (currentUser?.uid) {
+          const f = await getFolders(currentUser.uid, 'notes');
+          if (mounted) setFolders(f);
+        }
+
         const mergedMap = new Map<string, LectureNoteItem>();
         notesList.forEach(item => mergedMap.set(item.id, item));
 
@@ -111,7 +127,7 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
           .from('lecture_notes')
           .select('*')
           .order('created_at', { ascending: false })
-          .limit(50);
+          .limit(100);
 
         if (!lErr && Array.isArray(lectureRows)) {
           lectureRows.forEach((row: any) => {
@@ -121,30 +137,11 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
               content: row.content || '',
               subject: row.subject || 'Mathematics',
               updatedAt: row.created_at || new Date().toISOString(),
-              userId: row.user_id
+              userId: row.user_id,
+              folder_id: row.folder_id,
+              collab_code: row.collab_code,
+              isPinned: row.is_pinned
             });
-          });
-        }
-
-        const { data: vaultRows } = await supabase
-          .from('notes')
-          .select('*')
-          .or(`id.eq.${lectureId},id.like.lecture_%`)
-          .order('created_at', { ascending: false })
-          .limit(50);
-
-        if (Array.isArray(vaultRows)) {
-          vaultRows.forEach((row: any) => {
-            if (!mergedMap.has(row.id)) {
-              mergedMap.set(row.id, {
-                id: row.id,
-                title: row.title || 'Untitled Lecture Note',
-                content: row.content || '',
-                subject: row.subject || 'Mathematics',
-                updatedAt: row.created_at || new Date().toISOString(),
-                userId: row.user_id
-              });
-            }
           });
         }
 
@@ -153,14 +150,13 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
         if (finalItems.length > 0) {
           setNotesList(finalItems);
           persistLocalNotes(finalItems);
-          const current = finalItems.find(n => n.id === activeNoteId) || finalItems[0];
-          if (current) {
-            setActiveNoteId(current.id);
-            setTitle(current.title);
-            setContent(current.content);
-            setCurrentSubject(current.subject || 'Mathematics');
-            if (current.updatedAt) {
-              setLastSavedTime(new Date(current.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+          if (!activeNoteId) {
+            const current = finalItems.find(n => n.id === activeNoteId) || finalItems[0];
+            if (current) {
+              setActiveNoteId(current.id);
+              setTitle(current.title);
+              setContent(current.content);
+              setCurrentSubject(current.subject || 'Mathematics');
             }
           }
         }
@@ -171,7 +167,7 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [currentUser?.uid]);
 
   // Sync active note fields when activeNoteId changes
   useEffect(() => {
@@ -255,37 +251,10 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
       }
     };
   }, [activeNoteId, currentUser?.uid]);
-
   const flushSaveToCloud = async (noteId: string, newText: string, newTitle: string, newSubject: string) => {
-    setIsSaving(true);
-    setSaveStateLabel('Saving...');
     const nowIso = new Date().toISOString();
-
-    setNotesList(prev => {
-      const exists = prev.some(n => n.id === noteId);
-      const updated = exists
-        ? prev.map(n =>
-            n.id === noteId
-              ? { ...n, title: newTitle, content: newText, subject: newSubject, updatedAt: nowIso }
-              : n
-          )
-        : [
-            {
-              id: noteId,
-              title: newTitle,
-              content: newText,
-              subject: newSubject,
-              updatedAt: nowIso,
-              authorName: currentUser?.name || 'Student',
-              userId: currentUser?.uid || 'shared'
-            },
-            ...prev
-          ];
-      persistLocalNotes(updated);
-      return updated;
-    });
-
     try {
+      const current = notesList.find(n => n.id === noteId);
       const payload = {
         id: noteId,
         title: newTitle,
@@ -295,6 +264,9 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
         cover_bg: 'bg-indigo-900',
         user_id: currentUser?.uid || 'shared',
         created_at: nowIso,
+        folder_id: current?.folder_id || null,
+        collab_code: current?.collab_code || null,
+        is_pinned: current?.isPinned || false
       };
 
       const { error: lErr } = await supabase.from('lecture_notes').upsert(payload);
@@ -309,6 +281,116 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
       setSaveStateLabel('Saved Locally');
       setLastSavedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
     }
+  };
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim() || !currentUser?.uid) return;
+    const f = await createFolder(newFolderName, 'notes', currentUser.uid);
+    if (f) {
+      setFolders([f, ...folders]);
+      setNewFolderName('');
+      setShowFolderModal(false);
+      showToast('📁 Folder created');
+    }
+  };
+
+  const handleToggleCollab = async () => {
+    const activeNote = notesList.find(n => n.id === activeNoteId);
+    if (!activeNote) return;
+
+    const newCode = activeNote.collab_code ? null : Math.floor(100000 + Math.random() * 900000).toString();
+    const updated = notesList.map(n => n.id === activeNoteId ? { ...n, collab_code: newCode } : n);
+    setNotesList(updated);
+    persistLocalNotes(updated);
+
+    try {
+      await supabase.from('lecture_notes').update({ collab_code: newCode }).eq('id', activeNoteId);
+      await supabase.from('notes').update({ collab_code: newCode }).eq('id', activeNoteId);
+      showToast(newCode ? `🔓 Collaboration enabled: ${newCode}` : '🔒 Collaboration disabled');
+    } catch (_) {}
+  };
+
+  const handleJoinNote = async () => {
+    if (!joinCode.trim() || !currentUser?.uid) return;
+    try {
+      const { data, error } = await supabase
+        .from('lecture_notes')
+        .select('*')
+        .eq('collab_code', joinCode.trim())
+        .maybeSingle();
+
+      if (error || !data) {
+        showToast('⚠️ Invalid 6-digit code or note is private.');
+        return;
+      }
+
+      const joinedNote: LectureNoteItem = {
+        id: data.id,
+        title: data.title,
+        content: data.content,
+        subject: data.subject,
+        updatedAt: data.created_at || new Date().toISOString(),
+        userId: data.user_id,
+        folder_id: data.folder_id,
+        collab_code: data.collab_code,
+        isPinned: data.is_pinned
+      };
+
+      if (!notesList.some(n => n.id === joinedNote.id)) {
+        const updated = [joinedNote, ...notesList];
+        setNotesList(updated);
+        persistLocalNotes(updated);
+      }
+      setActiveNoteId(joinedNote.id);
+      setTitle(joinedNote.title);
+      setContent(joinedNote.content);
+      setCurrentSubject(joinedNote.subject);
+      setShowJoinModal(false);
+      setJoinCode('');
+      showToast('👥 Joined collaborative note');
+    } catch (_) {
+      showToast('⚠️ Error joining note.');
+    }
+  };
+
+  const handleLongPress = (e: React.MouseEvent | React.TouchEvent, noteId: string) => {
+    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
+
+    holdTimerRef.current = setTimeout(() => {
+      setHoldMenu({ noteId, x: clientX, y: clientY });
+      if (navigator.vibrate) navigator.vibrate(50);
+    }, 1000); // 1s long press
+  };
+
+  const cancelHold = () => {
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+  };
+
+  const handlePinNote = async (id: string) => {
+    const updated = notesList.map(n => n.id === id ? { ...n, isPinned: !n.isPinned } : n);
+    setNotesList(updated);
+    persistLocalNotes(updated);
+    try {
+      const isPinned = updated.find(n => n.id === id)?.isPinned;
+      await supabase.from('lecture_notes').update({ is_pinned: isPinned }).eq('id', id);
+      await supabase.from('notes').update({ is_pinned: isPinned }).eq('id', id);
+    } catch (_) {}
+    setHoldMenu(null);
+  };
+
+  const handleMoveToFolder = async (noteId: string, folderId: string | null) => {
+    const updated = notesList.map(n => n.id === noteId ? { ...n, folder_id: folderId } : n);
+    setNotesList(updated);
+    persistLocalNotes(updated);
+    try {
+      await supabase.from('lecture_notes').update({ folder_id: folderId }).eq('id', noteId);
+      await supabase.from('notes').update({ folder_id: folderId }).eq('id', noteId);
+    } catch (_) {}
+    setHoldMenu(null);
   };
 
   const saveAndBroadcast = (newText: string, newTitle: string, newSubject: string) => {
@@ -460,18 +542,17 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
     }
   };
 
-  const handleExportMarkdown = () => {
-    const blob = new Blob([`# ${title}\nSubject: ${currentSubject}\n\n${content}`], { type: 'text/markdown' });
-    const filename = `${(title || 'lecture_notes').replace(/\s+/g, '_').toLowerCase()}.md`;
-    if (typeof (window as any).downloadAIVoice === 'function') {
-      (window as any).downloadAIVoice(blob, filename);
-    } else {
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = filename;
-      link.click();
+  const handleExportPdf = () => {
+    generateFormattedPdf(title || 'Lecture Note', currentSubject, content);
+    showToast('⬇️ Downloaded Formatted PDF');
+  };
+
+  const handleCopyCollabCode = () => {
+    const activeNote = notesList.find(n => n.id === activeNoteId);
+    if (activeNote?.collab_code) {
+      navigator.clipboard.writeText(activeNote.collab_code);
+      showToast('📋 Code copied to clipboard');
     }
-    showToast('⬇️ Downloaded Markdown file (.md)');
   };
 
   const filteredNotes = notesList.filter(n => {
@@ -564,6 +645,14 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
           </select>
 
           <button
+            onClick={() => setShowJoinModal(true)}
+            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-300 text-xs font-bold flex items-center gap-1.5 shadow-md transition-all active:scale-95 shrink-0 border border-indigo-500/30"
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>Join Note</span>
+          </button>
+
+          <button
             onClick={handleCreateNewLectureNote}
             className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md transition-all active:scale-95 shrink-0"
           >
@@ -594,60 +683,74 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
         </div>
       </div>
 
-      {/* Horizontal Scrollable Lecture Note Pills */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
-        {filteredNotes.map((note) => {
-          const isSelected = note.id === activeNoteId;
-          return (
-            <div
-              key={note.id}
-              className={`group flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold shrink-0 transition-all cursor-pointer ${
-                isSelected
-                  ? 'bg-indigo-600/20 border-indigo-500/50 text-white shadow-md'
-                  : 'bg-slate-950/60 border-white/5 text-slate-400 hover:text-white hover:bg-slate-900'
-              }`}
-              onClick={() => setActiveNoteId(note.id)}
+      {/* Folders & Notes Navigation */}
+      <div className="flex flex-col gap-3">
+        {/* Folder Pills */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none no-scrollbar">
+          <button
+            onClick={() => setActiveFolderId(null)}
+            className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all ${!activeFolderId ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/20' : 'bg-slate-950/60 border-white/5 text-slate-400 hover:bg-slate-900'}`}
+          >
+            All Notes
+          </button>
+          {folders.map(f => (
+            <button
+              key={f.id}
+              onClick={() => setActiveFolderId(f.id)}
+              className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border transition-all ${activeFolderId === f.id ? 'bg-indigo-600 border-indigo-400 text-white shadow-lg shadow-indigo-500/20' : 'bg-slate-950/60 border-white/5 text-slate-400 hover:bg-slate-900'}`}
             >
-              <FileText className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-              <span className="truncate max-w-[150px]">{note.title || 'Untitled'}</span>
-              <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-indigo-300 font-mono">{note.subject}</span>
-              {notesList.length > 1 && (
-                confirmDeleteId === note.id ? (
-                  <div className="flex items-center gap-1 ml-1" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      onClick={() => handleDeleteLectureNote(note.id)}
-                      className="px-1.5 py-0.5 bg-rose-600 text-white rounded text-[9px] font-black"
-                    >
-                      Del
-                    </button>
-                    <button
-                      onClick={() => setConfirmDeleteId(null)}
-                      className="px-1 py-0.5 bg-slate-800 text-slate-300 rounded text-[9px]"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setConfirmDeleteId(note.id);
-                    }}
-                    className="opacity-60 hover:opacity-100 text-slate-400 hover:text-rose-400 p-0.5"
-                    title="Delete Note"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                )
-              )}
+              📁 {f.name}
+            </button>
+          ))}
+          <button
+            onClick={() => setShowFolderModal(true)}
+            className="p-1.5 rounded-xl bg-slate-950/60 border border-dashed border-white/20 text-slate-500 hover:text-indigo-400 hover:border-indigo-500/40 transition-all"
+            title="Create Folder"
+          >
+            <FolderPlus className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Note Pills */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
+          {filteredNotes
+            .filter(n => !activeFolderId || n.folder_id === activeFolderId)
+            .sort((a, b) => {
+              if (a.isPinned && !b.isPinned) return -1;
+              if (!a.isPinned && b.isPinned) return 1;
+              return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+            })
+            .map((note) => {
+              const isSelected = note.id === activeNoteId;
+              return (
+                <div
+                  key={note.id}
+                  className={`group flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold shrink-0 transition-all cursor-pointer relative ${
+                    isSelected
+                      ? 'bg-indigo-600/20 border-indigo-500/50 text-white shadow-md'
+                      : 'bg-slate-950/60 border-white/5 text-slate-400 hover:text-white hover:bg-slate-900'
+                  }`}
+                  onClick={() => setActiveNoteId(note.id)}
+                  onMouseDown={(e) => handleLongPress(e, note.id)}
+                  onMouseUp={cancelHold}
+                  onMouseLeave={cancelHold}
+                  onTouchStart={(e) => handleLongPress(e, note.id)}
+                  onTouchEnd={cancelHold}
+                >
+                  {note.isPinned && <Pin className="w-2.5 h-2.5 text-amber-400 absolute -top-1 -right-1 rotate-45" />}
+                  <FileText className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                  <span className="truncate max-w-[150px]">{note.title || 'Untitled'}</span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-indigo-300 font-mono">{note.subject}</span>
+                  {note.collab_code && <Users className="w-3 h-3 text-emerald-400" />}
+                </div>
+              );
+            })}
+          {filteredNotes.length === 0 && (
+            <div className="text-xs text-slate-500 py-1 px-2 italic">
+              No notes found in this view.
             </div>
-          );
-        })}
-        {filteredNotes.length === 0 && (
-          <div className="text-xs text-slate-500 py-1 px-2">
-            No lecture notes match your filter. Click "New Note" to create one.
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Active Note Header & Controls */}
@@ -693,6 +796,19 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
 
         {/* View Mode & Manual Save / Export */}
         <div className="flex flex-wrap items-center gap-1.5">
+          {/* Collaboration Button */}
+          <button
+            onClick={handleToggleCollab}
+            className={`px-3 py-1.5 rounded-xl border text-[11px] font-bold flex items-center gap-1.5 transition-all ${
+              notesList.find(n => n.id === activeNoteId)?.collab_code 
+                ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' 
+                : 'bg-slate-800 border-white/10 text-slate-400 hover:text-indigo-300 hover:border-indigo-500/40'
+            }`}
+          >
+            {notesList.find(n => n.id === activeNoteId)?.collab_code ? <Users className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+            <span>{notesList.find(n => n.id === activeNoteId)?.collab_code ? 'Live Collab' : 'Go Collab'}</span>
+          </button>
+
           <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-white/10">
             <button
               onClick={() => setViewMode('write')}
@@ -715,7 +831,7 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
           </div>
 
           <button
-            onClick={() => flushSaveToCloud(activeNoteId, content, title, currentSubject)}
+            onClick={() => flushSaveToCloud(activeNoteId!, content, title, currentSubject)}
             className="px-2.5 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold flex items-center gap-1 transition-all"
             title="Save Note Immediately"
           >
@@ -724,15 +840,38 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
           </button>
 
           <button
-            onClick={handleExportMarkdown}
-            className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 text-[11px] font-bold flex items-center gap-1 transition-all"
-            title="Download Markdown (.md)"
+            onClick={handleExportPdf}
+            className="px-2.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold flex items-center gap-1 transition-all shadow-lg shadow-rose-500/20"
+            title="Download Formatted PDF"
           >
-            <Download className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">.MD</span>
+            <FileText className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">PDF</span>
           </button>
         </div>
       </div>
+
+      {/* Collaboration Code Bar (if active) */}
+      {notesList.find(n => n.id === activeNoteId)?.collab_code && (
+        <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/30 px-4 py-2 rounded-2xl">
+          <div className="flex items-center gap-2">
+            <Unlock className="w-4 h-4 text-emerald-400" />
+            <span className="text-xs font-bold text-emerald-200">Collaborative Note Active</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 bg-slate-950 px-3 py-1 rounded-xl border border-white/10">
+              <span className="text-[10px] text-slate-500 font-black uppercase">Join Code:</span>
+              <span className="text-sm font-mono font-black text-white tracking-widest">{notesList.find(n => n.id === activeNoteId)?.collab_code}</span>
+            </div>
+            <button
+              onClick={handleCopyCollabCode}
+              className="p-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-all"
+              title="Copy Join Code"
+            >
+              <Share2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Formatting + AI Study Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-950/60 p-2 rounded-2xl border border-white/5">
@@ -786,39 +925,182 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
 
       {/* Editor / Preview Body */}
       <div className={`grid gap-4 min-h-[380px] sm:min-h-[460px] relative ${viewMode === 'split' ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
-        {(viewMode === 'write' || viewMode === 'split') && (
-          <div className="relative flex flex-col h-full min-h-[360px]">
-            <textarea
-              ref={textareaRef}
-              value={content}
-              onChange={handleContentChange}
-              placeholder="Start typing lecture notes here... Changes sync live with classmates and save automatically."
-              className="w-full flex-1 p-4 rounded-2xl bg-slate-950 border border-white/10 text-slate-100 text-xs sm:text-sm focus:outline-none focus:border-indigo-500/50 resize-none font-mono leading-relaxed scrollbar-thin placeholder-slate-600"
-            />
+        {!activeNoteId ? (
+          <div className="flex flex-col items-center justify-center bg-slate-950/50 rounded-2xl border border-dashed border-white/10 p-10 text-center">
+            <BookOpen className="w-12 h-12 text-slate-700 mb-4" />
+            <h3 className="text-lg font-bold text-slate-300">No Lecture Note Selected</h3>
+            <p className="text-xs text-slate-500 max-w-xs mt-2">Select a note from the list above or create a new one to start collaborating.</p>
+            <div className="flex items-center gap-3 mt-6">
+              <button onClick={handleCreateNewLectureNote} className="px-4 py-2 bg-indigo-600 rounded-xl text-white text-xs font-bold shadow-lg">New Note</button>
+              <button onClick={() => setShowJoinModal(true)} className="px-4 py-2 bg-slate-800 rounded-xl text-indigo-300 text-xs font-bold border border-indigo-500/20">Join Existing</button>
+            </div>
           </div>
-        )}
+        ) : (
+          <>
+            {(viewMode === 'write' || viewMode === 'split') && (
+              <div className="relative flex flex-col h-full min-h-[360px]">
+                <textarea
+                  ref={textareaRef}
+                  value={content}
+                  onChange={handleContentChange}
+                  placeholder="Start typing lecture notes here... Changes sync live with classmates and save automatically."
+                  className="w-full flex-1 p-4 rounded-2xl bg-slate-950 border border-white/10 text-slate-100 text-xs sm:text-sm focus:outline-none focus:border-indigo-500/50 resize-none font-mono leading-relaxed scrollbar-thin placeholder-slate-600"
+                />
+              </div>
+            )}
 
-        {(viewMode === 'preview' || viewMode === 'split') && (
-          <div className="p-4 sm:p-5 rounded-2xl bg-slate-950/90 border border-white/10 overflow-y-auto max-h-[500px] scrollbar-thin">
-            {renderFormattedPreview(content)}
-          </div>
+            {(viewMode === 'preview' || viewMode === 'split') && (
+              <div className="p-4 sm:p-5 rounded-2xl bg-slate-950/90 border border-white/10 overflow-y-auto max-h-[500px] scrollbar-thin">
+                {renderFormattedPreview(content)}
+              </div>
+            )}
+          </>
         )}
 
         {/* Saving Status Badge */}
-        <div className="absolute bottom-3 right-3 bg-slate-900/90 border border-white/10 backdrop-blur-md px-3 py-1 rounded-xl text-[11px] font-semibold text-slate-300 flex items-center gap-1.5 shadow-lg pointer-events-none">
-          {isSaving ? (
-            <>
-              <div className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-              <span className="text-amber-300">Saving...</span>
-            </>
-          ) : (
-            <>
-              <Check className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="text-slate-400">{saveStateLabel}</span>
-            </>
-          )}
-        </div>
+        {activeNoteId && (
+          <div className="absolute bottom-3 right-3 bg-slate-900/90 border border-white/10 backdrop-blur-md px-3 py-1 rounded-xl text-[11px] font-semibold text-slate-300 flex items-center gap-1.5 shadow-lg pointer-events-none">
+            {isSaving ? (
+              <>
+                <div className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                <span className="text-amber-300">Saving...</span>
+              </>
+            ) : (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="text-slate-400">{saveStateLabel}</span>
+              </>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Long Press Hold Menu */}
+      {holdMenu && (
+        <div 
+          className="fixed z-[100] w-48 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-1.5 animate-in fade-in zoom-in duration-150"
+          style={{ left: Math.min(window.innerWidth - 200, holdMenu.x), top: Math.min(window.innerHeight - 300, holdMenu.y) }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex flex-col gap-1">
+            <button
+              onClick={() => handlePinNote(holdMenu.noteId)}
+              className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
+            >
+              <Pin className="w-3.5 h-3.5 text-amber-400" />
+              {notesList.find(n => n.id === holdMenu.noteId)?.isPinned ? 'Unpin Note' : 'Pin Note'}
+            </button>
+            <div className="h-px bg-white/5 my-1" />
+            <div className="px-3 py-1 text-[9px] font-black text-slate-500 uppercase">Move to Folder</div>
+            <button
+              onClick={() => handleMoveToFolder(holdMenu.noteId, null)}
+              className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
+            >
+              <Move className="w-3.5 h-3.5 text-slate-400" />
+              Root
+            </button>
+            {folders.map(f => (
+              <button
+                key={f.id}
+                onClick={() => handleMoveToFolder(holdMenu.noteId, f.id)}
+                className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
+              >
+                <Move className="w-3.5 h-3.5 text-indigo-400" />
+                {f.name}
+              </button>
+            ))}
+            <div className="h-px bg-white/5 my-1" />
+            <button
+              onClick={() => {
+                setConfirmDeleteId(holdMenu.noteId);
+                setHoldMenu(null);
+              }}
+              className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete Note
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Folder Creation Modal */}
+      {showFolderModal && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-slate-900 border border-white/10 rounded-3xl p-6 shadow-2xl">
+            <h3 className="text-lg font-black text-white mb-4 flex items-center gap-2">
+              <FolderPlus className="w-5 h-5 text-indigo-400" />
+              Create New Folder
+            </h3>
+            <input
+              type="text"
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              placeholder="Folder Name (e.g. Finals Prep)"
+              className="w-full px-4 py-3 bg-slate-950 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
+              autoFocus
+            />
+            <div className="flex items-center gap-3 mt-6">
+              <button
+                onClick={() => setShowFolderModal(false)}
+                className="flex-1 px-4 py-2.5 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateFolder}
+                className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-lg"
+              >
+                Create Folder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Join Note Modal */}
+      {showJoinModal && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-slate-900 border border-white/10 rounded-3xl p-6 shadow-2xl">
+            <h3 className="text-lg font-black text-white mb-2 flex items-center gap-2">
+              <Users className="w-5 h-5 text-emerald-400" />
+              Join Collaborative Note
+            </h3>
+            <p className="text-[11px] text-slate-500 mb-4 italic">Enter the 6-digit code shared by your classmate or teacher.</p>
+            <div className="relative">
+              <Hash className="w-4 h-4 text-slate-600 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                maxLength={6}
+                value={joinCode}
+                onChange={(e) => setJoinCode(e.target.value.replace(/\D/g, ''))}
+                placeholder="6-digit code"
+                className="w-full pl-9 pr-4 py-3 bg-slate-950 border border-white/10 rounded-xl text-white text-center text-lg font-mono font-black tracking-widest focus:outline-none focus:border-emerald-500"
+                autoFocus
+              />
+            </div>
+            <div className="flex items-center gap-3 mt-6">
+              <button
+                onClick={() => setShowJoinModal(false)}
+                className="flex-1 px-4 py-2.5 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleJoinNote}
+                className="flex-1 px-4 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-bold shadow-lg"
+              >
+                Join Now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Global Overlay to close hold menu */}
+      {holdMenu && (
+        <div className="fixed inset-0 z-[99]" onClick={() => setHoldMenu(null)} />
+      )}
 
       {/* Footer */}
       <div className="pt-2 border-t border-white/10 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
