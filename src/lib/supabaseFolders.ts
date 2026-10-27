@@ -9,6 +9,7 @@ export interface Folder {
 }
 
 export async function getFolders(userId: string, type: 'notes' | 'materials'): Promise<Folder[]> {
+  if (!userId) return [];
   try {
     const { data, error } = await supabase
       .from('folders')
@@ -19,7 +20,8 @@ export async function getFolders(userId: string, type: 'notes' | 'materials'): P
 
     if (error) {
       if (error.code === '42P01') return [];
-      throw error;
+      console.warn('[FOLDERS] Supabase getFolders notice:', error.message);
+      return [];
     }
     return data || [];
   } catch (err) {
@@ -28,22 +30,38 @@ export async function getFolders(userId: string, type: 'notes' | 'materials'): P
   }
 }
 
-export async function createFolder(name: string, type: 'notes' | 'materials', userId: string): Promise<Folder | null> {
-  const folder: Folder = {
-    id: `folder_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-    name,
+export async function createFolder(name: string, type: 'notes' | 'materials', userId: string): Promise<Folder> {
+  if (!userId) {
+    throw new Error('User ID is required to create a folder.');
+  }
+
+  const newFolder = {
+    name: name.trim(),
     type,
     user_id: userId,
     created_at: new Date().toISOString()
   };
 
   try {
-    const { error } = await supabase.from('folders').insert(folder);
-    if (error && error.code !== '42P01') throw error;
-    return folder;
-  } catch (err) {
+    const { data, error } = await supabase
+      .from('folders')
+      .insert(newFolder)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('[FOLDERS] Supabase insert error:', error.message || error);
+      throw new Error(error.message || 'Failed to create folder in database');
+    }
+
+    if (!data) {
+      throw new Error('Folder created but no data returned from database');
+    }
+
+    return data as Folder;
+  } catch (err: any) {
     console.error('[FOLDERS] Failed to create folder:', err);
-    return null;
+    throw err;
   }
 }
 
@@ -51,26 +69,29 @@ export async function renameFolder(folderId: string, newName: string): Promise<v
   try {
     const { error } = await supabase
       .from('folders')
-      .update({ name: newName })
+      .update({ name: newName.trim() })
       .eq('id', folderId);
-    if (error && error.code !== '42P01') throw error;
-  } catch (err) {
+    if (error && error.code !== '42P01') {
+      throw new Error(error.message);
+    }
+  } catch (err: any) {
     console.error('[FOLDERS] Failed to rename folder:', err);
+    throw err;
   }
 }
 
 export async function deleteFolder(folderId: string): Promise<void> {
   try {
-    // Note: Items inside the folder should probably be moved to "Uncategorized" (null folder_id)
-    // or deleted. The requirement says "A user can create, rename, and delete a folder."
-    // It doesn't specify what happens to contents. Usually moving to root is safer.
     await supabase.from('notes').update({ folder_id: null }).eq('folder_id', folderId);
     await supabase.from('materials').update({ folder_id: null }).eq('folder_id', folderId);
     await supabase.from('lecture_notes').update({ folder_id: null }).eq('folder_id', folderId);
 
     const { error } = await supabase.from('folders').delete().eq('id', folderId);
-    if (error && error.code !== '42P01') throw error;
-  } catch (err) {
+    if (error && error.code !== '42P01') {
+      throw new Error(error.message);
+    }
+  } catch (err: any) {
     console.error('[FOLDERS] Failed to delete folder:', err);
+    throw err;
   }
 }

@@ -475,14 +475,21 @@ export async function getPeerMessages(force = false): Promise<ChatMessage[]> {
       return { text: rawMsg || '', meta: {} };
     };
 
-    // 1. Query 'chat_room_messages' table (primary table for room messages)
+    // 1. Query 'chat_room_messages' table (limit to latest 30 rows with timeout race)
     try {
-      const { data, error } = await supabase
+      const queryPromise = supabase
         .from('chat_room_messages')
         .select('*')
-        .order('created_at', { ascending: true });
+        .order('created_at', { ascending: false })
+        .limit(30);
 
-      if (!error && data) {
+      const timeoutPromise = new Promise<{ data: any; error: any }>((resolve) => {
+        setTimeout(() => resolve({ data: null, error: new Error('chat_room_messages query timeout') }), 4000);
+      });
+
+      const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
+
+      if (!error && Array.isArray(data)) {
         data.forEach(item => {
           let parsedDate = new Date();
           if (item.created_at) {

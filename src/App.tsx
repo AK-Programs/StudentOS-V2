@@ -25,6 +25,7 @@ import {
 } from './types';
 import { supabase } from './lib/supabase';
 import { getVaultNotes, saveVaultNoteToSupabase, deleteVaultNoteFromSupabase } from './lib/supabaseNotes';
+import { generateFormattedPdf } from './lib/pdfGenerator';
 import { getSupabaseUserProfile, saveSupabaseUserProfile, getDefaultProfileForAccount, saveLocalProfileBackup } from './lib/supabaseUsers';
 import { getSupabaseHomework, saveSupabaseHomework, deleteSupabaseHomework } from './lib/supabaseHomework';
 import { getAppNotifications, saveAppNotification, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification, generateUUID, registerPushSubscription, getDeviceId, triggerBrowserPushNotification, isUserEligibleForNotification, triggerNotificationSound } from './lib/notifications';
@@ -2532,30 +2533,34 @@ export default function App() {
     }
   }, [currentUser?.uid, currentUser?.email]);
 
-  // Personal Notes Sync
+  // Personal Notes Sync (Staggered to prevent connection flood)
   useEffect(() => {
     if (!currentUser) return;
-    const loadNotes = async () => {
-      try {
-        const uid = currentUser.uid || currentUser.email || 'guest';
-        const [dbNotes, fetchedFolders] = await Promise.all([
-          getVaultNotes(uid),
-          getFolders(uid, 'notes')
-        ]);
-        setVaultNotes(dbNotes);
-        setVaultFolders(fetchedFolders);
-        if (!selectedNoteId) {
-          setSelectedNoteId(dbNotes[0]?.id || null);
+    const timer = setTimeout(() => {
+      const loadNotes = async () => {
+        try {
+          const uid = currentUser.uid || currentUser.email || 'guest';
+          const [dbNotes, fetchedFolders] = await Promise.all([
+            getVaultNotes(uid),
+            getFolders(uid, 'notes')
+          ]);
+          setVaultNotes(dbNotes);
+          setVaultFolders(fetchedFolders);
+          if (!selectedNoteId) {
+            setSelectedNoteId(dbNotes[0]?.id || null);
+          }
+        } catch (err) {
+          console.error('[Sync] Failed to parse notes:', err);
+          setVaultNotes([]);
         }
-      } catch (err) {
-        console.error('[Sync] Failed to parse notes:', err);
-        setVaultNotes([]);
-      }
-    };
-    loadNotes();
+      };
+      loadNotes();
+    }, 250);
+
+    return () => clearTimeout(timer);
   }, [currentUser?.uid, currentUser?.email]);
 
-  // Homework Persistence Sync
+  // Homework Persistence Sync (Staggered)
   const isHomeworkLoaded = useRef<boolean>(false);
 
   useEffect(() => {
@@ -2563,18 +2568,22 @@ export default function App() {
       isHomeworkLoaded.current = false;
       return;
     }
-    getSupabaseHomework().then(list => {
-      if (list && list.length > 0) {
-        setHomeworkList(list);
-      } else {
-        // Fallback to default class homework on initial session
-        setHomeworkList([
-          { id: 'hw-1', title: 'Physics Worksheets Chapter 4', subject: 'Physics', content: 'Solve problems 1-15 regarding circular friction.', dueDate: 'Tomorrow', classGrade: 'Grade 10', classSection: 'All Sections', givenBy: 'Prof. Elara', createdAt: new Date().toISOString(), completedList: [] },
-          { id: 'hw-2', title: 'C++ BST balancing questions', subject: 'Computer Science', content: 'Design pseudo-code for rotation of tree node structures.', dueDate: 'Friday', classGrade: 'Grade 10', classSection: 'All Sections', givenBy: 'Prof. Elara', createdAt: new Date().toISOString(), completedList: ['naitik.kashyap0015@gmail.com'] }
-        ]);
-      }
-      isHomeworkLoaded.current = true;
-    });
+    const timer = setTimeout(() => {
+      getSupabaseHomework().then(list => {
+        if (list && list.length > 0) {
+          setHomeworkList(list);
+        } else {
+          // Fallback to default class homework on initial session
+          setHomeworkList([
+            { id: 'hw-1', title: 'Physics Worksheets Chapter 4', subject: 'Physics', content: 'Solve problems 1-15 regarding circular friction.', dueDate: 'Tomorrow', classGrade: 'Grade 10', classSection: 'All Sections', givenBy: 'Prof. Elara', createdAt: new Date().toISOString(), completedList: [] },
+            { id: 'hw-2', title: 'C++ BST balancing questions', subject: 'Computer Science', content: 'Design pseudo-code for rotation of tree node structures.', dueDate: 'Friday', classGrade: 'Grade 10', classSection: 'All Sections', givenBy: 'Prof. Elara', createdAt: new Date().toISOString(), completedList: ['naitik.kashyap0015@gmail.com'] }
+          ]);
+        }
+        isHomeworkLoaded.current = true;
+      });
+    }, 500);
+
+    return () => clearTimeout(timer);
   }, [currentUser]);
 
   // Realtime Supabase & Local Custom Event Sync for Orion Automations & Global Broadcasts
@@ -2672,13 +2681,13 @@ export default function App() {
   // We don't save the entire list to localStorage anymore in an effect, 
   // because each action (add, complete, delete) will call saveSupabaseHomework individually.
 
-  // AI Buddy Chats Sync — loads when user is authenticated (not just on tab visit)
+  // AI Buddy Chats Sync — loads when user is authenticated (staggered delay to prevent connection flood)
   useEffect(() => {
     if (!currentUser) {
       aiChatsSyncingFor.current = null;
       return;
     }
-    // Use Firebase auth UID consistently (same as what saveAiBuddyChat uses at line 3588)
+    // Use Firebase auth UID consistently (same as what saveAiBuddyChat uses)
     const uid = currentUser?.uid || currentUser.uid;
     if (!uid) return;
     
@@ -2686,50 +2695,54 @@ export default function App() {
     if (aiChatsSyncingFor.current === uid) return;
     aiChatsSyncingFor.current = uid;
     
-    console.log("[SUPABASE-CHAT] Syncing aiBuddyChats for user:", uid);
-    
-    getAiBuddyChats(uid).then((list) => {
-      if (list && list.length > 0) {
-        const uniqueList = Array.from(new Map(list.map(t => [t.id, t])).values());
-        const sortedList = uniqueList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)) as any;
-        setAiThreads(sortedList);
-        setActiveThreadId(prev => {
-          if (!prev || !uniqueList.find(t => t.id === prev)) {
-            const hasUserDefault = uniqueList.find(t => t.title === 'Introductory Study Unit');
-            return hasUserDefault ? hasUserDefault.id : (uniqueList[0]?.id || prev);
-          }
-          return prev;
-        });
-      } else {
-        const userDefaultId = crypto.randomUUID();
-        const defaultT = {
-          id: userDefaultId,
-          title: 'Introductory Study Unit',
-          personaId: 'study_buddy',
-          mode: 'explanatory' as const,
-          messages: [
-            { role: 'assistant' as const, content: `Hey! 🚀 Welcome to your Campus AI workspace. Here is what you can do:
+    const timer = setTimeout(() => {
+      console.log("[SUPABASE-CHAT] Syncing aiBuddyChats for user:", uid);
+      
+      getAiBuddyChats(uid).then((list) => {
+        if (list && list.length > 0) {
+          const uniqueList = Array.from(new Map(list.map(t => [t.id, t])).values());
+          const sortedList = uniqueList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)) as any;
+          setAiThreads(sortedList);
+          setActiveThreadId(prev => {
+            if (!prev || !uniqueList.find(t => t.id === prev)) {
+              const hasUserDefault = uniqueList.find(t => t.title === 'Introductory Study Unit');
+              return hasUserDefault ? hasUserDefault.id : (uniqueList[0]?.id || prev);
+            }
+            return prev;
+          });
+        } else {
+          const userDefaultId = crypto.randomUUID();
+          const defaultT = {
+            id: userDefaultId,
+            title: 'Introductory Study Unit',
+            personaId: 'study_buddy',
+            mode: 'explanatory' as const,
+            messages: [
+              { role: 'assistant' as const, content: `Hey! 🚀 Welcome to your Campus AI workspace. Here is what you can do:
 
 - **Start New Chat Threads**: Manage different lesson conversations seamlessly.
 - **Toggle Dynamic Learning Modes**: Socratic guidance, deeper explanations, code coach reviews, and exam challenges.
 - **Analyze Uploaded Files**: Drag and drop or browse standard codes, notes, chemistry formulae, or texts here to direct our context!
 
 What can I clarify today?` }
-          ],
-          attachedFile: null,
-          attachedFiles: [],
-          userId: uid,
-          createdAt: Date.now()
-        };
-        saveAiBuddyChat(defaultT).then(() => {
-          setAiThreads([defaultT]);
-          setActiveThreadId(userDefaultId);
-        });
-      }
-    }).catch(error => {
-      console.error("[SUPABASE-CHAT] Error loading AI buddy chats:", error);
-      aiChatsSyncingFor.current = null; // Allow retry on failure
-    });
+            ],
+            attachedFile: null,
+            attachedFiles: [],
+            userId: uid,
+            createdAt: Date.now()
+          };
+          saveAiBuddyChat(defaultT).then(() => {
+            setAiThreads([defaultT]);
+            setActiveThreadId(userDefaultId);
+          });
+        }
+      }).catch(error => {
+        console.error("[SUPABASE-CHAT] Error loading AI buddy chats:", error);
+        aiChatsSyncingFor.current = null; // Allow retry on failure
+      });
+    }, 900);
+
+    return () => clearTimeout(timer);
   }, [currentUser]); // Load when user logs in — not gated on tab so chats survive refresh
 
   // Educational Materials Hub Sync — loads for all tabs and re-syncs on user switch
@@ -9438,34 +9451,17 @@ ${roleLabel}: ${userQuery}
                 </div>
               )}
 
-              {/* Tab: Structured Vault & Collaborative Notes View */}
+              {/* Tab: Personal Lecture Notes Workspace */}
               {activeTab === 'notes' && (
                 <div className="space-y-6 animate-fadeIn">
                   
-                  {/* Notes Header Mode Selector */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-900/80 p-2 sm:p-2.5 rounded-2xl border border-white/5">
-                    <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:gap-2">
-                      <button
-                        onClick={() => setNotesViewMode('collaborative')}
-                        className={`flex-1 sm:flex-initial justify-center px-3 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-                          notesViewMode === 'collaborative'
-                            ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg'
-                            : 'text-slate-400 hover:text-white hover:bg-white/5'
-                        }`}
-                      >
-                        <span>📝 Collaborative Notes</span>
-                        <span className="hidden md:inline text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-md uppercase tracking-wider font-extrabold">Realtime Docs</span>
-                      </button>
-                      <button
-                        onClick={() => setNotesViewMode('vault')}
-                        className={`flex-1 sm:flex-initial justify-center px-3 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-                          notesViewMode === 'vault'
-                            ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg'
-                            : 'text-slate-400 hover:text-white hover:bg-white/5'
-                        }`}
-                      >
-                        <span>🔒 Personal Vault</span>
-                      </button>
+                  {/* Notes Header */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-900/80 p-3 sm:p-4 rounded-2xl border border-white/5">
+                    <div>
+                      <h2 className="text-lg font-black text-white font-display uppercase tracking-tight flex items-center gap-2">
+                        <span>📝 Personal Lecture & Study Notes</span>
+                      </h2>
+                      <p className="text-xs text-slate-400">Personal notes vault with markdown editing, AI summary tools, and folder organization.</p>
                     </div>
 
                     <button
@@ -9473,7 +9469,7 @@ ${roleLabel}: ${userQuery}
                         setStudyHubSubTab('flashcards');
                         handleTabSelect('study_hub');
                       }}
-                      className="px-3.5 py-2 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 text-xs font-bold transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
+                      className="px-3.5 py-2 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 text-xs font-bold transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer shrink-0"
                       title="Open Interactive Flashcards & SM-2 Study Center"
                     >
                       <Brain className="w-3.5 h-3.5 text-purple-400 shrink-0" />
@@ -9486,9 +9482,6 @@ ${roleLabel}: ${userQuery}
                     </button>
                   </div>
 
-                  {notesViewMode === 'collaborative' ? (
-                    <CollaborativeLectureNotes key={currentUser?.uid || currentUser?.email || 'collab-notes'} currentUser={currentUser} />
-                  ) : (
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                     
                     {/* Notion Sidebar List: 4 Cols */}
@@ -9791,14 +9784,10 @@ ${roleLabel}: ${userQuery}
                                     >⬇️ .MD</button>
                                     <button
                                       onClick={() => {
-                                        const w = window.open('', '_blank');
-                                        if (w) {
-                                          w.document.write(`<html><head><title>${activeNote.title}</title><style>body { font-family: sans-serif; padding: 2rem; }</style></head><body><h1>${activeNote.title}</h1><pre style="white-space: pre-wrap; font-family: inherit;">${activeNote.content}</pre></body></html>`);
-                                          w.document.close();
-                                          w.setTimeout(() => w.print(), 500);
-                                        }
+                                        generateFormattedPdf(activeNote.title, activeNote.subject, activeNote.content);
+                                        showNotification('📄 Downloading formatted note PDF...');
                                       }}
-                                      className="px-2 py-1 rounded bg-indigo-900/30 text-indigo-400 text-[10px] font-bold hover:bg-indigo-800/40" title="Export as PDF / Print"
+                                      className="px-2 py-1 rounded bg-indigo-900/30 text-indigo-400 text-[10px] font-bold hover:bg-indigo-800/40" title="Export as Formatted PDF"
                                     >🖨️ PDF</button>
                                   </div>
 
@@ -9995,7 +9984,6 @@ ${activeNote.content}`);
                     </div>
 
                   </div>
-                  )}
 
                 </div>
               )}

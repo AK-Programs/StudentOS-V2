@@ -190,7 +190,30 @@ async function persistSubscriptionToSupabase(params: {
 
   if (!resp.ok) {
     const errText = await resp.text();
-    console.warn(`[FCM SERVER] Supabase push_subscriptions upsert notice (${resp.status}):`, errText);
+    if (resp.status === 409 || errText.includes('push_subscriptions_user_id_fkey') || errText.includes('foreign key')) {
+      console.warn('[FCM SERVER] user_id violates foreign key constraint in push_subscriptions. Retrying with user_id: null');
+      try {
+        await fetch(`${supabaseUrl}/rest/v1/push_subscriptions?on_conflict=endpoint`, {
+          method: 'POST',
+          headers: {
+            'apikey': supabaseKey,
+            'Authorization': `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'resolution=merge-duplicates'
+          },
+          body: JSON.stringify({
+            user_id: null,
+            endpoint: params.endpoint,
+            keys: { ...richKeys, userId: null },
+            p256dh: params.p256dh,
+            auth: params.auth,
+            updated_at: now
+          })
+        });
+      } catch (_) {}
+    } else {
+      console.warn(`[FCM SERVER] Supabase push_subscriptions upsert notice (${resp.status}):`, errText);
+    }
   } else {
     console.log(`[FCM SERVER] Stored active push subscription in Supabase: userId=${params.userId || 'anon'}, role=${params.role || 'student'}, device="${params.deviceLabel || 'Browser'}"`);
   }

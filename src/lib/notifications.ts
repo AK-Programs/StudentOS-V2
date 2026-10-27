@@ -400,14 +400,25 @@ export async function saveAppNotification(notif: AppNotification): Promise<{ suc
   try {
     const { error } = await supabase.from('notifications').upsert(dbRow);
     if (error) {
-      console.error('[SUPABASE-NOTIFS] Error upserting notification:', error.message);
-      saveSuccess = false;
-      saveErrorMessage = error.message;
+      if (error.code === '23503' || error.message?.includes('foreign key') || error.message?.includes('notifications_user_id_fkey')) {
+        console.warn('[SUPABASE-NOTIFS] Target user_id does not exist in auth.users; retrying with user_id = null');
+        const fallbackRow = { ...dbRow, user_id: null };
+        const { error: err2 } = await supabase.from('notifications').upsert(fallbackRow);
+        if (err2) {
+          console.warn('[SUPABASE-NOTIFS] Fallback notification insert skipped:', err2.message);
+        } else {
+          saveSuccess = true;
+        }
+      } else {
+        console.error('[SUPABASE-NOTIFS] Error upserting notification:', error.message);
+        saveSuccess = false;
+        saveErrorMessage = error.message;
+      }
     } else {
       console.log('[SUPABASE-NOTIFS] Successfully saved notification to Supabase:', finalId);
     }
   } catch (err: any) {
-    console.error('[SUPABASE-NOTIFS] Exception saving notification:', err);
+    console.warn('[SUPABASE-NOTIFS] Exception saving notification:', err);
     saveSuccess = false;
     saveErrorMessage = err?.message || 'Database error';
   }

@@ -134,12 +134,22 @@ export async function getFCMClient(): Promise<Messaging | null> {
 /**
  * Save FCM Token to Firestore collection `fcmTokens`
  */
+let hasLoggedFirestorePermissionNotice = false;
+
 export async function saveFCMTokenToFirestore(
   fcmToken: string,
   userId?: string,
   metadata?: { role?: string; grade?: string; section?: string; house?: string; schoolId?: string }
 ): Promise<boolean> {
   if (!fcmToken) return false;
+  if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission !== 'granted') {
+    if (!hasLoggedFirestorePermissionNotice) {
+      console.warn('[FCM] Notification permission missing; skipping Firestore fcmTokens update.');
+      hasLoggedFirestorePermissionNotice = true;
+    }
+    return false;
+  }
+
   try {
     const firebaseConfig = {
       apiKey: (import.meta as any).env?.VITE_FIREBASE_API_KEY || defaultFirebaseConfig.apiKey,
@@ -177,7 +187,10 @@ export async function saveFCMTokenToFirestore(
     console.log(`[FCM STAGE 3/4] FCM Token saved to Firestore collection "fcmTokens" (docId: ${docId})`);
     return true;
   } catch (err: any) {
-    console.warn('[FCM] Error saving token to Firestore "fcmTokens":', err?.message || err);
+    if (!hasLoggedFirestorePermissionNotice) {
+      console.warn('[FCM] Notice saving token to Firestore fcmTokens:', err?.message || err);
+      hasLoggedFirestorePermissionNotice = true;
+    }
     return false;
   }
 }
