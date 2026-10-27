@@ -8,6 +8,7 @@
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getMessaging, getToken, onMessage, isSupported, deleteToken, Messaging } from 'firebase/messaging';
+import { getFirestore, doc, setDoc } from 'firebase/firestore';
 import { supabase } from './supabase';
 import { soundService } from './soundService';
 
@@ -127,6 +128,57 @@ export async function getFCMClient(): Promise<Messaging | null> {
   } catch (err: any) {
     console.warn('[FCM] Initialization notice:', err?.message || err);
     return null;
+  }
+}
+
+/**
+ * Save FCM Token to Firestore collection `fcmTokens`
+ */
+export async function saveFCMTokenToFirestore(
+  fcmToken: string,
+  userId?: string,
+  metadata?: { role?: string; grade?: string; section?: string; house?: string; schoolId?: string }
+): Promise<boolean> {
+  if (!fcmToken) return false;
+  try {
+    const firebaseConfig = {
+      apiKey: (import.meta as any).env?.VITE_FIREBASE_API_KEY || defaultFirebaseConfig.apiKey,
+      authDomain: (import.meta as any).env?.VITE_FIREBASE_AUTH_DOMAIN || defaultFirebaseConfig.authDomain,
+      projectId: (import.meta as any).env?.VITE_FIREBASE_PROJECT_ID || defaultFirebaseConfig.projectId,
+      storageBucket: (import.meta as any).env?.VITE_FIREBASE_STORAGE_BUCKET || defaultFirebaseConfig.storageBucket,
+      messagingSenderId: (import.meta as any).env?.VITE_FIREBASE_MESSAGING_SENDER_ID || defaultFirebaseConfig.messagingSenderId,
+      appId: (import.meta as any).env?.VITE_FIREBASE_APP_ID || defaultFirebaseConfig.appId
+    };
+
+    const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+    const db = getFirestore(app);
+
+    const deviceId = getFCMDeviceId();
+    const platform = getDevicePlatformLabel();
+    const now = new Date().toISOString();
+
+    const docId = (fcmToken || deviceId).replace(/[^a-zA-Z0-9_\-]/g, '_').substring(0, 120) || deviceId;
+
+    await setDoc(doc(db, 'fcmTokens', docId), {
+      id: docId,
+      token: fcmToken,
+      userId: userId || 'usr_anonymous',
+      deviceId,
+      platform: platform.includes('PWA') ? 'Android TWA / PWA' : platform,
+      role: metadata?.role || 'student',
+      grade: metadata?.grade || '',
+      section: metadata?.section || '',
+      house: metadata?.house || '',
+      schoolId: metadata?.schoolId || 'default_school',
+      createdAt: now,
+      updatedAt: now
+    }, { merge: true });
+
+    console.log(`[FCM STAGE 3/4] FCM Token saved to Firestore collection "fcmTokens" (docId: ${docId})`);
+    return true;
+  } catch (err: any) {
+    console.warn('[FCM] Error saving token to Firestore "fcmTokens":', err?.message || err);
+    return false;
   }
 }
 
@@ -375,6 +427,11 @@ export async function requestFCMPermission(
     } catch (apiErr) {
       console.warn('[FCM] Backend token registration notice:', apiErr);
     }
+
+    // 9. Register token directly in Firestore 'fcmTokens' collection
+    try {
+      await saveFCMTokenToFirestore(fcmToken || primaryEndpoint, effectiveUserId || undefined, effectiveMeta);
+    } catch (_) {}
 
     return { success: true, token: fcmToken || primaryEndpoint };
   } catch (err: any) {

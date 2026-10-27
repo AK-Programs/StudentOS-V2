@@ -192,9 +192,33 @@
         "actionExecuted": { "type": "string" }
       },
       "required": ["id", "prompt", "response", "timestamp"]
+    },
+    "FCMToken": {
+      "title": "FCMToken",
+      "description": "Firebase Cloud Messaging device token registration for push notifications",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique FCM token ID or token string hash" },
+        "token": { "type": "string", "description": "The Firebase Cloud Messaging push token" },
+        "userId": { "type": "string", "description": "UID or identifier of the associated user" },
+        "deviceId": { "type": "string", "description": "Unique persistent device identifier" },
+        "platform": { "type": "string", "description": "Operating system or browser platform label (Android TWA / PWA)" },
+        "role": { "type": "string", "description": "User school role" },
+        "grade": { "type": "string", "description": "User grade level" },
+        "section": { "type": "string", "description": "User classroom section" },
+        "house": { "type": "string", "description": "User house group" },
+        "schoolId": { "type": "string", "description": "Associated school identifier" },
+        "createdAt": { "type": "string", "description": "ISO timestamp indicating creation date" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp indicating last update" }
+      },
+      "required": ["id", "token", "deviceId", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
+    "/fcmTokens/{tokenId}": {
+      "schema": "FCMToken",
+      "description": "FCM device tokens for Android TWA and web push notification dispatching"
+    },
     "/studentReports/{reportId}": {
       "schema": "StudentReport",
       "description": "Classroom analytics profile, streak counters, and score summary for students"

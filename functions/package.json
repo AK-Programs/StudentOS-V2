@@ -1,0 +1,14 @@
+{
+  "name": "studentos-functions",
+  "version": "1.0.0",
+  "description": "StudentOS Firebase Cloud Functions for FCM Push Notifications",
+  "main": "index.js",
+  "dependencies": {
+    "firebase-admin": "^11.11.1",
+    "firebase-functions": "^4.5.0"
+  },
+  "engines": {
+    "node": "18"
+  },
+  "private": true
+}

@@ -1,0 +1,28 @@
+{
+  "packageId": "org.studentos.pwa",
+  "host": "studentos.app",
+  "name": "StudentOS Suite",
+  "shortName": "StudentOS",
+  "themeColor": "#0F172A",
+  "navigationColor": "#0F172A",
+  "backgroundColor": "#0F172A",
+  "enableNotifications": true,
+  "gcmSenderId": "940502459076",
+  "startUrl": "/",
+  "iconUrl": "https://studentos.app/icons/icon-512.png",
+  "maskableIconUrl": "https://studentos.app/icons/icon-512.png",
+  "appVersion": "3.15.0",
+  "appVersionCode": 31500,
+  "shortcuts": [],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://studentos.app/manifest.json",
+  "fallbackType": "customtabs",
+  "features": {
+    "locationDelegation": {
+      "enabled": true
+    }
+  },
+  "alphaDependencies": {
+    "enabled": true
+  }
+}

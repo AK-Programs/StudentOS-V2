@@ -372,21 +372,20 @@ export default function App() {
   const [firebaseOnboardingUser, setFirebaseOnboardingUser] = useState<any>(null);
   const [authError, setAuthError] = useState<{ code: string; message: string; hostname: string } | null>(null);
 
-  // Sync device push subscription & FCM tokens with active StudentOS user account whenever user changes
+  // Request notification permission & sync FCM tokens to Firestore & backend on app start
   useEffect(() => {
-    if (currentUser?.uid && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-      registerPushSubscription(currentUser.uid, {
-        role: currentUser.role,
-        grade: currentUser.grade,
-        section: currentUser.section,
-        house: currentUser.house
-      });
-      requestFCMPermission(currentUser.uid, {
-        role: currentUser.role,
-        grade: currentUser.grade,
-        section: currentUser.section,
-        house: currentUser.house
-      });
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      const uid = currentUser?.uid || 'usr_anonymous';
+      const meta = {
+        role: currentUser?.role || 'student',
+        grade: currentUser?.grade || '',
+        section: currentUser?.section || '',
+        house: currentUser?.house || ''
+      };
+      requestFCMPermission(uid, meta);
+      if (Notification.permission === 'granted' && currentUser?.uid) {
+        registerPushSubscription(currentUser.uid, meta);
+      }
     }
   }, [currentUser?.uid, currentUser?.role, currentUser?.grade, currentUser?.section, currentUser?.house]);
 
