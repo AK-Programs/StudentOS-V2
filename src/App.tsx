@@ -15,7 +15,7 @@ import {
   Heart, Bookmark, X, Bell, Zap, Gift, Smartphone, Paperclip, History, Brain, Globe,
   LayoutDashboard, Layers, Video, HelpCircle, GraduationCap, Shield, Compass,
   PanelLeftClose, PanelLeftOpen, ClipboardList, CheckSquare, Monitor, Tv, Cpu, Trophy, Swords,
-  Key, ArrowLeft, FolderPlus, Pin, Edit2, Move, Folder
+  Key, ArrowLeft, FolderPlus, Pin, Edit2, Move, Folder, Users2, Copy, CheckCheck, Columns, ListOrdered, List
 } from 'lucide-react';
 import { 
   UserRole, HouseType, SectionType, UserProfile, HouseStats, 
@@ -24,7 +24,7 @@ import {
   Homework, RecentAccount
 } from './types';
 import { supabase } from './lib/supabase';
-import { getVaultNotes, saveVaultNoteToSupabase, deleteVaultNoteFromSupabase } from './lib/supabaseNotes';
+import { getVaultNotes, saveVaultNoteToSupabase, deleteVaultNoteFromSupabase, getNoteByCollabCode } from './lib/supabaseNotes';
 import { generateFormattedPdf } from './lib/pdfGenerator';
 import { getSupabaseUserProfile, saveSupabaseUserProfile, getDefaultProfileForAccount, saveLocalProfileBackup } from './lib/supabaseUsers';
 import { getSupabaseHomework, saveSupabaseHomework, deleteSupabaseHomework } from './lib/supabaseHomework';
@@ -81,7 +81,6 @@ import { setupGlobalCallReceiver, acceptSchoolCall, declineSchoolCall } from './
 import { NotificationCenter } from './components/NotificationCenter';
 import { BroadcastModal } from './components/BroadcastModal';
 import { LiveBroadcastBanner } from './components/LiveBroadcastBanner';
-import { CollaborativeLectureNotes } from './components/CollaborativeLectureNotes';
 import { StudentOSLife } from './components/StudentOSLife';
 import { TeacherFunZone } from './components/TeacherFunZone';
 import AcademicCalendar from './components/AcademicCalendar';
@@ -1023,6 +1022,27 @@ export default function App() {
   const [renameVaultFolderModal, setRenameVaultFolderModal] = useState<{ id: string; name: string } | null>(null);
   const [renameVaultInput, setRenameVaultInput] = useState<string>('');
 
+  // Material Hub Folder Management States
+  const [materialFolders, setMaterialFolders] = useState<FolderType[]>([]);
+  const [activeMaterialFolderId, setActiveMaterialFolderId] = useState<string | null>(null);
+  const [showMaterialFolderModal, setShowMaterialFolderModal] = useState<boolean>(false);
+  const [newMaterialFolderName, setNewMaterialFolderName] = useState<string>('');
+  const [renameMaterialFolderModal, setRenameMaterialFolderModal] = useState<{ id: string; name: string } | null>(null);
+  const [renameMaterialInput, setRenameMaterialInput] = useState<string>('');
+  const [materialItemHoldMenu, setMaterialItemHoldMenu] = useState<{ materialId: string; x: number; y: number } | null>(null);
+
+  // Lecture Notes Notion-style UX States
+  const [collabJoinModalOpen, setCollabJoinModalOpen] = useState<boolean>(false);
+  const [collabJoinCodeInput, setCollabJoinCodeInput] = useState<string>('');
+  const [collabJoinError, setCollabJoinError] = useState<string>('');
+  const [collabJoinLoading, setCollabJoinLoading] = useState<boolean>(false);
+  const [activeNoteCollabModalOpen, setActiveNoteCollabModalOpen] = useState<boolean>(false);
+  const [showNoteOutline, setShowNoteOutline] = useState<boolean>(true);
+  const [slashMenuOpen, setSlashMenuOpen] = useState<boolean>(false);
+  const [slashMenuFilter, setSlashMenuFilter] = useState<string>('');
+  const [autoSaveState, setAutoSaveState] = useState<'saved' | 'saving'>('saved');
+  const [viewSplitPreview, setViewSplitPreview] = useState<boolean>(false);
+
   const handlePinVaultNote = async (noteId: string) => {
     const note = vaultNotes.find(n => n.id === noteId);
     if (!note) return;
@@ -1109,6 +1129,108 @@ export default function App() {
     showNotification('Lecture note deleted from Supabase.');
     setVaultItemHoldMenu(null);
     if (selectedNoteId === noteId) setSelectedNoteId(null);
+  };
+
+  // Material Hub Folder Handlers
+  const handleCreateMaterialFolder = async () => {
+    if (!newMaterialFolderName.trim() || !currentUser?.uid) return;
+    try {
+      const saved = await createFolder(newMaterialFolderName.trim(), 'materials', currentUser.uid);
+      setMaterialFolders(prev => [saved, ...prev]);
+      showNotification(`✓ Created Material folder "${saved.name}"`);
+      setNewMaterialFolderName('');
+      setShowMaterialFolderModal(false);
+    } catch (err: any) {
+      showNotification(`⚠️ Failed to create folder: ${err.message || 'Error'}`);
+    }
+  };
+
+  const handleRenameMaterialFolder = async () => {
+    if (!renameMaterialFolderModal || !renameMaterialInput.trim()) return;
+    try {
+      await renameFolder(renameMaterialFolderModal.id, renameMaterialInput.trim());
+      setMaterialFolders(prev => prev.map(f => f.id === renameMaterialFolderModal.id ? { ...f, name: renameMaterialInput.trim() } : f));
+      showNotification('✓ Folder renamed');
+      setRenameMaterialFolderModal(null);
+      setRenameMaterialInput('');
+    } catch (err: any) {
+      showNotification(`⚠️ Failed to rename folder: ${err.message || 'Error'}`);
+    }
+  };
+
+  const handleDeleteMaterialFolder = async (folderId: string, folderName: string) => {
+    if (!confirm(`Delete folder "${folderName}"? Files inside will be moved to Root.`)) return;
+    try {
+      await deleteFolder(folderId);
+      setMaterialFolders(prev => prev.filter(f => f.id !== folderId));
+      if (activeMaterialFolderId === folderId) setActiveMaterialFolderId(null);
+      setMaterials(prev => prev.map(m => m.folder_id === folderId ? { ...m, folder_id: null } : m));
+      showNotification('🗑️ Folder deleted');
+    } catch (err: any) {
+      showNotification(`⚠️ Failed to delete folder: ${err.message || 'Error'}`);
+    }
+  };
+
+  const handleMoveMaterialToFolder = async (materialId: string, folderId: string | null) => {
+    if (folderId) {
+      const targetFolder = materialFolders.find(f => f.id === folderId);
+      if (!targetFolder || targetFolder.type !== 'materials') {
+        showNotification('⚠️ Materials can only be moved into Material Hub folders.');
+        setMaterialItemHoldMenu(null);
+        return;
+      }
+    }
+    const mat = materials.find(m => m.id === materialId);
+    if (!mat) return;
+    const updated = { ...mat, folder_id: folderId };
+    setMaterials(prev => prev.map(m => m.id === materialId ? updated : m));
+    await saveSupabaseMaterial(updated);
+    showNotification(folderId ? '📁 Moved resource to folder' : '📂 Moved resource to root');
+    setMaterialItemHoldMenu(null);
+  };
+
+  // Lecture Notes 6-Digit Collab Handlers
+  const handleOpenNoteCollab = async (note: VaultNote) => {
+    let collabCode = note.collabCode;
+    if (!collabCode) {
+      collabCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const updated = { ...note, collabCode, isCollab: true };
+      setVaultNotes(prev => prev.map(n => n.id === note.id ? updated : n));
+      await saveVaultNoteToSupabase(updated);
+    }
+    setActiveNoteCollabModalOpen(true);
+  };
+
+  const handleJoinNoteByCode = async (code: string) => {
+    const cleanCode = code.trim();
+    if (cleanCode.length !== 6) {
+      setCollabJoinError('Please enter a valid 6-digit collaboration code.');
+      return;
+    }
+    setCollabJoinLoading(true);
+    setCollabJoinError('');
+    try {
+      const found = await getNoteByCollabCode(cleanCode);
+      if (found) {
+        // Add to user's notes if not already present
+        setVaultNotes(prev => {
+          const exists = prev.find(n => n.id === found.id || n.collabCode === cleanCode);
+          if (exists) return prev;
+          return [found, ...prev];
+        });
+        setSelectedNoteId(found.id);
+        setNoteEditMode(true);
+        showNotification(`🤝 Successfully joined note: "${found.title}"`);
+        setCollabJoinModalOpen(false);
+        setCollabJoinCodeInput('');
+      } else {
+        setCollabJoinError(`No note found matching code "${cleanCode}". Confirm the code with the note author.`);
+      }
+    } catch (err: any) {
+      setCollabJoinError(err.message || 'Failed to join note.');
+    } finally {
+      setCollabJoinLoading(false);
+    }
   };
   
   // --- Core State Expansion for Multi-User Real-time Sync & Custom Tools ---
@@ -2594,12 +2716,14 @@ export default function App() {
       const loadNotes = async () => {
         try {
           const uid = currentUser.uid || currentUser.email || 'guest';
-          const [dbNotes, fetchedFolders] = await Promise.all([
+          const [dbNotes, fetchedFolders, fetchedMaterialFolders] = await Promise.all([
             getVaultNotes(uid),
-            getFolders(uid, 'notes')
+            getFolders(uid, 'notes'),
+            getFolders(uid, 'materials')
           ]);
           setVaultNotes(dbNotes);
           setVaultFolders(fetchedFolders);
+          setMaterialFolders(fetchedMaterialFolders);
           if (!selectedNoteId) {
             setSelectedNoteId(dbNotes[0]?.id || null);
           }
@@ -9553,48 +9677,75 @@ ${roleLabel}: ${userQuery}
               {activeTab === 'notes' && (
                 <div className="space-y-6 animate-fadeIn">
                   
-                  {/* Notes Header */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-900/80 p-3 sm:p-4 rounded-2xl border border-white/5">
+                  {/* Notes Header Bar */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/80 p-3.5 sm:p-4 rounded-2xl border border-white/5 shadow-sm">
                     <div>
                       <h2 className="text-lg font-black text-white font-display uppercase tracking-tight flex items-center gap-2">
-                        <span>📝 Personal Lecture & Study Notes</span>
+                        <span>📝 Lecture Notes & Knowledge Base</span>
                       </h2>
-                      <p className="text-xs text-slate-400">Personal notes vault with markdown editing, AI summary tools, and folder organization.</p>
+                      <p className="text-xs text-slate-400">Notion-style markdown workspace with slash commands, live preview, outline TOC, and 6-digit peer collaboration.</p>
                     </div>
 
-                    <button
-                      onClick={() => {
-                        setStudyHubSubTab('flashcards');
-                        handleTabSelect('study_hub');
-                      }}
-                      className="px-3.5 py-2 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 text-xs font-bold transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer shrink-0"
-                      title="Open Interactive Flashcards & SM-2 Study Center"
-                    >
-                      <Brain className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                      <span>Flashcards Study Center</span>
-                      {dueCardsCount > 0 && (
-                        <span className="px-1.5 py-0.5 rounded-full bg-rose-500 text-white font-mono text-[9px] font-black animate-pulse">
-                          {dueCardsCount}
-                        </span>
-                      )}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setCollabJoinError('');
+                          setCollabJoinCodeInput('');
+                          setCollabJoinModalOpen(true);
+                        }}
+                        className="px-3.5 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer shadow-sm"
+                        title="Join a shared note using 6-digit code"
+                      >
+                        <Users2 className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Join Note</span>
+                      </button>
+
+                      <button
+                        onClick={handleCreateNewNote}
+                        className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer shadow-md"
+                        title="Create a new note"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>New Note</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setStudyHubSubTab('flashcards');
+                          handleTabSelect('study_hub');
+                        }}
+                        className="px-3.5 py-2 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 text-xs font-bold transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer shrink-0"
+                        title="Open Interactive Flashcards & SM-2 Study Center"
+                      >
+                        <Brain className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                        <span className="hidden sm:inline">Flashcards</span>
+                        {dueCardsCount > 0 && (
+                          <span className="px-1.5 py-0.5 rounded-full bg-rose-500 text-white font-mono text-[9px] font-black animate-pulse">
+                            {dueCardsCount}
+                          </span>
+                        )}
+                      </button>
+                    </div>
                   </div>
 
+                  {/* 3-Column Layout: Left Explorer (3), Center Canvas (6 or 9), Right Outline (3) */}
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                     
-                    {/* Notion Sidebar List: 4 Cols */}
-                    <div className="lg:col-span-4 smart-glass p-5 rounded-3xl space-y-4">
+                    {/* Left Column: Folders & Notes Explorer (File Manager) */}
+                    <div className="lg:col-span-3 smart-glass p-4 rounded-3xl space-y-4 border border-white/5">
                       <div className="flex items-center justify-between">
                         <div>
-                          <h3 className="text-base font-black text-white font-display uppercase tracking-tight">Notion Canvas Workspace</h3>
-                          <p className="text-[10px] text-slate-400">Organize and draft rich study structures.</p>
+                          <h3 className="text-sm font-black text-white font-display uppercase tracking-tight flex items-center gap-1.5">
+                            <span>📂 Explorer</span>
+                          </h3>
+                          <p className="text-[10px] text-slate-400">Folders & notes vault</p>
                         </div>
                         <button 
                           onClick={handleCreateNewNote}
-                          className="p-2 rounded-xl bg-indigo-600 hover:bg-indigo-505 text-white hover:bg-indigo-500 transition-all font-bold text-xs uppercase shadow-md flex items-center gap-1 active:scale-95"
-                          title="Instantiate clean canvas node"
+                          className="p-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition-all font-bold text-xs uppercase shadow flex items-center gap-1 active:scale-95 cursor-pointer"
+                          title="New blank note"
                         >
-                          ➕ New
+                          <Plus className="w-3.5 h-3.5" />
                         </button>
                       </div>
 
@@ -9602,12 +9753,12 @@ ${roleLabel}: ${userQuery}
                       <div className="relative">
                         <input 
                           type="text"
-                          placeholder="Search lecture pages..."
-                          value={newNoteTitle} // we'll use newNoteTitle as intermediate searching if needed, or local input
+                          placeholder="Filter notes..."
+                          value={newNoteTitle}
                           onChange={e => setNewNoteTitle(e.target.value)}
-                          className="w-full text-xs pl-8 pr-3 py-2.5 rounded-xl bg-slate-900 border border-white/5 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          className="w-full text-xs pl-8 pr-3 py-2 rounded-xl bg-slate-900 border border-white/5 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
                         />
-                        <span className="absolute left-3 top-3 text-[10px]">🔍</span>
+                        <Search className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-slate-500" />
                       </div>
 
                       {/* File Manager Breadcrumb & Action Bar */}
@@ -9634,14 +9785,14 @@ ${roleLabel}: ${userQuery}
                               <div className="flex items-center gap-1 overflow-x-auto scrollbar-none no-scrollbar min-w-0">
                                 <button
                                   onClick={() => setActiveVaultFolderId(null)}
-                                  className={`px-2.5 py-1 rounded-lg font-bold transition-all flex items-center gap-1 shrink-0 ${!activeVaultFolderId ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                                  className={`px-2 py-0.5 rounded-lg font-bold transition-all flex items-center gap-1 shrink-0 ${!activeVaultFolderId ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
                                 >
                                   <span>🏠 Root</span>
                                 </button>
                                 {activeVaultFolder && (
                                   <>
                                     <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
-                                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 truncate max-w-[120px]">
+                                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 truncate max-w-[100px]">
                                       <span>📁 {activeVaultFolder.name}</span>
                                     </div>
                                   </>
@@ -9652,7 +9803,7 @@ ${roleLabel}: ${userQuery}
                                 {activeVaultFolderId && (
                                   <button
                                     onClick={() => setActiveVaultFolderId(null)}
-                                    className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-all"
+                                    className="px-2 py-0.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-all"
                                     title="Back to Root Folders"
                                   >
                                     ↑ Up
@@ -9660,7 +9811,7 @@ ${roleLabel}: ${userQuery}
                                 )}
                                 <button
                                   onClick={() => setShowVaultFolderModal(true)}
-                                  className="px-2 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/25 font-bold text-[10px] flex items-center gap-1 transition-all"
+                                  className="px-2 py-0.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/25 font-bold text-[10px] flex items-center gap-1 transition-all"
                                   title="Create Personal Notes Folder"
                                 >
                                   <FolderPlus className="w-3 h-3" />
@@ -9677,17 +9828,19 @@ ${roleLabel}: ${userQuery}
                                     <span>📁 Folders ({vaultFolders.length})</span>
                                   </span>
                                 </div>
-                                <div className="grid grid-cols-2 gap-2">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                   {vaultFolders.map(f => {
                                     const noteCount = vaultNotes.filter(n => n.folder_id === f.id).length;
                                     return (
-                                      <div
+                                      <motion.div
                                         key={f.id}
+                                        whileHover={{ scale: 1.02 }}
+                                        whileTap={{ scale: 0.98 }}
                                         onClick={() => setActiveVaultFolderId(f.id)}
-                                        className="p-2.5 rounded-xl bg-slate-900/80 hover:bg-slate-850 border border-white/5 hover:border-amber-500/40 transition-all cursor-pointer group flex flex-col justify-between space-y-1.5 shadow-sm active:scale-[0.98]"
+                                        className="p-2.5 rounded-xl bg-slate-900/80 hover:bg-slate-850 border border-white/5 hover:border-amber-500/40 transition-all cursor-pointer group flex flex-col justify-between space-y-1.5 shadow-sm"
                                       >
                                         <div className="flex items-center justify-between gap-1">
-                                          <span className="text-lg">📁</span>
+                                          <span className="text-base">📁</span>
                                           <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
                                             <button
                                               onClick={() => {
@@ -9697,14 +9850,14 @@ ${roleLabel}: ${userQuery}
                                               className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white"
                                               title="Rename Folder"
                                             >
-                                              <Edit2 size={11} />
+                                              <Edit2 size={10} />
                                             </button>
                                             <button
                                               onClick={() => handleDeleteVaultFolder(f.id, f.name)}
                                               className="p-1 hover:bg-rose-500/20 rounded text-slate-400 hover:text-rose-400"
                                               title="Delete Folder"
                                             >
-                                              <Trash2 size={11} />
+                                              <Trash2 size={10} />
                                             </button>
                                           </div>
                                         </div>
@@ -9712,27 +9865,28 @@ ${roleLabel}: ${userQuery}
                                           <p className="text-xs font-bold text-white group-hover:text-amber-300 truncate">{f.name}</p>
                                           <p className="text-[9px] text-slate-400">{noteCount} {noteCount === 1 ? 'note' : 'notes'}</p>
                                         </div>
-                                      </div>
+                                      </motion.div>
                                     );
                                   })}
                                 </div>
                               </div>
                             )}
 
-                            {/* Section Header: Notes */}
+                            {/* Section Header: Notes List */}
                             <div className="flex items-center justify-between px-1 pt-1">
                               <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
-                                {activeVaultFolder ? `Notes in "${activeVaultFolder.name}"` : 'Notes at Root'} ({currentNotes.length})
+                                {activeVaultFolder ? `Notes in "${activeVaultFolder.name}"` : 'Notes'} ({currentNotes.length})
                               </span>
                             </div>
 
                             {/* List of notes */}
-                            <div className="space-y-1.5 max-h-[480px] overflow-y-auto pr-1">
+                            <div className="space-y-1.5 max-h-[460px] overflow-y-auto pr-1">
                               {currentNotes.map(note => {
                                 const isActive = selectedNoteId === note.id;
                                 return (
-                                  <button
+                                  <motion.button
                                     key={note.id}
+                                    whileTap={{ scale: 0.99 }}
                                     onClick={() => {
                                       setSelectedNoteId(note.id);
                                       setNoteEditMode(true);
@@ -9742,7 +9896,7 @@ ${roleLabel}: ${userQuery}
                                       const y = e.clientY;
                                       holdTimerRef.current = setTimeout(() => {
                                         setVaultItemHoldMenu({ noteId: note.id, x, y });
-                                      }, 2000);
+                                      }, 1500);
                                     }}
                                     onMouseUp={() => clearTimeout(holdTimerRef.current)}
                                     onMouseLeave={() => clearTimeout(holdTimerRef.current)}
@@ -9751,61 +9905,59 @@ ${roleLabel}: ${userQuery}
                                       const y = e.touches[0].clientY;
                                       holdTimerRef.current = setTimeout(() => {
                                         setVaultItemHoldMenu({ noteId: note.id, x, y });
-                                      }, 2000);
+                                      }, 1500);
                                     }}
                                     onTouchEnd={() => clearTimeout(holdTimerRef.current)}
-                                    className={`w-full text-left p-3 rounded-xl border transition-all flex items-center justify-between relative ${isActive ? 'bg-indigo-600/15 border-indigo-500/20 text-white' : 'border-white/5 bg-slate-900/40 hover:bg-white/5 text-slate-300'}`}
+                                    className={`w-full text-left p-2.5 rounded-xl border transition-all flex items-center justify-between relative ${isActive ? 'bg-indigo-600/20 border-indigo-500/40 text-white shadow-sm ring-1 ring-indigo-500/30' : 'border-white/5 bg-slate-900/40 hover:bg-white/5 text-slate-300'}`}
                                   >
-                                    {(note as any).isPinned && <Pin className="w-2 h-2 text-amber-400 absolute top-1 right-1 rotate-45" />}
-                                    <div className="flex items-center gap-2.5 min-w-0">
-                                      <span className="text-base flex-shrink-0">{note.icon || '📝'}</span>
+                                    {(note as any).isPinned && <Pin className="w-2.5 h-2.5 text-amber-400 absolute top-1 right-1 rotate-45" />}
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span className="text-sm flex-shrink-0">{note.icon || '📝'}</span>
                                       <div className="min-w-0">
                                         <p className="text-xs font-bold truncate leading-snug">{note.title || 'Untitled Note'}</p>
-                                        <div className="flex items-center gap-1.5 mt-1">
-                                          <span className="text-[8px] uppercase tracking-wider font-extrabold text-indigo-400 bg-indigo-500/10 px-1.5 py-0.2 rounded">
+                                        <div className="flex flex-wrap items-center gap-1 mt-0.5">
+                                          <span className="text-[8px] uppercase tracking-wider font-extrabold text-indigo-400 bg-indigo-500/10 px-1 py-0.2 rounded">
                                             {note.subject}
                                           </span>
-                                          <span className="text-[8px] text-slate-500 font-mono">{note.createdAt}</span>
+                                          {note.collabCode && (
+                                            <span className="text-[8px] uppercase tracking-wider font-extrabold text-emerald-400 bg-emerald-500/10 px-1 py-0.2 rounded border border-emerald-500/20 flex items-center gap-0.5">
+                                              <span>🤝</span> {note.collabCode}
+                                            </span>
+                                          )}
                                         </div>
                                       </div>
                                     </div>
-                                    <span className={`text-[10px] transition-transform ${isActive ? 'translate-x-1 opacity-100' : 'opacity-0'}`}>👉</span>
-                                  </button>
+                                    <span className={`text-[10px] transition-transform ${isActive ? 'translate-x-0.5 opacity-100 text-indigo-400 font-bold' : 'opacity-0'}`}>●</span>
+                                  </motion.button>
                                 );
                               })}
 
                               {currentNotes.length === 0 && (
                                 <div className="text-center py-8 text-xs text-slate-500 font-medium bg-slate-950/40 rounded-2xl border border-dashed border-white/5 p-4">
                                   {activeVaultFolder 
-                                    ? `Folder "${activeVaultFolder.name}" has no notes. Click "➕ New" or hold any note to move it here.`
-                                    : 'No notes at root. Click "➕ New" to build your first note.'}
+                                    ? `Folder "${activeVaultFolder.name}" has no notes yet.`
+                                    : 'No notes at root. Click "+ New Note" to write.'}
                                 </div>
                               )}
                             </div>
                           </>
                         );
                       })()}
-                        
-                        {vaultNotes.length > 0 && vaultNotes.filter(n => !newNoteTitle.trim() || n.title.toLowerCase().includes(newNoteTitle.toLowerCase())).length === 0 && (
-                          <div className="text-center py-6 text-xs text-slate-500">
-                            No match found for "{newNoteTitle}".
-                          </div>
-                        )}
-                      </div>
+                    </div>
 
-                    {/* Notion Main Document Container Workspace: 8 Cols */}
-                    <div className="lg:col-span-8 space-y-6">
+                    {/* Center Column: Clean Writing Surface (Notion/Obsidian style) */}
+                    <div className={`${showNoteOutline ? 'lg:col-span-6' : 'lg:col-span-9'} space-y-4`}>
                       {(() => {
                         const activeNote = vaultNotes.find(n => n.id === selectedNoteId);
                         if (!activeNote) {
                           return (
                             <div className="smart-glass p-12 rounded-3xl text-center space-y-4 border border-dashed border-white/5">
-                              <span className="text-5xl block animate-bounce">⚡</span>
-                              <h3 className="text-lg font-black font-display text-white">Select a Lecture Note Template</h3>
-                              <p className="text-xs text-slate-400 max-w-md mx-auto">Access, read, and write rich LaTeX, code blocks, or literature summaries. Click on any page in the sidebar workspace to begin your session, or start a new workspace canvas.</p>
+                              <span className="text-5xl block animate-bounce">📝</span>
+                              <h3 className="text-lg font-black font-display text-white">Select or Initialize a Note</h3>
+                              <p className="text-xs text-slate-400 max-w-md mx-auto">Access, write, and format clean markdown with slash commands, equations, and live preview. Select a note from the left explorer or start a new page.</p>
                               <button 
                                 onClick={handleCreateNewNote}
-                                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase tracking-wider transition-all shadow active:scale-95"
+                                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase tracking-wider transition-all shadow active:scale-95 cursor-pointer"
                               >
                                 🚀 Initialize New Page
                               </button>
@@ -9816,24 +9968,29 @@ ${roleLabel}: ${userQuery}
                         // Character & Word Counter
                         const charCount = activeNote.content.length;
                         const wordCount = activeNote.content.trim() === '' ? 0 : activeNote.content.trim().split(/\s+/).length;
+                        const readTimeMin = Math.max(1, Math.ceil(wordCount / 200));
 
-                        // Helpers to update fields dynamically with instant local storage saving
+                        // Dynamically parse headings for Table of Contents
+                        const parsedHeadings: { level: number; text: string; id: string }[] = [];
+                        const lines = activeNote.content.split('\n');
+                        lines.forEach((line, idx) => {
+                          const h1Match = line.match(/^#\s+(.+)/);
+                          const h2Match = line.match(/^##\s+(.+)/);
+                          const h3Match = line.match(/^###\s+(.+)/);
+                          if (h1Match) parsedHeadings.push({ level: 1, text: h1Match[1], id: `h-${idx}` });
+                          else if (h2Match) parsedHeadings.push({ level: 2, text: h2Match[1], id: `h-${idx}` });
+                          else if (h3Match) parsedHeadings.push({ level: 3, text: h3Match[1], id: `h-${idx}` });
+                        });
+
+                        // Autosave updater with state indicator
                         const updateActiveNote = async (updates: Partial<VaultNote>) => {
-                          setVaultNotes(prev => {
-                            const newNotes = prev.map(n => n.id === activeNote.id ? { ...n, ...updates } : n);
-                            if (currentUser) (async () => {
-       const newArr = newNotes;
-       for (const n of newArr) {
-          saveVaultNoteToSupabase(n).catch(()=>{});
-       }
-     })();
-                            return newNotes;
-                          });
+                          setAutoSaveState('saving');
+                          const updated = { ...activeNote, ...updates };
+                          setVaultNotes(prev => prev.map(n => n.id === activeNote.id ? updated : n));
                           try {
-                            await updateDoc(doc(db, 'notes', activeNote.id), updates);
-                          } catch (err) {
-                            console.error('[Vault Notes] Firestore update failed:', err);
-                          }
+                            await saveVaultNoteToSupabase(updated);
+                          } catch (_) {}
+                          setTimeout(() => setAutoSaveState('saved'), 400);
                         };
 
                         const handleToolbarInject = (prefix: string, suffix = '') => {
@@ -9847,19 +10004,39 @@ ${roleLabel}: ${userQuery}
                           const selected = text.substring(start, end) || 'Text';
                           const replacement = before + prefix + selected + suffix + after;
                           updateActiveNote({ content: replacement });
-                          showNotification('Layout token injected.');
                           setTimeout(() => {
                             textarea.focus();
                             textarea.setSelectionRange(start + prefix.length, start + prefix.length + selected.length);
                           }, 50);
                         };
 
+                        const slashCommands = [
+                          { label: 'Heading 1', desc: 'Large title heading', icon: 'H1', action: () => handleToolbarInject('# ', '\n') },
+                          { label: 'Heading 2', desc: 'Section heading', icon: 'H2', action: () => handleToolbarInject('## ', '\n') },
+                          { label: 'Heading 3', desc: 'Sub-section heading', icon: 'H3', action: () => handleToolbarInject('### ', '\n') },
+                          { label: 'Bullet List', desc: 'Simple bulleted list', icon: '•', action: () => handleToolbarInject('- ', '') },
+                          { label: 'Numbered List', desc: 'Numbered sequential list', icon: '1.', action: () => handleToolbarInject('1. ', '') },
+                          { label: 'Checklist', desc: 'Interactive task checklist', icon: '☑', action: () => handleToolbarInject('- [ ] ', '') },
+                          { label: 'Code Block', desc: 'Syntax highlighted code', icon: '</>', action: () => handleToolbarInject('```typescript\n', '\n```') },
+                          { label: 'LaTeX Math', desc: 'Mathematical derivation block', icon: '∑', action: () => handleToolbarInject('$$\n', '\n$$') },
+                          { label: 'Quote', desc: 'Indented blockquote', icon: '“', action: () => handleToolbarInject('> ', '') },
+                          { label: 'Callout Box', desc: 'Highlighted takeaway card', icon: '💡', action: () => handleToolbarInject('> 💡 **Key Takeaway**: ', '') },
+                          { label: 'Table', desc: '2x2 Markdown table', icon: '▦', action: () => handleToolbarInject('\n| Header 1 | Header 2 |\n|----------|----------|\n| Cell 1   | Cell 2   |\n', '') },
+                          { label: 'Divider', desc: 'Horizontal visual rule', icon: '—', action: () => handleToolbarInject('\n---\n', '') },
+                        ];
+
+                        const filteredCommands = slashCommands.filter(c => 
+                          !slashMenuFilter.trim() || 
+                          c.label.toLowerCase().includes(slashMenuFilter.toLowerCase()) ||
+                          c.desc.toLowerCase().includes(slashMenuFilter.toLowerCase())
+                        );
+
                         return (
-                          <div className="smart-glass rounded-3xl overflow-hidden border border-white/10 shadow-lg bg-slate-900/40 relative">
+                          <div className="smart-glass rounded-3xl overflow-hidden border border-white/10 shadow-lg bg-slate-900/50 relative">
                             
                             {/* Rich Theme Cover Gradient Banner */}
-                            <div className={`h-32 ${activeNote.coverBg || 'bg-gradient-to-r from-violet-600 to-indigo-900'} relative transition-all duration-500 flex items-end justify-between px-6 pb-3`}>
-                              <div className="absolute top-3 right-3 flex items-center gap-1.5 p-1 rounded-xl bg-black/40 border border-white/5 backdrop-blur-md">
+                            <div className={`h-24 ${activeNote.coverBg || 'bg-gradient-to-r from-violet-600 to-indigo-900'} relative transition-all duration-500 flex items-end justify-between px-6 pb-2`}>
+                              <div className="absolute top-2.5 right-3 flex items-center gap-1.5 p-1 rounded-xl bg-black/50 border border-white/10 backdrop-blur-md">
                                 {[
                                   'bg-gradient-to-r from-violet-600 to-indigo-900',
                                   'bg-gradient-to-r from-emerald-600 to-teal-900',
@@ -9870,61 +10047,109 @@ ${roleLabel}: ${userQuery}
                                   <button
                                     key={gIdx}
                                     onClick={() => updateActiveNote({ coverBg: grad })}
-                                    className={`h-4 w-4 rounded-full border border-white/20 hover:scale-110 active:scale-95 transition-all ${grad} ${activeNote.coverBg === grad ? 'ring-2 ring-indigo-400 border-white' : ''}`}
+                                    className={`h-3.5 w-3.5 rounded-full border border-white/20 hover:scale-110 active:scale-95 transition-all ${grad} ${activeNote.coverBg === grad ? 'ring-2 ring-indigo-400 border-white' : ''}`}
                                     title="Switch cover theme"
                                   />
                                 ))}
                               </div>
                               
-                              <p className="text-[9px] font-black uppercase text-white/50 tracking-wider">Studying Workspace • Live Synchronization</p>
+                              <p className="text-[9px] font-black uppercase text-white/60 tracking-wider">Notion Study Canvas • Auto-synchronized</p>
                             </div>
 
-                            {/* Main Document Body layout */}
-                            <div className="p-6 sm:p-8 space-y-6">
+                            {/* Main Document Body */}
+                            <div className="p-5 sm:p-6 space-y-4">
                               
-                              {/* Icon + Title Header block */}
-                              <div className="space-y-4 relative -mt-16">
-                                
-                                {/* Emoji selection bar */}
-                                <div className="inline-block relative group">
-                                  <div className="h-16 w-16 rounded-2xl bg-slate-950 border-2 border-white/10 text-3xl flex items-center justify-center cursor-pointer shadow-lg hover:border-indigo-500 transition-colors">
-                                    {activeNote.icon || '📝'}
+                              {/* Header & Title */}
+                              <div className="space-y-3 relative -mt-12">
+                                <div className="flex items-center justify-between gap-3">
+                                  {/* Emoji picker */}
+                                  <div className="inline-block relative group">
+                                    <div className="h-12 w-12 rounded-2xl bg-slate-950 border-2 border-white/10 text-2xl flex items-center justify-center cursor-pointer shadow-lg hover:border-indigo-500 transition-colors">
+                                      {activeNote.icon || '📝'}
+                                    </div>
+                                    <div className="absolute top-14 left-0 hidden group-hover:grid grid-cols-6 gap-1 p-2 rounded-xl bg-slate-950 border border-white/10 shadow-2xl z-30 w-44">
+                                      {['📝', '🚀', '💡', '💻', '🧠', '🧪', '🧬', '🔬', '📐', '🎨', '🏖️', '📚'].map(emoji => (
+                                        <button
+                                          key={emoji}
+                                          type="button"
+                                          onClick={() => {
+                                            updateActiveNote({ icon: emoji });
+                                            showNotification(`Icon updated to ${emoji}`);
+                                          }}
+                                          className="h-6 w-6 rounded hover:bg-white/10 text-xs transition-colors flex items-center justify-center cursor-pointer"
+                                        >
+                                          {emoji}
+                                        </button>
+                                      ))}
+                                    </div>
                                   </div>
-                                  <div className="absolute top-18 left-0 hidden group-hover:grid grid-cols-6 gap-1 p-2 rounded-xl bg-slate-950 border border-white/10 shadow-2xl z-20 w-44">
-                                    {['📝', '🚀', '💡', '💻', '🧠', '🧪', '🧬', '🔬', '📐', '🎨', '🏖️', '📚'].map(emoji => (
+
+                                  {/* Top Status Indicators: Autosave & Collab */}
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    {/* Autosave status pill */}
+                                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-mono font-bold flex items-center gap-1 transition-all ${
+                                      autoSaveState === 'saving'
+                                        ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                        : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                                    }`}>
+                                      {autoSaveState === 'saving' ? (
+                                        <><span>⏳</span> Saving...</>
+                                      ) : (
+                                        <><span>✓</span> Saved</>
+                                      )}
+                                    </span>
+
+                                    {/* Collab Button */}
+                                    {activeNote.collabCode ? (
                                       <button
-                                        key={emoji}
-                                        type="button"
-                                        onClick={() => {
-                                          updateActiveNote({ icon: emoji });
-                                          showNotification(`Icon updated to ${emoji}`);
-                                        }}
-                                        className="h-6 w-6 rounded hover:bg-white/10 text-xs transition-colors flex items-center justify-center"
+                                        onClick={() => setActiveNoteCollabModalOpen(true)}
+                                        className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold flex items-center gap-1 transition-all hover:scale-105 active:scale-95 cursor-pointer"
+                                        title="View Collab Code & Share"
                                       >
-                                        {emoji}
+                                        <Users2 className="w-3 h-3 text-emerald-400" />
+                                        <span>Collab Code: {activeNote.collabCode}</span>
                                       </button>
-                                    ))}
+                                    ) : (
+                                      <button
+                                        onClick={() => handleOpenNoteCollab(activeNote)}
+                                        className="px-2.5 py-1 rounded-full bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-[10px] font-bold flex items-center gap-1 transition-all hover:scale-105 active:scale-95 cursor-pointer"
+                                        title="Start Collab & generate 6-digit code"
+                                      >
+                                        <Users2 className="w-3 h-3" />
+                                        <span>Start Collab</span>
+                                      </button>
+                                    )}
+
+                                    {/* Outline toggle button */}
+                                    <button
+                                      onClick={() => setShowNoteOutline(!showNoteOutline)}
+                                      className={`px-2.5 py-1 rounded-full border text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                                        showNoteOutline ? 'bg-indigo-600/30 text-indigo-200 border-indigo-500/40' : 'bg-slate-900 text-slate-400 border-white/10 hover:text-white'
+                                      }`}
+                                      title="Toggle Outline Table of Contents"
+                                    >
+                                      <Columns className="w-3 h-3" />
+                                      <span>Outline</span>
+                                    </button>
                                   </div>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center">
-                                  {/* Page Title */}
+                                {/* Title and Subject inputs */}
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-center">
                                   <div className="md:col-span-3">
                                     <input 
                                       type="text"
                                       value={activeNote.title}
                                       onChange={e => updateActiveNote({ title: e.target.value })}
-                                      placeholder="Untitled Study Page"
-                                      className="w-full text-2xl font-black font-display tracking-tight text-white border-b border-transparent focus:border-indigo-500/30 pb-1 bg-transparent focus:outline-none transition-colors"
+                                      placeholder="Untitled Study Note..."
+                                      className="w-full text-xl sm:text-2xl font-black font-display tracking-tight text-white border-b border-transparent focus:border-indigo-500/40 pb-1 bg-transparent focus:outline-none transition-colors"
                                     />
                                   </div>
-
-                                  {/* Subject tags */}
                                   <div className="md:col-span-1">
                                     <select
                                       value={activeNote.subject}
                                       onChange={e => updateActiveNote({ subject: e.target.value })}
-                                      className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-slate-900 border border-white/5 text-slate-300 font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                      className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-slate-900 border border-white/5 text-slate-300 font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
                                     >
                                       {['Physics', 'Chemistry', 'Computer Science', 'Mathematics', 'Syllabus General', 'Biology', 'Geography', 'History', 'English'].map(sub => (
                                         <option key={sub} value={sub}>{sub}</option>
@@ -9934,233 +10159,311 @@ ${roleLabel}: ${userQuery}
                                 </div>
                               </div>
 
-                              {/* Workspace Editor vs Preview switches */}
-                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-white/5 pb-3">
-                                <div className="flex flex-wrap gap-2">
+                              {/* Editor Toolbar & Mode Switchers */}
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-y border-white/5 py-2.5">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  {/* View modes */}
+                                  <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-white/5">
+                                    <button
+                                      onClick={() => {
+                                        setNoteEditMode(true);
+                                        setViewSplitPreview(false);
+                                      }}
+                                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                                        noteEditMode && !viewSplitPreview ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                                      }`}
+                                    >
+                                      ✍️ Editor
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setNoteEditMode(false);
+                                        setViewSplitPreview(false);
+                                      }}
+                                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                                        !noteEditMode ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                                      }`}
+                                    >
+                                      👁️ Reader
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setNoteEditMode(true);
+                                        setViewSplitPreview(true);
+                                      }}
+                                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                                        viewSplitPreview ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                                      }`}
+                                    >
+                                      📑 Split View
+                                    </button>
+                                  </div>
+
+                                  {/* Slash command trigger */}
                                   <button
-                                    onClick={() => setNoteEditMode(true)}
-                                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${noteEditMode ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white bg-white/5'}`}
+                                    onClick={() => setSlashMenuOpen(!slashMenuOpen)}
+                                    className="px-2.5 py-1 rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/30 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+                                    title="Open Slash Command Palette"
                                   >
-                                    ✍️ Markdown Editor
-                                  </button>
-                                  <button
-                                    onClick={() => setNoteEditMode(false)}
-                                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${!noteEditMode ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white bg-white/5'}`}
-                                  >
-                                    👁️ Reader View
+                                    <Sparkles className="w-3 h-3 text-indigo-400" />
+                                    <span>Slash / Commands</span>
                                   </button>
                                 </div>
 
-                                <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 sm:gap-3">
-                                  {/* Export Buttons */}
-                                  <div className="flex items-center gap-1.5">
-                                    <button
-                                      onClick={() => {
-                                        const blob = new Blob([activeNote.content], { type: 'text/markdown' });
-                                        const filename = `${activeNote.title || 'Note'}.md`;
-                                        if (typeof (window as any).downloadAIVoice === 'function') {
-                                          (window as any).downloadAIVoice(blob, filename);
-                                        } else {
-                                          const link = document.createElement('a');
-                                          link.href = URL.createObjectURL(blob);
-                                          link.download = filename;
-                                          link.click();
-                                        }
-                                      }}
-                                      className="px-2 py-1 rounded bg-indigo-900/30 text-indigo-400 text-[10px] font-bold hover:bg-indigo-800/40" title="Export as MD"
-                                    >⬇️ .MD</button>
-                                    <button
-                                      onClick={() => {
-                                        generateFormattedPdf(activeNote.title, activeNote.subject, activeNote.content);
-                                        showNotification('📄 Downloading formatted note PDF...');
-                                      }}
-                                      className="px-2 py-1 rounded bg-indigo-900/30 text-indigo-400 text-[10px] font-bold hover:bg-indigo-800/40" title="Export as Formatted PDF"
-                                    >🖨️ PDF</button>
-                                  </div>
-
-                                  {/* Typography toggles */}
-                                  <div className="flex items-center gap-1.5 p-0.5 rounded-lg bg-slate-950 border border-white/5">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  {/* Font Switcher */}
+                                  <div className="flex items-center gap-1 p-0.5 rounded-lg bg-slate-950 border border-white/5">
                                     {(['sans', 'serif', 'mono'] as const).map(font => (
                                       <button
                                         key={font}
                                         onClick={() => setNoteFont(font)}
-                                        className={`px-2.5 py-1 rounded text-[10px] uppercase font-mono transition-all ${noteFont === font ? 'bg-indigo-600 font-bold text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}
+                                        className={`px-2 py-0.5 rounded text-[10px] uppercase font-mono transition-all ${noteFont === font ? 'bg-indigo-600 font-bold text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}
                                       >
                                         {font}
                                       </button>
                                     ))}
                                   </div>
+
+                                  {/* Export Buttons */}
+                                  <button
+                                    onClick={() => {
+                                      const blob = new Blob([activeNote.content], { type: 'text/markdown' });
+                                      const filename = `${activeNote.title || 'Note'}.md`;
+                                      const link = document.createElement('a');
+                                      link.href = URL.createObjectURL(blob);
+                                      link.download = filename;
+                                      link.click();
+                                    }}
+                                    className="px-2 py-1 rounded bg-indigo-900/30 text-indigo-400 text-[10px] font-bold hover:bg-indigo-800/40"
+                                    title="Export as Markdown"
+                                  >
+                                    .MD
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      generateFormattedPdf(activeNote.title, activeNote.subject, activeNote.content);
+                                      showNotification('📄 Generating note PDF...');
+                                    }}
+                                    className="px-2 py-1 rounded bg-indigo-900/30 text-indigo-400 text-[10px] font-bold hover:bg-indigo-800/40"
+                                    title="Export as PDF"
+                                  >
+                                    🖨️ PDF
+                                  </button>
                                 </div>
                               </div>
 
-                              {/* Notion editor tab canvas */}
-                              {noteEditMode ? (
-                                <div className="space-y-3.5">
-                                  
-                                  {/* Editor Formatting toolbar */}
-                                  <div className="flex flex-wrap items-center gap-1.5 bg-slate-950/40 p-2 rounded-xl border border-white/5 text-xs text-slate-400">
-                                    <button onClick={() => handleToolbarInject('# ', '\n')} className="hover:text-white px-2 py-1 rounded bg-slate-900 border border-white/5 hover:bg-slate-850 text-[10px] font-bold">H1</button>
-                                    <button onClick={() => handleToolbarInject('## ', '\n')} className="hover:text-white px-2 py-1 rounded bg-slate-900 border border-white/5 hover:bg-slate-850 text-[10px] font-bold">H2</button>
-                                    <button onClick={() => handleToolbarInject('### ', '\n')} className="hover:text-white px-2 py-1 rounded bg-slate-900 border border-white/5 hover:bg-slate-850 text-[10px] font-bold">H3</button>
-                                    <div className="w-px h-4 bg-white/10 mx-1"></div>
-                                    <button onClick={() => handleToolbarInject('**', '**')} className="hover:text-white px-2 py-1 rounded bg-slate-900 border border-white/5 hover:bg-slate-850 font-bold text-[10px]" title="Bold">B</button>
-                                    <button onClick={() => handleToolbarInject('*', '*')} className="hover:text-white px-2 py-1 rounded bg-slate-900 border border-white/5 hover:bg-slate-850 italic text-[10px]" title="Italic">I</button>
-                                    <button onClick={() => handleToolbarInject('<u>', '</u>')} className="hover:text-white px-2 py-1 rounded bg-slate-900 border border-white/5 hover:bg-slate-850 underline text-[10px]" title="Underline">U</button>
-                                    <button onClick={() => handleToolbarInject('<mark>', '</mark>')} className="hover:text-white px-2 py-1 rounded bg-emerald-900/50 border border-emerald-500/20 hover:bg-emerald-800/50 text-[10px]" title="Highlight">HL</button>
-                                    <div className="w-px h-4 bg-white/10 mx-1"></div>
-                                    <button onClick={() => handleToolbarInject('* ', '')} className="hover:text-white px-2 py-1 rounded bg-slate-900 border border-white/5 hover:bg-slate-850 text-[10px]">Bullet</button>
-                                    <button onClick={() => handleToolbarInject('1. ', '')} className="hover:text-white px-2 py-1 rounded bg-slate-900 border border-white/5 hover:bg-slate-850 text-[10px]">Number</button>
-                                    <button onClick={() => handleToolbarInject('- [ ] ', '')} className="hover:text-white px-2 py-1 rounded bg-slate-900 border border-white/5 hover:bg-slate-850 text-[10px]">Checklist</button>
-                                    <button onClick={() => handleToolbarInject('\n| Header | Header |\n|--------|--------|\n| Content| Content|\n', '')} className="hover:text-white px-2 py-1 rounded bg-slate-900 border border-white/5 hover:bg-slate-850 text-[10px]">Table</button>
-                                    <div className="w-px h-4 bg-white/10 mx-1"></div>
-                                    <button onClick={() => handleToolbarInject('\n---\n')} className="hover:text-white px-2 py-1 rounded bg-slate-900 border border-white/5 hover:bg-slate-850 text-[10px]">Line</button>
-                                    <button onClick={() => handleToolbarInject('> ', '')} className="hover:text-white px-2 py-1 rounded bg-slate-900 border border-white/5 hover:bg-slate-850 italic text-[10px]">Quote</button>
-                                    <button onClick={() => handleToolbarInject('`', '`')} className="hover:text-white px-2 py-1 rounded bg-slate-900 border border-white/5 hover:bg-slate-850 font-mono text-[10px]">Code</button>
-                                    <button onClick={() => handleToolbarInject('```\n', '\n```')} className="hover:text-white px-2 py-1 rounded bg-slate-900 border border-white/5 hover:bg-slate-850 font-mono text-[10px]">Block</button>
-                                    <button onClick={() => handleToolbarInject('$$ ', ' $$')} className="hover:text-white px-2 py-1 rounded bg-slate-900 border border-white/5 hover:bg-slate-850 font-serif text-[10px]" title="LaTeX Math">Math</button>
-                                    <div className="w-px h-4 bg-white/10 mx-1"></div>
-                                    <button onClick={() => handleToolbarInject('[Link Text](', ')')} className="hover:text-white px-2 py-1 rounded bg-slate-900 border border-white/5 hover:bg-slate-850 text-[10px]">🔗</button>
-                                    <button onClick={() => handleToolbarInject('![Image Alt](', ')')} className="hover:text-white px-2 py-1 rounded bg-slate-900 border border-white/5 hover:bg-slate-850 text-[10px]">🖼️</button>
-                                  </div>
-
-                                  {/* Notion-styled AI Toolbar expansion card */}
-                                  <div className="bg-slate-950/60 p-3.5 sm:p-4 rounded-2xl border border-indigo-500/10 space-y-3 shadow-inner">
-                                    <div className="flex flex-wrap items-center justify-between gap-2">
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-indigo-400">⚡</span>
-                                        <p className="text-xs font-black text-white font-display uppercase tracking-wider">NVIDIA AI Notion Note Companion</p>
-                                      </div>
-                                      <span className="text-[9px] text-slate-500 bg-white/5 px-2 py-0.5 rounded-full">Highlight text to prompt only selected section!</span>
-                                    </div>
-                                    
-                                    <div className="flex flex-wrap gap-1.5">
+                              {/* Slash Command Palette Modal / Dropdown */}
+                              <AnimatePresence>
+                                {slashMenuOpen && (
+                                  <motion.div
+                                    initial={{ opacity: 0, y: -6 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -6 }}
+                                    className="p-3 bg-slate-950 border border-indigo-500/30 rounded-2xl shadow-2xl space-y-2 z-20"
+                                  >
+                                    <div className="flex items-center justify-between pb-1 border-b border-white/5">
+                                      <span className="text-[11px] font-bold uppercase text-indigo-400 tracking-wider flex items-center gap-1.5">
+                                        <span>⚡ Slash Commands</span>
+                                      </span>
                                       <button 
-                                        type="button"
-                                        onClick={() => handleAINoteAction('summarize')}
-                                        disabled={aiGeneratingNotes}
-                                        className="px-3 py-1.5 rounded-xl bg-indigo-600/15 hover:bg-indigo-600/30 border border-indigo-500/20 text-[10px] font-bold text-indigo-300 transition-colors disabled:opacity-40"
+                                        onClick={() => setSlashMenuOpen(false)}
+                                        className="text-slate-400 hover:text-white p-0.5 rounded"
                                       >
-                                        📝 Summarize Note
-                                      </button>
-                                      <button 
-                                        type="button"
-                                        onClick={() => handleAINoteAction('expand')}
-                                        disabled={aiGeneratingNotes}
-                                        className="px-3 py-1.5 rounded-xl bg-indigo-600/15 hover:bg-indigo-600/30 border border-indigo-500/20 text-[10px] font-bold text-indigo-300 transition-colors disabled:opacity-40"
-                                      >
-                                        🚀 Expand Draft
-                                      </button>
-                                      <button 
-                                        type="button"
-                                        onClick={() => handleAINoteAction('improve')}
-                                        disabled={aiGeneratingNotes}
-                                        className="px-3 py-1.5 rounded-xl bg-indigo-600/15 hover:bg-indigo-600/30 border border-indigo-500/20 text-[10px] font-bold text-indigo-300 transition-colors disabled:opacity-40"
-                                      >
-                                        ✍️ Proofread & Polish
-                                      </button>
-                                      <button 
-                                        type="button"
-                                        onClick={() => handleAINoteAction('quiz')}
-                                        disabled={aiGeneratingNotes}
-                                        className="px-3 py-1.5 rounded-xl bg-purple-600/15 hover:bg-purple-600/30 border border-purple-500/20 text-[10px] font-bold text-purple-300 transition-colors disabled:opacity-40"
-                                      >
-                                        🧠 Active Quiz Block
-                                      </button>
-                                      <button 
-                                        type="button"
-                                        onClick={() => handleAINoteAction('action_items')}
-                                        disabled={aiGeneratingNotes}
-                                        className="px-3 py-1.5 rounded-xl bg-emerald-600/15 hover:bg-emerald-600/30 border border-emerald-500/20 text-[10px] font-bold text-emerald-300 transition-colors disabled:opacity-40"
-                                      >
-                                        📋 Extract Checklist
+                                        <X size={12} />
                                       </button>
                                     </div>
-
-                                    <div className="flex gap-2 items-center">
-                                      <input 
-                                        type="text"
-                                        placeholder="Ask AI to write section: e.g. Write a summary explaining electromagnetism..."
-                                        value={aiCustomPrompt}
-                                        onChange={e => setAiCustomPrompt(e.target.value)}
-                                        className="flex-1 bg-slate-900 border border-white/5 rounded-xl px-3 py-2 text-xs text-slate-150 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                      />
-                                      <button
-                                        type="button"
-                                        onClick={() => handleAINoteAction('custom')}
-                                        disabled={aiGeneratingNotes || !aiCustomPrompt.trim()}
-                                        className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-900/40 text-white font-bold text-[10px] uppercase transition-all"
-                                      >
-                                        Apply
-                                      </button>
+                                    <input 
+                                      type="text"
+                                      placeholder="Filter command..."
+                                      value={slashMenuFilter}
+                                      onChange={e => setSlashMenuFilter(e.target.value)}
+                                      className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-slate-900 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                      autoFocus
+                                    />
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-48 overflow-y-auto pr-1">
+                                      {filteredCommands.map((cmd, cIdx) => (
+                                        <button
+                                          key={cIdx}
+                                          type="button"
+                                          onClick={() => {
+                                            cmd.action();
+                                            setSlashMenuOpen(false);
+                                            setSlashMenuFilter('');
+                                          }}
+                                          className="flex items-center gap-2 p-2 rounded-xl bg-slate-900/70 hover:bg-indigo-600/20 border border-white/5 hover:border-indigo-500/30 text-left transition-all cursor-pointer group"
+                                        >
+                                          <span className="w-6 h-6 rounded-lg bg-white/5 flex items-center justify-center text-xs font-mono font-bold text-indigo-400 group-hover:bg-indigo-500 group-hover:text-white shrink-0">
+                                            {cmd.icon}
+                                          </span>
+                                          <div className="min-w-0">
+                                            <p className="text-xs font-bold text-white group-hover:text-indigo-300 truncate">{cmd.label}</p>
+                                            <p className="text-[9px] text-slate-400 truncate">{cmd.desc}</p>
+                                          </div>
+                                        </button>
+                                      ))}
                                     </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
 
-                                    {aiGeneratingNotes && (
-                                      <div className="flex items-center gap-2 text-xs text-indigo-400 font-bold animate-pulse pt-1">
-                                        <div className="animate-spin h-3 w-3 border-2 border-indigo-500 rounded-full border-t-transparent" />
-                                        <span>🤖 NVIDIA AI is redrafting blocks and active summaries. Please wait...</span>
-                                      </div>
-                                    )}
-                                  </div>
+                              {/* Formatting toolbar buttons */}
+                              <div className="flex flex-wrap items-center gap-1 bg-slate-950/60 p-1.5 rounded-xl border border-white/5 text-[10px] text-slate-400">
+                                <button onClick={() => handleToolbarInject('# ', '\n')} className="hover:text-white px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 font-bold">H1</button>
+                                <button onClick={() => handleToolbarInject('## ', '\n')} className="hover:text-white px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 font-bold">H2</button>
+                                <button onClick={() => handleToolbarInject('### ', '\n')} className="hover:text-white px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 font-bold">H3</button>
+                                <div className="w-px h-3.5 bg-white/10 mx-0.5"></div>
+                                <button onClick={() => handleToolbarInject('**', '**')} className="hover:text-white px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 font-bold" title="Bold">B</button>
+                                <button onClick={() => handleToolbarInject('*', '*')} className="hover:text-white px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 italic" title="Italic">I</button>
+                                <button onClick={() => handleToolbarInject('<mark>', '</mark>')} className="hover:text-white px-2 py-1 rounded bg-emerald-900/40 text-emerald-300" title="Highlight">HL</button>
+                                <button onClick={() => handleToolbarInject('- ', '')} className="hover:text-white px-2 py-1 rounded bg-slate-900 hover:bg-slate-800">List</button>
+                                <button onClick={() => handleToolbarInject('1. ', '')} className="hover:text-white px-2 py-1 rounded bg-slate-900 hover:bg-slate-800">1.2.3</button>
+                                <button onClick={() => handleToolbarInject('- [ ] ', '')} className="hover:text-white px-2 py-1 rounded bg-slate-900 hover:bg-slate-800">☑ ToDo</button>
+                                <div className="w-px h-3.5 bg-white/10 mx-0.5"></div>
+                                <button onClick={() => handleToolbarInject('`', '`')} className="hover:text-white px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 font-mono">Code</button>
+                                <button onClick={() => handleToolbarInject('$$\n', '\n$$')} className="hover:text-white px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 font-serif" title="LaTeX Math">Math $$</button>
+                                <button onClick={() => handleToolbarInject('> ', '')} className="hover:text-white px-2 py-1 rounded bg-slate-900 hover:bg-slate-800">Quote</button>
+                                <button onClick={() => handleToolbarInject('\n---\n')} className="hover:text-white px-2 py-1 rounded bg-slate-900 hover:bg-slate-800">Line</button>
+                              </div>
 
+                              {/* Canvas Editor: Split View or Standard Mode */}
+                              {viewSplitPreview ? (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                   <div className="relative">
                                     <textarea 
                                       id="notion-editor-textarea"
-                                      rows={15}
+                                      rows={18}
                                       value={activeNote.content}
                                       onChange={e => updateActiveNote({ content: e.target.value })}
-                                      className={`w-full px-4 py-3 bg-slate-950/60 border border-white/5 rounded-2xl focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs text-slate-200 leading-relaxed resize-none ${noteFont === 'serif' ? 'font-serif' : noteFont === 'mono' ? 'font-mono' : 'font-sans'}`}
-                                      placeholder="Write anything... support LaTeX equations, assignments instructions, code modules or list details..."
+                                      className={`w-full px-4 py-3 bg-slate-950/70 border border-white/5 rounded-2xl focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs text-slate-200 leading-relaxed resize-none ${noteFont === 'serif' ? 'font-serif' : noteFont === 'mono' ? 'font-mono' : 'font-sans'}`}
+                                      placeholder="Write anything in Markdown... (Type / for quick commands)"
                                     />
                                     <span className="absolute bottom-3 right-3 text-[10px] text-slate-500 font-mono">
-                                      {wordCount} words • {charCount} characters
+                                      {wordCount} words
                                     </span>
+                                  </div>
+                                  <div className={`p-4 rounded-2xl bg-slate-950/40 border border-white/5 text-xs text-slate-200 max-h-[440px] overflow-y-auto leading-relaxed select-text ${noteFont === 'serif' ? 'font-serif' : noteFont === 'mono' ? 'font-mono' : 'font-sans'}`}>
+                                    <div className="text-[10px] font-bold uppercase text-slate-500 pb-2 mb-2 border-b border-white/5">
+                                      Live Preview
+                                    </div>
+                                    <div className="space-y-2">
+                                      {renderMarkdown(activeNote.content)}
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : noteEditMode ? (
+                                <div className="relative">
+                                  <textarea 
+                                    id="notion-editor-textarea"
+                                    rows={16}
+                                    value={activeNote.content}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      if (val.endsWith('/') && !slashMenuOpen) {
+                                        setSlashMenuOpen(true);
+                                      }
+                                      updateActiveNote({ content: val });
+                                    }}
+                                    className={`w-full px-4 py-3 bg-slate-950/70 border border-white/5 rounded-2xl focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs text-slate-200 leading-relaxed resize-none ${noteFont === 'serif' ? 'font-serif' : noteFont === 'mono' ? 'font-mono' : 'font-sans'}`}
+                                    placeholder="Write in clean Markdown... Type / to launch commands palette, # for headings, - for lists, $$ for LaTeX math equations..."
+                                  />
+                                  <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono pt-1 px-1">
+                                    <span>Press / for Slash Menu commands</span>
+                                    <span>{wordCount} words • {charCount} chars • ~{readTimeMin}m read</span>
                                   </div>
                                 </div>
                               ) : (
-                                <div className={`p-6 rounded-2xl bg-slate-950/40 border border-white/5 text-xs text-slate-200 min-h-[300px] leading-relaxed select-text ${noteFont === 'serif' ? 'font-serif' : noteFont === 'mono' ? 'font-mono' : 'font-sans'}`}>
+                                <div className={`p-6 rounded-2xl bg-slate-950/40 border border-white/5 text-xs text-slate-200 min-h-[360px] leading-relaxed select-text ${noteFont === 'serif' ? 'font-serif' : noteFont === 'mono' ? 'font-mono' : 'font-sans'}`}>
                                   <div className="space-y-2">
                                     {renderMarkdown(activeNote.content)}
                                   </div>
                                 </div>
                               )}
 
+                              {/* AI Companion Expansion Bar */}
+                              <div className="bg-slate-950/60 p-3 sm:p-4 rounded-2xl border border-indigo-500/15 space-y-2.5 shadow-inner">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-indigo-400">⚡</span>
+                                    <p className="text-xs font-black text-white font-display uppercase tracking-wider">AI Study Note Companion</p>
+                                  </div>
+                                  <span className="text-[9px] text-slate-500">Transform drafts into study summaries or quiz blocks</span>
+                                </div>
+                                
+                                <div className="flex flex-wrap gap-1.5">
+                                  <button 
+                                    type="button"
+                                    onClick={() => handleAINoteAction('summarize')}
+                                    disabled={aiGeneratingNotes}
+                                    className="px-2.5 py-1 rounded-xl bg-indigo-600/15 hover:bg-indigo-600/30 border border-indigo-500/20 text-[10px] font-bold text-indigo-300 transition-colors disabled:opacity-40 cursor-pointer"
+                                  >
+                                    📝 Summarize
+                                  </button>
+                                  <button 
+                                    type="button"
+                                    onClick={() => handleAINoteAction('expand')}
+                                    disabled={aiGeneratingNotes}
+                                    className="px-2.5 py-1 rounded-xl bg-indigo-600/15 hover:bg-indigo-600/30 border border-indigo-500/20 text-[10px] font-bold text-indigo-300 transition-colors disabled:opacity-40 cursor-pointer"
+                                  >
+                                    🚀 Expand
+                                  </button>
+                                  <button 
+                                    type="button"
+                                    onClick={() => handleAINoteAction('improve')}
+                                    disabled={aiGeneratingNotes}
+                                    className="px-2.5 py-1 rounded-xl bg-indigo-600/15 hover:bg-indigo-600/30 border border-indigo-500/20 text-[10px] font-bold text-indigo-300 transition-colors disabled:opacity-40 cursor-pointer"
+                                  >
+                                    ✍️ Polish
+                                  </button>
+                                  <button 
+                                    type="button"
+                                    onClick={() => handleAINoteAction('quiz')}
+                                    disabled={aiGeneratingNotes}
+                                    className="px-2.5 py-1 rounded-xl bg-purple-600/15 hover:bg-purple-600/30 border border-purple-500/20 text-[10px] font-bold text-purple-300 transition-colors disabled:opacity-40 cursor-pointer"
+                                  >
+                                    🧠 Quiz Block
+                                  </button>
+                                  <button 
+                                    type="button"
+                                    onClick={() => handleAINoteAction('action_items')}
+                                    disabled={aiGeneratingNotes}
+                                    className="px-2.5 py-1 rounded-xl bg-emerald-600/15 hover:bg-emerald-600/30 border border-emerald-500/20 text-[10px] font-bold text-emerald-300 transition-colors disabled:opacity-40 cursor-pointer"
+                                  >
+                                    📋 Action Items
+                                  </button>
+                                </div>
+                              </div>
+
                               {/* Workspace page utilities */}
-                              <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-white/5">
+                              <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-white/5">
                                 <button
                                   onClick={() => {
-                                    navigator.clipboard.writeText(`Page: ${activeNote.icon || '📝'} ${activeNote.title}
-Subject: ${activeNote.subject}
-
-${activeNote.content}`);
-                                    showNotification('Full page layout copied in Markdown format!');
+                                    navigator.clipboard.writeText(`Page: ${activeNote.icon || '📝'} ${activeNote.title}\nSubject: ${activeNote.subject}\n\n${activeNote.content}`);
+                                    showNotification('Full page copied in Markdown format!');
                                   }}
-                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] text-slate-350 hover:text-white transition-colors border border-white/5 active:scale-95"
-                                  title="Export Note to standard Markdown syntax"
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] text-slate-300 hover:text-white transition-colors border border-white/5 active:scale-95 cursor-pointer"
+                                  title="Export Note to Markdown"
                                 >
-                                  📥 Copy Full Page Markdown
+                                  <Copy className="w-3 h-3" />
+                                  <span>Copy Markdown</span>
                                 </button>
 
                                 <button
                                   onClick={() => {
-                                    if (confirm('Delete this Notion study canvas page permanently?')) {
+                                    if (confirm('Delete this study note permanently?')) {
                                       setVaultNotes(prev => {
-                                      const newNotes = prev.filter(n => n.id !== activeNote.id);
-                                      if (currentUser) (async () => {
-       const newArr = newNotes;
-       for (const n of newArr) {
-          saveVaultNoteToSupabase(n).catch(()=>{});
-       }
-     })();
-                                      return newNotes;
-                                    });
+                                        const newNotes = prev.filter(n => n.id !== activeNote.id);
+                                        if (currentUser?.uid) deleteVaultNoteFromSupabase(activeNote.id, currentUser.uid).catch(()=>{});
+                                        return newNotes;
+                                      });
                                       setSelectedNoteId(null);
-                                      showNotification('Canvas page removed from database.');
+                                      showNotification('Note removed from vault.');
                                     }
                                   }}
-                                  className="flex items-center gap-1 text-red-400 hover:bg-red-500/10 px-3 py-1.5 rounded-lg transition-colors text-[10px] font-semibold active:scale-95"
+                                  className="flex items-center gap-1 text-red-400 hover:bg-red-500/10 px-3 py-1.5 rounded-lg transition-colors text-[10px] font-semibold active:scale-95 cursor-pointer"
                                   title="Trash note permanently"
                                 >
-                                  🗑️ Delete Page
+                                  <Trash2 className="w-3 h-3" />
+                                  <span>Delete Page</span>
                                 </button>
                               </div>
 
@@ -10170,7 +10473,259 @@ ${activeNote.content}`);
                       })()}
                     </div>
 
+                    {/* Right Column: Dynamic Outline (TOC) & Insights */}
+                    {showNoteOutline && (
+                      <div className="lg:col-span-3 smart-glass p-4 rounded-3xl space-y-4 border border-white/5 sticky top-4">
+                        {(() => {
+                          const activeNote = vaultNotes.find(n => n.id === selectedNoteId);
+                          if (!activeNote) {
+                            return (
+                              <div className="text-center py-8 text-xs text-slate-500">
+                                Select a note to view outline
+                              </div>
+                            );
+                          }
+
+                          const wordCount = activeNote.content.trim() === '' ? 0 : activeNote.content.trim().split(/\s+/).length;
+                          const readTimeMin = Math.max(1, Math.ceil(wordCount / 200));
+
+                          // Parse Headings
+                          const headings: { level: number; text: string }[] = [];
+                          const contentLines = activeNote.content.split('\n');
+                          contentLines.forEach(line => {
+                            const m1 = line.match(/^#\s+(.+)/);
+                            const m2 = line.match(/^##\s+(.+)/);
+                            const m3 = line.match(/^###\s+(.+)/);
+                            if (m1) headings.push({ level: 1, text: m1[1] });
+                            else if (m2) headings.push({ level: 2, text: m2[1] });
+                            else if (m3) headings.push({ level: 3, text: m3[1] });
+                          });
+
+                          return (
+                            <div className="space-y-4">
+                              <div className="flex items-center justify-between pb-2 border-b border-white/5">
+                                <h3 className="text-xs font-black text-white font-display uppercase tracking-wider flex items-center gap-1.5">
+                                  <span>📑 Outline (TOC)</span>
+                                </h3>
+                                <button
+                                  onClick={() => setShowNoteOutline(false)}
+                                  className="text-slate-400 hover:text-white p-1 rounded hover:bg-white/5"
+                                  title="Close Outline"
+                                >
+                                  <X size={12} />
+                                </button>
+                              </div>
+
+                              {/* Document Metrics */}
+                              <div className="grid grid-cols-2 gap-2 text-center">
+                                <div className="p-2 rounded-xl bg-slate-950/60 border border-white/5">
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase">Words</p>
+                                  <p className="text-sm font-black text-indigo-400 font-mono">{wordCount}</p>
+                                </div>
+                                <div className="p-2 rounded-xl bg-slate-950/60 border border-white/5">
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase">Read Time</p>
+                                  <p className="text-sm font-black text-purple-400 font-mono">~{readTimeMin}m</p>
+                                </div>
+                              </div>
+
+                              {/* Hierarchical Headings Tree */}
+                              <div className="space-y-1 max-h-[380px] overflow-y-auto pr-1">
+                                {headings.length === 0 ? (
+                                  <div className="text-center py-6 text-[11px] text-slate-500 px-2 bg-slate-950/30 rounded-xl border border-dashed border-white/5">
+                                    Type # Heading or ## Section in your note to automatically build an interactive outline.
+                                  </div>
+                                ) : (
+                                  headings.map((h, hIdx) => (
+                                    <div
+                                      key={hIdx}
+                                      className={`text-xs py-1 px-2 rounded-lg transition-colors truncate ${
+                                        h.level === 1
+                                          ? 'font-bold text-white bg-white/5'
+                                          : h.level === 2
+                                            ? 'pl-4 text-slate-300 font-semibold hover:bg-white/5'
+                                            : 'pl-7 text-[11px] text-slate-400 hover:bg-white/5'
+                                      }`}
+                                      title={h.text}
+                                    >
+                                      <span className="text-indigo-400 font-mono mr-1.5">{'#'.repeat(h.level)}</span>
+                                      <span>{h.text}</span>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+
+                              {/* Quick Syntax Shortcuts */}
+                              <div className="pt-2 border-t border-white/5 space-y-1 text-[10px] text-slate-400">
+                                <p className="font-bold uppercase text-slate-500 tracking-wider text-[9px]">Markdown Cheat-Sheet</p>
+                                <div className="flex flex-wrap gap-1">
+                                  <span className="px-1.5 py-0.5 rounded bg-slate-950 border border-white/5 font-mono"># H1</span>
+                                  <span className="px-1.5 py-0.5 rounded bg-slate-950 border border-white/5 font-mono">**bold**</span>
+                                  <span className="px-1.5 py-0.5 rounded bg-slate-950 border border-white/5 font-mono">- [ ] todo</span>
+                                  <span className="px-1.5 py-0.5 rounded bg-slate-950 border border-white/5 font-mono">$$ math $$</span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+
                   </div>
+
+                  {/* Modal 1: Collab 6-Digit Code Dialog (for creator / viewer) */}
+                  <AnimatePresence>
+                    {activeNoteCollabModalOpen && (() => {
+                      const note = vaultNotes.find(n => n.id === selectedNoteId);
+                      if (!note) return null;
+                      return (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+                          <motion.div
+                            initial={{ scale: 0.95, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.95, opacity: 0 }}
+                            className="w-full max-w-md smart-glass p-6 rounded-3xl border border-indigo-500/30 shadow-2xl space-y-4"
+                          >
+                            <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                              <div className="flex items-center gap-2">
+                                <Users2 className="w-5 h-5 text-indigo-400" />
+                                <h3 className="text-base font-black text-white">Peer Note Collaboration</h3>
+                              </div>
+                              <button
+                                onClick={() => setActiveNoteCollabModalOpen(false)}
+                                className="p-1 rounded-lg text-slate-400 hover:text-white"
+                              >
+                                <X size={16} />
+                              </button>
+                            </div>
+
+                            <p className="text-xs text-slate-300 leading-relaxed">
+                              Share this 6-digit code with your classmates. Anyone who enters this code in <span className="text-indigo-400 font-bold">Join Note</span> will open and sync this note with you.
+                            </p>
+
+                            <div className="p-5 rounded-2xl bg-slate-950 border border-indigo-500/40 text-center space-y-1 shadow-inner">
+                              <p className="text-[10px] uppercase tracking-wider font-extrabold text-slate-400">Collaboration Code</p>
+                              <p className="text-4xl font-black font-mono tracking-widest text-indigo-400 select-all py-1">
+                                {note.collabCode}
+                              </p>
+                              <p className="text-[10px] text-emerald-400 font-bold">🔒 Private to users with code</p>
+                            </div>
+
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => {
+                                  if (navigator.clipboard) {
+                                    navigator.clipboard.writeText(note.collabCode || '');
+                                    showNotification('✓ Copied 6-digit code to clipboard!');
+                                  }
+                                }}
+                                className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-md active:scale-95 cursor-pointer"
+                              >
+                                <Copy className="w-4 h-4" />
+                                <span>Copy 6-Digit Code</span>
+                              </button>
+                              <button
+                                onClick={() => setActiveNoteCollabModalOpen(false)}
+                                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition-all cursor-pointer"
+                              >
+                                Done
+                              </button>
+                            </div>
+                          </motion.div>
+                        </div>
+                      );
+                    })()}
+                  </AnimatePresence>
+
+                  {/* Modal 2: Join Note by 6-Digit Code Dialog */}
+                  <AnimatePresence>
+                    {collabJoinModalOpen && (
+                      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+                        <motion.div
+                          initial={{ scale: 0.95, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          exit={{ scale: 0.95, opacity: 0 }}
+                          className="w-full max-w-md smart-glass p-6 rounded-3xl border border-indigo-500/30 shadow-2xl space-y-4"
+                        >
+                          <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                            <div className="flex items-center gap-2">
+                              <Users2 className="w-5 h-5 text-indigo-400" />
+                              <h3 className="text-base font-black text-white">Join Shared Note</h3>
+                            </div>
+                            <button
+                              onClick={() => {
+                                setCollabJoinModalOpen(false);
+                                setCollabJoinError('');
+                              }}
+                              className="p-1 rounded-lg text-slate-400 hover:text-white"
+                            >
+                              <X size={16} />
+                            </button>
+                          </div>
+
+                          <p className="text-xs text-slate-300 leading-relaxed">
+                            Enter the 6-digit collaboration code provided by your peer or faculty to join and sync their lecture note.
+                          </p>
+
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">6-Digit Code</label>
+                            <input 
+                              type="text"
+                              maxLength={6}
+                              placeholder="e.g. 583921"
+                              value={collabJoinCodeInput}
+                              onChange={e => {
+                                const val = e.target.value.replace(/\D/g, '').slice(0, 6);
+                                setCollabJoinCodeInput(val);
+                                setCollabJoinError('');
+                              }}
+                              onKeyDown={e => e.key === 'Enter' && handleJoinNoteByCode(collabJoinCodeInput)}
+                              className="w-full text-center text-2xl font-mono font-black tracking-widest px-4 py-3 rounded-2xl bg-slate-950 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                              autoFocus
+                            />
+                          </div>
+
+                          {collabJoinError && (
+                            <motion.div
+                              initial={{ opacity: 0, y: -4 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="p-2.5 rounded-xl bg-red-500/15 border border-red-500/30 text-xs text-red-300 font-medium"
+                            >
+                              ⚠️ {collabJoinError}
+                            </motion.div>
+                          )}
+
+                          <div className="flex gap-2 pt-1">
+                            <button
+                              onClick={() => handleJoinNoteByCode(collabJoinCodeInput)}
+                              disabled={collabJoinLoading || collabJoinCodeInput.length !== 6}
+                              className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-900/40 text-white font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shadow-md active:scale-95 cursor-pointer disabled:cursor-not-allowed"
+                            >
+                              {collabJoinLoading ? (
+                                <>
+                                  <div className="w-3.5 h-3.5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                                  <span>Joining...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Check className="w-4 h-4" />
+                                  <span>Join Note</span>
+                                </>
+                              )}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setCollabJoinModalOpen(false);
+                                setCollabJoinError('');
+                              }}
+                              className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition-all cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </motion.div>
+                      </div>
+                    )}
+                  </AnimatePresence>
 
                 </div>
               )}
@@ -11668,27 +12223,89 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                     {/* Filter and List Panel */}
                     <div className="lg:col-span-8 space-y-6">
                       
-                      {/* Search and Filters Segment */}
-                      <div className="smart-glass p-4 sm:p-5 rounded-3xl space-y-4">
-                        <div className="relative">
-                          <input 
-                            type="text" 
-                            value={materialsSearchQuery}
-                            onChange={e => setMaterialsSearchQuery(e.target.value)}
-                            placeholder="Search academic text, year, or term (e.g. 2024 Exam, BST topic)..." 
-                            className="w-full pl-10 pr-4 py-2.5 bg-slate-900 border border-white/10 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs text-white"
-                          />
-                          <Search className="absolute left-3.5 top-3 w-4 h-4 text-slate-500" />
+                      {/* Search, Action Buttons & Breadcrumb Segment */}
+                      <div className="smart-glass p-3.5 sm:p-4 rounded-3xl space-y-3 border border-white/5 shadow-sm">
+                        
+                        {/* Top Action Row: Search + New Folder + Upload */}
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                          <div className="relative flex-1">
+                            <input 
+                              type="text" 
+                              value={materialsSearchQuery}
+                              onChange={e => setMaterialsSearchQuery(e.target.value)}
+                              placeholder="Search materials, exam years, topics..." 
+                              className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-white/10 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs text-white"
+                            />
+                            <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-500" />
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              onClick={() => {
+                                setNewMaterialFolderName('');
+                                setShowMaterialFolderModal(true);
+                              }}
+                              className="px-3 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-bold text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 cursor-pointer flex-1 sm:flex-initial"
+                              title="Create Material Hub Folder"
+                            >
+                              <FolderPlus className="w-3.5 h-3.5 text-indigo-400" />
+                              <span>+ New Folder</span>
+                            </button>
+
+                            <button 
+                              onClick={() => setOpenUploadModal(true)}
+                              className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs transition-all shadow-sm active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer flex-1 sm:flex-initial"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>Share File</span>
+                            </button>
+                          </div>
                         </div>
 
-                        {/* Dropdown Filters Line: Clean 4-Column Responsive Grid */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-[11px] sm:text-xs">
-                          <div className="space-y-1">
-                            <label className="text-slate-400 font-bold block uppercase tracking-wider text-[10px]">Target Level</label>
+                        {/* Breadcrumbs Navigation Bar */}
+                        {(() => {
+                          const activeFolder = materialFolders.find(f => f.id === activeMaterialFolderId);
+                          return (
+                            <div className="flex items-center justify-between gap-2 p-2 bg-slate-950/70 border border-white/5 rounded-2xl text-[11px]">
+                              <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none no-scrollbar min-w-0">
+                                <button
+                                  onClick={() => setActiveMaterialFolderId(null)}
+                                  className={`px-2.5 py-1 rounded-lg font-bold transition-all flex items-center gap-1 shrink-0 cursor-pointer ${
+                                    !activeMaterialFolderId ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white hover:bg-white/5'
+                                  }`}
+                                >
+                                  <span>🏠 Root</span>
+                                </button>
+                                {activeFolder && (
+                                  <>
+                                    <ChevronRight className="w-3 h-3 text-slate-600 shrink-0" />
+                                    <div className="flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 truncate max-w-[150px]">
+                                      <span>📁 {activeFolder.name}</span>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+
+                              {activeMaterialFolderId && (
+                                <button
+                                  onClick={() => setActiveMaterialFolderId(null)}
+                                  className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-all shrink-0 cursor-pointer"
+                                  title="Return to Root level"
+                                >
+                                  ↑ Back to Root
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
+
+                        {/* Compact 4-Column Dropdown Filters */}
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 text-[10px]">
+                          <div>
                             <select 
                               value={materialsGradeFilter}
                               onChange={e => setMaterialsGradeFilter(e.target.value)}
-                              className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                              className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
                             >
                               <option value="All">All Grades</option>
                               <option value="Grade 9">Grade 9</option>
@@ -11698,12 +12315,11 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                             </select>
                           </div>
 
-                          <div className="space-y-1">
-                            <label className="text-slate-400 font-bold block uppercase tracking-wider text-[10px]">Subject Domain</label>
+                          <div>
                             <select 
                               value={materialsSubjectFilter}
                               onChange={e => setMaterialsSubjectFilter(e.target.value)}
-                              className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                              className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
                             >
                               {['All', 'Mathematics', 'Physics', 'Chemistry', 'Biology', 'Computer Science', 'English', 'Social Science', 'General'].map(sub => (
                                 <option key={sub} value={sub}>{sub === 'All' ? 'All Subjects' : sub}</option>
@@ -11711,12 +12327,11 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                             </select>
                           </div>
 
-                          <div className="space-y-1">
-                            <label className="text-slate-400 font-bold block uppercase tracking-wider text-[10px]">Format Classification</label>
+                          <div>
                             <select 
                               value={materialsTypeFilter}
                               onChange={e => setMaterialsTypeFilter(e.target.value)}
-                              className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                              className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
                             >
                               <option value="All">All Formats</option>
                               <option value="pdf">PDF File</option>
@@ -11730,12 +12345,11 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                             </select>
                           </div>
 
-                          <div className="space-y-1">
-                            <label className="text-slate-400 font-bold block uppercase tracking-wider text-[10px]">Sorting Order</label>
+                          <div>
                             <select 
                               value={materialsSortBy}
                               onChange={e => setMaterialsSortBy(e.target.value)}
-                              className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                              className="w-full bg-slate-900 border border-white/10 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
                             >
                               <option value="Newest">Newest first</option>
                               <option value="Downloads">Most Downloaded</option>
@@ -11746,11 +12360,79 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                         </div>
                       </div>
 
+                      {/* Windows / Android File Manager: Folders First */}
+                      {!activeMaterialFolderId && materialFolders.length > 0 && (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between px-1">
+                            <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1.5">
+                              <span>📁 Folders ({materialFolders.length})</span>
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                            {materialFolders.map(f => {
+                              const fileCount = materials.filter(m => m.folder_id === f.id).length;
+                              return (
+                                <motion.div
+                                  key={f.id}
+                                  whileHover={{ scale: 1.02 }}
+                                  whileTap={{ scale: 0.98 }}
+                                  onClick={() => setActiveMaterialFolderId(f.id)}
+                                  className="p-3 rounded-2xl bg-slate-900/90 hover:bg-slate-850 border border-white/5 hover:border-amber-500/40 transition-all cursor-pointer group flex flex-col justify-between space-y-2 shadow-sm"
+                                >
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="text-xl">📁</span>
+                                    <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                                      <button
+                                        onClick={() => {
+                                          setRenameMaterialFolderModal({ id: f.id, name: f.name });
+                                          setRenameMaterialInput(f.name);
+                                        }}
+                                        className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white"
+                                        title="Rename Folder"
+                                      >
+                                        <Edit2 size={11} />
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteMaterialFolder(f.id, f.name)}
+                                        className="p-1 hover:bg-rose-500/20 rounded text-slate-400 hover:text-rose-400"
+                                        title="Delete Folder"
+                                      >
+                                        <Trash2 size={11} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs font-bold text-white group-hover:text-amber-300 truncate">{f.name}</p>
+                                    <p className="text-[9px] text-slate-400 font-mono">{fileCount} {fileCount === 1 ? 'file' : 'files'}</p>
+                                  </div>
+                                </motion.div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
                       {/* Materials List Generator */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between px-1">
+                          <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                            {activeMaterialFolderId 
+                              ? `Files in "${materialFolders.find(f => f.id === activeMaterialFolderId)?.name || 'Folder'}"` 
+                              : 'Files at Root'}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                         {(() => {
                           let displayList = materials;
                           const totalRaw = displayList.length;
+
+                          // File Manager folder filtering: show only files in active folder, or files at root
+                          if (activeMaterialFolderId) {
+                            displayList = displayList.filter(m => m.folder_id === activeMaterialFolderId);
+                          } else {
+                            displayList = displayList.filter(m => !m.folder_id);
+                          }
 
                           // Feed, notes, question papers, bookmarks state filter
                           if (activeMaterialSubTab === 'papers') {
@@ -11957,12 +12639,20 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
 
                                 {/* Interactive Actions Line */}
                                 <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
-                                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 w-full">
+                                  <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-1.5 w-full">
                                     <button 
                                       onClick={() => handleOpenMaterialDocument(mat)}
                                       className="text-[10px] font-bold text-white bg-indigo-600 hover:bg-indigo-500 border border-indigo-500/20 px-2 sm:px-3 py-2 sm:py-1.5 rounded-xl transition-all flex items-center justify-center gap-1 w-full whitespace-nowrap overflow-hidden text-ellipsis shadow-sm"
                                     >
                                       <Eye className="w-3.5 h-3.5 shrink-0" /> Open
+                                    </button>
+
+                                    <button 
+                                      onClick={() => setMaterialItemHoldMenu({ materialId: mat.id, x: 0, y: 0 })}
+                                      className="text-[10px] font-bold text-amber-300 bg-amber-500/10 hover:bg-amber-600 hover:text-white border border-amber-500/20 px-2 sm:px-3 py-2 sm:py-1.5 rounded-xl transition-all flex items-center justify-center gap-1 w-full whitespace-nowrap overflow-hidden text-ellipsis shadow-sm"
+                                      title="Organize into folder"
+                                    >
+                                      <Folder className="w-3.5 h-3.5 shrink-0" /> Move
                                     </button>
 
                                     <button 
@@ -12261,6 +12951,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                         })()}
                       </div>
                     </div>
+                  </div>
 
                     {/* Left Column: Easy Quick Share & Leaderboard */}
                     <div className="lg:col-span-4 space-y-6">
@@ -12912,6 +13603,139 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                     </div>
                   )}
 
+                  {/* Material Folder Creation Modal */}
+                  {showMaterialFolderModal && (
+                    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn text-left">
+                      <div className="bg-slate-900 border border-white/10 p-5 rounded-3xl max-w-sm w-full space-y-4 shadow-2xl">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-extrabold text-white flex items-center gap-2">
+                            <span>📁</span> Create Material Folder
+                          </h4>
+                          <button onClick={() => setShowMaterialFolderModal(false)} className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5">
+                            <X size={16} />
+                          </button>
+                        </div>
+                        <p className="text-xs text-slate-400">Folders in Material Hub store files, documents, and question papers only.</p>
+                        <input
+                          type="text"
+                          placeholder="Folder name (e.g. Physics Past Papers)"
+                          value={newMaterialFolderName}
+                          onChange={(e) => setNewMaterialFolderName(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleCreateMaterialFolder()}
+                          className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          autoFocus
+                        />
+                        <div className="flex justify-end gap-2 pt-2">
+                          <button
+                            onClick={() => setShowMaterialFolderModal(false)}
+                            className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold transition-all"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={handleCreateMaterialFolder}
+                            disabled={!newMaterialFolderName.trim()}
+                            className="px-4 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition-all shadow-md disabled:opacity-50"
+                          >
+                            Create
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Material Folder Rename Modal */}
+                  {renameMaterialFolderModal && (
+                    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn text-left">
+                      <div className="bg-slate-900 border border-white/10 p-5 rounded-3xl max-w-sm w-full space-y-4 shadow-2xl">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-extrabold text-white flex items-center gap-2">
+                            <span>✏️</span> Rename Folder
+                          </h4>
+                          <button onClick={() => setRenameMaterialFolderModal(null)} className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5">
+                            <X size={16} />
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          value={renameMaterialInput}
+                          onChange={(e) => setRenameMaterialInput(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleRenameMaterialFolder()}
+                          className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          autoFocus
+                        />
+                        <div className="flex justify-end gap-2 pt-2">
+                          <button
+                            onClick={() => setRenameMaterialFolderModal(null)}
+                            className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold transition-all"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={handleRenameMaterialFolder}
+                            disabled={!renameMaterialInput.trim()}
+                            className="px-4 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition-all shadow-md disabled:opacity-50"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Move File to Folder Modal */}
+                  {materialItemHoldMenu && (
+                    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn text-left">
+                      <div className="bg-slate-900 border border-white/10 p-5 rounded-3xl max-w-sm w-full space-y-4 shadow-2xl">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Folder className="w-4 h-4 text-amber-400" />
+                            <h4 className="text-xs font-black uppercase text-white tracking-wider">Move File to Folder</h4>
+                          </div>
+                          <button onClick={() => setMaterialItemHoldMenu(null)} className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5">
+                            <X size={16} />
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-slate-400">Choose a destination folder in Material Hub:</p>
+                        
+                        <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+                          <button
+                            onClick={() => handleMoveMaterialToFolder(materialItemHoldMenu.materialId, null)}
+                            className="w-full text-left p-2.5 rounded-xl border border-white/5 bg-slate-950/60 hover:bg-indigo-600/20 hover:border-indigo-500/30 text-white flex items-center justify-between text-xs font-bold transition-all"
+                          >
+                            <span className="flex items-center gap-2"><span>🏠</span> Root (No Folder)</span>
+                          </button>
+                          
+                          {materialFolders.map(folder => (
+                            <button
+                              key={folder.id}
+                              onClick={() => handleMoveMaterialToFolder(materialItemHoldMenu.materialId, folder.id)}
+                              className="w-full text-left p-2.5 rounded-xl border border-white/5 bg-slate-950/60 hover:bg-amber-600/20 hover:border-amber-500/30 text-white flex items-center justify-between text-xs font-bold transition-all"
+                            >
+                              <span className="flex items-center gap-2"><span>📁</span> {folder.name}</span>
+                              <span className="text-[10px] text-slate-500 font-mono">
+                                {materials.filter(m => m.folder_id === folder.id).length} files
+                              </span>
+                            </button>
+                          ))}
+
+                          {materialFolders.length === 0 && (
+                            <p className="text-center text-[10px] text-slate-500 py-3">No folders yet. Click "+ New Folder" at the top to create one.</p>
+                          )}
+                        </div>
+
+                        <div className="flex justify-end pt-2">
+                          <button
+                            onClick={() => setMaterialItemHoldMenu(null)}
+                            className="px-3.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold transition-all"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                 </div>
               )}
 
@@ -13048,92 +13872,10 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                   </div>
                 </div>
               )}
-                                     {/* Tab 7: AI Teacher Chat Dialog */}
+              {/* Tab 7: AI Teacher Chat Dialog */}
               {activeTab === 'ai_teacher' && (
-                <div className="space-y-4 animate-fadeIn">
+                <div className="h-[calc(100dvh-130px)] flex flex-col smart-glass p-3 sm:p-4 rounded-3xl border border-white/10 shadow-xl relative w-full overflow-hidden animate-fadeIn">
                   
-                  {/* AI Quota & Limits Dashboard Banner */}
-                  <div className="smart-glass p-4 sm:p-5 rounded-3xl border border-white/10 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm bg-gradient-to-r from-slate-900/90 via-indigo-950/20 to-slate-900/90">
-                    <div className="flex items-center gap-3.5">
-                      <div className={`p-3 rounded-2xl border shrink-0 transition-colors ${aiUsageState.remaining <= 0 ? 'bg-red-500/15 border-red-500/30 text-red-400' : 'bg-indigo-500/15 border-indigo-500/30 text-indigo-400'}`}>
-                        <Sparkles className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="text-sm font-black text-white">Byte — AI Study & Learning Assistant</h2>
-                          <button
-                            onClick={() => setIsJarvisActive(true)}
-                            className="px-3 py-1 rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-black text-[10px] uppercase tracking-wider flex items-center gap-1.5 shadow-lg shadow-indigo-600/30 transition-all cursor-pointer hover:scale-105"
-                            title="Open Orion AI Copilot"
-                          >
-                            <Sparkles className="w-3.5 h-3.5" />
-                            <span>Open Orion</span>
-                          </button>
-                          <button
-                            onClick={() => handleTabSelect('study_hub')}
-                            className="px-2.5 py-0.5 rounded-full bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 text-[10px] font-extrabold flex items-center gap-1 transition-all cursor-pointer"
-                            title="Switch to Byte Learning Syllabus & Interactive Lessons"
-                          >
-                            <BookOpen className="w-3 h-3" />
-                            <span>Switch to Byte Learning</span>
-                          </button>
-                          <span className="text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-0.5 rounded-full bg-slate-800/90 text-slate-300 border border-white/10 capitalize">
-                            {effectiveRole || 'student'} Tier
-                          </span>
-                          {aiUsageState.bonus > 0 && (
-                            <span className="text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                              <Zap className="w-2.5 h-2.5" /> +{aiUsageState.bonus} Bonus Quota
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[11px] text-slate-400 mt-1">
-                          {aiUsageState.remaining <= 0 ? (
-                            <span className="text-red-400 font-semibold flex items-center gap-1">
-                              <AlertTriangle className="w-3.5 h-3.5 inline" /> Daily limit reached. Next slot unlocks in ~{aiUsageState.nextAvailableInMinutes || 60}m, or upgrade your quota below.
-                            </span>
-                          ) : (
-                            <span>
-                              Rolling 24-hour fair-use limits safeguard server compute and guarantee fast response times.
-                            </span>
-                          )}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Progress Bar & Upgrade Action */}
-                    <div className="flex items-center gap-4 self-stretch md:self-auto justify-between md:justify-end border-t md:border-t-0 border-white/5 pt-3 md:pt-0">
-                      <div className="flex flex-col items-start md:items-end gap-1">
-                        <div className="flex items-center gap-1.5 text-xs font-bold">
-                          <span className={aiUsageState.remaining <= 0 ? 'text-red-400 font-mono' : 'text-emerald-400 font-mono'}>
-                            {aiUsageState.remaining}
-                          </span>
-                          <span className="text-slate-400">/ {aiUsageState.limit} queries left today</span>
-                        </div>
-                        <div className="w-32 sm:w-40 h-2 bg-slate-800 rounded-full overflow-hidden border border-white/5">
-                          <div 
-                            className={`h-full rounded-full transition-all duration-500 ${
-                              aiUsageState.remaining <= 0
-                                ? 'bg-red-500'
-                                : (aiUsageState.used / Math.max(1, aiUsageState.limit)) > 0.8
-                                  ? 'bg-amber-500'
-                                  : 'bg-indigo-500'
-                            }`}
-                            style={{ width: `${Math.min(100, Math.round((aiUsageState.used / Math.max(1, aiUsageState.limit)) * 100))}%` }}
-                          />
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={() => setShowQuotaModal(true)}
-                        className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase tracking-wider transition-all shadow-md active:scale-95 flex items-center gap-1.5 shrink-0"
-                        title="View AI limits and upgrade quota"
-                      >
-                        <Zap className="w-3.5 h-3.5 text-amber-300" />
-                        <span>Upgrade Quota</span>
-                      </button>
-                    </div>
-                  </div>
-
                   {/* Slide-out Study Threads Drawer */}
                   <AnimatePresence>
                     {showAiHistoryDrawer && (
@@ -13240,141 +13982,172 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                     )}
                   </AnimatePresence>
 
-                  {/* Primary Chat Dialog Pane */}
-                  <div className="smart-glass p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl min-h-[560px] h-[calc(100dvh-210px)] flex flex-col justify-between shadow-xl relative border border-white/10 w-full">
-                    
-                    {/* Header: Controls, Selectors & Actions */}
-                    <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-white/5 pb-3">
-                      {/* Left Actions: History Drawer & New Thread */}
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => setShowAiHistoryDrawer(true)}
-                          className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-850 border border-white/10 text-slate-300 hover:text-white flex items-center gap-1.5 text-xs font-semibold transition-all shadow-sm active:scale-95"
-                          title="Open Study History & Threads"
-                        >
-                          <History className="w-3.5 h-3.5 text-indigo-400" />
-                          <span className="hidden sm:inline">Threads</span>
-                          <span className="px-1.5 py-0.2 rounded-full bg-indigo-500/20 text-indigo-300 text-[10px] font-mono font-bold">
-                            {aiThreads.length}
-                          </span>
-                        </button>
-                        <button
-                          onClick={handleCreateNewThread}
-                          className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white flex items-center gap-1 text-xs font-bold transition-all shadow-sm active:scale-95"
-                          title="Start New Thread"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline">New</span>
-                        </button>
-                        <button
-                          onClick={() => setIsJarvisActive(true)}
-                          className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white flex items-center gap-1.5 text-xs font-black uppercase tracking-wider transition-all shadow-md active:scale-95 cursor-pointer"
-                          title="Open Orion AI Copilot"
-                        >
-                          <Sparkles className="w-3.5 h-3.5 text-cyan-300 animate-pulse" />
-                          <span>Orion</span>
-                        </button>
+                  {/* Header: Controls, Selectors & Actions */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-2.5 shrink-0">
+                    {/* Left Actions: History Drawer & New Thread */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <div className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-indigo-500/15 border border-indigo-500/20 text-white font-black text-xs">
+                        <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Byte</span>
+                        <span className="text-[9px] uppercase font-mono px-1 rounded bg-white/10 text-indigo-300">
+                          {effectiveRole || 'student'}
+                        </span>
                       </div>
-
-                      {/* Center Selectors: Tutor Persona & Tutorial Mode */}
-                      <div className="flex flex-wrap items-center gap-2">
-                        {/* Persona Selector */}
-                        <div className="flex items-center gap-1.5 bg-slate-900 border border-white/10 rounded-xl px-2.5 py-1 shadow-inner">
-                          <span className="text-sm shrink-0">
-                            {AI_PERSONAS.find(p => p.id === selectedPersona)?.avatarChar || '🤖'}
-                          </span>
-                          <select
-                            value={selectedPersona}
-                            onChange={(e) => handleSwitchPersona(e.target.value)}
-                            className="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer pr-1 max-w-[130px] sm:max-w-[180px] truncate"
-                            title="Select AI Instructor"
-                          >
-                            {AI_PERSONAS.map(p => (
-                              <option key={p.id} value={p.id} className="bg-slate-900 text-white">
-                                {p.name} ({p.speciality})
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        {/* Mode Selector */}
-                        <div className="flex items-center gap-1.5 bg-slate-900 border border-white/10 rounded-xl px-2.5 py-1 shadow-inner">
-                          <select
-                            value={aiMode}
-                            onChange={(e) => handleSwitchMode(e.target.value as any)}
-                            className="bg-transparent text-indigo-300 text-xs font-bold focus:outline-none cursor-pointer uppercase tracking-wider text-[10px] max-w-[120px] sm:max-w-none"
-                            title="Active Tutorial Mode"
-                          >
-                            <option value="explanatory" className="bg-slate-900 text-white">📚 Explainer Mode</option>
-                            <option value="socratic" className="bg-slate-900 text-white">🎓 Socratic Mode</option>
-                            <option value="coder" className="bg-slate-900 text-white">💻 Coding Coach</option>
-                            <option value="quiz_gen" className="bg-slate-900 text-white">📝 Quiz Exam</option>
-                          </select>
-                        </div>
-
-                        {/* Reasoning Mode Toggle */}
-                        <button
-                          type="button"
-                          onClick={() => setAiReasoningMode(!aiReasoningMode)}
-                          className={`px-2.5 py-1 rounded-xl border text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
-                            aiReasoningMode ? 'bg-purple-600/30 text-purple-300 border-purple-500/50 shadow-sm' : 'bg-slate-900 text-slate-400 border-white/10 hover:text-white'
-                          }`}
-                          title="Toggle Deep Reasoning Mode for step-by-step rigorous analysis"
-                        >
-                          <Cpu className="w-3.5 h-3.5 text-purple-400" />
-                          <span>{aiReasoningMode ? 'Reasoning: ON' : 'Reasoning'}</span>
-                        </button>
-
-                        {/* Web Search Mode Selector */}
-                        <div className="flex items-center gap-1.5 bg-slate-900 border border-teal-500/25 rounded-xl px-2.5 py-1 shadow-inner">
-                          <Globe className={`w-3.5 h-3.5 shrink-0 ${aiWebSearchMode === 'off' ? 'text-slate-500' : 'text-teal-400'}`} />
-                          <select
-                            value={aiWebSearchMode}
-                            onChange={(e) => setAiWebSearchMode(e.target.value as 'auto' | 'force' | 'off')}
-                            className="bg-transparent text-teal-300 text-[10px] font-bold focus:outline-none cursor-pointer uppercase tracking-wider"
-                            title="Controlled Web Search Intelligence Mode"
-                          >
-                            <option value="auto" className="bg-slate-900 text-white">🌐 Web: Smart Auto</option>
-                            <option value="force" className="bg-slate-900 text-white">🔍 Web: Always Search</option>
-                            <option value="off" className="bg-slate-900 text-white">⚡ Web: Offline Fast</option>
-                          </select>
-                        </div>
-
-                        {/* Super Admin Model Provider Switcher */}
-                        {(currentUser?.role === 'super_admin' || effectiveRole === 'super_admin') && (
-                          <div className="flex items-center gap-1.5 bg-slate-900 border border-purple-500/35 rounded-xl px-2.5 py-1 shadow-inner">
-                            <Cpu className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                            <select
-                              value={aiModelOverride || 'auto'}
-                              onChange={(e) => setAiModelOverride(e.target.value === 'auto' ? '' : e.target.value)}
-                              className="bg-transparent text-purple-300 text-[10px] font-bold focus:outline-none cursor-pointer uppercase tracking-wider"
-                              title="Super Admin AI Model Testing Override"
-                            >
-                              <option value="auto" className="bg-slate-900 text-white">🤖 AI: Auto Router</option>
-                              <option value="apinex" className="bg-slate-900 text-white">⚡ Provider: APInex</option>
-                              <option value="ministral" className="bg-slate-900 text-white">🌊 Provider: Ministral</option>
-                              <option value="groq" className="bg-slate-900 text-white">🚀 Provider: Groq</option>
-                              <option value="nara_router" className="bg-slate-900 text-white">🎯 Provider: Nara Router</option>
-                            </select>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Right Actions: Clear Chat */}
-                      <div className="flex items-center gap-1.5 ml-auto sm:ml-0">
-                        <button
-                          onClick={handleClearThreadHistory}
-                          className="px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white border border-white/5 text-[11px] font-semibold transition-all flex items-center gap-1"
-                          title="Flush dialogue entries for this thread"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          <span className="hidden md:inline">Clear</span>
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => setShowAiHistoryDrawer(true)}
+                        className="px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-slate-850 border border-white/10 text-slate-300 hover:text-white flex items-center gap-1.5 text-xs font-semibold transition-all shadow-sm active:scale-95"
+                        title="Open Study History & Threads"
+                      >
+                        <History className="w-3.5 h-3.5 text-indigo-400" />
+                        <span className="hidden sm:inline">Threads</span>
+                        <span className="px-1.5 py-0.2 rounded-full bg-indigo-500/20 text-indigo-300 text-[10px] font-mono font-bold">
+                          {aiThreads.length}
+                        </span>
+                      </button>
+                      <button
+                        onClick={handleCreateNewThread}
+                        className="px-2.5 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white flex items-center gap-1 text-xs font-bold transition-all shadow-sm active:scale-95"
+                        title="Start New Thread"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">New</span>
+                      </button>
+                      <button
+                        onClick={() => setIsJarvisActive(true)}
+                        className="px-2 py-1 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white flex items-center gap-1 text-xs font-black uppercase tracking-wider transition-all shadow-md active:scale-95 cursor-pointer"
+                        title="Open Orion AI Copilot"
+                      >
+                        <Sparkles className="w-3 h-3 text-cyan-300 animate-pulse" />
+                        <span className="hidden sm:inline">Orion</span>
+                      </button>
                     </div>
 
-                    {/* Dialogue Stream Body */}
-                    <div id="ai-dialog-scroll" className="flex-1 overflow-y-auto pr-2 my-3 space-y-3.5 bg-slate-950/40 p-3 sm:p-4 rounded-2xl border border-white/5 shadow-inner">
+                    {/* Center Selectors: Tutor Persona & Tutorial Mode */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {/* Persona Selector */}
+                      <div className="flex items-center gap-1 bg-slate-900 border border-white/10 rounded-xl px-2 py-1 shadow-inner">
+                        <span className="text-xs shrink-0">
+                          {AI_PERSONAS.find(p => p.id === selectedPersona)?.avatarChar || '🤖'}
+                        </span>
+                        <select
+                          value={selectedPersona}
+                          onChange={(e) => handleSwitchPersona(e.target.value)}
+                          className="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer pr-1 max-w-[120px] sm:max-w-[160px] truncate"
+                          title="Select AI Instructor"
+                        >
+                          {AI_PERSONAS.map(p => (
+                            <option key={p.id} value={p.id} className="bg-slate-900 text-white">
+                              {p.name} ({p.speciality})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Mode Selector */}
+                      <div className="flex items-center gap-1 bg-slate-900 border border-white/10 rounded-xl px-2 py-1 shadow-inner">
+                        <select
+                          value={aiMode}
+                          onChange={(e) => handleSwitchMode(e.target.value as any)}
+                          className="bg-transparent text-indigo-300 text-xs font-bold focus:outline-none cursor-pointer uppercase tracking-wider text-[10px] max-w-[100px] sm:max-w-none"
+                          title="Active Tutorial Mode"
+                        >
+                          <option value="explanatory" className="bg-slate-900 text-white">📚 Explainer Mode</option>
+                          <option value="socratic" className="bg-slate-900 text-white">🎓 Socratic Mode</option>
+                          <option value="coder" className="bg-slate-900 text-white">💻 Coding Coach</option>
+                          <option value="quiz_gen" className="bg-slate-900 text-white">📝 Quiz Exam</option>
+                        </select>
+                      </div>
+
+                      {/* Reasoning Mode Toggle */}
+                      <button
+                        type="button"
+                        onClick={() => setAiReasoningMode(!aiReasoningMode)}
+                        className={`px-2 py-1 rounded-xl border text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                          aiReasoningMode ? 'bg-purple-600/30 text-purple-300 border-purple-500/50 shadow-sm' : 'bg-slate-900 text-slate-400 border-white/10 hover:text-white'
+                        }`}
+                        title="Toggle Deep Reasoning Mode"
+                      >
+                        <Cpu className="w-3 h-3 text-purple-400" />
+                        <span className="hidden sm:inline">{aiReasoningMode ? 'Reasoning: ON' : 'Reasoning'}</span>
+                      </button>
+
+                      {/* Web Search Mode Selector */}
+                      <div className="flex items-center gap-1 bg-slate-900 border border-teal-500/25 rounded-xl px-2 py-1 shadow-inner">
+                        <Globe className={`w-3 h-3 shrink-0 ${aiWebSearchMode === 'off' ? 'text-slate-500' : 'text-teal-400'}`} />
+                        <select
+                          value={aiWebSearchMode}
+                          onChange={(e) => setAiWebSearchMode(e.target.value as 'auto' | 'force' | 'off')}
+                          className="bg-transparent text-teal-300 text-[10px] font-bold focus:outline-none cursor-pointer uppercase tracking-wider"
+                          title="Web Search Mode"
+                        >
+                          <option value="auto" className="bg-slate-900 text-white">🌐 Auto</option>
+                          <option value="force" className="bg-slate-900 text-white">🔍 Search</option>
+                          <option value="off" className="bg-slate-900 text-white">⚡ Fast</option>
+                        </select>
+                      </div>
+
+                      {/* Super Admin Model Provider Switcher */}
+                      {(currentUser?.role === 'super_admin' || effectiveRole === 'super_admin') && (
+                        <div className="flex items-center gap-1 bg-slate-900 border border-purple-500/35 rounded-xl px-2 py-1 shadow-inner">
+                          <Cpu className="w-3 h-3 text-purple-400 shrink-0" />
+                          <select
+                            value={aiModelOverride || 'auto'}
+                            onChange={(e) => setAiModelOverride(e.target.value === 'auto' ? '' : e.target.value)}
+                            className="bg-transparent text-purple-300 text-[10px] font-bold focus:outline-none cursor-pointer uppercase tracking-wider"
+                            title="Super Admin Model Override"
+                          >
+                            <option value="auto" className="bg-slate-900 text-white">🤖 Auto</option>
+                            <option value="apinex" className="bg-slate-900 text-white">⚡ APInex</option>
+                            <option value="ministral" className="bg-slate-900 text-white">🌊 Ministral</option>
+                            <option value="groq" className="bg-slate-900 text-white">🚀 Groq</option>
+                            <option value="nara_router" className="bg-slate-900 text-white">🎯 Nara</option>
+                          </select>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Right: Integrated Quota Badge & Clear Chat */}
+                    <div className="flex items-center gap-1.5 ml-auto">
+                      <div className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-slate-900/90 border border-white/10 text-xs">
+                        <div className="flex items-center gap-0.5 font-mono text-[11px] font-bold">
+                          <span className={aiUsageState.remaining <= 0 ? 'text-rose-400' : 'text-emerald-400'}>
+                            {aiUsageState.remaining}
+                          </span>
+                          <span className="text-slate-400 font-sans text-[10px]">/{aiUsageState.limit}</span>
+                        </div>
+                        <div className="w-12 h-1.5 bg-slate-800 rounded-full overflow-hidden hidden md:block">
+                          <div 
+                            className={`h-full rounded-full transition-all duration-300 ${
+                              aiUsageState.remaining <= 0
+                                ? 'bg-rose-500'
+                                : (aiUsageState.used / Math.max(1, aiUsageState.limit)) > 0.8
+                                  ? 'bg-amber-500'
+                                  : 'bg-indigo-500'
+                            }`}
+                            style={{ width: `${Math.min(100, Math.round((aiUsageState.used / Math.max(1, aiUsageState.limit)) * 100))}%` }}
+                          />
+                        </div>
+                        <button
+                          onClick={() => setShowQuotaModal(true)}
+                          className="px-1.5 py-0.5 rounded-lg bg-amber-500/15 hover:bg-amber-500 text-amber-300 hover:text-white font-extrabold text-[9px] uppercase tracking-wider transition-all flex items-center gap-0.5"
+                          title="Upgrade or Boost Quota"
+                        >
+                          <Zap className="w-2.5 h-2.5" /> Boost
+                        </button>
+                      </div>
+
+                      <button
+                        onClick={handleClearThreadHistory}
+                        className="p-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white border border-white/5 transition-all"
+                        title="Clear dialogue entries for this thread"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Dialogue Stream Body */}
+                  <div id="ai-dialog-scroll" className="flex-1 min-h-0 overflow-y-auto pr-2 my-2.5 space-y-3.5 bg-slate-950/40 p-3 sm:p-4 rounded-2xl border border-white/5 shadow-inner">
                       <div className="text-center p-2.5 border border-white/5 bg-white/5 rounded-2xl flex items-center justify-between gap-3 flex-wrap">
                         <div className="text-left">
                           <p className="text-[10px] text-indigo-400 font-extrabold uppercase tracking-widest flex items-center gap-1.5">
@@ -13701,7 +14474,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                     </div>
 
                     {/* Chat Interactive Composer with Integrated File Upload */}
-                    <div className="space-y-2">
+                    <div className="shrink-0 space-y-2 pt-1">
                       
                       {/* Attached Files Chips Strip */}
                       {attachedFiles && attachedFiles.length > 0 && (
@@ -13809,8 +14582,6 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                         </button>
                       </div>
                     </div>
-
-                  </div>
                 </div>
               )}
 

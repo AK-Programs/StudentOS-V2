@@ -105,7 +105,9 @@ export async function getVaultNotes(userId: string): Promise<VaultNote[]> {
           coverBg: n.cover_bg || 'bg-gradient-to-r from-violet-600 to-indigo-900',
           userId: n.user_id,
           folder_id: n.folder_id || null,
-          isPinned: Boolean(n.is_pinned)
+          isPinned: Boolean(n.is_pinned),
+          collabCode: n.collab_code || undefined,
+          isCollab: Boolean(n.is_collab || n.collab_code)
         }));
       const mergedMap = new Map<string, VaultNote>();
       for (const ln of localNotes) mergedMap.set(ln.id, ln);
@@ -131,19 +133,33 @@ export async function saveVaultNoteToSupabase(note: VaultNote): Promise<void> {
   }
   saveLocalVaultNotes(uid, current);
 
+  // If note has a collabCode, mirror it in local collab cache for cross-tab instant joining
+  if (note.collabCode) {
+    try {
+      localStorage.setItem(`s_os_collab_note_${note.collabCode}`, JSON.stringify(note));
+    } catch (_) {}
+  }
+
   try {
-    const { error } = await supabase.from('notes').upsert({
-       id: note.id,
-       title: note.title,
-       content: note.content,
-       subject: note.subject,
-       icon: note.icon,
-       cover_bg: note.coverBg,
-       user_id: note.userId,
-       created_at: note.createdAt,
-       folder_id: (note as any).folder_id || null,
-       is_pinned: (note as any).isPinned || false
-    });
+    const payload: any = {
+      id: note.id,
+      title: note.title,
+      content: note.content,
+      subject: note.subject,
+      icon: note.icon,
+      cover_bg: note.coverBg,
+      user_id: note.userId,
+      created_at: note.createdAt,
+      folder_id: (note as any).folder_id || null,
+      is_pinned: (note as any).isPinned || false
+    };
+
+    if (note.collabCode) {
+      payload.collab_code = note.collabCode;
+      payload.is_collab = true;
+    }
+
+    const { error } = await supabase.from('notes').upsert(payload);
     if (error && error.code !== '42P01') throw error;
   } catch (err) {
     console.error("Failed to save note to supabase", err);
@@ -159,6 +175,56 @@ export async function deleteVaultNoteFromSupabase(noteId: string, userId: string
     const { error } = await supabase.from('notes').delete().eq('id', noteId);
     if (error && error.code !== '42P01') throw error;
   } catch (err) {}
+}
+
+/**
+ * Searches for a note by a 6-digit collab code.
+ * Checks local cache first for instant sync, then queries Supabase.
+ */
+export async function getNoteByCollabCode(code: string): Promise<VaultNote | null> {
+  const cleanCode = code.trim();
+  if (!cleanCode) return null;
+
+  // 1. Try local cache
+  try {
+    const cached = localStorage.getItem(`s_os_collab_note_${cleanCode}`);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed && parsed.title) {
+        return parsed as VaultNote;
+      }
+    }
+  } catch (_) {}
+
+  // 2. Query Supabase
+  try {
+    const { data, error } = await supabase
+      .from('notes')
+      .select('*')
+      .eq('collab_code', cleanCode)
+      .maybeSingle();
+
+    if (!error && data) {
+      return {
+        id: data.id,
+        title: data.title,
+        content: data.content,
+        createdAt: data.created_at || new Date().toLocaleDateString(),
+        subject: data.subject || '',
+        icon: data.icon || '📝',
+        coverBg: data.cover_bg || 'bg-gradient-to-r from-violet-600 to-indigo-900',
+        userId: data.user_id,
+        folder_id: null,
+        isPinned: false,
+        collabCode: cleanCode,
+        isCollab: true
+      };
+    }
+  } catch (err) {
+    console.warn('[Collab] Remote lookup error:', err);
+  }
+
+  return null;
 }
 
 

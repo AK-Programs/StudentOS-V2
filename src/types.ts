@@ -240,6 +240,9 @@ export interface VaultNote {
   userId?: string;
   folder_id?: string | null;
   isPinned?: boolean;
+  collabCode?: string;
+  isCollab?: boolean;
+  collaborators?: string[];
 }
 
 export interface Homework {

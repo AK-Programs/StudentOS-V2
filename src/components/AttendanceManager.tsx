@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { UserProfile, AttendanceRecord, AttendanceStatus, UserRole } from '../types';
 import { fetchAllSupabaseUsers } from '../lib/supabaseUsers';
 import { supabase } from '../lib/supabase';
 import { sendNotificationToUsers } from '../firebase';
 import { 
   Calendar, Check, X, Clock, FileText, Download, 
-  Users, AlertTriangle, Filter, CheckCircle2, RefreshCw, BarChart2, Shield, FileSpreadsheet
+  Users, AlertTriangle, Filter, CheckCircle2, RefreshCw, BarChart2, Shield, FileSpreadsheet, Loader2
 } from 'lucide-react';
 import { exportAttendanceToExcel, canUserExport } from '../lib/excelExportService';
 
@@ -34,6 +35,9 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
   const [loading, setLoading] = useState(false);
   const [targetUsers, setTargetUsers] = useState<UserProfile[]>([]);
   const [attendance, setAttendance] = useState<Record<string, AttendanceRecord & { remarks?: string }>>({});
+  const [markingUid, setMarkingUid] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   
   // Historical stats map (studentId -> { present, total, percentage })
   const [historicalStats, setHistoricalStats] = useState<Record<string, { present: number; total: number; percentage: number }>>({});
@@ -44,20 +48,24 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
   const [leaveReason, setLeaveReason] = useState('');
   const [leaveDates, setLeaveDates] = useState('');
 
-  // Target role determination based on hierarchy
+  // Target role determination based on hierarchy (with fallback for teacher/admin roles)
+  const role = effectiveRole || currentUser?.role || 'teacher';
   const targetRoleToManage = 
-    effectiveRole === 'teacher' ? 'student' :
-    effectiveRole === 'coordinator' ? 'student' :
-    (effectiveRole === 'admin' || effectiveRole === 'super_admin') ? 'student' : null;
+    role === 'teacher' ? 'student' :
+    role === 'coordinator' ? 'student' :
+    (role === 'admin' || role === 'super_admin') ? 'student' : 'student';
 
   useEffect(() => {
     if (activeTab === 'attendance' || activeTab === 'analytics') fetchUsersAndAttendance();
     if (activeTab === 'leaves') fetchLeaveRequests();
   }, [date, selectedGrade, selectedSection, selectedSubject, activeTab, effectiveRole]);
 
+  // Read local cache key helper
+  const getCacheKey = (d: string) => `s_os_attendance_cache_${d}`;
+
   const fetchUsersAndAttendance = async () => {
-    if (!targetRoleToManage && effectiveRole !== 'super_admin') return;
     setLoading(true);
+    setErrorMessage(null);
     try {
       const allUsers = await fetchAllSupabaseUsers();
       
@@ -73,98 +81,175 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
       
       setTargetUsers(filtered);
 
-      // Fetch attendance for the selected date
-      const { data, error } = await supabase
-        .from('attendance')
-        .select('*')
-        .eq('date', date);
-        
-      if (error && error.code !== '42P01') throw error;
-
+      // Load local session cache first as initial baseline
       const attendanceMap: Record<string, AttendanceRecord & { remarks?: string }> = {};
-      data?.forEach((rec: any) => {
-        attendanceMap[rec.user_id] = {
-          id: rec.id,
-          date: rec.date,
-          grade: selectedGrade,
-          section: selectedSection,
-          studentId: rec.user_id,
-          status: rec.status,
-          remarks: rec.remarks || rec.notes
-        };
-      });
+      try {
+        const cachedRaw = localStorage.getItem(getCacheKey(date));
+        if (cachedRaw) {
+          const parsed = JSON.parse(cachedRaw);
+          if (parsed && typeof parsed === 'object') {
+            Object.assign(attendanceMap, parsed);
+          }
+        }
+      } catch (_) {}
+
+      // Fetch attendance from Supabase for the selected date
+      try {
+        const { data, error } = await supabase
+          .from('attendance')
+          .select('*')
+          .eq('date', date);
+          
+        if (error) {
+          if (error.code !== '42P01') {
+            console.warn('[Attendance] Supabase query notice:', error.message);
+          }
+        } else if (data && data.length > 0) {
+          data.forEach((rec: any) => {
+            if (rec.user_id) {
+              attendanceMap[rec.user_id] = {
+                id: rec.id || `${rec.user_id}_${rec.date}`,
+                date: rec.date,
+                grade: rec.grade || selectedGrade,
+                section: rec.section || selectedSection,
+                studentId: rec.user_id,
+                status: rec.status,
+                remarks: rec.remarks || rec.notes
+              };
+            }
+          });
+        }
+      } catch (dbErr: any) {
+        console.warn('[Attendance] Remote fetch fallback:', dbErr);
+      }
+
       setAttendance(attendanceMap);
 
-      // Fetch all past attendance to compute historical student percentages
-      const { data: allHistory } = await supabase
-        .from('attendance')
-        .select('user_id, status');
+      // Fetch past attendance to compute historical student percentages
+      try {
+        const { data: allHistory } = await supabase
+          .from('attendance')
+          .select('user_id, status');
 
-      if (allHistory) {
-        const statsMap: Record<string, { present: number; total: number; percentage: number }> = {};
-        allHistory.forEach((r: any) => {
-          if (!statsMap[r.user_id]) statsMap[r.user_id] = { present: 0, total: 0, percentage: 0 };
-          if (r.status !== 'holiday') {
-            statsMap[r.user_id].total += 1;
-            if (r.status === 'present' || r.status === 'late') {
-              statsMap[r.user_id].present += 1;
+        if (allHistory) {
+          const statsMap: Record<string, { present: number; total: number; percentage: number }> = {};
+          allHistory.forEach((r: any) => {
+            if (!statsMap[r.user_id]) statsMap[r.user_id] = { present: 0, total: 0, percentage: 0 };
+            if (r.status !== 'holiday') {
+              statsMap[r.user_id].total += 1;
+              if (r.status === 'present' || r.status === 'late') {
+                statsMap[r.user_id].present += 1;
+              }
             }
-          }
-        });
-        Object.keys(statsMap).forEach(uid => {
-          const s = statsMap[uid];
-          s.percentage = s.total > 0 ? Math.round((s.present / s.total) * 100) : 100;
-        });
-        setHistoricalStats(statsMap);
-      }
+          });
+          Object.keys(statsMap).forEach(uid => {
+            const s = statsMap[uid];
+            s.percentage = s.total > 0 ? Math.round((s.present / s.total) * 100) : 100;
+          });
+          setHistoricalStats(statsMap);
+        }
+      } catch (_) {}
     } catch (err: any) {
       console.error('Failed to load attendance:', err);
+      setErrorMessage(err.message || 'Failed to load student attendance list.');
     } finally {
       setLoading(false);
     }
   };
 
   const markStatus = async (uid: string, status: AttendanceStatus) => {
+    setMarkingUid(uid);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    const recordPayload = {
+      user_id: uid,
+      date: date,
+      status: status,
+      grade: selectedGrade,
+      section: selectedSection,
+      subject: selectedSubject,
+      updated_by: currentUser.name || currentUser.email,
+      updated_at: new Date().toISOString()
+    };
+
+    let serverError: any = null;
+
     try {
-      const { error } = await supabase
+      // Step 1: Check if attendance record already exists for this user and date
+      const { data: existingRows, error: checkError } = await supabase
         .from('attendance')
-        .upsert({
-          user_id: uid,
-          date: date,
-          status: status,
-          grade: selectedGrade,
-          section: selectedSection,
-          subject: selectedSubject,
-          updated_by: currentUser.name || currentUser.email,
-          updated_at: new Date().toISOString()
-        }, { onConflict: 'user_id, date' });
-        
-      if (error && error.code !== '42P01') throw error;
+        .select('id')
+        .eq('user_id', uid)
+        .eq('date', date)
+        .maybeSingle();
 
-      // Update local state immediately for instant feedback
-      setAttendance(prev => ({
-        ...prev,
-        [uid]: {
-          id: `${uid}_${date}`,
-          date,
-          grade: selectedGrade,
-          section: selectedSection,
-          studentId: uid,
-          status
-        }
-      }));
-
-      // Dispatch alert
-      const targetUser = targetUsers.find(u => u.uid === uid);
-      if (targetUser) {
-        sendNotificationToUsers({
-          title: '📝 Attendance Recorded',
-          message: `${targetUser.name} was marked "${status.toUpperCase()}" for ${selectedSubject} on ${date}.`,
-          type: 'attendance'
-        }).catch(e => console.error(e));
+      if (checkError && checkError.code !== '42P01') {
+        serverError = checkError;
+      } else if (existingRows?.id) {
+        // Step 2A: Update existing row
+        const { error: updateError } = await supabase
+          .from('attendance')
+          .update(recordPayload)
+          .eq('id', existingRows.id);
+        serverError = updateError;
+      } else {
+        // Step 2B: Insert new row
+        const newRecordId = `${uid}_${date}`;
+        const { error: insertError } = await supabase
+          .from('attendance')
+          .insert({
+            id: newRecordId,
+            ...recordPayload
+          });
+        serverError = insertError;
       }
     } catch (err: any) {
-      console.error('Failed to mark attendance:', err);
+      serverError = err;
+    }
+
+    // Step 3: Handle server failure vs success
+    if (serverError && serverError.code !== '42P01') {
+      const msg = serverError.message || serverError.details || 'Database rejected attendance record.';
+      setErrorMessage(`⚠️ Failed to save attendance: ${msg}`);
+      setMarkingUid(null);
+      // DO NOT look marked if it did not save!
+      return;
+    }
+
+    // Step 4: Confirmed success — update local state and localStorage cache so refresh retains the mark
+    const updatedRecord: AttendanceRecord & { remarks?: string } = {
+      id: `${uid}_${date}`,
+      date,
+      grade: selectedGrade,
+      section: selectedSection,
+      studentId: uid,
+      status
+    };
+
+    setAttendance(prev => {
+      const next = {
+        ...prev,
+        [uid]: updatedRecord
+      };
+      try {
+        localStorage.setItem(getCacheKey(date), JSON.stringify(next));
+      } catch (_) {}
+      return next;
+    });
+
+    setMarkingUid(null);
+    setSuccessMessage(`✓ Marked as ${status.toUpperCase()}`);
+    setTimeout(() => setSuccessMessage(null), 3000);
+
+    // Dispatch alert notification
+    const targetUser = targetUsers.find(u => u.uid === uid);
+    if (targetUser) {
+      sendNotificationToUsers({
+        title: '📝 Attendance Recorded',
+        message: `${targetUser.name} was marked "${status.toUpperCase()}" for ${selectedSubject} on ${date}.`,
+        type: 'attendance'
+      }).catch(e => console.error(e));
     }
   };
 
@@ -172,40 +257,62 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
   const handleMarkAllPresent = async () => {
     if (targetUsers.length === 0) return;
     setLoading(true);
+    setErrorMessage(null);
     try {
-      const updates = targetUsers.map(u => ({
-        user_id: u.uid,
-        date: date,
-        status: 'present',
-        grade: selectedGrade,
-        section: selectedSection,
-        subject: selectedSubject,
-        updated_by: currentUser.name || currentUser.email,
-        updated_at: new Date().toISOString()
-      }));
-
-      const { error } = await supabase
-        .from('attendance')
-        .upsert(updates, { onConflict: 'user_id, date' });
-
-      if (error && error.code !== '42P01') throw error;
-
       const newMap = { ...attendance };
-      targetUsers.forEach(u => {
-        if (u.uid) {
-          newMap[u.uid] = {
-            id: `${u.uid}_${date}`,
-            date,
-            grade: selectedGrade,
-            section: selectedSection,
-            studentId: u.uid,
-            status: 'present'
-          };
+      let anyError: any = null;
+
+      for (const u of targetUsers) {
+        if (!u.uid) continue;
+        const recordPayload = {
+          user_id: u.uid,
+          date: date,
+          status: 'present' as AttendanceStatus,
+          grade: selectedGrade,
+          section: selectedSection,
+          subject: selectedSubject,
+          updated_by: currentUser.name || currentUser.email,
+          updated_at: new Date().toISOString()
+        };
+
+        const { data: existingRows } = await supabase
+          .from('attendance')
+          .select('id')
+          .eq('user_id', u.uid)
+          .eq('date', date)
+          .maybeSingle();
+
+        if (existingRows?.id) {
+          const { error } = await supabase.from('attendance').update(recordPayload).eq('id', existingRows.id);
+          if (error && error.code !== '42P01') anyError = error;
+        } else {
+          const { error } = await supabase.from('attendance').insert({ id: `${u.uid}_${date}`, ...recordPayload });
+          if (error && error.code !== '42P01') anyError = error;
         }
-      });
-      setAttendance(newMap);
-    } catch (err) {
+
+        newMap[u.uid] = {
+          id: `${u.uid}_${date}`,
+          date,
+          grade: selectedGrade,
+          section: selectedSection,
+          studentId: u.uid,
+          status: 'present'
+        };
+      }
+
+      if (anyError) {
+        setErrorMessage(`⚠️ Batch mark encountered an issue: ${anyError.message}`);
+      } else {
+        setAttendance(newMap);
+        try {
+          localStorage.setItem(getCacheKey(date), JSON.stringify(newMap));
+        } catch (_) {}
+        setSuccessMessage('✓ All students marked Present.');
+        setTimeout(() => setSuccessMessage(null), 3000);
+      }
+    } catch (err: any) {
       console.error('Bulk mark error:', err);
+      setErrorMessage(err.message || 'Failed to mark all present.');
     } finally {
       setLoading(false);
     }
@@ -473,6 +580,48 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
             </div>
           </div>
 
+          {/* Real-time Status Alert Feedback */}
+          <AnimatePresence>
+            {errorMessage && (
+              <motion.div
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                className="p-3.5 bg-rose-500/15 border border-rose-500/30 rounded-2xl flex items-center justify-between text-xs text-rose-300 font-semibold shadow-md"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span className="truncate">{errorMessage}</span>
+                </div>
+                <button
+                  onClick={() => setErrorMessage(null)}
+                  className="p-1 hover:bg-rose-500/20 rounded-lg text-rose-300 hover:text-white shrink-0 ml-2"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </motion.div>
+            )}
+            {successMessage && (
+              <motion.div
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                className="p-3 bg-emerald-500/15 border border-emerald-500/30 rounded-2xl flex items-center justify-between text-xs text-emerald-300 font-bold shadow-md"
+              >
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{successMessage}</span>
+                </div>
+                <button
+                  onClick={() => setSuccessMessage(null)}
+                  className="p-1 hover:bg-emerald-500/20 rounded-lg text-emerald-300 hover:text-white"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* Quick Metrics Bar for Selected Class on Selected Date */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
             <div className="p-3 sm:p-3.5 bg-slate-950/60 border border-white/5 rounded-2xl flex items-center justify-between">
@@ -514,6 +663,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
               const studentAtt = attendance[u.uid!]?.status;
               const stats = historicalStats[u.uid!] || { present: 0, total: 0, percentage: 100 };
               const isLow = stats.total >= 3 && stats.percentage < 75;
+              const isMarkingThis = markingUid === u.uid;
 
               return (
                 <div key={u.uid} className="p-4 bg-slate-950/80 border border-white/10 rounded-2xl space-y-3 shadow-md">
@@ -543,41 +693,47 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
 
                   {/* Current Status Pill & Quick Action Buttons */}
                   <div className="grid grid-cols-3 gap-1.5 pt-1">
-                    <button 
+                    <motion.button 
+                      whileTap={{ scale: 0.96 }}
+                      disabled={isMarkingThis}
                       onClick={() => markStatus(u.uid!, 'present')} 
-                      className={`py-2 px-1 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1 border ${
+                      className={`py-2 px-1 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1 border cursor-pointer ${
                         studentAtt === 'present' 
-                          ? 'bg-emerald-500 border-emerald-400 text-slate-950 font-black shadow-md' 
+                          ? 'bg-emerald-500 border-emerald-400 text-slate-950 font-black shadow-md shadow-emerald-500/30 ring-2 ring-emerald-400/50' 
                           : 'bg-emerald-950/40 hover:bg-emerald-900/60 border-emerald-500/20 text-emerald-400'
                       }`}
                     >
-                      <Check className="w-3.5 h-3.5 shrink-0" />
+                      {isMarkingThis ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5 shrink-0" />}
                       <span>Present</span>
-                    </button>
+                    </motion.button>
 
-                    <button 
+                    <motion.button 
+                      whileTap={{ scale: 0.96 }}
+                      disabled={isMarkingThis}
                       onClick={() => markStatus(u.uid!, 'late')} 
-                      className={`py-2 px-1 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1 border ${
+                      className={`py-2 px-1 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1 border cursor-pointer ${
                         studentAtt === 'late' 
-                          ? 'bg-amber-500 border-amber-400 text-slate-950 font-black shadow-md' 
+                          ? 'bg-amber-500 border-amber-400 text-slate-950 font-black shadow-md shadow-amber-500/30 ring-2 ring-amber-400/50' 
                           : 'bg-amber-950/40 hover:bg-amber-900/60 border-amber-500/20 text-amber-400'
                       }`}
                     >
-                      <Clock className="w-3.5 h-3.5 shrink-0" />
+                      {isMarkingThis ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Clock className="w-3.5 h-3.5 shrink-0" />}
                       <span>Late</span>
-                    </button>
+                    </motion.button>
 
-                    <button 
+                    <motion.button 
+                      whileTap={{ scale: 0.96 }}
+                      disabled={isMarkingThis}
                       onClick={() => markStatus(u.uid!, 'absent')} 
-                      className={`py-2 px-1 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1 border ${
+                      className={`py-2 px-1 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1 border cursor-pointer ${
                         studentAtt === 'absent' 
-                          ? 'bg-rose-500 border-rose-400 text-white font-black shadow-md' 
+                          ? 'bg-rose-500 border-rose-400 text-white font-black shadow-md shadow-rose-500/30 ring-2 ring-rose-400/50' 
                           : 'bg-rose-950/40 hover:bg-rose-900/60 border-rose-500/20 text-rose-400'
                       }`}
                     >
-                      <X className="w-3.5 h-3.5 shrink-0" />
+                      {isMarkingThis ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5 shrink-0" />}
                       <span>Absent</span>
-                    </button>
+                    </motion.button>
                   </div>
                 </div>
               );
@@ -606,6 +762,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
                   const studentAtt = attendance[u.uid!]?.status;
                   const stats = historicalStats[u.uid!] || { present: 0, total: 0, percentage: 100 };
                   const isLow = stats.total >= 3 && stats.percentage < 75;
+                  const isMarkingThis = markingUid === u.uid;
 
                   return (
                     <tr key={u.uid} className="hover:bg-slate-900/40 transition-colors">
@@ -636,36 +793,65 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
                       </td>
 
                       <td className="p-4">
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider inline-block ${
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider inline-flex items-center gap-1 ${
                           studentAtt === 'present' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
                           studentAtt === 'absent' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' :
                           studentAtt === 'late' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
                           'bg-slate-800 text-slate-400'
                         }`}>
-                          {studentAtt || 'Unmarked'}
+                          {studentAtt === 'present' && <Check className="w-3 h-3 text-emerald-400" />}
+                          {studentAtt === 'absent' && <X className="w-3 h-3 text-rose-400" />}
+                          {studentAtt === 'late' && <Clock className="w-3 h-3 text-amber-400" />}
+                          {studentAtt ? studentAtt.toUpperCase() : 'Unmarked'}
                         </span>
                       </td>
 
                       <td className="p-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
-                          <button 
+                          <motion.button 
+                            whileTap={{ scale: 0.95 }}
+                            disabled={isMarkingThis}
                             onClick={() => markStatus(u.uid!, 'present')} 
-                            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${studentAtt === 'present' ? 'bg-emerald-500 text-slate-950 font-black' : 'bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400'}`}
+                            className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 border ${
+                              studentAtt === 'present' 
+                                ? 'bg-emerald-500 text-slate-950 font-black border-emerald-400 shadow-md shadow-emerald-500/30 ring-2 ring-emerald-400/40' 
+                                : 'bg-emerald-600/15 hover:bg-emerald-600/30 text-emerald-400 border-emerald-500/20'
+                            }`}
+                            title="Mark student Present"
                           >
-                            <Check className="w-3 h-3 inline mr-1" />Present
-                          </button>
-                          <button 
-                            onClick={() => markStatus(u.uid!, 'absent')} 
-                            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${studentAtt === 'absent' ? 'bg-rose-500 text-white font-black' : 'bg-rose-600/20 hover:bg-rose-600/40 text-rose-400'}`}
-                          >
-                            <X className="w-3 h-3 inline mr-1" />Absent
-                          </button>
-                          <button 
+                            {isMarkingThis ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                            <span>Present</span>
+                          </motion.button>
+                          
+                          <motion.button 
+                            whileTap={{ scale: 0.95 }}
+                            disabled={isMarkingThis}
                             onClick={() => markStatus(u.uid!, 'late')} 
-                            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${studentAtt === 'late' ? 'bg-amber-500 text-slate-950 font-black' : 'bg-amber-600/20 hover:bg-amber-600/40 text-amber-400'}`}
+                            className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 border ${
+                              studentAtt === 'late' 
+                                ? 'bg-amber-500 text-slate-950 font-black border-amber-400 shadow-md shadow-amber-500/30 ring-2 ring-amber-400/40' 
+                                : 'bg-amber-600/15 hover:bg-amber-600/30 text-amber-400 border-amber-500/20'
+                            }`}
+                            title="Mark student Late"
                           >
-                            <Clock className="w-3 h-3 inline mr-1" />Late
-                          </button>
+                            {isMarkingThis ? <Loader2 className="w-3 h-3 animate-spin" /> : <Clock className="w-3 h-3" />}
+                            <span>Late</span>
+                          </motion.button>
+
+                          <motion.button 
+                            whileTap={{ scale: 0.95 }}
+                            disabled={isMarkingThis}
+                            onClick={() => markStatus(u.uid!, 'absent')} 
+                            className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 border ${
+                              studentAtt === 'absent' 
+                                ? 'bg-rose-500 text-white font-black border-rose-400 shadow-md shadow-rose-500/30 ring-2 ring-rose-400/40' 
+                                : 'bg-rose-600/15 hover:bg-rose-600/30 text-rose-400 border-rose-500/20'
+                            }`}
+                            title="Mark student Absent"
+                          >
+                            {isMarkingThis ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
+                            <span>Absent</span>
+                          </motion.button>
                         </div>
                       </td>
                     </tr>
