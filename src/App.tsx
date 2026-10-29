@@ -30,7 +30,8 @@ import { getSupabaseUserProfile, saveSupabaseUserProfile, getDefaultProfileForAc
 import { getSupabaseHomework, saveSupabaseHomework, deleteSupabaseHomework } from './lib/supabaseHomework';
 import { getAppNotifications, saveAppNotification, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification, generateUUID, registerPushSubscription, getDeviceId, triggerBrowserPushNotification, isUserEligibleForNotification, triggerNotificationSound } from './lib/notifications';
 import { requestFCMPermission, setupFCMForegroundListener } from './lib/fcmNotifications';
-import { awardStudentXP } from './lib/gamification';
+import { awardStudentXP, isHalloweenBadgeDateRange } from './lib/gamification';
+import { getSavedTheme } from './lib/themeSystem';
 import {
   streamAIChatClient,
   buildAuthorizedStudentOSContext,
@@ -642,20 +643,16 @@ export default function App() {
   // Halloween 2026 Visitor Badge Logic (Target: Oct 29 – Nov 1)
   useEffect(() => {
     if (currentUser && currentUser.uid && !dataLoading && !firebaseLoading) {
-      const now = new Date();
-      const month = now.getMonth(); // 9 = October, 10 = November
-      const day = now.getDate();
-      const isHalloweenRange = (month === 9 && day >= 29) || (month === 10 && day <= 1);
-      
-      if (isHalloweenRange) {
+      if (isHalloweenBadgeDateRange()) {
         const currentBadges = currentUser.badges || [];
-        if (!currentBadges.includes('Halloween 2026')) {
+        if (!currentBadges.includes('halloween_2026') && !currentBadges.includes('Halloween 2026')) {
           const updatedUser = {
             ...currentUser,
-            badges: [...currentBadges, 'Halloween 2026']
+            badges: [...currentBadges, 'halloween_2026']
           };
           setCurrentUser(updatedUser);
           saveSupabaseUserProfile(updatedUser).catch(() => {});
+          showNotification('🎃 Halloween 2026 Badge Awarded!');
         }
       }
     }
@@ -3276,6 +3273,7 @@ ${resultText}
       setFirebaseLoading(true);
 
       let authenticated = false;
+      let authUser: any = null;
 
       // 1. First attempt Supabase Auth sign-in
       try {
@@ -3286,12 +3284,27 @@ ${resultText}
 
         if (!error && data?.user) {
           authenticated = true;
+          authUser = data.user;
         }
       } catch (authErr) {
-        console.warn('Supabase Auth signIn failed, attempting backend password verification:', authErr);
+        console.warn('Supabase Auth signIn failed, attempting fallback:', authErr);
       }
 
-      // 2. If Supabase Auth failed (e.g. forgot password, custom scrypt hash), verify via server endpoint
+      // 2. If Supabase Auth failed, attempt signUp to establish session or verify via backend
+      if (!authenticated) {
+        try {
+          const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+            email: loginEmail.trim(),
+            password: loginPassword,
+          });
+          if (!signUpErr && signUpData?.user && signUpData?.session) {
+            authenticated = true;
+            authUser = signUpData.user;
+          }
+        } catch (_) {}
+      }
+
+      // 3. Fallback to server endpoint if needed
       if (!authenticated) {
         const res = await fetch('/api/auth/login', {
           method: 'POST',
@@ -3319,11 +3332,32 @@ ${resultText}
         }
       }
 
+      if (authUser) {
+        let profile = await getSupabaseUserProfile(authUser.id, authUser.email);
+        if (!profile) {
+          profile = {
+            uid: authUser.id,
+            name: authUser.user_metadata?.full_name || loginEmail.split('@')[0] || 'Student',
+            email: authUser.email || loginEmail.trim(),
+            role: 'student',
+            accountStatus: 'approved',
+            studyHours: 0,
+            quizzesTaken: 0,
+            streakDays: 0,
+            lastLogin: Date.now()
+          };
+          await saveSupabaseUserProfile(profile);
+        }
+        setCurrentUser(profile);
+        localStorage.setItem('s_os_user', JSON.stringify(profile));
+        updateRecentAccounts(profile);
+      }
+
       try {
         sessionStorage.removeItem('s_os_startup_shown');
       } catch (_) {}
       setShowStartup(true);
-      
+      setFirebaseLoading(false);
       showNotification('Login successful!');
     } catch (err: any) {
       console.error('Email login error:', err);

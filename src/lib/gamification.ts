@@ -158,8 +158,29 @@ export const GAMIFICATION_BADGES: BadgeDefinition[] = [
     unlockRequirement: 'Win 1 Multiplayer Brain Battle',
     icon: '🛡️',
     category: 'leaderboard'
+  },
+  {
+    id: 'halloween_2026',
+    name: 'Halloween Spook 2026',
+    description: 'Visited StudentOS during the spooky 2026 Halloween celebration.',
+    unlockRequirement: 'Open StudentOS between Oct 29 & Nov 1',
+    icon: '🎃',
+    category: 'milestone'
   }
 ];
+
+export function isHalloweenBadgeDateRange(): boolean {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1; // October = 10, November = 11
+  const day = now.getDate();
+
+  if (year === 2026) {
+    if (month === 10 && day >= 29 && day <= 31) return true;
+    if (month === 11 && day === 1) return true;
+  }
+  return false;
+}
 
 export interface StudentGamificationStats {
   userId: string;
@@ -575,6 +596,7 @@ function evaluateBadges(
   checkAndUnlock('flawless_tactician', (profile.counts.brainBattlePerfects || 0) >= 1);
   checkAndUnlock('daily_conqueror', (profile.counts.dailyChallengesCompleted || 0) >= 1);
   checkAndUnlock('arena_victor', (profile.counts.multiplayerWins || 0) >= 1);
+  checkAndUnlock('halloween_2026', isHalloweenBadgeDateRange());
 
   return newlyUnlocked;
 }
