@@ -7631,6 +7631,12 @@ ${roleLabel}: ${userQuery}
 
       {currentUser && !isLocked && (
         <div className="flex min-h-screen relative">
+          {(getSavedTheme() === 'halloween' || currentUser.raw_data?.theme === 'halloween') && (
+            <>
+              <div className="halloween-fog-overlay" />
+              <div className="halloween-bat-anim">🦇</div>
+            </>
+          )}
           
           {/* Sidebar Overlay (Closes sidebar on outside click for Mobile/Tablet) */}
           {sidebarOpen && (
@@ -8826,13 +8832,13 @@ ${roleLabel}: ${userQuery}
                     }`}
                   >
                     <BorderBeam size={220} duration={14} colorFrom="#6366f1" colorTo="#ec4899" />
-                    {currentUser.raw_data?.theme === 'halloween' && (
+                    {(getSavedTheme() === 'halloween' || currentUser.raw_data?.theme === 'halloween') && (
                       <motion.div 
                         initial={{ opacity: 0, scale: 0.8 }}
-                        animate={{ opacity: 0.15, scale: 1 }}
-                        className="absolute -top-6 -right-6 text-8xl pointer-events-none select-none"
+                        animate={{ opacity: 0.85, scale: 1 }}
+                        className="absolute top-2 right-4 text-5xl sm:text-7xl pointer-events-none select-none halloween-flicker-item z-10"
                       >
-                        🎃
+                        🎃 🕸️
                       </motion.div>
                     )}
                     <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-6">
