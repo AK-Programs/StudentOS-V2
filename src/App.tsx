@@ -6924,7 +6924,7 @@ ${roleLabel}: ${userQuery}
                 <div className="inline-flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.25em] text-cyan-300">
                   <span>UNIFIED ACADEMIC ECOSYSTEM</span>
                 </div>
-                <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-white via-indigo-100 to-cyan-200 font-display">
+                <h1 className="text-4xl sm:text-5xl font-extrabold font-brand tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-white via-indigo-100 to-cyan-200">
                   {BRAND_CONFIG.name}
                 </h1>
                 <p className="text-xs sm:text-sm text-slate-400 max-w-md mx-auto font-medium">
@@ -7054,7 +7054,7 @@ ${roleLabel}: ${userQuery}
                 <BrandLogo size={40} className="shrink-0" />
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <h1 className="text-lg sm:text-xl font-black font-display tracking-tight text-white truncate">
+                    <h1 className="text-lg sm:text-xl font-extrabold font-brand tracking-tight text-white truncate">
                       {BRAND_CONFIG.name}
                     </h1>
                     <span className="text-[11px] font-mono text-slate-400">v{APP_VERSION}</span>
@@ -7797,7 +7797,7 @@ ${roleLabel}: ${userQuery}
                   </button>
                   {sidebarOpen && (
                     <div className="flex flex-col min-w-0">
-                      <span className="text-sm font-extrabold text-white tracking-tight truncate leading-none">
+                      <span className="text-sm font-brand font-extrabold text-white tracking-tight truncate leading-none">
                         {BRAND_CONFIG.name}
                       </span>
                       <span className="text-[10px] text-slate-400 font-mono mt-1 leading-none">

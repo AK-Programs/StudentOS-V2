@@ -32,15 +32,15 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   textClassName = '',
   subtitle
 }) => {
-  const [loadStage, setLoadStage] = useState<'svg' | 'png' | 'fallback'>('svg');
+  const [loadStage, setLoadStage] = useState<'png' | 'svg' | 'fallback'>('png');
 
   const dim = typeof size === 'number' ? size : SIZE_MAP[size]?.box ?? 36;
   const textSize = typeof size === 'number' ? 'text-lg font-bold' : SIZE_MAP[size]?.text ?? 'text-lg font-bold';
 
   const handleError = () => {
-    if (loadStage === 'svg') {
-      setLoadStage('png');
-    } else if (loadStage === 'png') {
+    if (loadStage === 'png') {
+      setLoadStage('svg');
+    } else if (loadStage === 'svg') {
       setLoadStage('fallback');
     }
   };
@@ -94,7 +94,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
 
       {withText && (
         <div className="flex flex-col leading-none select-none">
-          <span className={`tracking-tight ${textSize} ${textClassName || 'text-slate-900 dark:text-white'}`}>
+          <span className={`tracking-tight font-brand font-extrabold ${textSize} ${textClassName || 'text-slate-900 dark:text-white'}`}>
             {BRAND_CONFIG.name}
           </span>
           {subtitle && (

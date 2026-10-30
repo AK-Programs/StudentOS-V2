@@ -77,7 +77,7 @@ export const AboutVeylentraPage: React.FC<AboutVeylentraPageProps> = ({ onNaviga
             <div className="flex items-center gap-4">
               <BrandLogo size="lg" className="shadow-lg rounded-2xl p-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700" />
               <div>
-                <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+                <h1 className="text-3xl sm:text-4xl font-brand font-extrabold tracking-tight text-slate-900 dark:text-white">
                   About {BRAND_CONFIG.name}
                 </h1>
                 <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mt-0.5">

@@ -26,6 +26,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   size = 'md',
   collapsed = false
 }) => {
+  const [imgSrc, setImgSrc] = useState(BRAND_CONFIG.logo.pngPath);
   const [imageError, setImageError] = useState(false);
 
   // Size mappings
@@ -42,12 +43,15 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     <div className={`flex items-center gap-2.5 select-none ${dimensions.container} ${className}`}>
       {!imageError ? (
         <img
-          src={BRAND_CONFIG.logoUrl}
+          src={imgSrc}
           alt={BRAND_CONFIG.name}
           className={`${dimensions.img} object-contain transition-all duration-300 ${imageClassName}`}
           onError={() => {
-            // Try PNG fallback, then fallback to SVG emblem
-            setImageError(true);
+            if (imgSrc === BRAND_CONFIG.logo.pngPath) {
+              setImgSrc(BRAND_CONFIG.logo.svgPath);
+            } else {
+              setImageError(true);
+            }
           }}
         />
       ) : (
