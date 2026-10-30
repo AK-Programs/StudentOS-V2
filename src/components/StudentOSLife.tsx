@@ -156,7 +156,7 @@ const INITIAL_GALLERY: GalleryAlbum[] = [
 ];
 
 const INITIAL_NEWS: SchoolNews[] = [
-  { id: 'news-1', title: 'StudentOS Innovation Hub Wins National EdTech Excellence Award', category: 'Success Story', content: 'Our school has been recognized as the top smart digital campus in the region for integrating AI-assisted learning, collaborative whiteboards, and real-time student analytics.', author: 'Principal Office', imageUrl: 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?w=800&auto=format&fit=crop&q=80', publishedAt: '2026-08-04', featured: true },
+  { id: 'news-1', title: 'Veylentra Innovation Hub Wins National EdTech Excellence Award', category: 'Success Story', content: 'Our school has been recognized as the top smart digital campus in the region for integrating AI-assisted learning, collaborative whiteboards, and real-time student analytics.', author: 'Principal Office', imageUrl: 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?w=800&auto=format&fit=crop&q=80', publishedAt: '2026-08-04', featured: true },
   { id: 'news-2', title: 'Robotics Team Qualifies for International Championship in Tokyo', category: 'Achievement', content: 'The school Robotics Club team "Astra Drones" scored 1st place in the zonal finals and will represent India in the International Robotics Summit.', author: 'Robotics Club Mentors', imageUrl: 'https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=800&auto=format&fit=crop&q=80', publishedAt: '2026-08-02', featured: false }
 ];
 
@@ -606,7 +606,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
               </span>
             </div>
             <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-white tracking-tight">
-              StudentOS <span className="bg-gradient-to-r from-amber-400 via-indigo-300 to-cyan-300 bg-clip-text text-transparent">Life</span>
+              Veylentra <span className="bg-gradient-to-r from-amber-400 via-indigo-300 to-cyan-300 bg-clip-text text-transparent">Life</span>
             </h1>
             <p className="text-slate-300 text-xs sm:text-sm mt-1 max-w-2xl">
               {isStaffRole
@@ -781,7 +781,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
                     Inter-House Annual Hackathon 2026
                   </h3>
                   <p className="text-xs text-slate-300 leading-relaxed max-w-xl">
-                    Build smart digital solutions, educational web tools, and AI tools for StudentOS. Top 3 teams win cash prizes, rotating trophy, and official merit certificates!
+                    Build smart digital solutions, educational web tools, and AI tools for Veylentra. Top 3 teams win cash prizes, rotating trophy, and official merit certificates!
                   </p>
                 </div>
 
@@ -1215,7 +1215,7 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
                 <Shield className="w-5 h-5 text-indigo-400" /> House Championship Guidelines
               </h3>
               <p className="text-xs text-slate-300 leading-relaxed">
-                Points are awarded for academic top ranks, sports championships, debate victories, perfect attendance, clean campus drives, and club participation. The House with the highest total points at the end of the academic year wins the coveted **StudentOS Championship Shield**.
+                Points are awarded for academic top ranks, sports championships, debate victories, perfect attendance, clean campus drives, and club participation. The House with the highest total points at the end of the academic year wins the coveted **Veylentra Championship Shield**.
               </p>
             </div>
           </div>

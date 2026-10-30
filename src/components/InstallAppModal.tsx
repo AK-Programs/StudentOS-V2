@@ -149,7 +149,7 @@ export function InstallAppModal({
             </div>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                <h3 className="text-base sm:text-xl font-black text-white tracking-tight">StudentOS Android App</h3>
+                <h3 className="text-base sm:text-xl font-black text-white tracking-tight">Veylentra Android App</h3>
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                   {STUDENTOS_RELEASE_INFO.version}
                 </span>
@@ -206,7 +206,7 @@ export function InstallAppModal({
               <div className="p-3 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-emerald-300 text-xs font-bold">
                   <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>StudentOS is marked as installed on this device</span>
+                  <span>Veylentra is marked as installed on this device</span>
                 </div>
                 <button
                   type="button"
@@ -233,9 +233,9 @@ export function InstallAppModal({
                 {downloading 
                   ? 'Starting APK Download...' 
                   : isInstalled 
-                    ? 'Re-download StudentOS APK' 
+                    ? 'Re-download Veylentra APK' 
                     : isAndroid 
-                      ? 'Download & Install StudentOS APK' 
+                      ? 'Download & Install Veylentra APK' 
                       : 'Download Android APK'}
               </span>
               <span className="text-[11px] font-mono opacity-80">({STUDENTOS_RELEASE_INFO.apkSize})</span>
@@ -292,7 +292,7 @@ export function InstallAppModal({
                 <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 flex items-start gap-2">
                   <Shield className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
                   <span>
-                    <strong>Super Admin Authority:</strong> Modifying this URL updates the APK download destination for <strong>all users</strong> (students, parents, and teachers) across StudentOS.
+                    <strong>Super Admin Authority:</strong> Modifying this URL updates the APK download destination for <strong>all users</strong> (students, parents, and teachers) across Veylentra.
                   </span>
                 </div>
 
@@ -365,7 +365,7 @@ export function InstallAppModal({
               <li>Tap <strong className="text-white">Download Android APK</strong> above to save <code className="text-emerald-300 text-[11px]">{STUDENTOS_RELEASE_INFO.apkFileName}</code>.</li>
               <li>When prompted by Android, tap <strong className="text-white">"Open"</strong> or navigate to your Downloads folder.</li>
               <li>If asked, enable <strong className="text-white">"Install from unknown sources"</strong> for your browser in Settings.</li>
-              <li>Tap <strong className="text-white">Install</strong> and launch StudentOS directly from your home screen.</li>
+              <li>Tap <strong className="text-white">Install</strong> and launch Veylentra directly from your home screen.</li>
             </ol>
           </div>
 
@@ -385,7 +385,7 @@ export function InstallAppModal({
 
         {/* Footer */}
         <div className="p-3.5 sm:p-4 bg-slate-950/80 border-t border-white/10 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
-          <span className="truncate">StudentOS Official App &bull; {STUDENTOS_RELEASE_INFO.apkFileName}</span>
+          <span className="truncate">Veylentra Official App &bull; {STUDENTOS_RELEASE_INFO.apkFileName}</span>
           <button
             onClick={onClose}
             className="px-4 py-2 rounded-xl text-xs font-bold text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 transition-all"
@@ -519,7 +519,7 @@ export function AppInstallSection({
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-              <h3 className="text-base sm:text-lg font-black text-white">StudentOS Android App</h3>
+              <h3 className="text-base sm:text-lg font-black text-white">Veylentra Android App</h3>
               <span className="px-2 py-0.5 text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full">
                 {STUDENTOS_RELEASE_INFO.version}
               </span>

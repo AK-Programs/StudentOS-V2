@@ -15,7 +15,7 @@ import {
   Heart, Bookmark, X, Bell, Zap, Gift, Smartphone, Paperclip, History, Brain, Globe,
   LayoutDashboard, Layers, Video, HelpCircle, GraduationCap, Shield, Compass,
   PanelLeftClose, PanelLeftOpen, ClipboardList, CheckSquare, Monitor, Tv, Cpu, Trophy, Swords,
-  Key, ArrowLeft, FolderPlus, Pin, Edit2, Move, Folder, Users2, Copy, CheckCheck, Columns, ListOrdered, List
+  Key, ArrowLeft, FolderPlus, Pin, Edit2, Move, Folder, Users2, Copy, CheckCheck, Columns, ListOrdered, List, Info
 } from 'lucide-react';
 import { 
   UserRole, HouseType, SectionType, UserProfile, HouseStats, 
@@ -94,6 +94,9 @@ import AIQuotaManagerModal from './components/AIQuotaManagerModal';
 import { InstallAppModal, AppInstallSection } from './components/InstallAppModal';
 import { isApkInstalledOnDevice } from './config/appConfig';
 import { WhatsNewPortal } from './components/WhatsNewPortal';
+import { BrandLogo } from './components/brand/BrandLogo';
+import { BRAND_CONFIG } from './config/branding';
+import { AboutVeylentraPage } from './components/AboutVeylentraPage';
 import { SecurityDialog } from './components/SecurityDialog';
 import {
   getSecurityStatus,
@@ -2456,7 +2459,7 @@ export default function App() {
             } else {
               try {
                 profile = await saveSupabaseUserProfile(newProfile);
-                showNotification(`Welcome to StudentOS, ${profile.name}! 🎉`);
+                showNotification(`Welcome to Veylentra, ${profile.name}! 🎉`);
               } catch (sbCreateErr: any) {
                 console.error('[Auth] Failed to auto-create user profile:', sbCreateErr);
                 profile = newProfile;
@@ -2819,7 +2822,7 @@ export default function App() {
           const row = payload?.new as any;
           if (row && currentUser && isUserEligibleForNotification(row, currentUser)) {
             const nId = row.id || '';
-            triggerBrowserPushNotification(row.title || '📢 StudentOS Notice', {
+            triggerBrowserPushNotification(row.title || '📢 Veylentra Notice', {
               body: row.message || row.content || '',
               tag: nId ? `studentos-notif-${nId}` : `studentos-notif-${Date.now()}`,
               notifId: nId,
@@ -2836,7 +2839,7 @@ export default function App() {
           const notif = payload?.payload;
           if (notif && currentUser && isUserEligibleForNotification(notif, currentUser)) {
             triggerNotificationSound(notif.type || 'announcement');
-            triggerBrowserPushNotification(notif.title || '📢 StudentOS Notice', {
+            triggerBrowserPushNotification(notif.title || '📢 Veylentra Notice', {
               body: notif.message || '',
               tag: notif.id ? `studentos-notif-${notif.id}` : `studentos-notif-${Date.now()}`,
               notifId: notif.id,
@@ -3940,7 +3943,7 @@ ${resultText}
       setShowStartup(true);
       
       if (regRole === 'student') {
-        showNotification(`Welcome to StudentOS, ${newProfile.name}!`);
+        showNotification(`Welcome to Veylentra, ${newProfile.name}!`);
       } else {
         showNotification(`Request submitted for ${regRole.toUpperCase()} approval. Exploring as Student in the meantime!`);
       }
@@ -4908,7 +4911,7 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
       if (!existingByEmail && !map.has(rec.uid)) {
         map.set(rec.uid, {
           uid: rec.uid,
-          name: rec.name || 'StudentOS User',
+          name: rec.name || 'Veylentra User',
           role: (rec.role as UserRole) || 'student',
           email: rec.email || `${rec.uid}@studentos.edu`,
           house: (rec as any).house,
@@ -6908,7 +6911,7 @@ ${roleLabel}: ${userQuery}
                 <div className="relative h-20 w-20 sm:h-22 sm:w-22 rounded-3xl bg-gradient-to-br from-indigo-500 via-cyan-500 to-emerald-400 p-[1.5px] shadow-2xl shadow-indigo-500/30">
                   <div className="w-full h-full bg-slate-950 rounded-[22px] flex flex-col items-center justify-center relative overflow-hidden">
                     <div className="absolute inset-0 bg-gradient-to-b from-white/15 to-transparent" />
-                    <span className="text-3xl sm:text-4xl relative z-10">🎓</span>
+                    <BrandLogo size={36} className="relative z-10" />
                     <span className="text-[9px] font-mono font-black text-cyan-300 tracking-wider mt-0.5 relative z-10">
                       {loadingProgress}%
                     </span>
@@ -6919,10 +6922,10 @@ ${roleLabel}: ${userQuery}
               {/* Brand Title & Subtitle */}
               <div className="space-y-1.5">
                 <div className="inline-flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.25em] text-cyan-300">
-                  <span>NEURAL ACADEMIC OPERATING SYSTEM</span>
+                  <span>UNIFIED ACADEMIC ECOSYSTEM</span>
                 </div>
                 <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-white via-indigo-100 to-cyan-200 font-display">
-                  StudentOS
+                  {BRAND_CONFIG.name}
                 </h1>
                 <p className="text-xs sm:text-sm text-slate-400 max-w-md mx-auto font-medium">
                    Smartboards · Orion AI Tutors · Realtime Broadcasts · Scholar XP Arena
@@ -7048,13 +7051,11 @@ ${roleLabel}: ${userQuery}
             {/* Compact Brand Header */}
             <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-3.5">
               <div className="flex items-center gap-3 min-w-0">
-                <div className="h-10 w-10 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-xl shrink-0">
-                  🎓
-                </div>
+                <BrandLogo size={40} className="shrink-0" />
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <h1 className="text-lg sm:text-xl font-black font-display tracking-tight text-white truncate">
-                      StudentOS
+                      {BRAND_CONFIG.name}
                     </h1>
                     <span className="text-[11px] font-mono text-slate-400">v{APP_VERSION}</span>
                   </div>
@@ -7071,7 +7072,7 @@ ${roleLabel}: ${userQuery}
                   setIsInstallAppModalOpen(true);
                 }}
                 className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-[11px] font-semibold text-emerald-400 flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors"
-                title="Install StudentOS App"
+                title="Install Veylentra App"
               >
                 <Smartphone className="w-3.5 h-3.5" />
                 <span>Get App</span>
@@ -7789,15 +7790,15 @@ ${roleLabel}: ${userQuery}
                       if (!sidebarOpen) setSidebarOpen(true);
                       else handleTabSelect('dashboard');
                     }}
-                    className="h-9 w-9 rounded-xl bg-indigo-600 hover:bg-indigo-500 flex items-center justify-center font-extrabold text-white text-base shadow-md shadow-indigo-600/30 shrink-0 transition-transform active:scale-95 cursor-pointer"
-                    title={sidebarOpen ? 'StudentOS Dashboard' : 'Expand StudentOS Sidebar'}
+                    className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0 transition-transform active:scale-95 cursor-pointer overflow-hidden"
+                    title={sidebarOpen ? `${BRAND_CONFIG.name} Dashboard` : `Expand ${BRAND_CONFIG.name} Sidebar`}
                   >
-                    S
+                    <BrandLogo size={36} />
                   </button>
                   {sidebarOpen && (
                     <div className="flex flex-col min-w-0">
                       <span className="text-sm font-extrabold text-white tracking-tight truncate leading-none">
-                        StudentOS
+                        {BRAND_CONFIG.name}
                       </span>
                       <span className="text-[10px] text-slate-400 font-mono mt-1 leading-none">
                         v{APP_VERSION}
@@ -8193,15 +8194,15 @@ ${roleLabel}: ${userQuery}
                           )}
 
                           {(!presentationMode || isTabAllowedInPresentation('meet')) &&
-                            matchesFilter('StudentOS Meet', 'video call virtual classroom') && (
+                            matchesFilter('Veylentra Meet', 'video call virtual classroom') && (
                               <button
                                 type="button"
                                 onClick={() => handleTabSelect('meet')}
                                 className={getSidebarBtnClass('meet')}
-                                title="StudentOS Meet"
+                                title="Veylentra Meet"
                               >
                                 <Video className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="truncate">StudentOS Meet</span>}
+                                {sidebarOpen && <span className="truncate">Veylentra Meet</span>}
                               </button>
                             )}
                         </div>
@@ -8252,15 +8253,15 @@ ${roleLabel}: ${userQuery}
                               </button>
                             )}
 
-                            {matchesFilter('StudentOS Life', 'competitions clubs events polls badges') && (
+                            {matchesFilter('Veylentra Life', 'competitions clubs events polls badges') && (
                               <button
                                 type="button"
                                 onClick={() => handleTabSelect('life')}
                                 className={getSidebarBtnClass('life')}
-                                title="StudentOS Life: Competitions, Clubs, Events & Polls"
+                                title="Veylentra Life: Competitions, Clubs, Events & Polls"
                               >
                                 <Compass className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="truncate">StudentOS Life</span>}
+                                {sidebarOpen && <span className="truncate">Veylentra Life</span>}
                               </button>
                             )}
 
@@ -8385,7 +8386,7 @@ ${roleLabel}: ${userQuery}
                                 type="button"
                                 onClick={() => handleTabSelect('whats_new')}
                                 className={getSidebarBtnClass('whats_new')}
-                                title="What's New in StudentOS"
+                                title="What's New in Veylentra"
                               >
                                 <Zap className="w-4 h-4 shrink-0" />
                                 {sidebarOpen && (
@@ -8477,7 +8478,7 @@ ${roleLabel}: ${userQuery}
                   )}
                   <div className="flex flex-col min-w-0 flex-1">
                     <span className="text-xs font-bold text-white truncate leading-tight">
-                      {currentUser.name || 'StudentOS User'}
+                      {currentUser.name || 'Veylentra User'}
                     </span>
                     <span className="text-[10px] text-slate-400 truncate mt-0.5 font-medium">
                       {presentationMode ? 'Presenter Mode' : getUserProfileTitle(currentUser, effectiveRole)}
@@ -8516,7 +8517,7 @@ ${roleLabel}: ${userQuery}
                     type="button"
                     onClick={() => setIsInstallAppModalOpen(true)}
                     className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 hover:text-white border border-emerald-500/25 transition-all text-xs font-semibold cursor-pointer"
-                    title="Download StudentOS APK / Install App"
+                    title="Download Veylentra APK / Install App"
                   >
                     <Smartphone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                     <span className="truncate">Get App</span>
@@ -8526,7 +8527,7 @@ ${roleLabel}: ${userQuery}
                     type="button"
                     onClick={handleLogout}
                     className="flex items-center justify-center gap-1.5 py-2 px-2.5 text-xs bg-rose-500/10 hover:bg-rose-600 hover:text-white text-rose-300 border border-rose-500/20 rounded-xl transition-all font-semibold cursor-pointer"
-                    title="Sign out of StudentOS"
+                    title="Sign out of Veylentra"
                   >
                     <LogOut className="w-3.5 h-3.5 shrink-0" />
                     <span className="truncate">Sign Out</span>
@@ -8538,7 +8539,7 @@ ${roleLabel}: ${userQuery}
                     type="button"
                     onClick={() => setIsInstallAppModalOpen(true)}
                     className="w-full flex items-center justify-center p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 hover:text-white border border-emerald-500/25 transition-all cursor-pointer"
-                    title="Install StudentOS App"
+                    title="Install Veylentra App"
                   >
                     <Smartphone className="w-4 h-4" />
                   </button>
@@ -8551,6 +8552,36 @@ ${roleLabel}: ${userQuery}
                     <LogOut className="w-4 h-4" />
                   </button>
                 </div>
+              )}
+
+              {/* Absolute Bottom Sidebar Button: About Veylentra */}
+              {sidebarOpen ? (
+                <button
+                  type="button"
+                  onClick={() => handleTabSelect('about')}
+                  className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                    activeTab === 'about'
+                      ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-md shadow-indigo-500/25 border border-indigo-400/40'
+                      : 'text-slate-300 hover:text-white hover:bg-white/10 bg-white/5 border border-white/5'
+                  }`}
+                  title="About Veylentra"
+                >
+                  <Info className={`w-3.5 h-3.5 shrink-0 ${activeTab === 'about' ? 'text-white' : 'text-indigo-400'}`} />
+                  <span className="truncate">About Veylentra</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleTabSelect('about')}
+                  className={`w-full flex items-center justify-center p-2 rounded-xl transition-all cursor-pointer ${
+                    activeTab === 'about'
+                      ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-md shadow-indigo-500/25 border border-indigo-400/40'
+                      : 'text-slate-300 hover:text-white hover:bg-white/10 bg-white/5'
+                  }`}
+                  title="About Veylentra"
+                >
+                  <Info className={`w-4 h-4 ${activeTab === 'about' ? 'text-white' : 'text-indigo-400'}`} />
+                </button>
               )}
             </div>
           </aside>
@@ -8603,7 +8634,8 @@ ${roleLabel}: ${userQuery}
                 <div className="min-w-0 flex-1">
                   <h2 className="text-xs sm:text-xl font-extrabold tracking-tight text-white font-display truncate min-w-0">
                     {activeTab === 'dashboard' && 'My Dashboard'}
-                    {activeTab === 'meet' && 'StudentOS Meet (Virtual Classroom)'}
+                    {activeTab === 'about' && 'About Veylentra'}
+                    {activeTab === 'meet' && 'Veylentra Meet (Virtual Classroom)'}
                     {['study_hub', 'tasks', 'planner', 'flashcards'].includes(activeTab) && (
                       studyHubSubTab === 'tasks' ? 'Tasks & Focus Objectives' :
                       studyHubSubTab === 'planner' ? 'Study Schedule Planner' :
@@ -8719,7 +8751,7 @@ ${roleLabel}: ${userQuery}
                       ? 'bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-300 border-emerald-500/40 shadow-emerald-500/10'
                       : 'bg-gradient-to-r from-emerald-600/90 to-teal-600/90 hover:from-emerald-500 hover:to-teal-500 text-white border-emerald-500/30 shadow-emerald-500/20'
                   }`}
-                  title={isApkInstalled ? 'StudentOS Android App (APK) Installed - Click to Manage' : 'Download & Install StudentOS Android App (APK)'}
+                  title={isApkInstalled ? 'Veylentra Android App (APK) Installed - Click to Manage' : 'Download & Install Veylentra Android App (APK)'}
                 >
                   {isApkInstalled ? (
                     <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
@@ -8779,7 +8811,7 @@ ${roleLabel}: ${userQuery}
                       ? 'bg-indigo-600 text-white border-indigo-500 shadow-indigo-600/30'
                       : 'bg-slate-900 border-white/5 hover:bg-slate-800 text-slate-300 hover:text-white'
                   }`}
-                  title="What's New in StudentOS"
+                  title="What's New in Veylentra"
                 >
                   <Sparkles className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
                   <span className="hidden sm:inline">What's New</span>
@@ -9063,7 +9095,7 @@ ${roleLabel}: ${userQuery}
                             className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
                             <span className="text-xl">🚀</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">StudentOS Life</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Veylentra Life</span>
                           </button>
                         </>
                       )}
@@ -9117,7 +9149,7 @@ ${roleLabel}: ${userQuery}
                             className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
                             <span className="text-xl">🚀</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">StudentOS Life</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Veylentra Life</span>
                           </button>
                         </>
                       )}
@@ -9150,7 +9182,7 @@ ${roleLabel}: ${userQuery}
                             className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
                             <span className="text-xl">🚀</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">StudentOS Life</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Veylentra Life</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('profile')}
@@ -9190,7 +9222,7 @@ ${roleLabel}: ${userQuery}
                             className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
                           >
                             <span className="text-xl">🚀</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">StudentOS Life</span>
+                            <span className="text-xs font-bold text-white whitespace-nowrap">Veylentra Life</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('profile')}
@@ -9277,7 +9309,7 @@ ${roleLabel}: ${userQuery}
                       <div className="space-y-1.5 min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 text-[10px] font-black uppercase tracking-widest">
-                            🚀 StudentOS Life
+                            🚀 Veylentra Life
                           </span>
                           <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold uppercase">
                             {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '')
@@ -9305,8 +9337,8 @@ ${roleLabel}: ${userQuery}
                           <span>🚀</span>
                           <span>
                             {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '')
-                              ? 'Manage StudentOS Life'
-                              : 'Explore StudentOS Life'}
+                              ? 'Manage Veylentra Life'
+                              : 'Explore Veylentra Life'}
                           </span>
                         </button>
                       </div>
@@ -14914,6 +14946,11 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                     setProfileTab('whats_new');
                   }}
                 />
+              )}
+
+              {/* Tab: About Veylentra Dedicated Page */}
+              {activeTab === 'about' && (
+                <AboutVeylentraPage onNavigateTab={handleTabSelect} />
               )}
 
             </main>

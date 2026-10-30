@@ -341,7 +341,7 @@ export const DashboardGamificationCard: React.FC<{
                   <Trophy className="w-5 h-5" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-black text-white">StudentOS Scholar Gamification & Leaderboard</h2>
+                  <h2 className="text-lg font-black text-white">Veylentra Scholar Gamification & Leaderboard</h2>
                   <p className="text-xs text-slate-400">Academic XP, Daily Streaks, Merit Badges & Class Standings</p>
                 </div>
               </div>
@@ -682,7 +682,7 @@ export const StudentGamificationHub: React.FC<{
                   Academic XP Rewards & Daily Quests
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Complete real learning activities across StudentOS to level up
+                  Complete real learning activities across Veylentra to level up
                 </p>
               </div>
 
@@ -860,7 +860,7 @@ export const StudentGamificationHub: React.FC<{
       {activeSection === 'levels' && (
         <div className="smart-glass p-6 rounded-3xl border border-white/10 space-y-5">
           <div>
-            <h3 className="text-lg font-black text-white">10-Level StudentOS Scholar Progression</h3>
+            <h3 className="text-lg font-black text-white">10-Level Veylentra Scholar Progression</h3>
             <p className="text-xs text-slate-400">
               Advance from Level 1 Rookie Scholar to Level 10 Campus Legend through consistent study
             </p>

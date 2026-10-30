@@ -892,7 +892,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
     
     const newMeeting: Meeting = {
       id: meetingId,
-      title: newTitle || 'StudentOS Interactive Classroom',
+      title: newTitle || 'Veylentra Interactive Classroom',
       subject: newSubject,
       className: newClassName,
       batch: newBatch,
@@ -1336,7 +1336,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
     await saveMeetingRecording(newRec);
     setRecordings(getLocalRecordings());
-    showMeetNotice('Meeting recording saved in StudentOS Archive!');
+    showMeetNotice('Meeting recording saved in Veylentra Archive!');
   };
 
   const handleGenerateAiMeetingSummary = async () => {
@@ -1380,7 +1380,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
   const handleExportAttendanceReport = () => {
     if (!activeMeeting) return;
     const durationMins = joinTimestamp ? Math.round((Date.now() - joinTimestamp) / 60000) : 1;
-    let csv = `StudentOS Meet Attendance Report\n`;
+    let csv = `Veylentra Meet Attendance Report\n`;
     csv += `Meeting Title,${activeMeeting.title}\n`;
     csv += `Meeting ID,${activeMeeting.id}\n`;
     csv += `Host,${activeMeeting.hostName}\n`;
@@ -1436,7 +1436,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-base sm:text-xl font-black tracking-tight text-white font-display">StudentOS Meet</h1>
+                <h1 className="text-base sm:text-xl font-black tracking-tight text-white font-display">Veylentra Meet</h1>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
                   Real WebRTC
                 </span>
@@ -1572,7 +1572,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
                   <Shield className="w-6 h-6" />
                 </div>
                 <h3 className="text-lg font-black text-white">Join via Code / Password</h3>
-                <p className="text-xs text-slate-300">Enter a secure meeting ID or paste a StudentOS Meet join link.</p>
+                <p className="text-xs text-slate-300">Enter a secure meeting ID or paste a Veylentra Meet join link.</p>
               </div>
               <div className="mt-6 flex flex-col min-[340px]:flex-row items-stretch min-[340px]:items-center gap-2 z-10">
                 <input
@@ -1674,7 +1674,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
         <main className="flex-1 p-3 sm:p-6 max-w-7xl w-full mx-auto space-y-4 sm:space-y-6 animate-fadeIn">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-xl font-black text-white">StudentOS Meeting Calendar</h2>
+              <h2 className="text-xl font-black text-white">Veylentra Meeting Calendar</h2>
               <p className="text-xs text-slate-400">Class schedules, assembly routines, and academic webinars</p>
             </div>
           </div>

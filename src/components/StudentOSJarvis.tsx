@@ -194,7 +194,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
   const [isListening, setIsListening] = useState<boolean>(false);
   const [commandText, setCommandText] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const [jarvisFeedback, setJarvisFeedback] = useState<string>('Greetings, Professor. StudentOS Orion is ready. Speak or type a command to control the smart classroom.');
+  const [jarvisFeedback, setJarvisFeedback] = useState<string>('Greetings, Professor. Veylentra Orion is ready. Speak or type a command to control the smart classroom.');
   const [showDiagnostics, setShowDiagnostics] = useState<boolean>(false);
   const [diagnosticError, setDiagnosticError] = useState<{name: string, message: string} | null>(null);
 
@@ -851,7 +851,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
         effectiveRole || currentUser?.role || 'student'
       );
 
-      const systemPrompt = `You are StudentOS Orion, the intelligent School Operating Assistant & Copilot.
+      const systemPrompt = `You are Veylentra Orion, the intelligent School Operating Assistant & Copilot.
 Current User Role: ${effectiveRole || currentUser?.role || 'student'} (${currentUser?.name || 'User'})
 The user typed or spoke this command: "${command}".
 
@@ -872,7 +872,7 @@ Analyze the input and classify into ONE of these operational or intelligence act
 - "mark_attendance" (take attendance, mark attendance, record attendance)
 - "create_event" (schedule annual function, schedule event, schedule assembly)
 - "create_competition" (create competition, create coding competition, create sports competition)
-- "create_meet" (schedule StudentOS Meet, schedule meeting)
+- "create_meet" (schedule Veylentra Meet, schedule meeting)
 - "create_homework" (create homework, create assignment, publish assignment)
 - "create_notice" (upload notice, create notice)
 - "delete_item" (delete competition, delete event, cancel meeting, delete homework)
@@ -880,8 +880,8 @@ Analyze the input and classify into ONE of these operational or intelligence act
 - "general_chat" (general question, academic explanation, math problem, or conversation)
 
 Rules:
-1. Distinguish between known StudentOS data (provided in context) and general AI assistance.
-2. Never fabricate StudentOS records.
+1. Distinguish between known Veylentra data (provided in context) and general AI assistance.
+2. Never fabricate Veylentra records.
 3. Return raw JSON format with NO markdown wrapping:
 {
   "responseText": "Clear, helpful markdown response. If general_chat, provide the complete educational or operational answer.",
@@ -1032,13 +1032,13 @@ Rules:
       }
 
       return {
-        responseText: (aiText && aiText.trim().length > 0) ? aiText : `I'm ready to assist you. Let me know what you'd like to automate across StudentOS!`,
+        responseText: (aiText && aiText.trim().length > 0) ? aiText : `I'm ready to assist you. Let me know what you'd like to automate across Veylentra!`,
         action: 'general_chat'
       };
     } catch (err: any) {
       console.error('Orion remote parsing failed:', err);
       return {
-        responseText: `I'm ready to assist you. Let me know what you'd like to automate across StudentOS!`,
+        responseText: `I'm ready to assist you. Let me know what you'd like to automate across Veylentra!`,
         action: 'general_chat'
       };
     }
@@ -1140,7 +1140,7 @@ Rules:
         return;
       } else if (confirmNegatives.some(k => textLow.includes(k))) {
         setPendingConfirmation(null);
-        const cancelText = 'Operation canceled. No changes were made to StudentOS.';
+        const cancelText = 'Operation canceled. No changes were made to Veylentra.';
         setJarvisFeedback(cancelText);
         speakFeedback(cancelText);
         setIsProcessing(false);
@@ -1331,14 +1331,14 @@ Rules:
       return;
     } else if (mappedAction === 'show_timetable' || textLow.includes('timetable')) {
       triggerNavTransition('Timetable', 'timetable_viewer');
-    } else if (textLow.includes('studentos life') || textLow.includes('open life')) {
-      triggerNavTransition('StudentOS Life', 'life' as any);
-    } else if (textLow.includes('studentos meet') || textLow.includes('open meet')) {
-      triggerNavTransition('StudentOS Meet', 'meet' as any);
+    } else if (textLow.includes('veylentra life') || textLow.includes('studentos life') || textLow.includes('open life')) {
+      triggerNavTransition('Veylentra Life', 'life' as any);
+    } else if (textLow.includes('veylentra meet') || textLow.includes('studentos meet') || textLow.includes('open meet')) {
+      triggerNavTransition('Veylentra Meet', 'meet' as any);
     } else if (mappedAction === 'navigate_tab' && targetVal) {
       const tabVal = targetVal.toLowerCase();
-      if (tabVal.includes('life')) triggerNavTransition('StudentOS Life', 'life' as any);
-      else if (tabVal.includes('meet')) triggerNavTransition('StudentOS Meet', 'meet' as any);
+      if (tabVal.includes('life')) triggerNavTransition('Veylentra Life', 'life' as any);
+      else if (tabVal.includes('meet')) triggerNavTransition('Veylentra Meet', 'meet' as any);
       else if (tabVal.includes('material')) triggerNavTransition('Material Hub', 'materials');
       else if (tabVal.includes('attendance')) triggerNavTransition('Attendance Manager', 'attendance_manager');
       else if (tabVal.includes('homework')) triggerNavTransition('Class Homework', 'homework');
@@ -1583,7 +1583,7 @@ Rules:
           <div className="smart-glass p-4 rounded-2xl bg-slate-950/80 border border-indigo-500/30 space-y-4 shadow-xl">
             <div className="flex items-center justify-between gap-2 flex-wrap border-b border-white/10 pb-3">
               <div>
-                <span className="text-[9px] font-mono uppercase tracking-widest text-emerald-400 font-bold block">✓ StudentOS Live Data</span>
+                <span className="text-[9px] font-mono uppercase tracking-widest text-emerald-400 font-bold block">✓ Veylentra Live Data</span>
                 <h3 className="text-sm font-black text-white">{structuredOutput.title}</h3>
                 {structuredOutput.subtitle && <p className="text-[11px] text-slate-400">{structuredOutput.subtitle}</p>}
               </div>

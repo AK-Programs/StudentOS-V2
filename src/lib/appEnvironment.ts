@@ -187,9 +187,9 @@ export function getAppEnvironment(): CentralizedAppEnvironment {
       canInstallPWA: false,
       isInstallPromptAvailable: false,
       displayMode,
-      badgeLabel: 'StudentOS App (APK)',
+      badgeLabel: 'Veylentra App (APK)',
       badgeVariant: 'success',
-      details: 'Running inside the native StudentOS Android/iOS application shell.'
+      details: 'Running inside the native Veylentra Android/iOS application shell.'
     };
   }
 
