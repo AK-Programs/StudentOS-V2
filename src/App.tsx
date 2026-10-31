@@ -141,7 +141,6 @@ import { StudentOSOnboardingModal } from './components/onboarding/StudentOSOnboa
 import { GuidedProductTour } from './components/onboarding/GuidedProductTour';
 import { shouldShowOnboarding } from './lib/onboardingService';
 import { BottomSheet } from './components/ui/BottomSheet';
-import { Skeleton, SkeletonCard, SkeletonList } from './components/ui/Skeleton';
 
 // Stub Integrations
 import {
@@ -830,7 +829,7 @@ export default function App() {
         : tab === 'brain_battle' || tab === 'quiz'
         ? ['brain_battle', 'quiz'].includes(activeTab)
         : activeTab === tab;
-    let base = `group relative w-full flex items-center transition-all duration-200 rounded-xl border text-left min-w-0 cursor-pointer active:scale-95 ${
+    let base = `group relative w-full flex items-center transition-all duration-200 rounded-xl border text-left min-w-0 cursor-pointer ${
       sidebarOpen ? 'gap-3 px-3 py-2.5' : 'md:justify-center md:px-0 md:py-2.5 gap-3 px-3 py-2.5'
     } `;
     if (smartBoardMode) {
@@ -5486,8 +5485,7 @@ Date: ${new Date().toLocaleDateString()}
         likedBy: [],
         views: 1,
         isVerified: effectiveRole === 'teacher',
-        comments: [],
-        folder_id: activeMaterialFolderId
+        comments: []
       };
 
       console.log("[UPLOAD TRACE] 5. Metadata object constructed before save:", JSON.stringify(docItem, null, 2));
@@ -6936,27 +6934,27 @@ ${roleLabel}: ${userQuery}
                 <div className="absolute inset-5 rounded-full border border-cyan-400/20 border-t-cyan-400/80 animate-spin" style={{ animationDuration: '6s' }} />
 
                 {/* Central Emblem Core */}
-                <div className="relative h-24 w-24 sm:h-28 sm:w-28 rounded-[2rem] bg-gradient-to-br from-indigo-500 via-cyan-500 to-emerald-400 p-[2px] shadow-2xl shadow-indigo-500/40">
-                  <div className="w-full h-full bg-slate-950 rounded-[30px] flex flex-col items-center justify-center relative overflow-hidden">
-                    <div className="absolute inset-0 bg-gradient-to-b from-white/10 to-transparent" />
-                    <BrandLogo size={48} className="relative z-10" />
-                    <span className="text-[10px] font-mono font-black text-cyan-300 tracking-wider mt-1.5 relative z-10">
+                <div className="relative h-20 w-20 sm:h-22 sm:w-22 rounded-3xl bg-gradient-to-br from-indigo-500 via-cyan-500 to-emerald-400 p-[1.5px] shadow-2xl shadow-indigo-500/30">
+                  <div className="w-full h-full bg-slate-950 rounded-[22px] flex flex-col items-center justify-center relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-b from-white/15 to-transparent" />
+                    <BrandLogo size={36} className="relative z-10" />
+                    <span className="text-[9px] font-mono font-black text-cyan-300 tracking-wider mt-0.5 relative z-10">
                       {loadingProgress}%
                     </span>
                   </div>
                 </div>
               </div>
 
-              {/* Brand Title & Subtitle - Centered */}
-              <div className="space-y-2 flex flex-col items-center">
-                <div className="inline-flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.3em] text-cyan-400/80">
+              {/* Brand Title & Subtitle */}
+              <div className="space-y-1.5">
+                <div className="inline-flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.25em] text-cyan-300">
                   <span>UNIFIED ACADEMIC ECOSYSTEM</span>
                 </div>
-                <h1 className="text-4xl sm:text-5xl font-black font-brand tracking-tighter text-white">
-                  {BRAND_CONFIG.name.toUpperCase()}
+                <h1 className="text-4xl sm:text-5xl font-extrabold font-brand tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-white via-indigo-100 to-cyan-200">
+                  {BRAND_CONFIG.name}
                 </h1>
-                <p className="text-[11px] sm:text-xs text-slate-500 max-w-xs mx-auto font-medium tracking-wide">
-                   Smartboards · Orion AI Tutors · Scholar XP
+                <p className="text-xs sm:text-sm text-slate-400 max-w-md mx-auto font-medium">
+                   Smartboards · Orion AI Tutors · Realtime Broadcasts · Scholar XP Arena
                 </p>
               </div>
             </div>
@@ -7076,23 +7074,35 @@ ${roleLabel}: ${userQuery}
           <BackgroundBeams />
           <div className="bento-card max-w-md w-full rounded-3xl border border-white/10 shadow-2xl p-5 sm:p-6 space-y-4 relative overflow-hidden z-10">
             <BorderBeam size={220} duration={12} colorFrom="#6366f1" colorTo="#38bdf8" />
-            {/* Compact Brand Header - Centered Layout */}
-            <div className="flex flex-col items-center justify-center gap-2 border-b border-white/10 pb-4 text-center">
-              <div className="relative">
-                <div className="absolute inset-0 bg-indigo-500/20 blur-2xl rounded-full" />
-                <BrandLogo size={56} className="relative z-10" />
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center justify-center gap-2">
-                  <h1 className="text-2xl font-black font-brand tracking-tight text-white uppercase">
-                    {BRAND_CONFIG.name}
-                  </h1>
-                  <span className="text-[10px] font-mono text-slate-500 bg-white/5 px-1.5 py-0.5 rounded">v{APP_VERSION}</span>
+            {/* Compact Brand Header */}
+            <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-3.5">
+              <div className="flex items-center gap-3 min-w-0">
+                <BrandLogo size={40} className="shrink-0" />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-lg sm:text-xl font-extrabold font-brand tracking-tight text-white truncate">
+                      {BRAND_CONFIG.name}
+                    </h1>
+                    <span className="text-[11px] font-mono text-slate-400">v{APP_VERSION}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 truncate">
+                    Academic & Institutional Workspace
+                  </p>
                 </div>
-                <p className="text-xs text-slate-400 font-medium tracking-wide">
-                  Academic & Institutional Workspace
-                </p>
               </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  soundService.playButtonClick();
+                  setIsInstallAppModalOpen(true);
+                }}
+                className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-[11px] font-semibold text-emerald-400 flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors"
+                title="Install Veylentra App"
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                <span>Get App</span>
+              </button>
             </div>
 
             {/* Sign In / Create Account Segmented Switcher */}
@@ -7797,37 +7807,31 @@ ${roleLabel}: ${userQuery}
             }`}
           >
             {/* Sidebar Header Brand & Collapse Controls */}
-            <div className="shrink-0 pb-4 border-b border-white/10">
-              <div className={`flex flex-col items-center justify-center text-center ${sidebarOpen ? 'space-y-3' : 'space-y-2'}`}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!sidebarOpen) setSidebarOpen(true);
-                    else handleTabSelect('dashboard');
-                  }}
-                  className={`rounded-2xl flex items-center justify-center transition-all active:scale-90 cursor-pointer overflow-hidden shadow-lg ${
-                    sidebarOpen 
-                      ? 'h-16 w-16 bg-gradient-to-br from-indigo-500 to-purple-600 p-[1.5px]' 
-                      : 'h-10 w-10 bg-slate-800 hover:bg-slate-700'
-                  }`}
-                  title={sidebarOpen ? `${BRAND_CONFIG.name} Dashboard` : `Expand ${BRAND_CONFIG.name} Sidebar`}
-                >
-                  <div className={`w-full h-full flex items-center justify-center ${sidebarOpen ? 'bg-slate-950 rounded-[14px]' : ''}`}>
-                    <BrandLogo size={sidebarOpen ? 40 : 28} />
-                  </div>
-                </button>
-                
-                {sidebarOpen && (
-                  <div className="flex flex-col items-center">
-                    <span className="text-base font-black font-brand text-white tracking-widest uppercase">
-                      {BRAND_CONFIG.name}
-                    </span>
-                    <span className="text-[9px] text-slate-500 font-mono tracking-tighter mt-0.5">
-                      INSTITUTIONAL SUITE v{APP_VERSION}
-                    </span>
-                  </div>
-                )}
-              </div>
+            <div className="shrink-0 space-y-3 pb-3 border-b border-white/10">
+              <div className={`flex items-center ${sidebarOpen ? 'justify-between' : 'md:justify-center justify-between'}`}>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!sidebarOpen) setSidebarOpen(true);
+                      else handleTabSelect('dashboard');
+                    }}
+                    className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0 transition-transform active:scale-95 cursor-pointer overflow-hidden"
+                    title={sidebarOpen ? `${BRAND_CONFIG.name} Dashboard` : `Expand ${BRAND_CONFIG.name} Sidebar`}
+                  >
+                    <BrandLogo size={36} />
+                  </button>
+                  {sidebarOpen && (
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-sm font-brand font-extrabold text-white tracking-tight truncate leading-none">
+                        {BRAND_CONFIG.name}
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono mt-1 leading-none">
+                        v{APP_VERSION}
+                      </span>
+                    </div>
+                  )}
+                </div>
 
                 {sidebarOpen ? (
                   <div className="flex items-center gap-1 shrink-0">
@@ -7915,7 +7919,8 @@ ${roleLabel}: ${userQuery}
                   </div>
                 </div>
               )}
-            
+            </div>
+
             {/* Scrollable Navigation Body */}
             <nav className="flex-1 min-h-0 overflow-y-auto py-3 pr-1 space-y-4 scrollbar-thin">
               {(() => {
@@ -8533,24 +8538,46 @@ ${roleLabel}: ${userQuery}
               )}
 
               {sidebarOpen ? (
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 px-3 text-xs bg-rose-500/10 hover:bg-rose-600 hover:text-white text-rose-300 border border-rose-500/20 rounded-xl transition-all font-semibold cursor-pointer"
-                  title="Sign out of Veylentra"
-                >
-                  <LogOut className="w-4 h-4 shrink-0" />
-                  <span className="truncate">Sign Out</span>
-                </button>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsInstallAppModalOpen(true)}
+                    className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 hover:text-white border border-emerald-500/25 transition-all text-xs font-semibold cursor-pointer"
+                    title="Download Veylentra APK / Install App"
+                  >
+                    <Smartphone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span className="truncate">Get App</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="flex items-center justify-center gap-1.5 py-2 px-2.5 text-xs bg-rose-500/10 hover:bg-rose-600 hover:text-white text-rose-300 border border-rose-500/20 rounded-xl transition-all font-semibold cursor-pointer"
+                    title="Sign out of Veylentra"
+                  >
+                    <LogOut className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">Sign Out</span>
+                  </button>
+                </div>
               ) : (
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  className="w-full flex items-center justify-center p-2 text-xs bg-rose-500/10 hover:bg-rose-600 hover:text-white text-rose-400 rounded-xl transition-all font-semibold cursor-pointer"
-                  title="Sign Out"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
+                <div className="flex flex-col items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsInstallAppModalOpen(true)}
+                    className="w-full flex items-center justify-center p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 hover:text-white border border-emerald-500/25 transition-all cursor-pointer"
+                    title="Install Veylentra App"
+                  >
+                    <Smartphone className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="w-full flex items-center justify-center p-2 text-xs bg-rose-500/10 hover:bg-rose-600 hover:text-white text-rose-400 rounded-xl transition-all font-semibold cursor-pointer"
+                    title="Sign Out"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                </div>
               )}
 
               {/* Absolute Bottom Sidebar Button: About Veylentra */}
@@ -8738,7 +8765,28 @@ ${roleLabel}: ${userQuery}
                   <span>{clock}</span>
                 </div>
 
-
+                {/* Install App / Download APK Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundService.playAppearSound();
+                    setIsInstallAppModalOpen(true);
+                  }}
+                  className={`p-1.5 sm:px-3 sm:py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-md border transition-all active:scale-95 cursor-pointer min-h-[32px] sm:min-h-[38px] ${
+                    isApkInstalled
+                      ? 'bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-300 border-emerald-500/40 shadow-emerald-500/10'
+                      : 'bg-gradient-to-r from-emerald-600/90 to-teal-600/90 hover:from-emerald-500 hover:to-teal-500 text-white border-emerald-500/30 shadow-emerald-500/20'
+                  }`}
+                  title={isApkInstalled ? 'Veylentra Android App (APK) Installed - Click to Manage' : 'Download & Install Veylentra Android App (APK)'}
+                >
+                  {isApkInstalled ? (
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  ) : (
+                    <Smartphone className="w-3.5 h-3.5 text-emerald-100 shrink-0" />
+                  )}
+                  <span className="hidden sm:inline">{isApkInstalled ? 'Installed' : 'Install App'}</span>
+                  <span className="hidden md:inline text-[9px] uppercase font-mono px-1.5 py-0.5 rounded bg-black/30 text-emerald-200 font-extrabold">APK</span>
+                </button>
 
                 {/* Broadcast Action Button */}
                 {['super_admin', 'admin', 'teacher', 'coordinator'].includes(effectiveRole) && (
@@ -8917,25 +8965,6 @@ ${roleLabel}: ${userQuery}
               {/* Tab 1: Dashboard View */}
               {activeTab === 'dashboard' && (
                 <div className="space-y-6 animate-fadeIn">
-                  {dataLoading && !showStartup ? (
-                    <div className="space-y-8">
-                      <Skeleton className="h-48 w-full rounded-3xl" />
-                      <div className="space-y-4">
-                        <Skeleton className="h-4 w-1/4" />
-                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-                          {Array.from({ length: 7 }).map((_, i) => (
-                            <Skeleton key={i} className="h-24 w-full rounded-2xl" />
-                          ))}
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        <SkeletonCard />
-                        <SkeletonCard />
-                        <SkeletonCard />
-                      </div>
-                    </div>
-                  ) : (
-                    <>
                   
                   {/* Status Banner for Pending Requests */}
                   {currentUser.accountStatus && currentUser.accountStatus !== 'approved' && (
@@ -9578,24 +9607,12 @@ ${roleLabel}: ${userQuery}
                     </div>
                   </div>
 
-                    </>
-                  )}
                 </div>
               )}
 
               {/* Unified Study Hub View: Flashcards (SM-2), Task Manager, & Study Schedule Planner */}
               {['study_hub', 'tasks', 'planner', 'flashcards'].includes(activeTab) && (
                 <div className="space-y-6 animate-fadeIn">
-                  {dataLoading && !showStartup ? (
-                    <div className="space-y-6">
-                      <Skeleton className="h-16 w-full rounded-2xl" />
-                      <div className="smart-glass p-6 rounded-3xl space-y-4">
-                        <Skeleton className="h-6 w-1/3" />
-                        <SkeletonList count={5} />
-                      </div>
-                    </div>
-                  ) : (
-                    <>
                   {/* Study Hub Unified Sub-Tabs Navigation */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/90 backdrop-blur-xl p-2.5 rounded-2xl border border-white/10 shadow-lg relative z-20">
                     <div className="w-full sm:max-w-md">
@@ -9728,28 +9745,12 @@ ${roleLabel}: ${userQuery}
                       />
                     </div>
                   )}
-                  </>
-                )}
-              </div>
-            )}
+                </div>
+              )}
 
               {/* Tab: Personal Lecture Notes Workspace */}
               {activeTab === 'notes' && (
                 <div className="space-y-6 animate-fadeIn">
-                  {dataLoading && !showStartup ? (
-                    <div className="space-y-6">
-                      <Skeleton className="h-16 w-full rounded-2xl" />
-                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                        <div className="lg:col-span-3 space-y-4">
-                          <SkeletonList count={6} />
-                        </div>
-                        <div className="lg:col-span-9">
-                          <Skeleton className="h-[600px] w-full rounded-3xl" />
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
                   
                   {/* Notes Header Bar */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/80 p-3.5 sm:p-4 rounded-2xl border border-white/5 shadow-sm">
@@ -10807,8 +10808,6 @@ ${roleLabel}: ${userQuery}
                     )}
                   </AnimatePresence>
 
-                    </>
-                  )}
                 </div>
               )}
 
@@ -12180,25 +12179,6 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
               */}
               {activeTab === 'materials' && (
                 <div className="space-y-8 animate-fadeIn">
-                  {dataLoading && !showStartup ? (
-                    <div className="space-y-8">
-                      <Skeleton className="h-40 w-full rounded-3xl" />
-                      <div className="flex gap-4 overflow-x-auto pb-2">
-                        {Array.from({ length: 4 }).map((_, i) => (
-                          <Skeleton key={i} className="h-10 w-32 rounded-xl flex-shrink-0" />
-                        ))}
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
-                        <SkeletonCard />
-                        <SkeletonCard />
-                        <SkeletonCard />
-                        <SkeletonCard />
-                        <SkeletonCard />
-                        <SkeletonCard />
-                      </div>
-                    </div>
-                  ) : (
-                    <>
                   
                   {/* Subject and Statistics Banner */}
                   <div className="smart-glass p-4 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl space-y-4">
@@ -13875,8 +13855,6 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                     </>
                   )}
 
-                    </>
-                  )}
                 </div>
               )}
 
