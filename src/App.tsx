@@ -92,8 +92,6 @@ import ProfileCustomizer from './components/ProfileCustomizer';
 import { ProfileSettings } from './components/ProfileSettings';
 import { PromotionalBanners } from './components/PromotionalBanners';
 import AIQuotaManagerModal from './components/AIQuotaManagerModal';
-import { InstallAppModal, AppInstallSection } from './components/InstallAppModal';
-import { isApkInstalledOnDevice } from './config/appConfig';
 import { WhatsNewPortal } from './components/WhatsNewPortal';
 import { BrandLogo } from './components/brand/BrandLogo';
 import { BRAND_CONFIG } from './config/branding';
@@ -507,19 +505,9 @@ export default function App() {
 
 
 
-  const [isInstallAppModalOpen, setIsInstallAppModalOpen] = useState<boolean>(false);
   const [isSoundSettingsModalOpen, setIsSoundSettingsModalOpen] = useState<boolean>(false);
-  const [isApkInstalled, setIsApkInstalled] = useState<boolean>(() => isApkInstalledOnDevice());
   const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState<boolean>(false);
   const [isProductTourOpen, setIsProductTourOpen] = useState<boolean>(false);
-
-  useEffect(() => {
-    const handleInstallChanged = (e: any) => {
-      setIsApkInstalled(Boolean(e.detail?.installed));
-    };
-    window.addEventListener('studentos_apk_installed_changed', handleInstallChanged);
-    return () => window.removeEventListener('studentos_apk_installed_changed', handleInstallChanged);
-  }, []);
 
   // Check if onboarding should appear for new users or upon explicit restart request
   useEffect(() => {
@@ -7204,18 +7192,6 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  soundService.playButtonClick();
-                  setIsInstallAppModalOpen(true);
-                }}
-                className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-[11px] font-semibold text-emerald-400 flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors"
-                title="Install Veylentra App"
-              >
-                <Smartphone className="w-3.5 h-3.5" />
-                <span>Get App</span>
-              </button>
             </div>
 
             {/* Sign In / Create Account Segmented Switcher */}
@@ -8651,21 +8627,11 @@ CRITICAL WEB GROUNDING DIRECTIVE:
               )}
 
               {sidebarOpen ? (
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsInstallAppModalOpen(true)}
-                    className="flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 hover:text-white border border-emerald-500/25 transition-all text-xs font-semibold cursor-pointer"
-                    title="Download Veylentra APK / Install App"
-                  >
-                    <Smartphone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                    <span className="truncate">Get App</span>
-                  </button>
-
+                <div className="w-full">
                   <button
                     type="button"
                     onClick={handleLogout}
-                    className="flex items-center justify-center gap-1.5 py-2 px-2.5 text-xs bg-rose-500/10 hover:bg-rose-600 hover:text-white text-rose-300 border border-rose-500/20 rounded-xl transition-all font-semibold cursor-pointer"
+                    className="w-full flex items-center justify-center gap-1.5 py-2 px-2.5 text-xs bg-rose-500/10 hover:bg-rose-600 hover:text-white text-rose-300 border border-rose-500/20 rounded-xl transition-all font-semibold cursor-pointer"
                     title="Sign out of Veylentra"
                   >
                     <LogOut className="w-3.5 h-3.5 shrink-0" />
@@ -8674,14 +8640,6 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                 </div>
               ) : (
                 <div className="flex flex-col items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setIsInstallAppModalOpen(true)}
-                    className="w-full flex items-center justify-center p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 hover:text-white border border-emerald-500/25 transition-all cursor-pointer"
-                    title="Install Veylentra App"
-                  >
-                    <Smartphone className="w-4 h-4" />
-                  </button>
                   <button
                     type="button"
                     onClick={handleLogout}
@@ -8878,28 +8836,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                   <span>{clock}</span>
                 </div>
 
-                {/* Install App / Download APK Button */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    soundService.playAppearSound();
-                    setIsInstallAppModalOpen(true);
-                  }}
-                  className={`p-1.5 sm:px-3 sm:py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-md border transition-all active:scale-95 cursor-pointer min-h-[32px] sm:min-h-[38px] ${
-                    isApkInstalled
-                      ? 'bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-300 border-emerald-500/40 shadow-emerald-500/10'
-                      : 'bg-gradient-to-r from-emerald-600/90 to-teal-600/90 hover:from-emerald-500 hover:to-teal-500 text-white border-emerald-500/30 shadow-emerald-500/20'
-                  }`}
-                  title={isApkInstalled ? 'Veylentra Android App (APK) Installed - Click to Manage' : 'Download & Install Veylentra Android App (APK)'}
-                >
-                  {isApkInstalled ? (
-                    <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  ) : (
-                    <Smartphone className="w-3.5 h-3.5 text-emerald-100 shrink-0" />
-                  )}
-                  <span className="hidden sm:inline">{isApkInstalled ? 'Installed' : 'Install App'}</span>
-                  <span className="hidden md:inline text-[9px] uppercase font-mono px-1.5 py-0.5 rounded bg-black/30 text-emerald-200 font-extrabold">APK</span>
-                </button>
+
 
                 {/* Broadcast Action Button */}
                 {['super_admin', 'admin', 'teacher', 'coordinator'].includes(effectiveRole) && (
@@ -11503,14 +11440,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                         </button>
                       </div>
 
-                      {/* App Download and Installation Section */}
-                      <div className="mt-8 pt-6 border-t border-white/5">
-                        <AppInstallSection 
-                          isSuperAdmin={Boolean(isSuperAdmin || effectiveRole === 'super_admin' || currentUser?.role === 'super_admin')}
-                          effectiveRole={effectiveRole || currentUser?.role || 'student'}
-                          currentUserName={currentUser?.name || currentUser?.email || 'Super Admin'}
-                        />
-                      </div>
+
                     </form>
                   )}
                   
@@ -15519,15 +15449,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
         />
       )}
 
-      {isInstallAppModalOpen && (
-        <InstallAppModal
-          isOpen={isInstallAppModalOpen}
-          onClose={() => setIsInstallAppModalOpen(false)}
-          isSuperAdmin={Boolean(isSuperAdmin || effectiveRole === 'super_admin' || currentUser?.role === 'super_admin')}
-          effectiveRole={effectiveRole || currentUser?.role || 'student'}
-          currentUserName={currentUser?.name || currentUser?.email || 'Super Admin'}
-        />
-      )}
+
 
       {isSoundSettingsModalOpen && (
         <SoundSettingsModal
