@@ -144,8 +144,8 @@ export function InstallAppModal({
           </button>
 
           <div className="flex items-center gap-2.5 sm:gap-3 pr-8">
-            <div className="w-12 h-12 rounded-2xl bg-white p-1 shadow-lg shadow-indigo-500/20 shrink-0 flex items-center justify-center overflow-hidden border border-white/20">
-              <img src="/brand/app-logo-white.png" alt="Veylentra App Icon" className="w-full h-full object-contain rounded-xl" />
+            <div className="w-12 h-12 rounded-2xl bg-slate-950 p-2 shadow-lg shadow-indigo-500/20 shrink-0 flex items-center justify-center overflow-hidden border border-white/10">
+              <img src="/brand/logo.png" alt="Veylentra Logo" className="w-full h-full object-contain" />
             </div>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
@@ -514,8 +514,8 @@ export function AppInstallSection({
     <div className="p-4 sm:p-6 bg-slate-950/60 border border-white/10 rounded-2xl space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-12 h-12 rounded-2xl bg-white p-1 shadow-lg shrink-0 flex items-center justify-center overflow-hidden border border-white/20">
-            <img src="/brand/app-logo-white.png" alt="Veylentra App Icon" className="w-full h-full object-contain rounded-xl" />
+          <div className="w-12 h-12 rounded-2xl bg-slate-950 p-2 shadow-lg shrink-0 flex items-center justify-center overflow-hidden border border-white/10">
+            <img src="/brand/logo.png" alt="Veylentra Logo" className="w-full h-full object-contain" />
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
