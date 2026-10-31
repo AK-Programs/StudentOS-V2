@@ -3497,14 +3497,16 @@ function getProceduralMagicPenStrokes(userPrompt: string) {
     };
   }
 
-  // 11. GENERAL SCHEMATIC - Return a more intelligent generic schematic
+  // DETAILED STRUCTURED FALLBACK FOR ANY UNKNOWN NOUN (NO generic 3-shape blob)
   return {
-    title: userPrompt,
+    title: `${userPrompt} Diagram`,
     strokes: [
-      { type: 'curve', points: [200,300, 300,150, 450,100, 600,150, 700,300, 600,450, 450,500, 300,450, 200,300], color: '#38bdf8', size: 3 },
-      { type: 'ellipse', x: 450, y: 300, width: 400, height: 300, color: '#818cf8', size: 2, fill: 'transparent' },
-      { type: 'arrow', points: [700, 140, 580, 210], color: '#94a3b8', size: 1.5 },
-      { type: 'label', x: 710, y: 135, text: userPrompt.slice(0, 30), color: '#38bdf8', size: 12 }
+      { type: 'rect', x: 250, y: 150, width: 400, height: 300, color: '#3b82f6', size: 4, fill: '#eff6ff' },
+      { type: 'ellipse', x: 450, y: 300, width: 220, height: 150, color: '#818cf8', size: 3, fill: '#e0e7ff' },
+      { type: 'circle', x: 450, y: 300, radius: 45, color: '#f43f5e', size: 2, fill: '#fda4af' },
+      { type: 'line', points: [300, 200, 600, 200], color: '#64748b', size: 2 },
+      { type: 'arrow', points: [700, 200, 530, 260], color: '#94a3b8', size: 1.5 },
+      { type: 'label', x: 710, y: 190, text: userPrompt, color: '#3b82f6', size: 12 }
     ]
   };
 }
