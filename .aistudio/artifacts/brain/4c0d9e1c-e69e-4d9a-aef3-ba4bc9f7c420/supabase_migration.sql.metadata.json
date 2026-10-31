@@ -1,0 +1,6 @@
+{
+  "summary":  "SQL migration script for adding sort_order columns and a dedicated personal_tasks table to support drag-and-drop reordering and improved Material Hub folder operations.",
+  "updatedAt":  "2026-10-31T06:17:11.511500086Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

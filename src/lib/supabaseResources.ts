@@ -46,7 +46,8 @@ function mapMaterialToRow(mat: MaterialResource) {
     question_paper_year: mat.questionPaperYear || null,
     ai_summary: mat.aiSummary || null,
     ai_quiz: mat.aiQuiz || null,
-    folder_id: (mat as any).folder_id || null,
+    folder_id: (mat as any).folder_id || mat.folder_id || null,
+    sort_order: (mat as any).sort_order || 0,
     raw_data: mat // Store the whole object as backup
   };
 }
@@ -95,6 +96,7 @@ function mapRowToMaterial(row: any): MaterialResource {
     aiSummary: row.ai_summary || backup.aiSummary,
     aiQuiz: row.ai_quiz || backup.aiQuiz,
     folder_id: row.folder_id || backup.folder_id || null,
+    sort_order: row.sort_order || backup.sort_order || 0,
   };
 }
 
@@ -233,6 +235,7 @@ export async function getSupabaseMaterials(): Promise<MaterialResource[]> {
     const { data, error } = await supabase
       .from('materials')
       .select('*')
+      .order('sort_order', { ascending: true })
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -346,6 +349,7 @@ function mapResourceToRow(res: any) {
     created_at: createdAtMs,
     author: res.author || 'Teacher',
     folder_id: res.folder_id || null,
+    sort_order: res.sort_order || 0,
     raw_data: res
   };
 }
@@ -372,7 +376,8 @@ function mapRowToResource(row: any): any {
     createdAt: row.created_at || backup.createdAt,
     created_at: row.created_at || backup.created_at,
     author: row.author || backup.author,
-    folder_id: row.folder_id || backup.folder_id || null
+    folder_id: row.folder_id || backup.folder_id || null,
+    sort_order: row.sort_order || backup.sort_order || 0
   };
 }
 

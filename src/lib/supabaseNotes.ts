@@ -85,7 +85,10 @@ function saveLocalVaultNotes(userId: string, notes: VaultNote[]): void {
 export async function getVaultNotes(userId: string): Promise<VaultNote[]> {
   const localNotes = getLocalVaultNotes(userId);
   try {
-    const { data, error } = await supabase.from('notes').select('*').eq('user_id', userId);
+    const { data, error } = await supabase.from('notes')
+      .select('*')
+      .eq('user_id', userId)
+      .order('sort_order', { ascending: true });
     if (error) {
       if (error.code === '42P01') {
         return localNotes;
@@ -107,7 +110,8 @@ export async function getVaultNotes(userId: string): Promise<VaultNote[]> {
           folder_id: n.folder_id || null,
           isPinned: Boolean(n.is_pinned),
           collabCode: n.collab_code || undefined,
-          isCollab: Boolean(n.is_collab || n.collab_code)
+          isCollab: Boolean(n.is_collab || n.collab_code),
+          sort_order: n.sort_order || 0
         }));
       const mergedMap = new Map<string, VaultNote>();
       for (const ln of localNotes) mergedMap.set(ln.id, ln);
@@ -151,7 +155,8 @@ export async function saveVaultNoteToSupabase(note: VaultNote): Promise<void> {
       user_id: note.userId,
       created_at: note.createdAt,
       folder_id: (note as any).folder_id || null,
-      is_pinned: (note as any).isPinned || false
+      is_pinned: (note as any).isPinned || false,
+      sort_order: note.sort_order || 0
     };
 
     if (note.collabCode) {
@@ -175,6 +180,24 @@ export async function deleteVaultNoteFromSupabase(noteId: string, userId: string
     const { error } = await supabase.from('notes').delete().eq('id', noteId);
     if (error && error.code !== '42P01') throw error;
   } catch (err) {}
+}
+
+export async function updateNoteOrder(notes: VaultNote[], userId: string): Promise<void> {
+  const uid = userId || 'guest';
+  saveLocalVaultNotes(uid, notes);
+
+  try {
+    const updates = notes.map((n, idx) => ({
+      id: n.id,
+      user_id: userId,
+      sort_order: idx
+    }));
+
+    const { error } = await supabase.from('notes').upsert(updates);
+    if (error && error.code !== '42P01') throw error;
+  } catch (err) {
+    console.error('[NOTES] Order update error:', err);
+  }
 }
 
 /**

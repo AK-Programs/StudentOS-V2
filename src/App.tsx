@@ -5,7 +5,7 @@ import { Whiteboard2 } from './components/Whiteboard2';
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { 
   Search, ChevronRight, ChevronDown, Plus, Check, Trash, Trash2, BookOpen, Award, Sparkles, 
   Clock, ArrowRight, Lock, Unlock, Send, Volume2, VolumeX, ZoomIn, 
@@ -24,10 +24,11 @@ import {
   Homework, RecentAccount
 } from './types';
 import { supabase } from './lib/supabase';
-import { getVaultNotes, saveVaultNoteToSupabase, deleteVaultNoteFromSupabase, getNoteByCollabCode } from './lib/supabaseNotes';
+import { getVaultNotes, saveVaultNoteToSupabase, deleteVaultNoteFromSupabase, getNoteByCollabCode, updateNoteOrder } from './lib/supabaseNotes';
 import { generateFormattedPdf } from './lib/pdfGenerator';
 import { getSupabaseUserProfile, saveSupabaseUserProfile, getDefaultProfileForAccount, saveLocalProfileBackup } from './lib/supabaseUsers';
 import { getSupabaseHomework, saveSupabaseHomework, deleteSupabaseHomework } from './lib/supabaseHomework';
+import { getPersonalTasks, savePersonalTask, updateTaskOrder as saveTaskOrderToSupabase, deletePersonalTask } from './lib/supabaseTasks';
 import { getAppNotifications, saveAppNotification, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification, generateUUID, registerPushSubscription, getDeviceId, triggerBrowserPushNotification, isUserEligibleForNotification, triggerNotificationSound } from './lib/notifications';
 import { requestFCMPermission, setupFCMForegroundListener } from './lib/fcmNotifications';
 import { awardStudentXP, isHalloweenBadgeDateRange } from './lib/gamification';
@@ -139,6 +140,7 @@ import { FloatingByteWidget } from './components/byte/FloatingByteWidget';
 import { StudentOSOnboardingModal } from './components/onboarding/StudentOSOnboardingModal';
 import { GuidedProductTour } from './components/onboarding/GuidedProductTour';
 import { shouldShowOnboarding } from './lib/onboardingService';
+import { BottomSheet } from './components/ui/BottomSheet';
 
 // Stub Integrations
 import {
@@ -2695,22 +2697,41 @@ export default function App() {
     }
   }, [activeTab]);
 
-  // Tasks Sync
+  // Tasks Sync (Improved for Personal Tasks table)
   useEffect(() => {
-    if (!currentUser) {
+    if (!currentUser?.uid) {
       setTasks([]);
       return;
     }
-    try {
-      const rd = currentUser.raw_data || {};
-      const fallbackProfile = getDefaultProfileForAccount(currentUser.uid, currentUser.email);
-      const userTasks = rd.tasks || fallbackProfile?.raw_data?.tasks || [];
-      setTasks(userTasks);
-    } catch (err) {
-      console.error('[Sync] Failed to load tasks:', err);
-      setTasks([]);
-    }
-  }, [currentUser?.uid, currentUser?.email]);
+    
+    let active = true;
+    const syncTasks = async () => {
+      try {
+        const fetched = await getPersonalTasks(currentUser.uid!);
+        if (active) {
+          // If no tasks in DB, check raw_data for migration
+          if (fetched.length === 0) {
+            const rd = currentUser.raw_data || {};
+            const userTasks = (rd.tasks || []) as Task[];
+            if (userTasks.length > 0) {
+              setTasks(userTasks);
+              // Migrate to new table
+              for (const t of userTasks) {
+                await savePersonalTask(t, currentUser.uid!);
+              }
+            }
+          } else {
+            setTasks(fetched);
+          }
+        }
+      } catch (err) {
+        console.error('[Sync] Tasks fetch error:', err);
+      }
+    };
+
+    syncTasks();
+    return () => { active = false; };
+  }, [currentUser?.uid]);
 
   // Personal Notes Sync (Staggered to prevent connection flood)
   useEffect(() => {
@@ -3989,54 +4010,55 @@ ${resultText}
 
   // Tasks manager operations
   const handleAddTask = async () => {
-    if (!newTaskTitle.trim() || !currentUser) return;
-    const uid = currentUser.uid;
-    const taskId = generateUniqueId();
+    if (!newTaskTitle.trim() || !currentUser?.uid) return;
+    soundService.playSuccess();
     const item: Task = {
-      id: taskId,
+      id: generateUniqueId(),
       title: newTaskTitle.trim(),
       completed: false,
-      dueDate: 'June 15',
+      dueDate: 'Tomorrow',
       subject: currentUser?.specialtySubject || 'General',
-      userId: uid,
-      createdAt: new Date().toISOString()
+      userId: currentUser.uid,
+      createdAt: new Date().toISOString(),
+      sort_order: tasks.length
     };
-    try {
-      const updated = [...tasks, item];
-      setTasks(updated);
-      const updatedUser = { ...currentUser, raw_data: { ...(currentUser.raw_data || {}), tasks: updated } };
-      setCurrentUser(updatedUser);
-      saveSupabaseUserProfile(updatedUser).catch(e => {});
-      setNewTaskTitle('');
-      showNotification('New task milestone appended to local repository.');
-    } catch (err: any) {
-      console.error('Failed to add task:', err);
-    }
+    
+    const updated = [...tasks, item];
+    setTasks(updated);
+    setNewTaskTitle('');
+    await savePersonalTask(item, currentUser.uid);
+    showNotification('Task added to your personal list.');
   };
 
   const toggleTask = async (id: string) => {
-    if (!currentUser) return;
-    const target = tasks.find(t => t.id === id);
-    if (target && !target.completed) {
+    if (!currentUser?.uid) return;
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+
+    if (!task.completed) {
       soundService.playTaskComplete();
     } else {
       soundService.playClick();
     }
-    const updated = tasks.map(t => t.id === id ? { ...t, completed: !t.completed } : t);
+
+    const updatedTask = { ...task, completed: !task.completed };
+    const updated = tasks.map(t => t.id === id ? updatedTask : t);
     setTasks(updated);
-    const updatedUser = { ...currentUser, raw_data: { ...(currentUser.raw_data || {}), tasks: updated } };
-    setCurrentUser(updatedUser);
-    saveSupabaseUserProfile(updatedUser).catch(console.error);
+    await savePersonalTask(updatedTask, currentUser.uid);
   };
 
   const deleteTask = async (id: string) => {
-    if (!currentUser) return;
+    if (!currentUser?.uid) return;
     const updated = tasks.filter(t => t.id !== id);
     setTasks(updated);
-    const updatedUser = { ...currentUser, raw_data: { ...(currentUser.raw_data || {}), tasks: updated } };
-    setCurrentUser(updatedUser);
-    saveSupabaseUserProfile(updatedUser).catch(console.error);
-    showNotification('Task deleted.');
+    await deletePersonalTask(id);
+    showNotification('Task removed.');
+  };
+
+  const handleReorderTasks = async (newOrder: Task[]) => {
+    if (!currentUser?.uid) return;
+    setTasks(newOrder);
+    await saveTaskOrderToSupabase(newOrder, currentUser.uid);
   };
 
   // Vault Notes notes state
@@ -4143,17 +4165,20 @@ ${resultText}
   };
 
   const handleDeleteNote = async (id: string) => {
-    if (!currentUser) return;
-    const uid = currentUser.uid;
+    if (!currentUser?.uid) return;
     const updated = vaultNotes.filter(n => n.id !== id);
     setVaultNotes(updated);
-    (async () => {
-       const newArr = updated;
-       for (const n of newArr) {
-          saveVaultNoteToSupabase(n).catch(()=>{});
-       }
-     })();
-    showNotification('Lecture note removed.');
+    if (selectedNoteId === id) {
+      setSelectedNoteId(null);
+    }
+    await deleteVaultNoteFromSupabase(id, currentUser.uid);
+    showNotification('Note removed from your vault.');
+  };
+
+  const handleReorderNotes = async (newOrder: VaultNote[]) => {
+    if (!currentUser?.uid) return;
+    setVaultNotes(newOrder);
+    await updateNoteOrder(newOrder, currentUser.uid);
   };
 
   const handleCreateNewNote = async () => {
@@ -5326,7 +5351,8 @@ Date: ${new Date().toLocaleDateString()}
       isVerified: effectiveRole === 'teacher' || effectiveRole === 'admin' || effectiveRole === 'super_admin', // auto verify staff!
       comments: [],
       visibility: newMaterialVisibility,
-      questionPaperYear: yearInput ? yearInput.trim() : undefined
+      questionPaperYear: yearInput ? yearInput.trim() : undefined,
+      folder_id: activeMaterialFolderId
     };
 
     console.log("[UPLOAD TRACE] 5. Metadata object constructed before save:", JSON.stringify(docItem, null, 2));
@@ -8832,7 +8858,15 @@ ${roleLabel}: ${userQuery}
 
             {/* Base View Layout Wrapper */}
             <main className={`flex-1 p-2 sm:p-6 md:p-8 pb-24 sm:pb-12 max-w-7xl w-full mx-auto space-y-4 sm:space-y-8 min-w-0 ${fontSize === 'large' ? 'text-lg' : fontSize === 'huge' ? 'text-xl' : 'text-sm'}`}>
-              
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={activeTab}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.2 }}
+                  className="space-y-4 sm:space-y-8"
+                >
               {/* Tab: Panel Mode Launcher */}
               {activeTab === 'panel_mode' && effectiveRole !== 'student' && (
                 <div className="space-y-6 animate-fadeIn min-h-[calc(100dvh-140px)] flex flex-col pt-2 sm:pt-4">
@@ -9045,35 +9079,35 @@ ${roleLabel}: ${userQuery}
                         <>
                           <button
                             onClick={() => handleTabSelect('meet')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
                           >
                             <span className="text-xl">📹</span>
                             <span className="text-xs font-bold text-white whitespace-nowrap">Live Meet</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('notes')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
                           >
                             <span className="text-xl">📝</span>
                             <span className="text-xs font-bold text-white whitespace-nowrap">Lecture Notes</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('homework')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
                           >
                             <span className="text-xl">📓</span>
                             <span className="text-xs font-bold text-white whitespace-nowrap">Homework Hub</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('brain_battle')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
                           >
                             <span className="text-xl">⚔️</span>
                             <span className="text-xs font-bold text-white whitespace-nowrap">Brain Battle</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('study_hub')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left relative cursor-pointer"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left relative cursor-pointer active:scale-95 transition-transform"
                           >
                             <span className="text-xl">🎯</span>
                             <span className="text-xs font-bold text-white whitespace-nowrap">Study Hub</span>
@@ -9085,14 +9119,14 @@ ${roleLabel}: ${userQuery}
                           </button>
                           <button
                             onClick={() => handleTabSelect('pomodoro')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
                           >
                             <span className="text-xl">⏱️</span>
                             <span className="text-xs font-bold text-white whitespace-nowrap">Focus Timer</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('life')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
                           >
                             <span className="text-xl">🚀</span>
                             <span className="text-xs font-bold text-white whitespace-nowrap">Veylentra Life</span>
@@ -9104,49 +9138,49 @@ ${roleLabel}: ${userQuery}
                         <>
                           <button
                             onClick={() => handleTabSelect('faculty')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
                           >
                             <span className="text-xl">👨‍🏫</span>
                             <span className="text-xs font-bold text-white whitespace-nowrap">Faculty Center</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('panel_mode')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
                           >
                             <span className="text-xl">🖥️</span>
                             <span className="text-xs font-bold text-white whitespace-nowrap">Smartboard</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('attendance_manager')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
                           >
                             <span className="text-xl">📋</span>
                             <span className="text-xs font-bold text-white whitespace-nowrap">Attendance Roll</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('homework')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
                           >
                             <span className="text-xl">📓</span>
                             <span className="text-xs font-bold text-white whitespace-nowrap">Homework</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('assignments')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
                           >
                             <span className="text-xl">📚</span>
                             <span className="text-xs font-bold text-white whitespace-nowrap">Assignments</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('funzone')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
                           >
                             <span className="text-xl">🎡</span>
                             <span className="text-xs font-bold text-white whitespace-nowrap">Teacher Fun Zone</span>
                           </button>
                           <button
                             onClick={() => handleTabSelect('life')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
                           >
                             <span className="text-xl">🚀</span>
                             <span className="text-xs font-bold text-white whitespace-nowrap">Veylentra Life</span>
@@ -9658,13 +9692,22 @@ ${roleLabel}: ${userQuery}
                         </button>
                       </div>
 
-                      <div className="space-y-2.5 pt-4 border-t border-white/5">
+                      <Reorder.Group 
+                        axis="y" 
+                        values={tasks} 
+                        onReorder={handleReorderTasks}
+                        className="space-y-2.5 pt-4 border-t border-white/5"
+                      >
                         {tasks.map(t => (
-                          <div key={t.id} className="p-4 rounded-xl bg-white/5 border border-white/5 hover:border-white/10 transition-colors flex items-center justify-between">
-                            <div className="flex items-center gap-3">
+                          <Reorder.Item 
+                            key={t.id} 
+                            value={t}
+                            className="p-4 rounded-xl bg-white/5 border border-white/5 hover:border-white/10 transition-colors flex items-center justify-between cursor-grab active:cursor-grabbing"
+                          >
+                            <div className="flex items-center gap-3 pointer-events-none">
                               <button 
-                                onClick={() => toggleTask(t.id)}
-                                className={`h-5 w-5 rounded flex items-center justify-center border transition-all ${t.completed ? 'bg-emerald-600 border-emerald-500 text-white' : 'border-white/20 hover:border-white'}`}
+                                onClick={(e) => { e.stopPropagation(); toggleTask(t.id); }}
+                                className={`h-5 w-5 rounded flex items-center justify-center border transition-all pointer-events-auto ${t.completed ? 'bg-emerald-600 border-emerald-500 text-white' : 'border-white/20 hover:border-white'}`}
                               >
                                 {t.completed && <Check className="w-3 h-3 stroke-[3]" />}
                               </button>
@@ -9673,12 +9716,12 @@ ${roleLabel}: ${userQuery}
                               </span>
                             </div>
                             <button 
-                              onClick={() => deleteTask(t.id)}
-                              className="text-red-400 hover:bg-red-500/10 p-1.5 rounded-lg transition-colors"
+                              onClick={(e) => { e.stopPropagation(); deleteTask(t.id); }}
+                              className="text-red-400 hover:bg-red-500/10 p-1.5 rounded-lg transition-colors pointer-events-auto"
                             >
                               <Trash className="w-4 h-4" />
                             </button>
-                          </div>
+                          </Reorder.Item>
                         ))}
 
                         {tasks.length === 0 && (
@@ -9686,7 +9729,7 @@ ${roleLabel}: ${userQuery}
                             No active task milestones recorded yet. Create one!
                           </div>
                         )}
-                      </div>
+                      </Reorder.Group>
                     </div>
                   )}
 
@@ -9912,12 +9955,18 @@ ${roleLabel}: ${userQuery}
                             </div>
 
                             {/* List of notes */}
-                            <div className="space-y-1.5 max-h-[460px] overflow-y-auto pr-1">
+                            <Reorder.Group 
+                              axis="y" 
+                              values={vaultNotes} 
+                              onReorder={handleReorderNotes}
+                              className="space-y-1.5 max-h-[460px] overflow-y-auto pr-1"
+                            >
                               {currentNotes.map(note => {
                                 const isActive = selectedNoteId === note.id;
                                 return (
-                                  <motion.button
+                                  <Reorder.Item
                                     key={note.id}
+                                    value={note}
                                     whileTap={{ scale: 0.99 }}
                                     onClick={() => {
                                       setSelectedNoteId(note.id);
@@ -9940,10 +9989,10 @@ ${roleLabel}: ${userQuery}
                                       }, 1500);
                                     }}
                                     onTouchEnd={() => clearTimeout(holdTimerRef.current)}
-                                    className={`w-full text-left p-2.5 rounded-xl border transition-all flex items-center justify-between relative ${isActive ? 'bg-indigo-600/20 border-indigo-500/40 text-white shadow-sm ring-1 ring-indigo-500/30' : 'border-white/5 bg-slate-900/40 hover:bg-white/5 text-slate-300'}`}
+                                    className={`w-full text-left p-2.5 rounded-xl border transition-all flex items-center justify-between relative cursor-grab active:cursor-grabbing ${isActive ? 'bg-indigo-600/20 border-indigo-500/40 text-white shadow-sm ring-1 ring-indigo-500/30' : 'border-white/5 bg-slate-900/40 hover:bg-white/5 text-slate-300'}`}
                                   >
                                     {(note as any).isPinned && <Pin className="w-2.5 h-2.5 text-amber-400 absolute top-1 right-1 rotate-45" />}
-                                    <div className="flex items-center gap-2 min-w-0">
+                                    <div className="flex items-center gap-2 min-w-0 pointer-events-none">
                                       <span className="text-sm flex-shrink-0">{note.icon || '📝'}</span>
                                       <div className="min-w-0">
                                         <p className="text-xs font-bold truncate leading-snug">{note.title || 'Untitled Note'}</p>
@@ -9960,7 +10009,7 @@ ${roleLabel}: ${userQuery}
                                       </div>
                                     </div>
                                     <span className={`text-[10px] transition-transform ${isActive ? 'translate-x-0.5 opacity-100 text-indigo-400 font-bold' : 'opacity-0'}`}>●</span>
-                                  </motion.button>
+                                  </Reorder.Item>
                                 );
                               })}
 
@@ -9971,7 +10020,7 @@ ${roleLabel}: ${userQuery}
                                     : 'No notes at root. Click "+ New Note" to write.'}
                                 </div>
                               )}
-                            </div>
+                            </Reorder.Group>
                           </>
                         );
                       })()}
@@ -13715,57 +13764,95 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                     </div>
                   )}
 
-                  {/* Move File to Folder Modal */}
+                  {/* Move File to Folder Modal / Bottom Sheet */}
                   {materialItemHoldMenu && (
-                    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn text-left">
-                      <div className="bg-slate-900 border border-white/10 p-5 rounded-3xl max-w-sm w-full space-y-4 shadow-2xl">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <Folder className="w-4 h-4 text-amber-400" />
-                            <h4 className="text-xs font-black uppercase text-white tracking-wider">Move File to Folder</h4>
-                          </div>
-                          <button onClick={() => setMaterialItemHoldMenu(null)} className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5">
-                            <X size={16} />
-                          </button>
-                        </div>
-                        <p className="text-[11px] text-slate-400">Choose a destination folder in Material Hub:</p>
-                        
-                        <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
-                          <button
-                            onClick={() => handleMoveMaterialToFolder(materialItemHoldMenu.materialId, null)}
-                            className="w-full text-left p-2.5 rounded-xl border border-white/5 bg-slate-950/60 hover:bg-indigo-600/20 hover:border-indigo-500/30 text-white flex items-center justify-between text-xs font-bold transition-all"
-                          >
-                            <span className="flex items-center gap-2"><span>🏠</span> Root (No Folder)</span>
-                          </button>
-                          
-                          {materialFolders.map(folder => (
+                    <>
+                      {/* Mobile Bottom Sheet */}
+                      <div className="md:hidden">
+                        <BottomSheet 
+                          isOpen={!!materialItemHoldMenu} 
+                          onClose={() => setMaterialItemHoldMenu(null)}
+                          title="Move File to Folder"
+                        >
+                          <div className="space-y-3">
                             <button
-                              key={folder.id}
-                              onClick={() => handleMoveMaterialToFolder(materialItemHoldMenu.materialId, folder.id)}
-                              className="w-full text-left p-2.5 rounded-xl border border-white/5 bg-slate-950/60 hover:bg-amber-600/20 hover:border-amber-500/30 text-white flex items-center justify-between text-xs font-bold transition-all"
+                              onClick={() => handleMoveMaterialToFolder(materialItemHoldMenu.materialId, null)}
+                              className="w-full text-left p-4 rounded-2xl border border-white/5 bg-slate-950/60 text-white flex items-center gap-3 text-sm font-bold"
                             >
-                              <span className="flex items-center gap-2"><span>📁</span> {folder.name}</span>
-                              <span className="text-[10px] text-slate-500 font-mono">
-                                {materials.filter(m => m.folder_id === folder.id).length} files
-                              </span>
+                              <span className="text-xl">🏠</span>
+                              <span>Root (No Folder)</span>
                             </button>
-                          ))}
+                            
+                            {materialFolders.map(folder => (
+                              <button
+                                key={folder.id}
+                                onClick={() => handleMoveMaterialToFolder(materialItemHoldMenu.materialId, folder.id)}
+                                className="w-full text-left p-4 rounded-2xl border border-white/5 bg-slate-950/60 text-white flex items-center justify-between text-sm font-bold"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <span className="text-xl">📁</span>
+                                  <span>{folder.name}</span>
+                                </div>
+                                <span className="text-[10px] text-slate-500 font-mono">
+                                  {materials.filter(m => m.folder_id === folder.id).length} files
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </BottomSheet>
+                      </div>
 
-                          {materialFolders.length === 0 && (
-                            <p className="text-center text-[10px] text-slate-500 py-3">No folders yet. Click "+ New Folder" at the top to create one.</p>
-                          )}
-                        </div>
+                      {/* Desktop Modal */}
+                      <div className="hidden md:flex fixed inset-0 bg-slate-950/80 backdrop-blur-sm items-center justify-center p-4 z-50 animate-fadeIn text-left">
+                        <div className="bg-slate-900 border border-white/10 p-5 rounded-3xl max-w-sm w-full space-y-4 shadow-2xl">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Folder className="w-4 h-4 text-amber-400" />
+                              <h4 className="text-xs font-black uppercase text-white tracking-wider">Move File to Folder</h4>
+                            </div>
+                            <button onClick={() => setMaterialItemHoldMenu(null)} className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5">
+                              <X size={16} />
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-slate-400">Choose a destination folder in Material Hub:</p>
+                          
+                          <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+                            <button
+                              onClick={() => handleMoveMaterialToFolder(materialItemHoldMenu.materialId, null)}
+                              className="w-full text-left p-2.5 rounded-xl border border-white/5 bg-slate-950/60 hover:bg-indigo-600/20 hover:border-indigo-500/30 text-white flex items-center justify-between text-xs font-bold transition-all"
+                            >
+                              <span className="flex items-center gap-2"><span>🏠</span> Root (No Folder)</span>
+                            </button>
+                            
+                            {materialFolders.map(folder => (
+                              <button
+                                key={folder.id}
+                                onClick={() => handleMoveMaterialToFolder(materialItemHoldMenu.materialId, folder.id)}
+                                className="w-full text-left p-2.5 rounded-xl border border-white/5 bg-slate-950/60 hover:bg-amber-600/20 hover:border-amber-500/30 text-white flex items-center justify-between text-xs font-bold transition-all"
+                              >
+                                <span className="flex items-center gap-2"><span>📁</span> {folder.name}</span>
+                                <span className="text-[10px] text-slate-500 font-mono">
+                                  {materials.filter(m => m.folder_id === folder.id).length} files
+                                </span>
+                              </button>
+                            ))}
 
-                        <div className="flex justify-end pt-2">
-                          <button
-                            onClick={() => setMaterialItemHoldMenu(null)}
-                            className="px-3.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold transition-all"
-                          >
-                            Cancel
-                          </button>
+                            {materialFolders.length === 0 && (
+                              <p className="text-center text-[10px] text-slate-500 py-3">No folders yet. Click "+ New Folder" at the top to create one.</p>
+                            )}
+                          </div>
+
+                          <div className="flex justify-end pt-2">
+                            <button
+                              onClick={() => setMaterialItemHoldMenu(null)}
+                              className="px-3.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold transition-all"
+                            >
+                              Cancel
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    </>
                   )}
 
                 </div>
@@ -14953,6 +15040,8 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                 <AboutVeylentraPage onNavigateTab={handleTabSelect} />
               )}
 
+                </motion.div>
+              </AnimatePresence>
             </main>
 
             {/* Mobile Bottom Navigation Bar (Phones < 768px & Installed Mobile PWA) */}

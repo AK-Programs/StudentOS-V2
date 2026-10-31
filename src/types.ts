@@ -220,6 +220,7 @@ export interface Task {
   subject?: string;
   userId?: string;
   createdAt?: string;
+  sort_order?: number;
 }
 
 export interface ScheduleItem {
@@ -243,6 +244,7 @@ export interface VaultNote {
   collabCode?: string;
   isCollab?: boolean;
   collaborators?: string[];
+  sort_order?: number;
 }
 
 export interface Homework {
@@ -337,6 +339,7 @@ export interface MaterialResource {
   aiImportantQuestions?: string;
   folder_id?: string | null;
   isPinned?: boolean;
+  sort_order?: number;
 }
 
 export interface QuizQuestion {

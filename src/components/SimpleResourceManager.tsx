@@ -13,6 +13,7 @@ import { AssignmentUploadForm } from './AssignmentUploadForm';
 import { getSupabaseResources, saveSupabaseResource, deleteSupabaseResource } from '../lib/supabaseResources';
 import { InAppDocumentViewer } from './InAppDocumentViewer';
 import { getFolders, Folder, createFolder, renameFolder, deleteFolder } from '../lib/supabaseFolders';
+import { SkeletonList } from './ui/Skeleton';
 
 export default function SimpleResourceManager({ 
   type, title, emoji, currentUser, effectiveRole, showNotification, goBack 
@@ -526,11 +527,7 @@ export default function SimpleResourceManager({
 
       {/* List Content: Windows/Android File Manager Row List */}
       {loading ? (
-        <div className="space-y-2">
-          {[1, 2, 3].map(n => (
-            <div key={n} className="bento-card p-4 rounded-2xl h-20 animate-pulse" />
-          ))}
-        </div>
+        <SkeletonList count={5} />
       ) : currentViewItems.length === 0 ? (
         <div className="bento-card text-center py-10 px-4 rounded-3xl space-y-2">
           <div className="p-3 w-12 h-12 mx-auto rounded-2xl bg-white/5 flex items-center justify-center text-slate-400">
