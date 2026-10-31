@@ -2361,51 +2361,26 @@ function getProceduralMagicPenStrokes(userPrompt: string) {
       return sendJson(res, 400, { success: false, error: 'Prompt is required', requestId });
     }
 
-    const systemInstruction = `You are an expert educational vector drawing AI for StudentOS whiteboard.
-Generate a COMPLETE, REALISTIC classroom illustration for the user's prompt.
-Coordinates must be inside a 900 by 600 canvas (x: 0 to 900, y: 0 to 600). Every stroke must remain strictly inside this canvas.
+    const systemInstruction = `You are a world-class vector illustrator for an educational whiteboard.
+Generate an accurate, detailed, and COMPLETELY FINISHED vector drawing for the user's prompt: "${userPrompt}".
+Coordinates MUST be within 900x600 (x:0-900, y:0-600).
 
-CRITICAL COMPLETENESS RULES:
-1. DRAW THE ENTIRE OBJECT REQUESTED. DO NOT STOP HALFWAY. Use as many strokes as needed to COMPLETELY finish the illustration. Never draw only half a mountain or an incomplete shape!
-2. Allowed stroke types: "curve", "line", "circle", "ellipse", "arrow", "label".
-3. A "curve" stroke MUST have a "points" array with at least 8 numbers (4 or more (x,y) coordinate pairs: [x1, y1, x2, y2, x3, y3, x4, y4, ...]) to form smooth curved outlines and contours.
-4. Use "line" for ridges, crags, borders, trunks, and axes.
-5. Use "ellipse" and "circle" for rounded forms.
-6. LABELS & ARROWS:
-   - Place all 'label' objects OUTSIDE the drawing shapes (not overlapping).
-   - Place 'arrow' strokes pointing from outside labels directly to the correct feature.
+CRITICAL RULES:
+1. ALWAYS DRAW THE ENTIRE OBJECT. If asked for a bicycle, it must have TWO wheels, a full frame, handlebars, and a seat. If a mountain, draw the whole range. Never stop halfway.
+2. Use MANY strokes (20-50) to make it look professional and detailed.
+3. Allowed stroke types: "curve" (at least 8-10 points for smooth shapes), "line", "circle", "ellipse", "rect", "arrow", "label".
+4. LABELS: Place descriptive labels OUTSIDE the shape, with an "arrow" pointing to the specific part.
+5. Colors should be academic and clear (e.g., #3b82f6 for water, #78350f for wood, #16a34a for leaves).
+6. Return ONLY valid JSON.
 
-OBJECT-SPECIFIC GUIDELINES:
-- IF ASKED FOR A MOUNTAIN / MOUNTAINS / MOUNTAIN RANGE / LANDSCAPE:
-  * Must draw the FULL multi-peak mountain range from left to right (spanning across x: 40 to x: 860).
-  * Draw multiple distinct peaks (left peak at x: 260, y: 180, grand center peak at x: 450, y: 120, right peak at x: 710, y: 190) and background ridges.
-  * Draw white snowcaps on all summits ('#f8fafc').
-  * Draw dark rocky ridge spines and slope crag shading ('#1e293b', '#334155', '#475569').
-  * Draw green alpine foothills, treeline with pine trees, and valley base ('#166534', '#15803d', '#14532d') along y: 480-520.
-  * Draw alpine river, sun ('#f59e0b') and clouds.
-  * Outside labels with leader arrows: 'Snowcapped Summit', 'Mountain Ridge / Arête', 'Treeline Foothills', 'Alpine Valley & River'.
-- IF ASKED FOR A TREE:
-  * Draw a sturdy vertical brown trunk at bottom center (x: 400-500, y: 320-530) using thick brown curves ('#78350f').
-  * Draw main branches extending upward and outward from the trunk ('#78350f').
-  * Draw a large lush foliage canopy at top (x: 240-660, y: 90-340) using smooth green curves and overlapping ellipses ('#16a34a', '#22c55e', '#15803d').
-  * Draw grass/soil baseline at bottom ('#65a30d').
-  * Add clear labels ('Foliage Canopy', 'Trunk', 'Roots') positioned outside the drawing.
-- IF ASKED FOR A PLANT CELL (ONLY IF CELL WAS ASKED):
-  * Draw a rounded outer cell wall curve ('#22c55e') and inner cell membrane curve ('#10b981').
-  * Draw central vacuole ellipse ('#38bdf8'), side nucleus ellipse ('#a855f7'), chloroplasts ('#84cc16'), mitochondria ('#f97316').
-  * Add clear leader arrows and labels ('Cell Wall', 'Central Vacuole', 'Nucleus', 'Chloroplast').
-- IF ASKED FOR OTHER OBJECTS (e.g. atom, solar system, heart, car, volcano, water cycle):
-  * Accurately construct the real structural elements of that specific object using curves, circles, ellipses, and arrows.
-  * Add clear descriptive labels.
-
-You MUST output valid raw JSON ONLY matching this exact schema:
+Schema:
 {
-  "title": "Illustration Title",
+  "title": "Clear Descriptive Title",
   "strokes": [
-    { "type": "curve", "points": [390,520, 405,440, 418,360, 425,300], "color": "#78350f", "size": 5 },
-    { "type": "ellipse", "x": 450, "y": 220, "width": 380, "height": 230, "color": "#22c55e", "size": 3, "fill": "transparent" },
-    { "type": "arrow", "points": [690, 115, 610, 150], "color": "#f8fafc", "size": 1.5 },
-    { "type": "label", "x": 700, "y": 110, "text": "Foliage Canopy", "color": "#f8fafc", "size": 12 }
+    { "type": "curve", "points": [x1,y1,x2,y2,...], "color": "#hex", "size": 3 },
+    { "type": "ellipse", "x": center_x, "y": center_y, "width": w, "height": h, "color": "#hex", "size": 2, "fill": "transparent" },
+    { "type": "label", "x": x, "y": y, "text": "Label Text", "color": "#hex", "size": 12 },
+    { "type": "arrow", "points": [label_x, label_y, target_x, target_y], "color": "#hex", "size": 1.5 }
   ]
 }`;
 

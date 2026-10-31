@@ -547,6 +547,43 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       };
     }
 
+    if (p.includes('bike') || p.includes('bicycle') || p.includes('cycle')) {
+      return {
+        title: 'Bicycle Vector Diagram',
+        strokes: [
+          { type: 'circle', x: 300, y: 420, radius: 80, color: '#475569', size: 4, fill: 'transparent' },
+          { type: 'circle', x: 300, y: 420, radius: 10, color: '#1e293b', size: 2, fill: '#1e293b' },
+          { type: 'circle', x: 600, y: 420, radius: 80, color: '#475569', size: 4, fill: 'transparent' },
+          { type: 'circle', x: 600, y: 420, radius: 10, color: '#1e293b', size: 2, fill: '#1e293b' },
+          { type: 'line', points: [300, 420, 350, 250, 400, 250], color: '#3b82f6', size: 5 },
+          { type: 'line', points: [600, 420, 520, 280, 450, 280], color: '#3b82f6', size: 5 },
+          { type: 'line', points: [350, 250, 520, 280], color: '#3b82f6', size: 5 },
+          { type: 'line', points: [300, 420, 600, 420], color: '#3b82f6', size: 5 },
+          { type: 'ellipse', x: 450, y: 275, width: 60, height: 20, color: '#1e293b', size: 3, fill: '#334155' },
+          { type: 'arrow', points: [250, 150, 350, 240], color: '#94a3b8', size: 1.5 },
+          { type: 'label', x: 180, y: 140, text: 'Handlebars', color: '#3b82f6', size: 12 },
+          { type: 'arrow', points: [650, 150, 480, 260], color: '#94a3b8', size: 1.5 },
+          { type: 'label', x: 660, y: 140, text: 'Bicycle Seat', color: '#1e293b', size: 12 }
+        ]
+      };
+    }
+
+    if (p.includes('door') || p.includes('entrance') || p.includes('gate')) {
+      return {
+        title: 'Door Structure Diagram',
+        strokes: [
+          { type: 'rect', x: 350, y: 100, width: 200, height: 400, color: '#78350f', size: 6, fill: '#fef3c7' },
+          { type: 'rect', x: 365, y: 115, width: 170, height: 370, color: '#92400e', size: 2, fill: 'transparent' },
+          { type: 'circle', x: 520, y: 320, radius: 10, color: '#fbbf24', size: 2, fill: '#f59e0b' },
+          { type: 'line', points: [350, 100, 350, 500], color: '#451a03', size: 4 },
+          { type: 'arrow', points: [600, 320, 535, 320], color: '#94a3b8', size: 1.5 },
+          { type: 'label', x: 610, y: 315, text: 'Handle / Knob', color: '#f59e0b', size: 12 },
+          { type: 'arrow', points: [450, 50, 450, 110], color: '#94a3b8', size: 1.5 },
+          { type: 'label', x: 410, y: 40, text: 'Door Panel', color: '#78350f', size: 12 }
+        ]
+      };
+    }
+
     return {
       title: userPrompt,
       strokes: [
@@ -1590,19 +1627,27 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
         if (py > maxY) maxY = py;
       }
       if (!isFinite(minX)) return { x: 0, y: 0, width: 0, height: 0 };
-      return { x: minX, y: minY, width: Math.max(4, maxX - minX), height: Math.max(4, maxY - minY) };
+      const halfSize = (ln.brushSize || 4) / 2;
+      return { 
+        x: minX - halfSize, 
+        y: minY - halfSize, 
+        width: Math.max(halfSize * 2, (maxX - minX) + halfSize * 2), 
+        height: Math.max(halfSize * 2, (maxY - minY) + halfSize * 2) 
+      };
     }
     const sh = item as ShapeObj;
     const sx = sh.scaleX || 1;
     const sy = sh.scaleY || 1;
+    const halfStroke = (sh.strokeWidth || 2) / 2;
+    
     if (sh.type === 'circle' || sh.type === 'triangle' || sh.type === 'pentagon' || sh.type === 'polygon' || sh.type === 'star' || sh.type === 'geometry') {
       const r = (sh.radius || 30) * Math.max(Math.abs(sx), Math.abs(sy));
-      return { x: sh.x - r, y: sh.y - r, width: r * 2, height: r * 2 };
+      return { x: sh.x - r - halfStroke, y: sh.y - r - halfStroke, width: (r + halfStroke) * 2, height: (r + halfStroke) * 2 };
     }
     if (sh.type === 'ellipse') {
       const rx = (Math.abs(sh.width || 60) / 2) * Math.abs(sx);
       const ry = (Math.abs(sh.height || 40) / 2) * Math.abs(sy);
-      return { x: sh.x - rx, y: sh.y - ry, width: rx * 2, height: ry * 2 };
+      return { x: sh.x - rx - halfStroke, y: sh.y - ry - halfStroke, width: (rx + halfStroke) * 2, height: (ry + halfStroke) * 2 };
     }
     if (sh.type === 'line' || sh.type === 'arrow') {
       const pts = sh.points || [0, 0, 0, 0];
@@ -1615,7 +1660,12 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
         if (py < minY) minY = py;
         if (py > maxY) maxY = py;
       }
-      return { x: minX, y: minY, width: Math.max(6, maxX - minX), height: Math.max(6, maxY - minY) };
+      return { 
+        x: minX - halfStroke, 
+        y: minY - halfStroke, 
+        width: Math.max(halfStroke * 2, (maxX - minX) + halfStroke * 2), 
+        height: Math.max(halfStroke * 2, (maxY - minY) + halfStroke * 2) 
+      };
     }
     if (sh.type === 'text') {
       const approxW = Math.max(60, (sh.text?.length || 5) * ((sh.fontSize || 24) * 0.6)) * Math.abs(sx);
@@ -1626,8 +1676,14 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     const rawH = (sh.height ?? (sh.type === 'model_3d' ? 410 : sh.type === 'svg_node' ? 360 : 90)) * sy;
     const bx = rawW < 0 ? sh.x + rawW : sh.x;
     const by = rawH < 0 ? sh.y + rawH : sh.y;
-    return { x: bx, y: by, width: Math.max(6, Math.abs(rawW)), height: Math.max(6, Math.abs(rawH)) };
+    return { 
+      x: bx - halfStroke, 
+      y: by - halfStroke, 
+      width: Math.max(halfStroke * 2, Math.abs(rawW) + halfStroke * 2), 
+      height: Math.max(halfStroke * 2, Math.abs(rawH) + halfStroke * 2) 
+    };
   };
+
 
   // Geometry hit-testing helpers for precise selection
   const distToSegmentSquared = (px: number, py: number, x1: number, y1: number, x2: number, y2: number): number => {
@@ -2540,15 +2596,28 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           };
 
           current.shapes.forEach(sh => {
-            if (checkBox(getElementBoundingBox(sh, 'shape'))) {
+            const box = getElementBoundingBox(sh, 'shape');
+            if (checkBox(box)) {
               matches.push({ id: sh.id, type: 'shape' });
             }
           });
           current.lines.forEach(ln => {
-            if (ln.tool !== 'eraser' && (doesStrokeIntersectMarquee(ln.points, rx, ry, rw, rh, selectionMode) || checkBox(getElementBoundingBox(ln, 'line')))) {
-              matches.push({ id: ln.id, type: 'line' });
+            if (ln.tool !== 'eraser') {
+              const box = getElementBoundingBox(ln, 'line');
+              // Ensure we check both point-level intersection and bounding box intersection
+              if (selectionMode === 'intersect') {
+                if (doesStrokeIntersectMarquee(ln.points, rx, ry, rw, rh, 'intersect') || checkBox(box)) {
+                  matches.push({ id: ln.id, type: 'line' });
+                }
+              } else {
+                // Contain mode: whole stroke must be inside marquee
+                if (doesStrokeIntersectMarquee(ln.points, rx, ry, rw, rh, 'contain')) {
+                  matches.push({ id: ln.id, type: 'line' });
+                }
+              }
             }
           });
+
 
           if (e?.evt?.shiftKey || e?.evt?.ctrlKey || e?.evt?.metaKey) {
             setSelectedIds(prev => {

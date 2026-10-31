@@ -3235,6 +3235,7 @@ function getProceduralMagicPenStrokes(userPrompt: string) {
   
   // 1. FULL MOUNTAIN RANGE / PEAKS / LANDSCAPE
   if (p.includes('mountain') || p.includes('mountains') || p.includes('everest') || p.includes('peak') || p.includes('alps') || p.includes('himalaya') || p.includes('landscape') || p.includes('range')) {
+
     return {
       title: 'Mountain Range Diagram (Summit, Ridges & Foothills)',
       strokes: [
@@ -3441,13 +3442,67 @@ function getProceduralMagicPenStrokes(userPrompt: string) {
     };
   }
 
-  // 8. GENERAL SCHEMATIC
+  // 8. BICYCLE
+  if (p.includes('bike') || p.includes('bicycle') || p.includes('cycle')) {
+    return {
+      title: 'Bicycle Vector Diagram',
+      strokes: [
+        { type: 'circle', x: 300, y: 420, radius: 80, color: '#475569', size: 4, fill: 'transparent' }, // Front wheel
+        { type: 'circle', x: 300, y: 420, radius: 10, color: '#1e293b', size: 2, fill: '#1e293b' },
+        { type: 'circle', x: 600, y: 420, radius: 80, color: '#475569', size: 4, fill: 'transparent' }, // Rear wheel
+        { type: 'circle', x: 600, y: 420, radius: 10, color: '#1e293b', size: 2, fill: '#1e293b' },
+        { type: 'line', points: [300, 420, 350, 250, 400, 250], color: '#3b82f6', size: 5 }, // Fork and handlebars
+        { type: 'line', points: [600, 420, 520, 280, 450, 280], color: '#3b82f6', size: 5 }, // Seat post
+        { type: 'line', points: [350, 250, 520, 280], color: '#3b82f6', size: 5 }, // Top tube
+        { type: 'line', points: [300, 420, 600, 420], color: '#3b82f6', size: 5 }, // Chainstay (simplified)
+        { type: 'ellipse', x: 450, y: 275, width: 60, height: 20, color: '#1e293b', size: 3, fill: '#334155' }, // Seat
+        { type: 'arrow', points: [250, 150, 350, 240], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 180, y: 140, text: 'Handlebars', color: '#3b82f6', size: 12 },
+        { type: 'arrow', points: [650, 150, 480, 260], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 660, y: 140, text: 'Bicycle Seat', color: '#1e293b', size: 12 }
+      ]
+    };
+  }
+
+  // 9. DOOR
+  if (p.includes('door') || p.includes('entrance') || p.includes('gate')) {
+    return {
+      title: 'Door Structure Diagram',
+      strokes: [
+        { type: 'rect', x: 350, y: 100, width: 200, height: 400, color: '#78350f', size: 6, fill: '#fef3c7' }, // Door frame
+        { type: 'rect', x: 365, y: 115, width: 170, height: 370, color: '#92400e', size: 2, fill: 'transparent' }, // Panel line
+        { type: 'circle', x: 520, y: 320, radius: 10, color: '#fbbf24', size: 2, fill: '#f59e0b' }, // Door handle
+        { type: 'line', points: [350, 100, 350, 500], color: '#451a03', size: 4 }, // Hinges side
+        { type: 'arrow', points: [600, 320, 535, 320], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 610, y: 315, text: 'Handle / Knob', color: '#f59e0b', size: 12 },
+        { type: 'arrow', points: [450, 50, 450, 110], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 410, y: 40, text: 'Door Panel', color: '#78350f', size: 12 }
+      ]
+    };
+  }
+
+  // 10. HOUSE
+  if (p.includes('house') || p.includes('home') || p.includes('building')) {
+    return {
+      title: 'House Architecture Diagram',
+      strokes: [
+        { type: 'rect', x: 250, y: 250, width: 400, height: 250, color: '#475569', size: 4, fill: '#f1f5f9' }, // Base
+        { type: 'line', points: [250, 250, 450, 100, 650, 250, 250, 250], color: '#ef4444', size: 5 }, // Roof
+        { type: 'rect', x: 420, y: 380, width: 60, height: 120, color: '#78350f', size: 3, fill: '#92400e' }, // Door
+        { type: 'rect', x: 300, y: 300, width: 80, height: 80, color: '#38bdf8', size: 2, fill: '#e0f2fe' }, // Window 1
+        { type: 'rect', x: 520, y: 300, width: 80, height: 80, color: '#38bdf8', size: 2, fill: '#e0f2fe' }, // Window 2
+        { type: 'arrow', points: [550, 50, 480, 130], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 560, y: 40, text: 'Sloped Roof', color: '#ef4444', size: 12 }
+      ]
+    };
+  }
+
+  // 11. GENERAL SCHEMATIC - Return a more intelligent generic schematic
   return {
     title: userPrompt,
     strokes: [
-      { type: 'curve', points: [150,220, 250,160, 450,140, 650,160, 750,220, 780,340, 720,440, 450,470, 180,440, 120,340, 150,220], color: '#38bdf8', size: 3 },
-      { type: 'ellipse', x: 450, y: 300, width: 340, height: 210, color: '#818cf8', size: 2, fill: 'transparent' },
-      { type: 'circle', x: 450, y: 300, radius: 55, color: '#f43f5e', size: 2, fill: 'transparent' },
+      { type: 'curve', points: [200,300, 300,150, 450,100, 600,150, 700,300, 600,450, 450,500, 300,450, 200,300], color: '#38bdf8', size: 3 },
+      { type: 'ellipse', x: 450, y: 300, width: 400, height: 300, color: '#818cf8', size: 2, fill: 'transparent' },
       { type: 'arrow', points: [700, 140, 580, 210], color: '#94a3b8', size: 1.5 },
       { type: 'label', x: 710, y: 135, text: userPrompt.slice(0, 30), color: '#38bdf8', size: 12 }
     ]
@@ -3463,66 +3518,41 @@ app.post('/api/ai/magic-draw', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Prompt is required' });
     }
 
-    const systemInstruction = `You are an expert educational vector drawing AI for StudentOS whiteboard.
-Generate a COMPLETE, REALISTIC classroom illustration for the user's prompt.
-Coordinates must be inside a 900 by 600 canvas (x: 0 to 900, y: 0 to 600). Every stroke must remain strictly inside this canvas.
+    const systemInstruction = `You are a world-class vector illustrator for an educational whiteboard.
+Generate an accurate, detailed, and COMPLETELY FINISHED vector drawing for the user's prompt: "${userPrompt}".
+Coordinates MUST be within 900x600 (x:0-900, y:0-600).
 
-CRITICAL COMPLETENESS RULES:
-1. DRAW THE ENTIRE OBJECT REQUESTED. DO NOT STOP HALFWAY. Use as many strokes as needed to COMPLETELY finish the illustration. Never draw only half a mountain or an incomplete shape!
-2. Allowed stroke types: "curve", "line", "circle", "ellipse", "arrow", "label".
-3. A "curve" stroke MUST have a "points" array with at least 8 numbers (4 or more (x,y) coordinate pairs: [x1, y1, x2, y2, x3, y3, x4, y4, ...]) to form smooth curved outlines and contours.
-4. Use "line" for ridges, crags, borders, trunks, and axes.
-5. Use "ellipse" and "circle" for rounded forms.
-6. LABELS & ARROWS:
-   - Place all 'label' objects OUTSIDE the drawing shapes (not overlapping).
-   - Place 'arrow' strokes pointing from outside labels directly to the correct feature.
+CRITICAL RULES:
+1. ALWAYS DRAW THE ENTIRE OBJECT. If asked for a bicycle, it must have TWO wheels, a full frame, handlebars, and a seat. If a mountain, draw the whole range. Never stop halfway.
+2. Use MANY strokes (20-50) to make it look professional and detailed.
+3. Allowed stroke types: "curve" (at least 8-10 points for smooth shapes), "line", "circle", "ellipse", "rect", "arrow", "label".
+4. LABELS: Place descriptive labels OUTSIDE the shape, with an "arrow" pointing to the specific part.
+5. Colors should be academic and clear (e.g., #3b82f6 for water, #78350f for wood, #16a34a for leaves).
+6. Return ONLY valid JSON.
 
-OBJECT-SPECIFIC GUIDELINES:
-- IF ASKED FOR A MOUNTAIN / MOUNTAINS / MOUNTAIN RANGE / LANDSCAPE:
-  * Must draw the FULL multi-peak mountain range from left to right (spanning across x: 40 to x: 860).
-  * Draw multiple distinct peaks (left peak at x: 260, y: 180, grand center peak at x: 450, y: 120, right peak at x: 710, y: 190) and background ridges.
-  * Draw white snowcaps on all summits ('#f8fafc').
-  * Draw dark rocky ridge spines and slope crag shading ('#1e293b', '#334155', '#475569').
-  * Draw green alpine foothills, treeline with pine trees, and valley base ('#166534', '#15803d', '#14532d') along y: 480-520.
-  * Draw alpine river, sun ('#f59e0b') and clouds.
-  * Outside labels with leader arrows: 'Snowcapped Summit', 'Mountain Ridge / Arête', 'Treeline Foothills', 'Alpine Valley & River'.
-- IF ASKED FOR A TREE:
-  * Draw a sturdy vertical brown trunk at bottom center (x: 400-500, y: 320-530) using thick brown curves ('#78350f').
-  * Draw main branches extending upward and outward from the trunk ('#78350f').
-  * Draw a large lush foliage canopy at top (x: 240-660, y: 90-340) using smooth green curves and overlapping ellipses ('#16a34a', '#22c55e', '#15803d').
-  * Draw grass/soil baseline at bottom ('#65a30d').
-  * Add clear labels ('Foliage Canopy', 'Trunk', 'Roots') positioned outside the drawing.
-- IF ASKED FOR A PLANT CELL (ONLY IF CELL WAS ASKED):
-  * Draw a rounded outer cell wall curve ('#22c55e') and inner cell membrane curve ('#10b981').
-  * Draw central vacuole ellipse ('#38bdf8'), side nucleus ellipse ('#a855f7'), chloroplasts ('#84cc16'), mitochondria ('#f97316').
-  * Add clear leader arrows and labels ('Cell Wall', 'Central Vacuole', 'Nucleus', 'Chloroplast').
-- IF ASKED FOR OTHER OBJECTS (e.g. atom, solar system, heart, car, volcano, water cycle):
-  * Accurately construct the real structural elements of that specific object using curves, circles, ellipses, and arrows.
-  * Add clear descriptive labels.
-
-You MUST output valid raw JSON ONLY matching this exact schema:
+Schema:
 {
-  "title": "Illustration Title",
+  "title": "Clear Descriptive Title",
   "strokes": [
-    { "type": "curve", "points": [390,520, 405,440, 418,360, 425,300], "color": "#78350f", "size": 5 },
-    { "type": "ellipse", "x": 450, "y": 220, "width": 380, "height": 230, "color": "#22c55e", "size": 3, "fill": "transparent" },
-    { "type": "arrow", "points": [690, 115, 610, 150], "color": "#f8fafc", "size": 1.5 },
-    { "type": "label", "x": 700, "y": 110, "text": "Foliage Canopy", "color": "#f8fafc", "size": 12 }
+    { "type": "curve", "points": [x1,y1,x2,y2,...], "color": "#hex", "size": 3 },
+    { "type": "ellipse", "x": center_x, "y": center_y, "width": w, "height": h, "color": "#hex", "size": 2, "fill": "transparent" },
+    { "type": "label", "x": x, "y": y, "text": "Label Text", "color": "#hex", "size": 12 },
+    { "type": "arrow", "points": [label_x, label_y, target_x, target_y], "color": "#hex", "size": 1.5 }
   ]
 }`;
 
-    const fullPrompt = `Create complete drawing commands for requested object: "${userPrompt}"`;
+    const fullPrompt = `Generate a detailed vector drawing of: "${userPrompt}"`;
     const ministralKey = (process.env.MINISTRAL_API_KEY || process.env.MISTRAL_API_KEY || process.env.VITE_MINISTRAL_API_KEY || '').trim().replace(/^["']|["']$/g, '');
 
     let rawText = '';
     let providerUsed = 'ministral';
     let modelUsed = 'ministral-8b-2410';
 
-    // Strict 5.5-second timeout on AI response to guarantee <15s end-to-end response
+    // Increased timeout to 9 seconds to allow for more complex generation
     if (ministralKey) {
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5500);
+        const timeout = setTimeout(() => controller.abort(), 9000);
         const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -3536,8 +3566,8 @@ You MUST output valid raw JSON ONLY matching this exact schema:
               { role: 'system', content: systemInstruction },
               { role: 'user', content: fullPrompt }
             ],
-            temperature: 0.4,
-            max_tokens: 3000,
+            temperature: 0.3,
+            max_tokens: 4000,
             response_format: { type: 'json_object' }
           }),
           signal: controller.signal
@@ -3552,33 +3582,7 @@ You MUST output valid raw JSON ONLY matching this exact schema:
       }
     }
 
-    // Fallback to Gemini with 5.5s timeout if Ministral failed or took too long
-    if (!rawText) {
-      try {
-        const { getGeminiClient } = await import('./server/aiClient');
-        const gemini = getGeminiClient();
-        if (gemini) {
-          const geminiPromise = gemini.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: [{ role: 'user', parts: [{ text: `${systemInstruction}\n\nTask: ${fullPrompt}` }] }],
-            config: {
-              temperature: 0.3,
-              maxOutputTokens: 3000,
-              responseMimeType: 'application/json'
-            }
-          });
-          const timeoutPromise = new Promise<any>((resolve) => setTimeout(() => resolve(null), 5500));
-          const geminiRes = await Promise.race([geminiPromise, timeoutPromise]);
-          if (geminiRes && geminiRes.text) {
-            rawText = geminiRes.text;
-            providerUsed = 'gemini';
-            modelUsed = 'gemini-2.5-flash';
-          }
-        }
-      } catch (gErr) {
-        console.warn('[Magic Draw Gemini] Fallback failed:', gErr);
-      }
-    }
+
 
     let parsed: any = null;
     if (rawText) {
@@ -3589,14 +3593,14 @@ You MUST output valid raw JSON ONLY matching this exact schema:
         } else if (cleaned.startsWith('```')) {
           cleaned = cleaned.replace(/^```/, '').replace(/```$/, '').trim();
         }
-        parsed = repairTruncatedStrokesJson(cleaned);
+        parsed = JSON.parse(cleaned);
       } catch (pErr) {
         console.warn('[Magic Draw] JSON parse failed, trying repair:', pErr);
         parsed = repairTruncatedStrokesJson(rawText);
       }
     }
 
-    if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length >= 8) {
+    if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length >= 6) {
       return res.status(200).json({
         success: true,
         title: parsed.title || userPrompt,
@@ -3606,7 +3610,7 @@ You MUST output valid raw JSON ONLY matching this exact schema:
       });
     }
 
-    // Procedural Fallback matching the requested object (Tree, Plant Cell, Mountain, or general)
+    // High-quality procedural vector fallback (returns instantly!)
     const fallback = getProceduralMagicPenStrokes(userPrompt);
     return res.status(200).json({
       success: true,
@@ -3638,38 +3642,38 @@ app.post('/api/ai/handwriting-formula', async (req, res) => {
     }
 
     let recognizedText = '';
-    const { getGeminiClient } = await import('./server/aiClient');
-    const gemini = getGeminiClient();
+    const ministralKey = (process.env.MINISTRAL_API_KEY || process.env.MISTRAL_API_KEY || process.env.VITE_MINISTRAL_API_KEY || '').trim().replace(/^["']|["']$/g, '');
 
-    if (gemini && image) {
+    if (ministralKey && image) {
       try {
         const cleanBase64 = String(image).replace(/^data:image\/[a-zA-Z]+;base64,/, '').trim();
-        const response = await gemini.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                {
-                  inlineData: {
-                    mimeType: 'image/png',
-                    data: cleanBase64
-                  }
-                },
-                {
-                  text: 'You are an expert handwriting and mathematical formula recognition engine. Transcribe the exact handwritten text, equation, or formula shown in this image.\nRules:\n1. Output ONLY the raw transcribed formula or text. Absolutely NO explanations, markdown backticks, or greetings.\n2. For formulas, use standard mathematical unicode symbols (e.g., E = mc², a² + b² = c², x² + y² = r², F = ma, 2x + 5 = 15, ∫ x dx = x²/2 + C, ½, √x, π, θ, ±, ≤, ≥).\n3. If it is normal handwritten words or phrases (e.g. "Photosynthesis", "Newton\'s Law", "Oxygen", "Answer: 42"), transcribe the words accurately.\n4. If multiple lines are written, preserve line breaks.'
-                }
-              ]
-            }
-          ],
-          config: {
-            temperature: 0.1,
-            maxOutputTokens: 256
-          }
+        const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${ministralKey}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'ministral-8b-2410',
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: 'You are an expert handwriting and mathematical formula recognition engine. Transcribe the exact handwritten text, equation, or formula shown in this image. Output ONLY the raw transcribed formula or text. No markdown or explanations.' },
+                  { type: 'image_url', image_url: { url: `data:image/png;base64,${cleanBase64}` } }
+                ]
+              }
+            ],
+            max_tokens: 256
+          })
         });
-        recognizedText = (response.text || '').trim();
-      } catch (gErr) {
-        console.warn('[Handwriting Formula Gemini OCR Error]', gErr);
+        if (response.ok) {
+          const data = await response.json();
+          recognizedText = data?.choices?.[0]?.message?.content || '';
+        }
+      } catch (mErr) {
+        console.warn('[Handwriting Formula Ministral OCR Error]', mErr);
       }
     }
 
