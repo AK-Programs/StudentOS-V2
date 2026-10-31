@@ -3400,7 +3400,48 @@ function getProceduralMagicPenStrokes(userPrompt: string) {
     };
   }
 
-  // 6. GENERAL SCHEMATIC
+  // 6. HEART / ANATOMY
+  if (p.includes('heart') || p.includes('cardio') || p.includes('blood') || p.includes('valve')) {
+    return {
+      title: 'Human Heart Anatomy Diagram',
+      strokes: [
+        { type: 'curve', points: [450,160, 370,120, 300,160, 270,240, 300,340, 450,480, 600,340, 630,240, 600,160, 530,120, 450,160], color: '#ef4444', size: 4 },
+        { type: 'curve', points: [450,160, 450,300, 420,440], color: '#dc2626', size: 3 },
+        { type: 'curve', points: [430,130, 450,80, 490,90, 500,150], color: '#3b82f6', size: 4 },
+        { type: 'arrow', points: [200, 170, 320, 190], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 100, y: 165, text: 'Right Atrium', color: '#38bdf8', size: 12 },
+        { type: 'arrow', points: [700, 170, 580, 190], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 710, y: 165, text: 'Left Atrium', color: '#f87171', size: 12 },
+        { type: 'arrow', points: [200, 360, 350, 380], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 80, y: 355, text: 'Right Ventricle', color: '#38bdf8', size: 12 },
+        { type: 'arrow', points: [700, 360, 550, 380], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 710, y: 355, text: 'Left Ventricle', color: '#f87171', size: 12 }
+      ]
+    };
+  }
+
+  // 7. CAR / VEHICLE
+  if (p.includes('car') || p.includes('vehicle') || p.includes('automobile') || p.includes('truck')) {
+    return {
+      title: 'Automobile Structure Diagram',
+      strokes: [
+        { type: 'line', points: [50, 460, 850, 460], color: '#64748b', size: 3 },
+        { type: 'curve', points: [120,440, 150,380, 260,370, 350,260, 600,260, 710,370, 820,380, 840,440, 120,440], color: '#3b82f6', size: 4 },
+        { type: 'curve', points: [360,270, 470,270, 470,360, 360,360, 360,270], color: '#93c5fd', size: 2 },
+        { type: 'curve', points: [485,270, 590,270, 680,360, 485,360, 485,270], color: '#93c5fd', size: 2 },
+        { type: 'circle', x: 260, y: 440, radius: 42, color: '#1e293b', size: 5, fill: '#334155' },
+        { type: 'circle', x: 260, y: 440, radius: 18, color: '#cbd5e1', size: 2, fill: '#94a3b8' },
+        { type: 'circle', x: 680, y: 440, radius: 42, color: '#1e293b', size: 5, fill: '#334155' },
+        { type: 'circle', x: 680, y: 440, radius: 18, color: '#cbd5e1', size: 2, fill: '#94a3b8' },
+        { type: 'arrow', points: [480, 180, 480, 250], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 420, y: 160, text: 'Aerodynamic Cabin & Glass', color: '#60a5fa', size: 12 },
+        { type: 'arrow', points: [260, 540, 260, 490], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 190, y: 550, text: 'Tires & Alloy Wheels', color: '#f8fafc', size: 12 }
+      ]
+    };
+  }
+
+  // 8. GENERAL SCHEMATIC
   return {
     title: userPrompt,
     strokes: [
@@ -3477,60 +3518,59 @@ You MUST output valid raw JSON ONLY matching this exact schema:
     let providerUsed = 'ministral';
     let modelUsed = 'ministral-8b-2410';
 
+    // Strict 5.5-second timeout on AI response to guarantee <15s end-to-end response
     if (ministralKey) {
-      const tokenLimits = [8192, 10000];
-      for (const maxToks of tokenLimits) {
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 60000);
-          const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${ministralKey}`,
-              'Content-Type': 'application/json',
-              'Accept': 'application/json'
-            },
-            body: JSON.stringify({
-              model: 'ministral-8b-2410',
-              messages: [
-                { role: 'system', content: systemInstruction },
-                { role: 'user', content: fullPrompt }
-              ],
-              temperature: 0.5,
-              max_tokens: maxToks,
-              response_format: { type: 'json_object' }
-            }),
-            signal: controller.signal
-          });
-          clearTimeout(timeout);
-          if (response.ok) {
-            const data = await response.json();
-            rawText = data?.choices?.[0]?.message?.content || '';
-            if (rawText) break;
-          }
-        } catch (mErr) {
-          console.warn('[Magic Draw Ministral] Attempt failed:', mErr);
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5500);
+        const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${ministralKey}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'ministral-8b-2410',
+            messages: [
+              { role: 'system', content: systemInstruction },
+              { role: 'user', content: fullPrompt }
+            ],
+            temperature: 0.4,
+            max_tokens: 3000,
+            response_format: { type: 'json_object' }
+          }),
+          signal: controller.signal
+        });
+        clearTimeout(timeout);
+        if (response.ok) {
+          const data = await response.json();
+          rawText = data?.choices?.[0]?.message?.content || '';
         }
+      } catch (mErr) {
+        console.warn('[Magic Draw Ministral] Attempt timed out or failed:', mErr);
       }
     }
 
-    // Fallback to Gemini if Ministral is not configured or failed
+    // Fallback to Gemini with 5.5s timeout if Ministral failed or took too long
     if (!rawText) {
       try {
         const { getGeminiClient } = await import('./server/aiClient');
         const gemini = getGeminiClient();
         if (gemini) {
-          const geminiRes = await gemini.models.generateContent({
+          const geminiPromise = gemini.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: [{ role: 'user', parts: [{ text: `${systemInstruction}\n\nTask: ${fullPrompt}` }] }],
             config: {
-              temperature: 0.4,
-              maxOutputTokens: 8192,
+              temperature: 0.3,
+              maxOutputTokens: 3000,
               responseMimeType: 'application/json'
             }
           });
-          rawText = geminiRes.text || '';
-          if (rawText) {
+          const timeoutPromise = new Promise<any>((resolve) => setTimeout(() => resolve(null), 5500));
+          const geminiRes = await Promise.race([geminiPromise, timeoutPromise]);
+          if (geminiRes && geminiRes.text) {
+            rawText = geminiRes.text;
             providerUsed = 'gemini';
             modelUsed = 'gemini-2.5-flash';
           }

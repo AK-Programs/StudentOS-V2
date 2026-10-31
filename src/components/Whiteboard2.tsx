@@ -492,12 +492,73 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   const [isPresentationMode, setIsPresentationMode] = useState(false);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
 
-  // Selection state: supports single and multi-object selection + rectangular marquee
   const [selectedIds, setSelectedIds] = useState<{ id: string; type: 'shape' | 'line' }[]>([]);
   const selectedObj = selectedIds.length > 0 ? selectedIds[0] : null;
   const setSelectedObj = (item: { id: string; type: 'shape' | 'line' } | null) => {
     setSelectedIds(item ? [item] : []);
   };
+  const getProceduralMagicPenStrokesClient = (userPrompt: string) => {
+    const p = String(userPrompt || '').toLowerCase();
+    
+    if (p.includes('mountain') || p.includes('mountains') || p.includes('everest') || p.includes('peak') || p.includes('alps') || p.includes('himalaya') || p.includes('landscape') || p.includes('range')) {
+      return {
+        title: 'Mountain Range Diagram',
+        strokes: [
+          { type: 'circle', x: 760, y: 100, radius: 45, color: '#f59e0b', size: 3, fill: '#fbbf24' },
+          { type: 'line', points: [760, 40, 760, 20], color: '#f59e0b', size: 2 },
+          { type: 'line', points: [825, 100, 845, 100], color: '#f59e0b', size: 2 },
+          { type: 'curve', points: [100,105, 130,85, 175,90, 205,115, 235,110, 255,130, 225,145, 130,145, 100,130, 100,105], color: '#cbd5e1', size: 2 },
+          { type: 'curve', points: [30,340, 130,260, 210,290, 310,210, 400,250, 450,190, 530,240, 620,180, 700,250, 810,290, 870,350], color: '#64748b', size: 2 },
+          { type: 'curve', points: [35,510, 105,380, 185,260, 255,180, 305,240, 365,330, 415,440, 445,510], color: '#475569', size: 4 },
+          { type: 'ellipse', x: 255, y: 198, width: 44, height: 32, color: '#f8fafc', size: 2, fill: 'transparent' },
+          { type: 'curve', points: [215,510, 305,360, 385,230, 450,120, 510,210, 580,340, 655,460, 695,510], color: '#334155', size: 5 },
+          { type: 'ellipse', x: 450, y: 155, width: 62, height: 48, color: '#f8fafc', size: 2, fill: 'transparent' },
+          { type: 'curve', points: [475,510, 555,370, 635,240, 710,190, 765,270, 825,370, 875,510], color: '#475569', size: 4 },
+          { type: 'curve', points: [20,510, 200,490, 450,505, 700,490, 880,510], color: '#15803d', size: 4 },
+          { type: 'curve', points: [470,505, 460,530, 475,555, 455,585, 480,600], color: '#38bdf8', size: 4 },
+          { type: 'arrow', points: [330, 75, 435, 115], color: '#94a3b8', size: 1.5 },
+          { type: 'label', x: 180, y: 70, text: 'Snowcapped Summit', color: '#f8fafc', size: 12 },
+          { type: 'arrow', points: [600, 210, 520, 230], color: '#94a3b8', size: 1.5 },
+          { type: 'label', x: 610, y: 205, text: 'Mountain Ridge / Arête', color: '#cbd5e1', size: 12 },
+          { type: 'arrow', points: [310, 565, 440, 560], color: '#94a3b8', size: 1.5 },
+          { type: 'label', x: 165, y: 560, text: 'Alpine Valley & River', color: '#38bdf8', size: 12 }
+        ]
+      };
+    }
+
+    if (p.includes('tree') || p.includes('oak') || p.includes('forest') || (p.includes('plant') && !p.includes('cell'))) {
+      return {
+        title: 'Tree Diagram (Trunk, Branches & Canopy)',
+        strokes: [
+          { type: 'curve', points: [100,520, 250,510, 450,525, 650,515, 800,520], color: '#65a30d', size: 3 },
+          { type: 'curve', points: [390,520, 405,440, 418,360, 425,300], color: '#78350f', size: 5 },
+          { type: 'curve', points: [510,520, 495,440, 482,360, 475,300], color: '#78350f', size: 5 },
+          { type: 'curve', points: [430,330, 370,270, 310,240], color: '#78350f', size: 4 },
+          { type: 'curve', points: [470,330, 530,270, 590,240], color: '#78350f', size: 4 },
+          { type: 'curve', points: [250,280, 230,200, 290,130, 380,100, 450,90, 530,100, 620,130, 670,200, 650,280, 600,330, 520,350, 450,360, 370,350, 300,330, 250,280], color: '#16a34a', size: 4 },
+          { type: 'ellipse', x: 450, y: 220, width: 380, height: 230, color: '#22c55e', size: 3, fill: 'transparent' },
+          { type: 'ellipse', x: 340, y: 190, width: 190, height: 140, color: '#4ade80', size: 2, fill: 'transparent' },
+          { type: 'ellipse', x: 560, y: 190, width: 190, height: 140, color: '#4ade80', size: 2, fill: 'transparent' },
+          { type: 'arrow', points: [690, 115, 610, 150], color: '#94a3b8', size: 1.5 },
+          { type: 'label', x: 700, y: 110, text: 'Foliage Canopy', color: '#4ade80', size: 12 },
+          { type: 'arrow', points: [640, 430, 500, 430], color: '#94a3b8', size: 1.5 },
+          { type: 'label', x: 650, y: 425, text: 'Trunk (Wood & Bark)', color: '#fbbf24', size: 12 }
+        ]
+      };
+    }
+
+    return {
+      title: userPrompt,
+      strokes: [
+        { type: 'curve', points: [150,220, 250,160, 450,140, 650,160, 750,220, 780,340, 720,440, 450,470, 180,440, 120,340, 150,220], color: '#38bdf8', size: 3 },
+        { type: 'ellipse', x: 450, y: 300, width: 340, height: 210, color: '#818cf8', size: 2, fill: 'transparent' },
+        { type: 'circle', x: 450, y: 300, radius: 55, color: '#f43f5e', size: 2, fill: 'transparent' },
+        { type: 'arrow', points: [700, 140, 580, 210], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 710, y: 135, text: userPrompt.slice(0, 30), color: '#38bdf8', size: 12 }
+      ]
+    };
+  };
+
   const [selectionMode, setSelectionMode] = useState<'intersect' | 'contain'>('intersect');
   const [marqueeRect, setMarqueeRect] = useState<{
     visible: boolean;
@@ -607,6 +668,8 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     loading: boolean;
     error: string | null;
   }>({ open: false, prompt: '', loading: false, error: null });
+
+  const [isMagicPenDrawing, setIsMagicPenDrawing] = useState<string | null>(null);
 
   const stageRef = useRef<any>(null);
   const trRef = useRef<any>(null);
@@ -723,175 +786,190 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     const promptText = magicPenModal.prompt.trim();
     if (!promptText) return;
 
-    setMagicPenModal(prev => ({ ...prev, loading: true, error: null }));
+    // Close modal immediately and show drawing indicator on the board
+    setMagicPenModal({ open: false, prompt: '', loading: false, error: null });
+    setIsMagicPenDrawing(promptText);
+
     try {
-      const res = await fetch('/api/ai/magic-draw', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: promptText })
-      });
-      const data = await res.json();
-      if (data?.success && Array.isArray(data.strokes)) {
-        pushHistory();
-        type DrawItem = { kind: 'line'; data: LineObj } | { kind: 'shape'; data: ShapeObj };
-        const drawItems: DrawItem[] = [];
+      let rawStrokes: any[] = [];
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 7500);
 
-        const clampX = (v: number) => Math.min(890, Math.max(10, typeof v === 'number' ? v : 100));
-        const clampY = (v: number) => Math.min(590, Math.max(10, typeof v === 'number' ? v : 100));
-        const clampPts = (pts: number[]) => pts.map((p, pIdx) => pIdx % 2 === 0 ? clampX(p) : clampY(p));
-
-        data.strokes.forEach((stroke: any, idx: number) => {
-          const id = 'magic_' + Math.random().toString(36).substring(2, 9) + '_' + idx;
-          const color = stroke.color || '#38bdf8';
-          const size = stroke.size || stroke.brushSize || 3;
-
-          if (stroke.type === 'line' && Array.isArray(stroke.points) && stroke.points.length >= 4) {
-            drawItems.push({
-              kind: 'line',
-              data: {
-                id,
-                points: clampPts(stroke.points),
-                color,
-                brushSize: size,
-                tool: 'pen',
-                tension: 0.3
-              }
-            });
-          } else if (stroke.type === 'curve' && Array.isArray(stroke.points) && stroke.points.length >= 4) {
-            drawItems.push({
-              kind: 'line',
-              data: {
-                id,
-                points: clampPts(stroke.points),
-                color,
-                brushSize: size,
-                tool: 'pen',
-                tension: 0.5
-              }
-            });
-          } else if (stroke.type === 'arrow' && Array.isArray(stroke.points) && stroke.points.length >= 4) {
-            const arrowPts = clampPts(stroke.points);
-            drawItems.push({
-              kind: 'shape',
-              data: {
-                id,
-                type: 'arrow',
-                x: 0,
-                y: 0,
-                points: arrowPts,
-                stroke: color,
-                strokeWidth: size
-              }
-            });
-          } else if (stroke.type === 'circle') {
-            const cx = clampX(stroke.x ?? 250);
-            const cy = clampY(stroke.y ?? 200);
-            const radius = Math.min(260, Math.max(10, stroke.radius ?? 45));
-            drawItems.push({
-              kind: 'shape',
-              data: {
-                id,
-                type: 'circle',
-                x: cx,
-                y: cy,
-                radius,
-                stroke: color,
-                strokeWidth: size,
-                fill: stroke.fill || 'transparent'
-              }
-            });
-          } else if (stroke.type === 'ellipse') {
-            const cx = clampX(stroke.x ?? 250);
-            const cy = clampY(stroke.y ?? 200);
-            const rx = Math.min(300, stroke.radiusX ?? (stroke.width ? stroke.width / 2 : (stroke.radius ?? 50)));
-            const ry = Math.min(200, stroke.radiusY ?? (stroke.height ? stroke.height / 2 : (stroke.radius ?? 30)));
-            drawItems.push({
-              kind: 'shape',
-              data: {
-                id,
-                type: 'ellipse',
-                x: cx,
-                y: cy,
-                width: rx * 2,
-                height: ry * 2,
-                stroke: color,
-                strokeWidth: size,
-                fill: stroke.fill || 'transparent'
-              }
-            });
-          } else if (stroke.type === 'rect') {
-            const rx = clampX(stroke.x ?? 150);
-            const ry = clampY(stroke.y ?? 150);
-            drawItems.push({
-              kind: 'shape',
-              data: {
-                id,
-                type: 'rect',
-                x: rx,
-                y: ry,
-                width: Math.min(880 - rx, stroke.width ?? 120),
-                height: Math.min(580 - ry, stroke.height ?? 80),
-                stroke: color,
-                strokeWidth: size,
-                fill: stroke.fill || 'transparent'
-              }
-            });
-          } else if (stroke.type === 'label' || stroke.type === 'text') {
-            const rawSize = stroke.size || 12;
-            const cappedSize = Math.max(11, Math.min(16, rawSize));
-            drawItems.push({
-              kind: 'shape',
-              data: {
-                id,
-                type: 'text',
-                x: clampX(stroke.x ?? 150),
-                y: clampY(stroke.y ?? 150),
-                text: stroke.text || '',
-                stroke: color,
-                strokeWidth: 1,
-                fill: color,
-                fontSize: cappedSize
-              }
-            });
-          }
+      try {
+        const res = await fetch('/api/ai/magic-draw', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: promptText }),
+          signal: controller.signal
         });
-
-        // Close modal immediately so the user can watch the animated drawing occur live on canvas
-        setMagicPenModal({ open: false, prompt: '', loading: false, error: null });
-
-        // Animate the strokes smoothly in order without truncating
-        let step = 0;
-        const strokeDelay = Math.max(16, Math.min(60, Math.floor(1600 / Math.max(1, drawItems.length))));
-        const animInterval = setInterval(() => {
-          if (step >= drawItems.length) {
-            clearInterval(animInterval);
-            soundService.playAchievementSound();
-            return;
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.success && Array.isArray(data.strokes) && data.strokes.length >= 4) {
+            rawStrokes = data.strokes;
           }
-          const item = drawItems[step];
-          setSlides(prev => {
-            const next = [...prev];
-            const sl = next[activeSlideIdx];
-            if (sl) {
-              if (item.kind === 'line') {
-                sl.lines = [...sl.lines, item.data];
-              } else {
-                sl.shapes = [...sl.shapes, item.data];
-              }
-            }
-            return next;
-          });
-          step++;
-        }, strokeDelay);
-      } else {
-        throw new Error(data?.error || 'AI generation failed to produce valid drawing strokes.');
+        }
+      } catch (fErr) {
+        console.warn('[Magic Pen Client Fetch] Timed out or failed, using client procedural engine:', fErr);
       }
+
+      if (!rawStrokes || rawStrokes.length < 4) {
+        const fallback = getProceduralMagicPenStrokesClient(promptText);
+        rawStrokes = fallback.strokes;
+      }
+
+      pushHistory();
+      type DrawItem = { kind: 'line'; data: LineObj } | { kind: 'shape'; data: ShapeObj };
+      const drawItems: DrawItem[] = [];
+
+      const clampX = (v: number) => Math.min(890, Math.max(10, typeof v === 'number' ? v : 100));
+      const clampY = (v: number) => Math.min(590, Math.max(10, typeof v === 'number' ? v : 100));
+      const clampPts = (pts: number[]) => pts.map((p, pIdx) => pIdx % 2 === 0 ? clampX(p) : clampY(p));
+
+      rawStrokes.forEach((stroke: any, idx: number) => {
+        const id = 'magic_' + Math.random().toString(36).substring(2, 9) + '_' + idx;
+        const color = stroke.color || '#38bdf8';
+        const size = stroke.size || stroke.brushSize || 3;
+
+        if (stroke.type === 'line' && Array.isArray(stroke.points) && stroke.points.length >= 4) {
+          drawItems.push({
+            kind: 'line',
+            data: {
+              id,
+              points: clampPts(stroke.points),
+              color,
+              brushSize: size,
+              tool: 'pen',
+              tension: 0.3
+            }
+          });
+        } else if (stroke.type === 'curve' && Array.isArray(stroke.points) && stroke.points.length >= 4) {
+          drawItems.push({
+            kind: 'line',
+            data: {
+              id,
+              points: clampPts(stroke.points),
+              color,
+              brushSize: size,
+              tool: 'pen',
+              tension: 0.5
+            }
+          });
+        } else if (stroke.type === 'arrow' && Array.isArray(stroke.points) && stroke.points.length >= 4) {
+          const arrowPts = clampPts(stroke.points);
+          drawItems.push({
+            kind: 'shape',
+            data: {
+              id,
+              type: 'arrow',
+              x: 0,
+              y: 0,
+              points: arrowPts,
+              stroke: color,
+              strokeWidth: size
+            }
+          });
+        } else if (stroke.type === 'circle') {
+          const cx = clampX(stroke.x ?? 250);
+          const cy = clampY(stroke.y ?? 200);
+          const radius = Math.min(260, Math.max(10, stroke.radius ?? 45));
+          drawItems.push({
+            kind: 'shape',
+            data: {
+              id,
+              type: 'circle',
+              x: cx,
+              y: cy,
+              radius,
+              stroke: color,
+              strokeWidth: size,
+              fill: stroke.fill || 'transparent'
+            }
+          });
+        } else if (stroke.type === 'ellipse') {
+          const cx = clampX(stroke.x ?? 250);
+          const cy = clampY(stroke.y ?? 200);
+          const rx = Math.min(300, stroke.radiusX ?? (stroke.width ? stroke.width / 2 : (stroke.radius ?? 50)));
+          const ry = Math.min(200, stroke.radiusY ?? (stroke.height ? stroke.height / 2 : (stroke.radius ?? 30)));
+          drawItems.push({
+            kind: 'shape',
+            data: {
+              id,
+              type: 'ellipse',
+              x: cx,
+              y: cy,
+              width: rx * 2,
+              height: ry * 2,
+              stroke: color,
+              strokeWidth: size,
+              fill: stroke.fill || 'transparent'
+            }
+          });
+        } else if (stroke.type === 'rect') {
+          const rx = clampX(stroke.x ?? 150);
+          const ry = clampY(stroke.y ?? 150);
+          drawItems.push({
+            kind: 'shape',
+            data: {
+              id,
+              type: 'rect',
+              x: rx,
+              y: ry,
+              width: Math.min(880 - rx, stroke.width ?? 120),
+              height: Math.min(580 - ry, stroke.height ?? 80),
+              stroke: color,
+              strokeWidth: size,
+              fill: stroke.fill || 'transparent'
+            }
+          });
+        } else if (stroke.type === 'label' || stroke.type === 'text') {
+          const rawSize = stroke.size || 12;
+          const cappedSize = Math.max(11, Math.min(16, rawSize));
+          drawItems.push({
+            kind: 'shape',
+            data: {
+              id,
+              type: 'text',
+              x: clampX(stroke.x ?? 150),
+              y: clampY(stroke.y ?? 150),
+              text: stroke.text || '',
+              stroke: color,
+              strokeWidth: 1,
+              fill: color,
+              fontSize: cappedSize
+            }
+          });
+        }
+      });
+
+      // Rapidly render all strokes on canvas
+      let step = 0;
+      const strokeDelay = Math.max(10, Math.min(35, Math.floor(800 / Math.max(1, drawItems.length))));
+      const animInterval = setInterval(() => {
+        if (step >= drawItems.length) {
+          clearInterval(animInterval);
+          setIsMagicPenDrawing(null);
+          soundService.playAchievementSound();
+          return;
+        }
+        const item = drawItems[step];
+        setSlides(prev => {
+          const next = [...prev];
+          const sl = next[activeSlideIdx];
+          if (sl) {
+            if (item.kind === 'line') {
+              sl.lines = [...sl.lines, item.data];
+            } else {
+              sl.shapes = [...sl.shapes, item.data];
+            }
+          }
+          return next;
+        });
+        step++;
+      }, strokeDelay);
     } catch (err: any) {
-      setMagicPenModal(prev => ({
-        ...prev,
-        loading: false,
-        error: err.message || 'Failed to generate drawing. Please try again.'
-      }));
+      console.error('Magic Pen drawing error:', err);
+      setIsMagicPenDrawing(null);
     }
   };
 
@@ -1629,14 +1707,14 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     // Check shapes in reverse order (topmost first)
     for (let i = currentSlide.shapes.length - 1; i >= 0; i--) {
       const sh = currentSlide.shapes[i];
-      if (isCloseToShape(sh, px, py, 14)) {
+      if (isCloseToShape(sh, px, py, 18)) {
         return { id: sh.id, type: 'shape' };
       }
     }
     // Check lines in reverse order (topmost first)
     for (let i = currentSlide.lines.length - 1; i >= 0; i--) {
       const ln = currentSlide.lines[i];
-      if (ln.tool !== 'eraser' && doesStrokeHitPoint(ln.points, px, py, Math.max(16, (ln.brushSize || 3) / 2 + 10))) {
+      if (ln.tool !== 'eraser' && doesStrokeHitPoint(ln.points, px, py, Math.max(26, (ln.brushSize || 3) + 18))) {
         return { id: ln.id, type: 'line' };
       }
     }
@@ -2054,7 +2132,25 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     
     if (tool === 'select') {
       const slide = slides[activeSlideIdx];
-      const hitItem = findObjectAtPosition(pos.x, pos.y, slide);
+      let directHitItem: { id: string; type: 'shape' | 'line' } | null = null;
+      let targetNode = e.target;
+      const stage = e.target?.getStage?.();
+      while (targetNode && targetNode !== stage) {
+        const nodeId = targetNode.id?.();
+        if (nodeId && slide) {
+          if (slide.shapes.some(s => s.id === nodeId)) {
+            directHitItem = { id: nodeId, type: 'shape' };
+            break;
+          }
+          if (slide.lines.some(l => l.id === nodeId)) {
+            directHitItem = { id: nodeId, type: 'line' };
+            break;
+          }
+        }
+        targetNode = targetNode.getParent?.();
+      }
+
+      const hitItem = directHitItem || findObjectAtPosition(pos.x, pos.y, slide);
       if (hitItem) {
         const isModifier = e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey;
         const alreadySelected = selectedIds.some(s => s.id === hitItem.id);
@@ -2449,7 +2545,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             }
           });
           current.lines.forEach(ln => {
-            if (ln.tool !== 'eraser' && doesStrokeIntersectMarquee(ln.points, rx, ry, rw, rh, selectionMode)) {
+            if (ln.tool !== 'eraser' && (doesStrokeIntersectMarquee(ln.points, rx, ry, rw, rh, selectionMode) || checkBox(getElementBoundingBox(ln, 'line')))) {
               matches.push({ id: ln.id, type: 'line' });
             }
           });
@@ -4279,6 +4375,14 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             )}
           </Layer>
         </Stage>
+
+        {/* Magic Pen Active Drawing Indicator Overlay */}
+        {isMagicPenDrawing && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-indigo-950/95 border border-indigo-400/50 text-cyan-200 px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 text-xs sm:text-sm font-bold z-50 backdrop-blur-md animate-pulse">
+            <Sparkles className="w-4 h-4 text-cyan-400 animate-spin" style={{ animationDuration: '3s' }} />
+            <span>Magic Pen is drawing "{isMagicPenDrawing}"...</span>
+          </div>
+        )}
 
         {/* AI Shape Predictive Toast Notification */}
         {aiTip && (

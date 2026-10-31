@@ -2415,52 +2415,46 @@ You MUST output valid raw JSON ONLY matching this exact schema:
     let lastError: any = null;
     let successfulMaxTokens = 8192;
 
-    const tokenLimits = [8192, 10000];
-    for (let i = 0; i < tokenLimits.length; i++) {
-      const maxToks = tokenLimits[i];
+    try {
+      const resResult = await callMinistralCompletion(
+        fullPrompt,
+        systemInstruction,
+        [],
+        {
+          jsonMode: true,
+          maxTokens: 3000,
+          requestId,
+          timeoutMs: 5500
+        }
+      );
+      rawText = resResult.text;
+    } catch (mErr) {
+      console.warn('[Magic Draw Vercel API] Timeout or error, falling back to procedural:', mErr);
+    }
+    let parsed: any = null;
+    if (rawText) {
       try {
-        const resResult = await callMinistralCompletion(
-          fullPrompt,
-          systemInstruction,
-          [],
-          {
-            jsonMode: true,
-            maxTokens: maxToks,
-            requestId,
-            timeoutMs: 55000
-          }
-        );
-        rawText = resResult.text;
-        
         let cleaned = rawText.trim();
         if (cleaned.startsWith('```json')) {
           cleaned = cleaned.replace(/^```json/, '').replace(/```$/, '').trim();
         } else if (cleaned.startsWith('```')) {
           cleaned = cleaned.replace(/^```/, '').replace(/```$/, '').trim();
         }
-
-        let parsed = repairTruncatedStrokesJson(cleaned);
-        if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length >= 8) {
-          successfulMaxTokens = maxToks;
-          return sendJson(res, 200, {
-            success: true,
-            title: parsed.title || userPrompt,
-            strokes: parsed.strokes,
-            providerUsed: 'ministral',
-            modelUsed: 'ministral-8b-2410',
-            requestId,
-            telemetry: {
-              requestId,
-              providerUsed: 'ministral',
-              modelUsed: 'ministral-8b-2410',
-              maxTokens: successfulMaxTokens
-            }
-          });
-        }
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`[Magic Draw] Attempt ${i + 1} with maxTokens=${maxToks} failed:`, err?.message || err);
+        parsed = repairTruncatedStrokesJson(cleaned);
+      } catch (pErr) {
+        parsed = repairTruncatedStrokesJson(rawText);
       }
+    }
+
+    if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length >= 6) {
+      return sendJson(res, 200, {
+        success: true,
+        title: parsed.title || userPrompt,
+        strokes: parsed.strokes,
+        providerUsed: 'ministral',
+        modelUsed: 'ministral-8b-2410',
+        requestId
+      });
     }
 
     const fallback = getProceduralMagicPenStrokes(userPrompt);
