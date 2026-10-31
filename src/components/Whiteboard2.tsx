@@ -2558,10 +2558,8 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     // Complete rectangular marquee selection
     if (tool === 'select' && isMarqueeSelecting.current) {
       isMarqueeSelecting.current = false;
-      const stage = e?.target?.getStage();
-      const point = stage ? getRelativePointerPosition(stage) : null;
-      const endX = point ? point.x : marqueeRectRef.current.x2;
-      const endY = point ? point.y : marqueeRectRef.current.y2;
+      const endX = marqueeRectRef.current.x2;
+      const endY = marqueeRectRef.current.y2;
       const startX = marqueeRectRef.current.x1;
       const startY = marqueeRectRef.current.y1;
 

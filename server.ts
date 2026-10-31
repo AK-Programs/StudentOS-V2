@@ -3600,7 +3600,7 @@ Schema:
       }
     }
 
-    if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length >= 6) {
+    if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length >= 2) {
       return res.status(200).json({
         success: true,
         title: parsed.title || userPrompt,
