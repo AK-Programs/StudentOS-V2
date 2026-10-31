@@ -29,8 +29,8 @@ export const BRAND_CONFIG: BrandConfig = {
   tagline: 'An integrated platform for modern school life and learning.',
   version: '3.12.0',
   logo: {
-    svgPath: '/brand/logo.svg?v=20261031_v5',
-    pngPath: '/brand/logo.png?v=20261031_v5',
+    svgPath: '/brand/logo.svg?v=20261031_black_v1',
+    pngPath: '/brand/logo.png?v=20261031_black_v1',
     fallbackLetter: 'V',
     altText: 'Veylentra Logo'
   }
