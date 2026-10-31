@@ -141,6 +141,7 @@ import { StudentOSOnboardingModal } from './components/onboarding/StudentOSOnboa
 import { GuidedProductTour } from './components/onboarding/GuidedProductTour';
 import { shouldShowOnboarding } from './lib/onboardingService';
 import { BottomSheet } from './components/ui/BottomSheet';
+import { Skeleton, SkeletonCard, SkeletonList } from './components/ui/Skeleton';
 
 // Stub Integrations
 import {
@@ -829,7 +830,7 @@ export default function App() {
         : tab === 'brain_battle' || tab === 'quiz'
         ? ['brain_battle', 'quiz'].includes(activeTab)
         : activeTab === tab;
-    let base = `group relative w-full flex items-center transition-all duration-200 rounded-xl border text-left min-w-0 cursor-pointer ${
+    let base = `group relative w-full flex items-center transition-all duration-200 rounded-xl border text-left min-w-0 cursor-pointer active:scale-95 ${
       sidebarOpen ? 'gap-3 px-3 py-2.5' : 'md:justify-center md:px-0 md:py-2.5 gap-3 px-3 py-2.5'
     } `;
     if (smartBoardMode) {
@@ -5485,7 +5486,8 @@ Date: ${new Date().toLocaleDateString()}
         likedBy: [],
         views: 1,
         isVerified: effectiveRole === 'teacher',
-        comments: []
+        comments: [],
+        folder_id: activeMaterialFolderId
       };
 
       console.log("[UPLOAD TRACE] 5. Metadata object constructed before save:", JSON.stringify(docItem, null, 2));
@@ -8965,6 +8967,25 @@ ${roleLabel}: ${userQuery}
               {/* Tab 1: Dashboard View */}
               {activeTab === 'dashboard' && (
                 <div className="space-y-6 animate-fadeIn">
+                  {dataLoading && !showStartup ? (
+                    <div className="space-y-8">
+                      <Skeleton className="h-48 w-full rounded-3xl" />
+                      <div className="space-y-4">
+                        <Skeleton className="h-4 w-1/4" />
+                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+                          {Array.from({ length: 7 }).map((_, i) => (
+                            <Skeleton key={i} className="h-24 w-full rounded-2xl" />
+                          ))}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <SkeletonCard />
+                        <SkeletonCard />
+                        <SkeletonCard />
+                      </div>
+                    </div>
+                  ) : (
+                    <>
                   
                   {/* Status Banner for Pending Requests */}
                   {currentUser.accountStatus && currentUser.accountStatus !== 'approved' && (
@@ -9607,12 +9628,24 @@ ${roleLabel}: ${userQuery}
                     </div>
                   </div>
 
+                    </>
+                  )}
                 </div>
               )}
 
               {/* Unified Study Hub View: Flashcards (SM-2), Task Manager, & Study Schedule Planner */}
               {['study_hub', 'tasks', 'planner', 'flashcards'].includes(activeTab) && (
                 <div className="space-y-6 animate-fadeIn">
+                  {dataLoading && !showStartup ? (
+                    <div className="space-y-6">
+                      <Skeleton className="h-16 w-full rounded-2xl" />
+                      <div className="smart-glass p-6 rounded-3xl space-y-4">
+                        <Skeleton className="h-6 w-1/3" />
+                        <SkeletonList count={5} />
+                      </div>
+                    </div>
+                  ) : (
+                    <>
                   {/* Study Hub Unified Sub-Tabs Navigation */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/90 backdrop-blur-xl p-2.5 rounded-2xl border border-white/10 shadow-lg relative z-20">
                     <div className="w-full sm:max-w-md">
@@ -9745,12 +9778,28 @@ ${roleLabel}: ${userQuery}
                       />
                     </div>
                   )}
-                </div>
-              )}
+                  </>
+                )}
+              </div>
+            )}
 
               {/* Tab: Personal Lecture Notes Workspace */}
               {activeTab === 'notes' && (
                 <div className="space-y-6 animate-fadeIn">
+                  {dataLoading && !showStartup ? (
+                    <div className="space-y-6">
+                      <Skeleton className="h-16 w-full rounded-2xl" />
+                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                        <div className="lg:col-span-3 space-y-4">
+                          <SkeletonList count={6} />
+                        </div>
+                        <div className="lg:col-span-9">
+                          <Skeleton className="h-[600px] w-full rounded-3xl" />
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
                   
                   {/* Notes Header Bar */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/80 p-3.5 sm:p-4 rounded-2xl border border-white/5 shadow-sm">
@@ -10808,6 +10857,8 @@ ${roleLabel}: ${userQuery}
                     )}
                   </AnimatePresence>
 
+                    </>
+                  )}
                 </div>
               )}
 
@@ -12179,6 +12230,25 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
               */}
               {activeTab === 'materials' && (
                 <div className="space-y-8 animate-fadeIn">
+                  {dataLoading && !showStartup ? (
+                    <div className="space-y-8">
+                      <Skeleton className="h-40 w-full rounded-3xl" />
+                      <div className="flex gap-4 overflow-x-auto pb-2">
+                        {Array.from({ length: 4 }).map((_, i) => (
+                          <Skeleton key={i} className="h-10 w-32 rounded-xl flex-shrink-0" />
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+                        <SkeletonCard />
+                        <SkeletonCard />
+                        <SkeletonCard />
+                        <SkeletonCard />
+                        <SkeletonCard />
+                        <SkeletonCard />
+                      </div>
+                    </div>
+                  ) : (
+                    <>
                   
                   {/* Subject and Statistics Banner */}
                   <div className="smart-glass p-4 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl space-y-4">
@@ -13855,6 +13925,8 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                     </>
                   )}
 
+                    </>
+                  )}
                 </div>
               )}
 

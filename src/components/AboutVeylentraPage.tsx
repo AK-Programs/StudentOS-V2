@@ -62,7 +62,7 @@ export const AboutVeylentraPage: React.FC<AboutVeylentraPageProps> = ({ onNaviga
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.45 }}
-        className="relative overflow-hidden rounded-3xl border border-white/10 bg-slate-900/80 p-6 sm:p-10 shadow-2xl backdrop-blur-xl"
+        className="relative overflow-hidden rounded-3xl border border-white/10 p-6 sm:p-10 shadow-2xl smart-glass"
       >
         <div className="absolute top-0 right-0 -mt-12 -mr-12 w-96 h-96 rounded-full bg-gradient-to-br from-indigo-500/20 via-cyan-500/10 to-transparent blur-3xl pointer-events-none" />
 
@@ -76,7 +76,7 @@ export const AboutVeylentraPage: React.FC<AboutVeylentraPageProps> = ({ onNaviga
             <div className="flex items-center gap-4">
               <BrandLogo size="lg" className="shrink-0" />
               <div>
-                <h1 className="text-3xl sm:text-4xl font-brand font-extrabold tracking-tight text-white">
+                <h1 className="text-3xl sm:text-4xl font-brand font-extrabold tracking-tight">
                   About {BRAND_CONFIG.name}
                 </h1>
                 <p className="text-xs sm:text-sm font-medium text-slate-400 mt-0.5">
@@ -134,7 +134,7 @@ export const AboutVeylentraPage: React.FC<AboutVeylentraPageProps> = ({ onNaviga
           </div>
         </div>
 
-        <div className="relative overflow-hidden rounded-3xl border border-indigo-500/30 bg-gradient-to-br from-slate-900/90 via-slate-900/60 to-indigo-950/40 p-6 sm:p-8 shadow-2xl">
+        <div className="relative overflow-hidden rounded-3xl border border-indigo-500/30 smart-glass p-6 sm:p-8 shadow-2xl">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
             <div className="flex items-center gap-5">
               <div className="relative flex-shrink-0">
@@ -213,7 +213,7 @@ export const AboutVeylentraPage: React.FC<AboutVeylentraPageProps> = ({ onNaviga
                 key={channel.id}
                 className={`relative rounded-2xl border p-5 transition-all duration-200 ${
                   channel.isConfigured
-                    ? 'border-white/10 bg-slate-900/80 hover:border-indigo-500/50 hover:bg-slate-900'
+                    ? 'border-white/10 smart-glass hover:border-indigo-500/50'
                     : 'border-dashed border-white/10 bg-slate-950/40 opacity-70'
                 }`}
               >
@@ -307,7 +307,7 @@ export const AboutVeylentraPage: React.FC<AboutVeylentraPageProps> = ({ onNaviga
               className={`rounded-2xl border p-5 flex flex-col justify-between ${
                 member.isFounder
                   ? 'border-indigo-500/40 bg-indigo-950/20'
-                  : 'border-white/10 bg-slate-900/80'
+                  : 'border-white/10 smart-glass'
               }`}
             >
               <div className="space-y-3">
