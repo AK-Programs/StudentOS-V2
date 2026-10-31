@@ -6186,26 +6186,54 @@ ${roleLabel}: ${userQuery}
 [Directive: The student attached the following file(s): ${fileNamesList}. You MUST explicitly mention the file name(s) (${fileNamesList}) in your response to demonstrate that the document content was reviewed.]`;
     }
 
-    const targetThreadId = activeThreadId;
-    const currentThread = aiThreads.find(t => t.id === targetThreadId) || aiThreads[0];
+    const targetThreadId = activeThreadId || `thread_${Date.now()}`;
+    let currentThread = aiThreads.find(t => t.id === targetThreadId) || aiThreads[0];
     
-    const updatedMessages = [...(currentThread?.messages || []), newUserMsg];
-    const newTitle = currentThread.title.startsWith('Study Session #') || currentThread.title.startsWith('Introductory Study') || currentThread.title.startsWith('Study with')
-      ? (userQuery.length > 25 ? userQuery.substring(0, 25) + '...' : userQuery)
-      : currentThread.title;
+    if (!currentThread) {
+      const defaultTitle = userQuery.length > 25 ? userQuery.substring(0, 25) + '...' : userQuery;
+      currentThread = {
+        id: targetThreadId,
+        title: defaultTitle,
+        createdAt: new Date().toISOString(),
+        messages: []
+      };
+      setActiveThreadId(targetThreadId);
+    }
 
-    // Optimistically push user message + streaming assistant placeholder
-    setAiThreads(prev => prev.map(t => {
-      if (t.id === targetThreadId) {
-        return { 
-          ...t, 
-          messages: [...updatedMessages, { role: 'assistant' as const, content: '' }],
-          title: newTitle,
-          attachedFiles: []
-        };
+    const existingTitle = currentThread?.title || 'Study Session';
+    const newTitle = (!existingTitle || existingTitle.startsWith('Study Session') || existingTitle.startsWith('Introductory Study') || existingTitle.startsWith('Study with'))
+      ? (userQuery.length > 25 ? userQuery.substring(0, 25) + '...' : userQuery)
+      : existingTitle;
+
+    const updatedMessages = [...(currentThread?.messages || []), newUserMsg];
+
+    // Optimistically push user message + streaming assistant placeholder (handling zero-threads state)
+    setAiThreads(prev => {
+      const exists = prev.some(t => t.id === targetThreadId);
+      if (!exists) {
+        return [
+          {
+            id: targetThreadId,
+            title: newTitle,
+            createdAt: new Date().toISOString(),
+            messages: [...updatedMessages, { role: 'assistant' as const, content: '' }],
+            attachedFiles: []
+          },
+          ...prev
+        ];
       }
-      return t;
-    }));
+      return prev.map(t => {
+        if (t.id === targetThreadId) {
+          return { 
+            ...t, 
+            messages: [...updatedMessages, { role: 'assistant' as const, content: '' }],
+            title: newTitle,
+            attachedFiles: []
+          };
+        }
+        return t;
+      });
+    });
 
     if (typeof overrideQuery !== 'string') {
       setAiInput('');
@@ -6237,11 +6265,49 @@ ${roleLabel}: ${userQuery}
 
       let streamedWebSources: any[] = [];
       let streamedWebUsed = false;
-      setAiStatusMessage(aiWebSearchMode === 'force' ? '🔍 Searching verified web & academic sources...' : '');
+      let webSearchContext = '';
+
+      // Fix 3: Web Search Grounding - Call /api/ai/search first when search is requested
+      const isWebSearchRequested = aiWebSearchMode === 'force' || aiWebSearchMode === 'always';
+      if (isWebSearchRequested || aiWebSearchMode === 'auto') {
+        setAiStatusMessage('🔍 Searching verified web & academic sources...');
+        try {
+          const searchResp = await fetch('/api/ai/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: userQuery })
+          });
+          if (searchResp.ok) {
+            const searchData = await searchResp.json();
+            if (searchData.success && Array.isArray(searchData.results) && searchData.results.length > 0) {
+              streamedWebUsed = true;
+              streamedWebSources = searchData.results.map((r: any) => ({
+                title: r.title,
+                url: r.url || r.uri,
+                snippet: r.snippet || r.description,
+                domain: r.published_source || r.domain || (r.url ? new URL(r.url).hostname : 'web')
+              }));
+
+              const formattedSources = streamedWebSources.map((s, idx) => `[Source ${idx + 1}]: ${s.title}\nURL: ${s.url}\nSnippet: ${s.snippet}`).join('\n\n');
+
+              webSearchContext = `\n\nVERIFIED REAL-TIME WEB SEARCH RESULTS FOR "${userQuery}":
+${formattedSources}
+
+CRITICAL WEB GROUNDING DIRECTIVE:
+1. Base your answer strictly on the real-time search results above.
+2. Cite the exact titles and URLs provided in the search results.
+3. NEVER state "I cannot browse the web" because live search results have been retrieved and provided to you above.
+4. NEVER invent, fabricate, or hallucinate URLs or links. Only display links explicitly provided in the search results above.`;
+            }
+          }
+        } catch (sErr) {
+          console.warn('Direct web search pre-fetch failed, falling back to server router:', sErr);
+        }
+      }
 
       const streamResult = await streamAIChatClient(
         {
-          prompt: promptWithContext,
+          prompt: promptWithContext + webSearchContext,
           history: historyPayload,
           persona: selectedPersona,
           level: currentUser?.grade,
@@ -6269,23 +6335,32 @@ ${roleLabel}: ${userQuery}
           },
           onToken: (_delta, fullText) => {
             answer = fullText;
-            setAiThreads(prev => prev.map(t => {
-              if (t.id === targetThreadId) {
-                return {
-                  ...t,
-                  messages: [
-                    ...updatedMessages,
-                    {
-                      role: 'assistant' as const,
-                      content: fullText,
-                      webSearchUsed: streamedWebUsed,
-                      webSources: streamedWebSources
-                    }
-                  ]
-                };
+            setAiThreads(prev => {
+              const exists = prev.some(t => t.id === targetThreadId);
+              const assistantMsg = {
+                role: 'assistant' as const,
+                content: fullText,
+                webSearchUsed: streamedWebUsed,
+                webSources: streamedWebSources
+              };
+              if (!exists) {
+                return [{
+                  id: targetThreadId,
+                  title: newTitle,
+                  createdAt: new Date().toISOString(),
+                  messages: [...updatedMessages, assistantMsg]
+                }, ...prev];
               }
-              return t;
-            }));
+              return prev.map(t => {
+                if (t.id === targetThreadId) {
+                  return {
+                    ...t,
+                    messages: [...updatedMessages, assistantMsg]
+                  };
+                }
+                return t;
+              });
+            });
           },
           onDone: (finalMeta) => {
             setAiStatusMessage('');
@@ -6320,23 +6395,32 @@ ${roleLabel}: ${userQuery}
         setAiUsageState(updated);
       }
 
-      setAiThreads(prev => prev.map(t => {
-        if (t.id === targetThreadId) {
-          return {
-            ...t,
-            messages: [
-              ...updatedMessages,
-              {
-                role: 'assistant',
-                content: answer,
-                webSearchUsed: finalWebUsed,
-                webSources: finalWebSources
-              }
-            ]
-          };
+      setAiThreads(prev => {
+        const assistantMsg = {
+          role: 'assistant' as const,
+          content: answer,
+          webSearchUsed: finalWebUsed,
+          webSources: finalWebSources
+        };
+        const exists = prev.some(t => t.id === targetThreadId);
+        if (!exists) {
+          return [{
+            id: targetThreadId,
+            title: newTitle,
+            createdAt: new Date().toISOString(),
+            messages: [...updatedMessages, assistantMsg]
+          }, ...prev];
         }
-        return t;
-      }));
+        return prev.map(t => {
+          if (t.id === targetThreadId) {
+            return {
+              ...t,
+              messages: [...updatedMessages, assistantMsg]
+            };
+          }
+          return t;
+        });
+      });
 
       if (currentUser?.uid) {
          saveAiBuddyChat({ 
@@ -6364,6 +6448,13 @@ ${roleLabel}: ${userQuery}
     } catch (err: any) {
       if (err?.name === 'AbortError') {
         showNotification('Generation stopped.');
+        setAiThreads(prev => prev.map(t => {
+          if (t.id === targetThreadId) {
+            const msgs = t.messages.filter(m => m.content !== '');
+            return { ...t, messages: msgs.length > 0 ? msgs : [...updatedMessages, { role: 'assistant', content: '[Generation stopped by user]' }] };
+          }
+          return t;
+        }));
         return;
       }
       const isQuotaErr = err?.isLimitReached || err?.message?.includes('Daily AI message limit') || err?.message?.includes('AI_LIMIT_REACHED');
@@ -6380,15 +6471,27 @@ ${roleLabel}: ${userQuery}
         ? `⚠️ **Daily AI Buddy Limit Reached**\n\nYou have used your daily query allocation for your tier (${aiUsageState.limit} queries/day). \n\n* **Replenishment**: Queries reset on a rolling 24-hour cycle.\n* **Instant Boost**: Click **"Upgrade Quota"** above to enter an academic study voucher (e.g. \`STUDENTOS-PRO\` or \`EXAM-PREP\`) or request an extra quota grant from your instructors.`
         : `⚠️ **AI is temporarily unavailable**\n\n${err?.message || 'Please try again in a moment.'}`;
 
-      setAiThreads(prev => prev.map(t => {
-        if (t.id === targetThreadId) {
-          return { 
-            ...t, 
-            messages: [...updatedMessages, { role: 'assistant' as const, content: errorContent }] 
-          };
+      setAiThreads(prev => {
+        const assistantErrMsg = { role: 'assistant' as const, content: errorContent };
+        const exists = prev.some(t => t.id === targetThreadId);
+        if (!exists) {
+          return [{
+            id: targetThreadId,
+            title: newTitle,
+            createdAt: new Date().toISOString(),
+            messages: [...updatedMessages, assistantErrMsg]
+          }, ...prev];
         }
-        return t;
-      }));
+        return prev.map(t => {
+          if (t.id === targetThreadId) {
+            return { 
+              ...t, 
+              messages: [...updatedMessages, assistantErrMsg] 
+            };
+          }
+          return t;
+        });
+      });
     } finally {
       setAiLoading(false);
       aiAbortControllerRef.current = null;

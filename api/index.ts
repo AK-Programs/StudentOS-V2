@@ -2119,6 +2119,84 @@ export default async function handler(req: any, res: any) {
     }
   }
 
+function getProceduralMagicPenStrokes(userPrompt: string) {
+  const p = String(userPrompt || '').toLowerCase();
+  
+  if (p.includes('tree') || p.includes('oak') || p.includes('forest') || (p.includes('plant') && !p.includes('cell'))) {
+    return {
+      title: 'Tree Diagram (Trunk, Branches & Canopy)',
+      strokes: [
+        { type: 'curve', points: [100,520, 250,510, 450,525, 650,515, 800,520], color: '#65a30d', size: 3 },
+        { type: 'curve', points: [390,520, 405,440, 418,360, 425,300], color: '#78350f', size: 5 },
+        { type: 'curve', points: [510,520, 495,440, 482,360, 475,300], color: '#78350f', size: 5 },
+        { type: 'curve', points: [435,510, 442,430, 448,340], color: '#92400e', size: 2 },
+        { type: 'curve', points: [465,510, 460,430, 455,340], color: '#92400e', size: 2 },
+        { type: 'curve', points: [430,330, 370,270, 310,240], color: '#78350f', size: 4 },
+        { type: 'curve', points: [470,330, 530,270, 590,240], color: '#78350f', size: 4 },
+        { type: 'curve', points: [450,320, 450,250, 440,190], color: '#78350f', size: 3 },
+        { type: 'curve', points: [250,280, 230,200, 290,130, 380,100, 450,90, 530,100, 620,130, 670,200, 650,280, 600,330, 520,350, 450,360, 370,350, 300,330, 250,280], color: '#16a34a', size: 4 },
+        { type: 'ellipse', x: 450, y: 220, width: 380, height: 230, color: '#22c55e', size: 3, fill: 'transparent' },
+        { type: 'ellipse', x: 340, y: 190, width: 190, height: 140, color: '#4ade80', size: 2, fill: 'transparent' },
+        { type: 'ellipse', x: 560, y: 190, width: 190, height: 140, color: '#4ade80', size: 2, fill: 'transparent' },
+        { type: 'ellipse', x: 450, y: 150, width: 220, height: 130, color: '#15803d', size: 2, fill: 'transparent' },
+        { type: 'arrow', points: [690, 115, 610, 150], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 700, y: 110, text: 'Foliage Canopy', color: '#4ade80', size: 12 },
+        { type: 'arrow', points: [690, 240, 580, 240], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 700, y: 235, text: 'Branches & Twigs', color: '#86efac', size: 12 },
+        { type: 'arrow', points: [640, 430, 500, 430], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 650, y: 425, text: 'Trunk (Wood & Bark)', color: '#fbbf24', size: 12 },
+        { type: 'arrow', points: [640, 525, 480, 525], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 650, y: 520, text: 'Roots System (Soil)', color: '#a3e635', size: 12 }
+      ]
+    };
+  }
+  
+  if (p.includes('cell')) {
+    return {
+      title: 'Plant Cell Diagram',
+      strokes: [
+        { type: 'curve', points: [180,120, 450,100, 720,120, 760,280, 740,460, 450,480, 180,460, 140,280, 180,120], color: '#22c55e', size: 4 },
+        { type: 'curve', points: [195,135, 450,115, 705,135, 742,280, 725,445, 450,465, 195,445, 158,280, 195,135], color: '#10b981', size: 2 },
+        { type: 'ellipse', x: 440, y: 290, width: 240, height: 180, color: '#38bdf8', size: 2, fill: 'transparent' },
+        { type: 'ellipse', x: 270, y: 230, width: 95, height: 85, color: '#a855f7', size: 2, fill: 'transparent' },
+        { type: 'circle', x: 270, y: 230, radius: 16, color: '#c084fc', size: 2, fill: '#c084fc' },
+        { type: 'ellipse', x: 570, y: 190, width: 50, height: 32, color: '#84cc16', size: 2, fill: 'transparent' },
+        { type: 'ellipse', x: 580, y: 390, width: 52, height: 34, color: '#84cc16', size: 2, fill: 'transparent' },
+        { type: 'ellipse', x: 310, y: 410, width: 48, height: 30, color: '#84cc16', size: 2, fill: 'transparent' },
+        { type: 'ellipse', x: 240, y: 340, width: 42, height: 24, color: '#f97316', size: 2, fill: 'transparent' },
+        { type: 'ellipse', x: 460, y: 430, width: 44, height: 26, color: '#f97316', size: 2, fill: 'transparent' },
+        { type: 'curve', points: [370,170, 390,165, 410,172, 425,168], color: '#ec4899', size: 2 },
+        { type: 'curve', points: [368,178, 388,173, 408,180, 423,176], color: '#ec4899', size: 2 },
+        { type: 'arrow', points: [100, 90, 180, 120], color: '#94a3b8', size: 1.5 },
+        { type: 'arrow', points: [100, 160, 195, 155], color: '#94a3b8', size: 1.5 },
+        { type: 'arrow', points: [130, 230, 220, 230], color: '#94a3b8', size: 1.5 },
+        { type: 'arrow', points: [440, 60, 440, 200], color: '#94a3b8', size: 1.5 },
+        { type: 'arrow', points: [790, 170, 600, 190], color: '#94a3b8', size: 1.5 },
+        { type: 'arrow', points: [790, 390, 610, 390], color: '#94a3b8', size: 1.5 },
+        { type: 'arrow', points: [130, 340, 215, 340], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 20, y: 85, text: 'Cell Wall', color: '#f8fafc', size: 12 },
+        { type: 'label', x: 20, y: 155, text: 'Cell Membrane', color: '#f8fafc', size: 12 },
+        { type: 'label', x: 50, y: 225, text: 'Side Nucleus', color: '#f8fafc', size: 12 },
+        { type: 'label', x: 400, y: 40, text: 'Central Vacuole', color: '#f8fafc', size: 12 },
+        { type: 'label', x: 800, y: 165, text: 'Chloroplast', color: '#f8fafc', size: 12 },
+        { type: 'label', x: 800, y: 385, text: 'Chloroplast', color: '#f8fafc', size: 12 },
+        { type: 'label', x: 30, y: 335, text: 'Mitochondria', color: '#f8fafc', size: 12 }
+      ]
+    };
+  }
+
+  return {
+    title: userPrompt,
+    strokes: [
+      { type: 'ellipse', x: 450, y: 300, width: 360, height: 240, color: '#38bdf8', size: 3, fill: 'transparent' },
+      { type: 'curve', points: [250,300, 350,220, 450,300, 550,380, 650,300], color: '#818cf8', size: 3 },
+      { type: 'circle', x: 450, y: 300, radius: 50, color: '#f43f5e', size: 2, fill: 'transparent' },
+      { type: 'arrow', points: [670, 180, 570, 240], color: '#94a3b8', size: 1.5 },
+      { type: 'label', x: 680, y: 175, text: userPrompt.slice(0, 30), color: '#38bdf8', size: 12 }
+    ]
+  };
+}
+
   // 2.5 Magic Draw / Magic Pen endpoint
   if (pathname === '/api/ai/magic-draw' || pathname === '/api/ai/magic-draw/') {
     const body = await parseJsonBody(req);
@@ -2130,33 +2208,40 @@ export default async function handler(req: any, res: any) {
     const systemInstruction = `You are an expert educational vector drawing AI for StudentOS whiteboard.
 Generate a detailed, realistic classroom diagram for the user's prompt using 20 to 30 precise drawing strokes.
 Coordinates must be inside a 900 by 600 canvas (x: 0 to 900, y: 0 to 600).
+
 CRITICAL DRAWING RULES:
-1. DO NOT draw diagrams from generic rectangles and single straight lines. Use smooth curves and organic shapes!
+1. DO NOT draw generic rectangles or random straight lines. Draw the exact realistic object requested by the user!
 2. Allowed stroke types: "curve", "line", "circle", "ellipse", "arrow", "label".
-3. A "curve" stroke MUST have a "points" array with at least 8 numbers (4 or more (x,y) coordinate pairs: [x1, y1, x2, y2, x3, y3, x4, y4, ...]) to form smooth curved outlines (cell walls, organ membranes, bent arrows, anatomical contours).
-4. Use "ellipse" for round/oval organs (nucleus, vacuole, chloroplast, mitochondria, cells).
-5. For biological or scientific diagrams (e.g. plant cell), you MUST include:
-   - One large rounded outer cell wall curve (using "curve" with 8+ points).
-   - One inner cell membrane curve (using "curve").
-   - One large central vacuole ellipse.
-   - One nucleus ellipse pushed to the side, not in the center.
-   - Two or three small chloroplast ellipses.
-   - Mitochondria or Golgi apparatus ellipses.
-   - Short leader arrows pointing from outside labels to organelles.
-   - Precise scientific labels with size 12 placed outside the main drawing shapes so they never cover the drawing.
-6. Use short, precise scientific or technical labels. Reject generic labels such as Overview, Principles, Operations, or Applications.
-You MUST output valid raw JSON ONLY, with no markdown code blocks or surrounding text, matching this exact schema:
+3. A "curve" stroke MUST have a "points" array with at least 8 numbers (4 or more (x,y) coordinate pairs: [x1, y1, x2, y2, x3, y3, x4, y4, ...]) to form smooth curved outlines.
+4. Draw the EXACT object requested:
+
+OBJECT-SPECIFIC GUIDELINES:
+- IF ASKED FOR A TREE:
+  * Draw a sturdy vertical brown trunk at bottom center (x: 400-500, y: 320-530) using thick brown curves ('#78350f').
+  * Draw main branches extending upward and outward from the trunk ('#78350f').
+  * Draw a large lush foliage canopy at top (x: 240-660, y: 90-340) using smooth green curves and overlapping ellipses ('#16a34a', '#22c55e', '#15803d').
+  * Draw grass/soil baseline at bottom ('#65a30d').
+  * Add clear labels ('Foliage Canopy', 'Trunk', 'Roots') positioned outside the drawing.
+- IF ASKED FOR A PLANT CELL:
+  * Draw a rounded outer cell wall curve ('#22c55e') and inner cell membrane curve ('#10b981').
+  * Draw central vacuole ellipse ('#38bdf8'), side nucleus ellipse ('#a855f7'), chloroplasts ('#84cc16'), mitochondria ('#f97316').
+  * Add clear leader arrows and labels ('Cell Wall', 'Central Vacuole', 'Nucleus', 'Chloroplast').
+- IF ASKED FOR OTHER OBJECTS (e.g. atom, solar system, heart, car, volcano, water cycle):
+  * Accurately construct the real structural elements of that specific object using curves, circles, ellipses, and arrows.
+  * Add clear descriptive labels.
+
+You MUST output valid raw JSON ONLY matching this exact schema:
 {
   "title": "Illustration Title",
   "strokes": [
-    { "type": "curve", "points": [150,120, 350,110, 450,180, 480,280, 420,380, 280,410, 180,390, 120,300, 150,120], "color": "#22c55e", "size": 3 },
-    { "type": "ellipse", "x": 300, "y": 250, "width": 140, "height": 90, "color": "#38bdf8", "size": 2, "fill": "transparent" },
-    { "type": "arrow", "points": [370, 250, 520, 180], "color": "#f8fafc", "size": 2 },
-    { "type": "label", "x": 530, "y": 170, "text": "Central Vacuol", "color": "#f8fafc", "size": 12 }
+    { "type": "curve", "points": [390,520, 405,440, 418,360, 425,300], "color": "#78350f", "size": 5 },
+    { "type": "ellipse", "x": 450, "y": 220, "width": 380, "height": 230, "color": "#22c55e", "size": 3, "fill": "transparent" },
+    { "type": "arrow", "points": [690, 115, 610, 150], "color": "#f8fafc", "size": 1.5 },
+    { "type": "label", "x": 700, "y": 110, "text": "Foliage Canopy", "color": "#f8fafc", "size": 12 }
   ]
 }`;
 
-    const fullPrompt = `Create drawing commands for: "${userPrompt}"`;
+    const fullPrompt = `Create precise drawing commands for requested object: "${userPrompt}"`;
 
     let rawText = '';
     let lastError: any = null;
@@ -2187,7 +2272,7 @@ You MUST output valid raw JSON ONLY, with no markdown code blocks or surrounding
         }
 
         const parsed = JSON.parse(cleaned);
-        if (parsed && Array.isArray(parsed.strokes)) {
+        if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length > 0) {
           successfulMaxTokens = maxToks;
           return sendJson(res, 200, {
             success: true,
@@ -2210,45 +2295,15 @@ You MUST output valid raw JSON ONLY, with no markdown code blocks or surrounding
       }
     }
 
-    if (/plant\s*cell/i.test(userPrompt)) {
-      const plantCellStrokes = [
-        { type: 'curve', points: [180,120, 450,100, 720,120, 760,280, 740,460, 450,480, 180,460, 140,280, 180,120], color: '#22c55e', size: 4 },
-        { type: 'curve', points: [195,135, 450,115, 705,135, 742,280, 725,445, 450,465, 195,445, 158,280, 195,135], color: '#10b981', size: 2 },
-        { type: 'ellipse', x: 440, y: 290, width: 240, height: 180, color: '#38bdf8', size: 2, fill: 'transparent' },
-        { type: 'ellipse', x: 270, y: 230, width: 95, height: 85, color: '#a855f7', size: 2, fill: 'transparent' },
-        { type: 'circle', x: 270, y: 230, radius: 16, color: '#c084fc', size: 2, fill: '#c084fc' },
-        { type: 'ellipse', x: 570, y: 190, width: 50, height: 32, color: '#84cc16', size: 2, fill: 'transparent' },
-        { type: 'ellipse', x: 580, y: 390, width: 52, height: 34, color: '#84cc16', size: 2, fill: 'transparent' },
-        { type: 'ellipse', x: 310, y: 410, width: 48, height: 30, color: '#84cc16', size: 2, fill: 'transparent' },
-        { type: 'ellipse', x: 240, y: 340, width: 42, height: 24, color: '#f97316', size: 2, fill: 'transparent' },
-        { type: 'ellipse', x: 460, y: 430, width: 44, height: 26, color: '#f97316', size: 2, fill: 'transparent' },
-        { type: 'curve', points: [370,170, 390,165, 410,172, 425,168], color: '#ec4899', size: 2 },
-        { type: 'curve', points: [368,178, 388,173, 408,180, 423,176], color: '#ec4899', size: 2 },
-        { type: 'arrow', points: [100, 90, 180, 120], color: '#94a3b8', size: 1.5 },
-        { type: 'arrow', points: [100, 160, 195, 155], color: '#94a3b8', size: 1.5 },
-        { type: 'arrow', points: [130, 230, 220, 230], color: '#94a3b8', size: 1.5 },
-        { type: 'arrow', points: [440, 60, 440, 200], color: '#94a3b8', size: 1.5 },
-        { type: 'arrow', points: [790, 170, 600, 190], color: '#94a3b8', size: 1.5 },
-        { type: 'arrow', points: [790, 390, 610, 390], color: '#94a3b8', size: 1.5 },
-        { type: 'arrow', points: [130, 340, 215, 340], color: '#94a3b8', size: 1.5 },
-        { type: 'label', x: 20, y: 85, text: 'Cell Wall', color: '#f8fafc', size: 12 },
-        { type: 'label', x: 20, y: 155, text: 'Cell Membrane', color: '#f8fafc', size: 12 },
-        { type: 'label', x: 50, y: 225, text: 'Side Nucleus', color: '#f8fafc', size: 12 },
-        { type: 'label', x: 400, y: 40, text: 'Central Vacuole', color: '#f8fafc', size: 12 },
-        { type: 'label', x: 800, y: 165, text: 'Chloroplast', color: '#f8fafc', size: 12 },
-        { type: 'label', x: 800, y: 385, text: 'Chloroplast', color: '#f8fafc', size: 12 },
-        { type: 'label', x: 30, y: 335, text: 'Mitochondria', color: '#f8fafc', size: 12 }
-      ];
-
-      return sendJson(res, 200, {
-        success: true,
-        title: 'Plant Cell Diagram',
-        strokes: plantCellStrokes,
-        providerUsed: 'ministral',
-        modelUsed: 'ministral-8b-2410',
-        requestId
-      });
-    }
+    const fallback = getProceduralMagicPenStrokes(userPrompt);
+    return sendJson(res, 200, {
+      success: true,
+      title: fallback.title,
+      strokes: fallback.strokes,
+      providerUsed: 'procedural_vector',
+      modelUsed: 'classroom-vector-engine',
+      requestId
+    });
 
     const statusCode = typeof lastError?.status === 'number' && lastError.status >= 400 ? lastError.status : 500;
     return sendJson(res, statusCode, {

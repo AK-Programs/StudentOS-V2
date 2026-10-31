@@ -383,17 +383,28 @@ export async function streamStudentOSAI(
     signal: abortSignal
   });
 
+  if (res.redirected) {
+    throw new Error(`API request was redirected (HTTP ${res.status}). Ensure backend /api/ai/chat route is reachable on the current host.`);
+  }
+
   if (res.status === 429) {
     const limitData = await res.json().catch(() => ({}));
-    const limitErr: any = new Error(limitData.message || 'Daily AI message limit reached.');
+    const limitErr: any = new Error(limitData.message || limitData.error || 'Daily AI message limit reached.');
     limitErr.isLimitReached = true;
     limitErr.limitData = limitData;
     throw limitErr;
   }
 
   if (!res.ok) {
-    const errData = await res.json().catch(() => ({}));
-    throw new Error(errData.message || errData.error || `HTTP ${res.status}`);
+    let errMessage = '';
+    try {
+      const errData = await res.json();
+      errMessage = errData.message || errData.error || errData.details;
+    } catch (_) {
+      const textErr = await res.text().catch(() => '');
+      errMessage = textErr.slice(0, 200) || `HTTP error ${res.status}`;
+    }
+    throw new Error(errMessage || `HTTP ${res.status}`);
   }
 
   const contentType = res.headers.get('content-type') || '';

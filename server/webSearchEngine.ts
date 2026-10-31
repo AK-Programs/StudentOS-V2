@@ -132,7 +132,7 @@ function classifyDomainAuthority(urlStr: string): {
 export function detectWebSearchIntent(
   prompt: string,
   persona = 'study_buddy',
-  explicitMode: 'auto' | 'always' | 'off' = 'auto'
+  explicitMode: 'auto' | 'always' | 'force' | 'off' = 'auto'
 ): { shouldSearch: boolean; cleanQuery: string; reason: string } {
   if (explicitMode === 'off') {
     return { shouldSearch: false, cleanQuery: '', reason: 'Web search explicitly disabled' };
@@ -148,11 +148,11 @@ export function detectWebSearchIntent(
     .replace(/\[Attached Diagram\/Image\]/gi, '')
     .trim();
 
-  if (explicitMode === 'always') {
+  if (explicitMode === 'always' || explicitMode === 'force') {
     return {
       shouldSearch: true,
-      cleanQuery: extractPrivacySafeSearchQuery(textOnly),
-      reason: 'Explicit search mode requested'
+      cleanQuery: extractPrivacySafeSearchQuery(textOnly) || textOnly,
+      reason: 'Explicit search mode forced'
     };
   }
 
