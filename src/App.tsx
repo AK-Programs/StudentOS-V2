@@ -6936,27 +6936,27 @@ ${roleLabel}: ${userQuery}
                 <div className="absolute inset-5 rounded-full border border-cyan-400/20 border-t-cyan-400/80 animate-spin" style={{ animationDuration: '6s' }} />
 
                 {/* Central Emblem Core */}
-                <div className="relative h-20 w-20 sm:h-22 sm:w-22 rounded-3xl bg-gradient-to-br from-indigo-500 via-cyan-500 to-emerald-400 p-[1.5px] shadow-2xl shadow-indigo-500/30">
-                  <div className="w-full h-full bg-slate-950 rounded-[22px] flex flex-col items-center justify-center relative overflow-hidden">
-                    <div className="absolute inset-0 bg-gradient-to-b from-white/15 to-transparent" />
-                    <BrandLogo size={36} className="relative z-10" />
-                    <span className="text-[9px] font-mono font-black text-cyan-300 tracking-wider mt-0.5 relative z-10">
+                <div className="relative h-24 w-24 sm:h-28 sm:w-28 rounded-[2rem] bg-gradient-to-br from-indigo-500 via-cyan-500 to-emerald-400 p-[2px] shadow-2xl shadow-indigo-500/40">
+                  <div className="w-full h-full bg-slate-950 rounded-[30px] flex flex-col items-center justify-center relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-b from-white/10 to-transparent" />
+                    <BrandLogo size={48} className="relative z-10" />
+                    <span className="text-[10px] font-mono font-black text-cyan-300 tracking-wider mt-1.5 relative z-10">
                       {loadingProgress}%
                     </span>
                   </div>
                 </div>
               </div>
 
-              {/* Brand Title & Subtitle */}
-              <div className="space-y-1.5">
-                <div className="inline-flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.25em] text-cyan-300">
+              {/* Brand Title & Subtitle - Centered */}
+              <div className="space-y-2 flex flex-col items-center">
+                <div className="inline-flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.3em] text-cyan-400/80">
                   <span>UNIFIED ACADEMIC ECOSYSTEM</span>
                 </div>
-                <h1 className="text-4xl sm:text-5xl font-extrabold font-brand tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-white via-indigo-100 to-cyan-200">
-                  {BRAND_CONFIG.name}
+                <h1 className="text-4xl sm:text-5xl font-black font-brand tracking-tighter text-white">
+                  {BRAND_CONFIG.name.toUpperCase()}
                 </h1>
-                <p className="text-xs sm:text-sm text-slate-400 max-w-md mx-auto font-medium">
-                   Smartboards · Orion AI Tutors · Realtime Broadcasts · Scholar XP Arena
+                <p className="text-[11px] sm:text-xs text-slate-500 max-w-xs mx-auto font-medium tracking-wide">
+                   Smartboards · Orion AI Tutors · Scholar XP
                 </p>
               </div>
             </div>
@@ -7076,21 +7076,22 @@ ${roleLabel}: ${userQuery}
           <BackgroundBeams />
           <div className="bento-card max-w-md w-full rounded-3xl border border-white/10 shadow-2xl p-5 sm:p-6 space-y-4 relative overflow-hidden z-10">
             <BorderBeam size={220} duration={12} colorFrom="#6366f1" colorTo="#38bdf8" />
-            {/* Compact Brand Header */}
-            <div className="flex items-center justify-between gap-3 border-b border-white/10 pb-3.5">
-              <div className="flex items-center gap-3 min-w-0">
-                <BrandLogo size={40} className="shrink-0" />
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h1 className="text-lg sm:text-xl font-extrabold font-brand tracking-tight text-white truncate">
-                      {BRAND_CONFIG.name}
-                    </h1>
-                    <span className="text-[11px] font-mono text-slate-400">v{APP_VERSION}</span>
-                  </div>
-                  <p className="text-[11px] text-slate-400 truncate">
-                    Academic & Institutional Workspace
-                  </p>
+            {/* Compact Brand Header - Centered Layout */}
+            <div className="flex flex-col items-center justify-center gap-4 border-b border-white/10 pb-5 text-center">
+              <div className="relative">
+                <div className="absolute inset-0 bg-indigo-500/20 blur-2xl rounded-full" />
+                <BrandLogo size={56} className="relative z-10" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center justify-center gap-2">
+                  <h1 className="text-2xl font-black font-brand tracking-tight text-white uppercase">
+                    {BRAND_CONFIG.name}
+                  </h1>
+                  <span className="text-[10px] font-mono text-slate-500 bg-white/5 px-1.5 py-0.5 rounded">v{APP_VERSION}</span>
                 </div>
+                <p className="text-xs text-slate-400 font-medium tracking-wide">
+                  Academic & Institutional Workspace
+                </p>
               </div>
 
               <button
@@ -7099,11 +7100,10 @@ ${roleLabel}: ${userQuery}
                   soundService.playButtonClick();
                   setIsInstallAppModalOpen(true);
                 }}
-                className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-[11px] font-semibold text-emerald-400 flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors"
-                title="Install Veylentra App"
+                className="mt-1 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-indigo-600/20 transition-all active:scale-95 cursor-pointer"
               >
-                <Smartphone className="w-3.5 h-3.5" />
-                <span>Get App</span>
+                <Smartphone className="w-4 h-4" />
+                <span>Install Veylentra App</span>
               </button>
             </div>
 
@@ -7809,31 +7809,37 @@ ${roleLabel}: ${userQuery}
             }`}
           >
             {/* Sidebar Header Brand & Collapse Controls */}
-            <div className="shrink-0 space-y-3 pb-3 border-b border-white/10">
-              <div className={`flex items-center ${sidebarOpen ? 'justify-between' : 'md:justify-center justify-between'}`}>
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!sidebarOpen) setSidebarOpen(true);
-                      else handleTabSelect('dashboard');
-                    }}
-                    className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0 transition-transform active:scale-95 cursor-pointer overflow-hidden"
-                    title={sidebarOpen ? `${BRAND_CONFIG.name} Dashboard` : `Expand ${BRAND_CONFIG.name} Sidebar`}
-                  >
-                    <BrandLogo size={36} />
-                  </button>
-                  {sidebarOpen && (
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-sm font-brand font-extrabold text-white tracking-tight truncate leading-none">
-                        {BRAND_CONFIG.name}
-                      </span>
-                      <span className="text-[10px] text-slate-400 font-mono mt-1 leading-none">
-                        v{APP_VERSION}
-                      </span>
-                    </div>
-                  )}
-                </div>
+            <div className="shrink-0 pb-4 border-b border-white/10">
+              <div className={`flex flex-col items-center justify-center text-center ${sidebarOpen ? 'space-y-3' : 'space-y-2'}`}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!sidebarOpen) setSidebarOpen(true);
+                    else handleTabSelect('dashboard');
+                  }}
+                  className={`rounded-2xl flex items-center justify-center transition-all active:scale-90 cursor-pointer overflow-hidden shadow-lg ${
+                    sidebarOpen 
+                      ? 'h-16 w-16 bg-gradient-to-br from-indigo-500 to-purple-600 p-[1.5px]' 
+                      : 'h-10 w-10 bg-slate-800 hover:bg-slate-700'
+                  }`}
+                  title={sidebarOpen ? `${BRAND_CONFIG.name} Dashboard` : `Expand ${BRAND_CONFIG.name} Sidebar`}
+                >
+                  <div className={`w-full h-full flex items-center justify-center ${sidebarOpen ? 'bg-slate-950 rounded-[14px]' : ''}`}>
+                    <BrandLogo size={sidebarOpen ? 40 : 28} />
+                  </div>
+                </button>
+                
+                {sidebarOpen && (
+                  <div className="flex flex-col items-center">
+                    <span className="text-base font-black font-brand text-white tracking-widest uppercase">
+                      {BRAND_CONFIG.name}
+                    </span>
+                    <span className="text-[9px] text-slate-500 font-mono tracking-tighter mt-0.5">
+                      INSTITUTIONAL SUITE v{APP_VERSION}
+                    </span>
+                  </div>
+                )}
+              </div>
 
                 {sidebarOpen ? (
                   <div className="flex items-center gap-1 shrink-0">
@@ -7921,8 +7927,7 @@ ${roleLabel}: ${userQuery}
                   </div>
                 </div>
               )}
-            </div>
-
+            
             {/* Scrollable Navigation Body */}
             <nav className="flex-1 min-h-0 overflow-y-auto py-3 pr-1 space-y-4 scrollbar-thin">
               {(() => {
