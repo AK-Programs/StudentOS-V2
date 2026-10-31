@@ -1,31 +1,3 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%" fill="none">
-  <!-- Veylentra Official Brand Emblem SVG -->
-  <!-- Note for replacement: Replace this file at /public/brand/logo.svg with your custom SVG logo -->
-  <defs>
-    <linearGradient id="veylentra-grad-primary" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#6366f1" />
-      <stop offset="50%" stop-color="#8b5cf6" />
-      <stop offset="100%" stop-color="#06b6d4" />
-    </linearGradient>
-    <linearGradient id="veylentra-grad-surface" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0f172a" />
-      <stop offset="100%" stop-color="#020617" />
-    </linearGradient>
-    <filter id="veylentra-glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="16" result="blur" />
-      <feComposite in="SourceGraphic" in2="blur" operator="over" />
-    </filter>
-  </defs>
-
-  <!-- Squircle Base Container -->
-  <rect x="24" y="24" width="464" height="464" rx="128" fill="url(#veylentra-grad-surface)" stroke="url(#veylentra-grad-primary)" stroke-width="8" stroke-opacity="0.4"/>
-
-  <!-- Subtle Inner Ambient Mesh -->
-  <circle cx="256" cy="180" r="140" fill="#6366f1" opacity="0.18" filter="url(#veylentra-glow)"/>
-  <circle cx="256" cy="340" r="100" fill="#06b6d4" opacity="0.14" filter="url(#veylentra-glow)"/>
-
-  <!-- Veylentra Modern Dynamic "V" Crest -->
-  <path d="M128 140 L216 140 L256 312 L296 140 L384 140 L288 384 L224 384 Z" fill="url(#veylentra-grad-primary)"/>
-  <path d="M224 140 L256 260 L288 140 Z" fill="#ffffff" opacity="0.9"/>
-  <polygon points="256,384 224,384 256,420 288,384" fill="#06b6d4" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <image href="/brand/logo.png" x="0" y="0" width="512" height="512" preserveAspectRatio="xMidYMid meet" />
 </svg>

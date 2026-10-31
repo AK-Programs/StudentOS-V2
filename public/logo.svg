@@ -1,28 +1,3 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
-  <defs>
-    <linearGradient id="veylentra-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#6366f1"/>
-      <stop offset="50%" stop-color="#8b5cf6"/>
-      <stop offset="100%" stop-color="#a855f7"/>
-    </linearGradient>
-    <linearGradient id="accent-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#38bdf8"/>
-      <stop offset="100%" stop-color="#818cf8"/>
-    </linearGradient>
-    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="12" result="blur" />
-      <feComposite in="SourceGraphic" in2="blur" operator="over" />
-    </filter>
-  </defs>
-  
-  <!-- Outer Rounded Shield Container -->
-  <rect x="32" y="32" width="448" height="448" rx="112" fill="url(#veylentra-grad)" filter="url(#glow)" />
-  <rect x="36" y="36" width="440" height="440" rx="108" fill="none" stroke="#ffffff" stroke-opacity="0.25" stroke-width="4" />
-  
-  <!-- Veylentra Stylized 'V' Symbol -->
-  <path d="M 128 144 L 256 384 L 384 144 L 320 144 L 256 288 L 192 144 Z" fill="#ffffff" />
-  <!-- Dynamic Accent Wing -->
-  <path d="M 256 288 L 384 144 L 320 144 Z" fill="url(#accent-grad)" opacity="0.9" />
-  <circle cx="384" cy="144" r="20" fill="#38bdf8" />
-  <circle cx="128" cy="144" r="16" fill="#ffffff" opacity="0.8" />
+  <image href="/brand/logo.png" x="0" y="0" width="512" height="512" preserveAspectRatio="xMidYMid meet" />
 </svg>
