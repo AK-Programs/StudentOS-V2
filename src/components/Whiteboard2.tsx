@@ -10,7 +10,7 @@ import {
   Triangle, Minus, ChevronDown, Trash2, Sliders, Settings2, Plus, Copy,
   ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, ArrowUp, ArrowDown, Type, Sparkles,
   Undo2, Redo2, Image as ImageIcon, StickyNote, FileText, Box, Layers, Hand, RotateCcw, Eye, Tag, HelpCircle,
-  Play, Rotate3d, FolderOpen, Save, Upload, Cloud, LogOut
+  Play, Rotate3d, FolderOpen, Save, Upload, Cloud, LogOut, Sigma
 } from 'lucide-react';
 import { InteractiveThreeDViewer, Educational3DScene } from './InteractiveThreeDViewer';
 import { ThreeDLibraryAndRequestModal } from './ThreeDLibraryAndRequestModal';
@@ -118,7 +118,7 @@ export interface LineObj {
   points: number[];
   color: string;
   brushSize: number;
-  tool: 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser';
+  tool: 'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'formula_pen';
   groupId?: string;
   isLocked?: boolean;
   scaleX?: number;
@@ -520,7 +520,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   } | null>(null);
   const [isRunningSelectionAI, setIsRunningSelectionAI] = useState(false);
   
-  const [tool, setTool] = useState<'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'object_eraser' | 'select' | 'pan' | 'shape'>('pen');
+  const [tool, setTool] = useState<'pen' | 'pencil' | 'marker' | 'highlighter' | 'eraser' | 'object_eraser' | 'select' | 'pan' | 'shape' | 'formula_pen'>('pen');
   const [shapeType, setShapeType] = useState<'rect' | 'square' | 'circle' | 'ellipse' | 'triangle' | 'line' | 'arrow' | 'pentagon' | 'polygon' | 'star' | 'ruler-15' | 'ruler-30' | 'protractor' | 'compass' | 'setsquare-45' | 'setsquare-30-60' | 'geometry' | 'text' | 'ruler' | 'setsquare'>('rect');
   const [brushColor, setBrushColor] = useState('#ffffff');
   const [brushSize, setBrushSize] = useState(4);
@@ -538,11 +538,26 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   const [activeEraserPos, setActiveEraserPos] = useState<{ x: number; y: number } | null>(null);
   const [cloudBrowserOpen, setCloudBrowserOpen] = useState(false);
 
-  // Multi-Touch & Palm/Wrist Contact Tracking Engine
+  // Multi-Touch, Two-Finger Navigation & Palm/Wrist Contact Tracking Engine
   const lastTouchTimeRef = useRef<number>(0);
   const lastStrokeStartTimeRef = useRef<number>(0);
   const currentDrawingLineIdRef = useRef<string | null>(null);
-  const gestureModeRef = useRef<'idle' | 'drawing' | 'three_finger_erase' | 'palm_erase'>('idle');
+  const gestureModeRef = useRef<'idle' | 'drawing' | 'three_finger_erase' | 'palm_erase' | 'two_finger_pinch_pan'>('idle');
+  const twoFingerTouchRef = useRef<{
+    startDist: number;
+    startCenter: { x: number; y: number };
+    startScale: number;
+    startStagePos: { x: number; y: number };
+  } | null>(null);
+  const touchLiftCooldownRef = useRef<number>(0);
+
+  // Formula Pen Handwriting Recognition state & debounce refs
+  const formulaStrokeIdsRef = useRef<string[]>([]);
+  const formulaConvertTimeoutRef = useRef<any>(null);
+
+  // Multi-Object Synchronous Drag Movement
+  const dragStartPosMapRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const dragActiveNodeStartRef = useRef<{ id: string; x: number; y: number } | null>(null);
 
   const [aiTip, setAiTip] = useState<string | null>(null);
   const [stageScale, setStageScale] = useState(1);
@@ -720,6 +735,10 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
         type DrawItem = { kind: 'line'; data: LineObj } | { kind: 'shape'; data: ShapeObj };
         const drawItems: DrawItem[] = [];
 
+        const clampX = (v: number) => Math.min(890, Math.max(10, typeof v === 'number' ? v : 100));
+        const clampY = (v: number) => Math.min(590, Math.max(10, typeof v === 'number' ? v : 100));
+        const clampPts = (pts: number[]) => pts.map((p, pIdx) => pIdx % 2 === 0 ? clampX(p) : clampY(p));
+
         data.strokes.forEach((stroke: any, idx: number) => {
           const id = 'magic_' + Math.random().toString(36).substring(2, 9) + '_' + idx;
           const color = stroke.color || '#38bdf8';
@@ -730,11 +749,11 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
               kind: 'line',
               data: {
                 id,
-                points: stroke.points,
+                points: clampPts(stroke.points),
                 color,
                 brushSize: size,
                 tool: 'pen',
-                tension: 0.4
+                tension: 0.3
               }
             });
           } else if (stroke.type === 'curve' && Array.isArray(stroke.points) && stroke.points.length >= 4) {
@@ -742,7 +761,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
               kind: 'line',
               data: {
                 id,
-                points: stroke.points,
+                points: clampPts(stroke.points),
                 color,
                 brushSize: size,
                 tool: 'pen',
@@ -750,22 +769,23 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
               }
             });
           } else if (stroke.type === 'arrow' && Array.isArray(stroke.points) && stroke.points.length >= 4) {
+            const arrowPts = clampPts(stroke.points);
             drawItems.push({
               kind: 'shape',
               data: {
                 id,
                 type: 'arrow',
-                x: stroke.points[0],
-                y: stroke.points[1],
-                points: stroke.points,
+                x: 0,
+                y: 0,
+                points: arrowPts,
                 stroke: color,
                 strokeWidth: size
               }
             });
           } else if (stroke.type === 'circle') {
-            const cx = stroke.x ?? 250;
-            const cy = stroke.y ?? 200;
-            const radius = stroke.radius ?? 45;
+            const cx = clampX(stroke.x ?? 250);
+            const cy = clampY(stroke.y ?? 200);
+            const radius = Math.min(260, Math.max(10, stroke.radius ?? 45));
             drawItems.push({
               kind: 'shape',
               data: {
@@ -780,10 +800,10 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
               }
             });
           } else if (stroke.type === 'ellipse') {
-            const cx = stroke.x ?? 250;
-            const cy = stroke.y ?? 200;
-            const rx = stroke.radiusX ?? (stroke.width ? stroke.width / 2 : (stroke.radius ?? 50));
-            const ry = stroke.radiusY ?? (stroke.height ? stroke.height / 2 : (stroke.radius ?? 30));
+            const cx = clampX(stroke.x ?? 250);
+            const cy = clampY(stroke.y ?? 200);
+            const rx = Math.min(300, stroke.radiusX ?? (stroke.width ? stroke.width / 2 : (stroke.radius ?? 50)));
+            const ry = Math.min(200, stroke.radiusY ?? (stroke.height ? stroke.height / 2 : (stroke.radius ?? 30)));
             drawItems.push({
               kind: 'shape',
               data: {
@@ -799,15 +819,17 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
               }
             });
           } else if (stroke.type === 'rect') {
+            const rx = clampX(stroke.x ?? 150);
+            const ry = clampY(stroke.y ?? 150);
             drawItems.push({
               kind: 'shape',
               data: {
                 id,
                 type: 'rect',
-                x: stroke.x ?? 150,
-                y: stroke.y ?? 150,
-                width: stroke.width ?? 120,
-                height: stroke.height ?? 80,
+                x: rx,
+                y: ry,
+                width: Math.min(880 - rx, stroke.width ?? 120),
+                height: Math.min(580 - ry, stroke.height ?? 80),
                 stroke: color,
                 strokeWidth: size,
                 fill: stroke.fill || 'transparent'
@@ -821,8 +843,8 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
               data: {
                 id,
                 type: 'text',
-                x: stroke.x ?? 150,
-                y: stroke.y ?? 150,
+                x: clampX(stroke.x ?? 150),
+                y: clampY(stroke.y ?? 150),
                 text: stroke.text || '',
                 stroke: color,
                 strokeWidth: 1,
@@ -836,8 +858,9 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
         // Close modal immediately so the user can watch the animated drawing occur live on canvas
         setMagicPenModal({ open: false, prompt: '', loading: false, error: null });
 
-        // Animate the strokes in order
+        // Animate the strokes smoothly in order without truncating
         let step = 0;
+        const strokeDelay = Math.max(16, Math.min(60, Math.floor(1600 / Math.max(1, drawItems.length))));
         const animInterval = setInterval(() => {
           if (step >= drawItems.length) {
             clearInterval(animInterval);
@@ -858,7 +881,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             return next;
           });
           step++;
-        }, 70);
+        }, strokeDelay);
       } else {
         throw new Error(data?.error || 'AI generation failed to produce valid drawing strokes.');
       }
@@ -1522,7 +1545,300 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     return { x: bx, y: by, width: Math.abs(rawW), height: Math.abs(rawH) };
   };
 
+  // Geometry hit-testing helpers for precise selection
+  const distToSegmentSquared = (px: number, py: number, x1: number, y1: number, x2: number, y2: number): number => {
+    const l2 = (x2 - x1) ** 2 + (y2 - y1) ** 2;
+    if (l2 === 0) return (px - x1) ** 2 + (py - y1) ** 2;
+    let t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2;
+    t = Math.max(0, Math.min(1, t));
+    return (px - (x1 + t * (x2 - x1))) ** 2 + (py - (y1 + t * (y2 - y1))) ** 2;
+  };
+
+  const doesStrokeHitPoint = (points: number[], px: number, py: number, threshold: number): boolean => {
+    if (!points || points.length < 2) return false;
+    const threshSq = threshold * threshold;
+    if (points.length === 2) {
+      return (points[0] - px) ** 2 + (points[1] - py) ** 2 <= threshSq;
+    }
+    for (let i = 0; i < points.length - 2; i += 2) {
+      if (distToSegmentSquared(px, py, points[i], points[i + 1], points[i + 2], points[i + 3]) <= threshSq) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const isPointInRect = (px: number, py: number, rx: number, ry: number, rw: number, rh: number): boolean => {
+    return px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
+  };
+
+  const lineIntersectsLine = (x1: number, y1: number, x2: number, y2: number, x3: number, y3: number, x4: number, y4: number): boolean => {
+    const denom = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1);
+    if (denom === 0) return false;
+    const ua = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / denom;
+    const ub = ((x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3)) / denom;
+    return ua >= 0 && ua <= 1 && ub >= 0 && ub <= 1;
+  };
+
+  const doesStrokeIntersectMarquee = (points: number[], rx: number, ry: number, rw: number, rh: number, mode: 'intersect' | 'contain'): boolean => {
+    if (!points || points.length < 2) return false;
+    if (mode === 'contain') {
+      for (let i = 0; i < points.length; i += 2) {
+        if (!isPointInRect(points[i], points[i + 1], rx, ry, rw, rh)) return false;
+      }
+      return true;
+    }
+    // Intersect mode
+    for (let i = 0; i < points.length; i += 2) {
+      if (isPointInRect(points[i], points[i + 1], rx, ry, rw, rh)) return true;
+    }
+    for (let i = 0; i < points.length - 2; i += 2) {
+      const x1 = points[i], y1 = points[i + 1], x2 = points[i + 2], y2 = points[i + 3];
+      if (
+        lineIntersectsLine(x1, y1, x2, y2, rx, ry, rx + rw, ry) ||
+        lineIntersectsLine(x1, y1, x2, y2, rx + rw, ry, rx + rw, ry + rh) ||
+        lineIntersectsLine(x1, y1, x2, y2, rx + rw, ry + rh, rx, ry + rh) ||
+        lineIntersectsLine(x1, y1, x2, y2, rx, ry + rh, rx, ry)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Find topmost item under pointer for selector click
+  const findObjectAtPosition = (px: number, py: number, currentSlide?: Slide): { id: string; type: 'shape' | 'line' } | null => {
+    if (!currentSlide) return null;
+    // Check shapes in reverse order (topmost first)
+    for (let i = currentSlide.shapes.length - 1; i >= 0; i--) {
+      const sh = currentSlide.shapes[i];
+      if (isCloseToShape(sh, px, py, 14)) {
+        return { id: sh.id, type: 'shape' };
+      }
+    }
+    // Check lines in reverse order (topmost first)
+    for (let i = currentSlide.lines.length - 1; i >= 0; i--) {
+      const ln = currentSlide.lines[i];
+      if (ln.tool !== 'eraser' && doesStrokeHitPoint(ln.points, px, py, Math.max(16, (ln.brushSize || 3) / 2 + 10))) {
+        return { id: ln.id, type: 'line' };
+      }
+    }
+    return null;
+  };
+
+  // Formula Pen: convert gathered handwriting strokes into real aligned text in place
+  const convertFormulaHandwriting = async () => {
+    const strokeIds = [...formulaStrokeIdsRef.current];
+    if (strokeIds.length === 0) return;
+    formulaStrokeIdsRef.current = [];
+
+    const slide = slides[activeSlideIdx];
+    if (!slide) return;
+
+    const targetLines = slide.lines.filter(l => strokeIds.includes(l.id));
+    if (targetLines.length === 0) return;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    targetLines.forEach(l => {
+      for (let i = 0; i < l.points.length; i += 2) {
+        const px = l.points[i];
+        const py = l.points[i + 1];
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
+      }
+    });
+
+    if (!isFinite(minX) || !isFinite(minY)) return;
+
+    const pad = 24;
+    const boxW = Math.max(40, maxX - minX);
+    const boxH = Math.max(30, maxY - minY);
+    const canvasW = Math.round(boxW + pad * 2);
+    const canvasH = Math.round(boxH + pad * 2);
+
+    const offscreen = document.createElement('canvas');
+    offscreen.width = canvasW;
+    offscreen.height = canvasH;
+    const ctx = offscreen.getContext('2d');
+    if (!ctx) return;
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvasW, canvasH);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#000000';
+
+    targetLines.forEach(l => {
+      if (l.points.length < 4) return;
+      ctx.lineWidth = Math.max(3, l.brushSize || 3);
+      ctx.beginPath();
+      ctx.moveTo(l.points[0] - minX + pad, l.points[1] - minY + pad);
+      for (let i = 2; i < l.points.length; i += 2) {
+        ctx.lineTo(l.points[i] - minX + pad, l.points[i + 1] - minY + pad);
+      }
+      ctx.stroke();
+    });
+
+    const base64Image = offscreen.toDataURL('image/png');
+    setAiTip('📐 Recognizing formula & aligning text...');
+
+    try {
+      const res = await fetch('/api/ai/handwriting-formula', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64Image })
+      });
+      const data = await res.json();
+      if (data?.success && data?.text) {
+        pushHistory();
+        const recognizedText = data.text;
+        const targetFontSize = Math.max(18, Math.min(32, Math.round(boxH * 0.7)));
+
+        const textShape: ShapeObj = {
+          id: `formula_${Date.now()}`,
+          type: 'text',
+          x: Math.round(minX),
+          y: Math.round(minY),
+          width: Math.max(boxW, 140),
+          height: Math.max(boxH, 36),
+          stroke: brushColor,
+          fill: brushColor,
+          strokeWidth: 1,
+          text: recognizedText,
+          fontSize: targetFontSize
+        };
+
+        setSlides(prev => {
+          const next = cloneSlides(prev);
+          const sl = next[activeSlideIdx];
+          if (sl) {
+            sl.lines = sl.lines.filter(l => !strokeIds.includes(l.id));
+            sl.shapes.push(textShape);
+          }
+          return next;
+        });
+
+        setSelectedIds([{ id: textShape.id, type: 'shape' }]);
+        setAiTip(`✨ Formula: "${recognizedText.slice(0, 35)}"`);
+        soundService.playAchievementSound();
+      } else {
+        setAiTip('⚠️ Formula Pen: could not recognize handwriting, kept ink.');
+      }
+    } catch (err) {
+      console.error('Formula handwriting recognition error:', err);
+      setAiTip('⚠️ Formula Pen recognition unavailable, kept ink.');
+    }
+  };
+
+  // Synchronous Multi-Object Drag Movement Handlers
+  const handleObjectDragStart = (e: any, objId: string) => {
+    if (tool !== 'select') return;
+    const map = new Map<string, { x: number; y: number }>();
+    selectedIds.forEach(sel => {
+      const node = stageRef.current?.findOne('#' + sel.id);
+      if (node) {
+        map.set(sel.id, { x: node.x(), y: node.y() });
+      }
+    });
+    dragStartPosMapRef.current = map;
+    dragActiveNodeStartRef.current = { id: objId, x: e.target.x(), y: e.target.y() };
+  };
+
+  const handleObjectDragMove = (e: any, objId: string) => {
+    if (tool !== 'select' || !dragActiveNodeStartRef.current) return;
+    const activeStart = dragActiveNodeStartRef.current;
+    const dx = e.target.x() - activeStart.x;
+    const dy = e.target.y() - activeStart.y;
+    selectedIds.forEach(sel => {
+      if (sel.id === objId) return;
+      const node = stageRef.current?.findOne('#' + sel.id);
+      const startPos = dragStartPosMapRef.current.get(sel.id);
+      if (node && startPos) {
+        node.position({ x: startPos.x + dx, y: startPos.y + dy });
+      }
+    });
+    trRef.current?.batchDraw?.();
+  };
+
+  const handleObjectDragEnd = (e: any, objId: string) => {
+    if (tool !== 'select' || !dragActiveNodeStartRef.current) return;
+    const activeStart = dragActiveNodeStartRef.current;
+    const dx = e.target.x() - activeStart.x;
+    const dy = e.target.y() - activeStart.y;
+
+    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+      pushHistory();
+      setSlides(prev => {
+        const next = cloneSlides(prev);
+        const slide = next[activeSlideIdx];
+        if (!slide) return prev;
+        const idSet = new Set(selectedIds.map(s => s.id));
+        slide.shapes.forEach(sh => {
+          if (idSet.has(sh.id)) {
+            sh.x += dx;
+            sh.y += dy;
+          }
+        });
+        slide.lines.forEach(ln => {
+          if (idSet.has(ln.id)) {
+            ln.points = ln.points.map((p, idx) => idx % 2 === 0 ? p + dx : p + dy);
+          }
+        });
+        return next;
+      });
+    }
+    // Reset any line nodes position to 0,0 since line points shifted
+    selectedIds.forEach(sel => {
+      if (sel.type === 'line') {
+        const node = stageRef.current?.findOne('#' + sel.id);
+        if (node) node.position({ x: 0, y: 0 });
+      }
+    });
+    dragStartPosMapRef.current.clear();
+    dragActiveNodeStartRef.current = null;
+  };
+
+  // Two-Finger trackpad pan & wheel zoom
+  const handleStageWheel = (e: any) => {
+    e.evt.preventDefault();
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    if (e.evt.ctrlKey || e.evt.metaKey) {
+      const scaleBy = 1.05;
+      const oldScale = stage.scaleX();
+      const pointer = stage.getPointerPosition();
+      if (!pointer) return;
+
+      const mousePointTo = {
+        x: (pointer.x - stage.x()) / oldScale,
+        y: (pointer.y - stage.y()) / oldScale,
+      };
+
+      const direction = e.evt.deltaY > 0 ? -1 : 1;
+      const newScale = Math.min(4.0, Math.max(0.4, direction > 0 ? oldScale * scaleBy : oldScale / scaleBy));
+
+      setStageScale(newScale);
+      setStagePos({
+        x: pointer.x - mousePointTo.x * newScale,
+        y: pointer.y - mousePointTo.y * newScale,
+      });
+    } else {
+      setStagePos(prev => ({
+        x: prev.x - e.evt.deltaX,
+        y: prev.y - e.evt.deltaY,
+      }));
+    }
+  };
+
   const handleMouseDown = (e: any) => {
+    // Prevent accidental stroke on finger lift right after two-finger gesture
+    if (Date.now() - touchLiftCooldownRef.current < 350) {
+      return;
+    }
+
     const stage = e.target.getStage();
     const pos = getRelativePointerPosition(stage);
     if (!pos) return;
@@ -1536,7 +1852,40 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       lastTouchTimeRef.current = Date.now();
       const touches = e.evt.touches;
 
-      // 1. Three-finger eraser gesture recognition
+      // 1. Two-finger pinch to zoom & two-finger drag to pan across any tool (pen, selector, etc.)
+      if (touches.length === 2) {
+        e.evt.preventDefault?.();
+        gestureModeRef.current = 'two_finger_pinch_pan';
+
+        // Discard accidental single-finger stroke started before second finger touched down
+        if (Date.now() - lastStrokeStartTimeRef.current < 450 && currentDrawingLineIdRef.current) {
+          setSlides(prev => {
+            const next = cloneSlides(prev);
+            const cur = next[activeSlideIdx];
+            if (cur && cur.lines.length > 0 && cur.lines[cur.lines.length - 1].id === currentDrawingLineIdRef.current) {
+              cur.lines.pop();
+            }
+            return next;
+          });
+          currentDrawingLineIdRef.current = null;
+        }
+
+        const t0 = touches[0];
+        const t1 = touches[1];
+        const dist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+        const center = { x: (t0.clientX + t1.clientX) / 2, y: (t0.clientY + t1.clientY) / 2 };
+
+        twoFingerTouchRef.current = {
+          startDist: Math.max(1, dist),
+          startCenter: center,
+          startScale: stageScale,
+          startStagePos: { ...stagePos }
+        };
+        isDrawing.current = false;
+        return;
+      }
+
+      // 2. Three-finger eraser gesture recognition
       if (touches.length === 3) {
         e.evt.preventDefault?.();
         gestureModeRef.current = 'three_finger_erase';
@@ -1687,19 +2036,34 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     }
     
     if (tool === 'select') {
-      // Rectangular Marquee Selection when clicking and holding on empty canvas
-      if (e.target === stage) {
-        isMarqueeSelecting.current = true;
-        setMarqueeRect({
-          visible: true,
-          x1: pos.x,
-          y1: pos.y,
-          x2: pos.x,
-          y2: pos.y
-        });
-        if (!e.evt?.shiftKey && !e.evt?.ctrlKey && !e.evt?.metaKey) {
-          setSelectedIds([]);
+      const slide = slides[activeSlideIdx];
+      const hitItem = findObjectAtPosition(pos.x, pos.y, slide);
+      if (hitItem) {
+        const isModifier = e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey;
+        const alreadySelected = selectedIds.some(s => s.id === hitItem.id);
+
+        if (!alreadySelected) {
+          if (isModifier) {
+            setSelectedIds(prev => [...prev, hitItem]);
+          } else {
+            setSelectedIds([hitItem]);
+          }
         }
+        isMarqueeSelecting.current = false;
+        return;
+      }
+
+      // No object under pointer: Start Rectangular Marquee Selection Box
+      isMarqueeSelecting.current = true;
+      setMarqueeRect({
+        visible: true,
+        x1: pos.x,
+        y1: pos.y,
+        x2: pos.x,
+        y2: pos.y
+      });
+      if (!e.evt?.shiftKey && !e.evt?.ctrlKey && !e.evt?.metaKey) {
+        setSelectedIds([]);
       }
       return;
     }
@@ -1719,7 +2083,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     pushHistory();
     isDrawing.current = true;
     
-    if (tool === 'pen' || tool === 'pencil' || tool === 'marker' || tool === 'highlighter') {
+    if (tool === 'pen' || tool === 'pencil' || tool === 'marker' || tool === 'highlighter' || tool === 'formula_pen') {
       let colorStr = brushColor;
       let sizeVal = brushSize;
       
@@ -1732,12 +2096,23 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       } else if (tool === 'highlighter') {
         colorStr = brushColor + '40'; 
         sizeVal = brushSize * 4.0;
+      } else if (tool === 'formula_pen') {
+        colorStr = brushColor;
+        sizeVal = Math.max(2, brushSize);
+        if (formulaConvertTimeoutRef.current) {
+          clearTimeout(formulaConvertTimeoutRef.current);
+          formulaConvertTimeoutRef.current = null;
+        }
       }
       
       const newLineId = Date.now().toString();
       currentDrawingLineIdRef.current = newLineId;
       lastStrokeStartTimeRef.current = Date.now();
       gestureModeRef.current = 'drawing';
+
+      if (tool === 'formula_pen') {
+        formulaStrokeIdsRef.current.push(newLineId);
+      }
 
       const newLine: LineObj = {
         id: newLineId,
@@ -1784,6 +2159,33 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     if (e.evt?.touches) {
       lastTouchTimeRef.current = Date.now();
       const touches = e.evt.touches;
+
+      // Two-finger pinch to zoom & two-finger drag to pan in real-time
+      if (touches.length === 2 && twoFingerTouchRef.current) {
+        e.evt.preventDefault?.();
+        const t0 = touches[0];
+        const t1 = touches[1];
+        const curDist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+        const curCenter = { x: (t0.clientX + t1.clientX) / 2, y: (t0.clientY + t1.clientY) / 2 };
+
+        const { startDist, startCenter, startScale, startStagePos } = twoFingerTouchRef.current;
+        const scaleFactor = curDist / startDist;
+        const newScale = Math.min(4.0, Math.max(0.4, startScale * scaleFactor));
+
+        const containerRect = containerRef.current?.getBoundingClientRect() || { left: 0, top: 0 };
+        const centerOnContainerX = startCenter.x - containerRect.left;
+        const centerOnContainerY = startCenter.y - containerRect.top;
+
+        const boardX = (centerOnContainerX - startStagePos.x) / startScale;
+        const boardY = (centerOnContainerY - startStagePos.y) / startScale;
+
+        const newStageX = (curCenter.x - containerRect.left) - boardX * newScale;
+        const newStageY = (curCenter.y - containerRect.top) - boardY * newScale;
+
+        setStageScale(newScale);
+        setStagePos({ x: newStageX, y: newStageY });
+        return;
+      }
 
       // Three-finger active erase move
       if (touches.length === 3 || gestureModeRef.current === 'three_finger_erase') {
@@ -1925,7 +2327,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       const updated = [...prev];
       const currentSlide = updated[activeSlideIdx];
 
-      if (tool === 'pen' || tool === 'pencil' || tool === 'marker' || tool === 'highlighter') {
+      if (tool === 'pen' || tool === 'pencil' || tool === 'marker' || tool === 'highlighter' || tool === 'formula_pen') {
         const lastLine = currentSlide.lines[currentSlide.lines.length - 1];
         if (lastLine) {
           lastLine.points = lastLine.points.concat([point.x, point.y]);
@@ -1971,6 +2373,15 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   };
 
   const handleMouseUp = (e?: any) => {
+    // Two-finger pinch-pan gesture completion
+    if (gestureModeRef.current === 'two_finger_pinch_pan') {
+      twoFingerTouchRef.current = null;
+      gestureModeRef.current = 'idle';
+      touchLiftCooldownRef.current = Date.now();
+      isDrawing.current = false;
+      return;
+    }
+
     // Complete rectangular marquee selection
     if (tool === 'select' && isMarqueeSelecting.current) {
       isMarqueeSelecting.current = false;
@@ -2008,7 +2419,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             }
           });
           current.lines.forEach(ln => {
-            if (ln.tool !== 'eraser' && checkBox(getElementBoundingBox(ln, 'line'))) {
+            if (ln.tool !== 'eraser' && doesStrokeIntersectMarquee(ln.points, rx, ry, rw, rh, selectionMode)) {
               matches.push({ id: ln.id, type: 'line' });
             }
           });
@@ -2033,6 +2444,16 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     currentDrawingLineIdRef.current = null;
     isDrawing.current = false;
     hasPushedEraserHistory.current = false;
+
+    // Formula Pen: schedule conversion of handwriting into aligned real text
+    if (tool === 'formula_pen' && formulaStrokeIdsRef.current.length > 0) {
+      if (formulaConvertTimeoutRef.current) {
+        clearTimeout(formulaConvertTimeoutRef.current);
+      }
+      formulaConvertTimeoutRef.current = setTimeout(() => {
+        convertFormulaHandwriting();
+      }, 950);
+    }
 
     // AI Predictive Shape Assistant Engine
     if (aiShapeAssistant && (tool === 'pen' || tool === 'pencil' || tool === 'marker' || tool === 'highlighter')) {
@@ -2801,6 +3222,15 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
             <span className="text-xs font-bold hidden md:inline">Magic Pen</span>
           </button>
+
+          <button 
+            onClick={() => { setTool('formula_pen'); setShapesMenuOpen(false); }} 
+            className={`p-1.5 sm:p-2 rounded-xl transition-all flex items-center gap-1.5 px-2 ${tool === 'formula_pen' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+            title="Formula Pen — Handwrite equations or answers and convert into aligned text"
+          >
+            <Sigma className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
+            <span className="text-xs font-bold hidden md:inline">Formula Pen</span>
+          </button>
           
           <button 
             onClick={() => { setTool('pencil'); setShapesMenuOpen(false); }} 
@@ -3308,22 +3738,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                 return null;
               })()}
 
-              <button
-                onClick={() => handleSelectedObjectAIAction('to_3d')}
-                disabled={isRunningSelectionAI}
-                className="p-1 px-2.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white text-[10px] font-black uppercase rounded-lg shadow-md transition-all flex items-center gap-1 disabled:opacity-50"
-                title="Convert Selected Object/Text into an Interactive 3D Educational Model"
-              >
-                <Box className="w-3 h-3" /> Convert to 3D
-              </button>
-              <button
-                onClick={() => handleSelectedObjectAIAction('to_svg')}
-                disabled={isRunningSelectionAI}
-                className="p-1 px-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold rounded-lg transition-all flex items-center gap-1 disabled:opacity-50"
-                title="Generate Sanitized Classroom SVG Diagram from Selection"
-              >
-                <Sparkles className="w-3 h-3" /> Make Visual
-              </button>
+
               <button
                 onClick={() => handleSelectedObjectAIAction('explain')}
                 disabled={isRunningSelectionAI}
@@ -3438,6 +3853,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           onTouchCancel={handleInteractionStop}
           onPointerLeave={handleInteractionStop}
           onPointerCancel={handleInteractionStop}
+          onWheel={handleStageWheel}
           ref={stageRef}
           scaleX={stageScale}
           scaleY={stageScale}
@@ -3460,10 +3876,9 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                 x={shape.x} 
                 y={shape.y} 
                 draggable={tool === 'select' && !(shape as any).isLocked}
-                onDragEnd={(e) => {
-                  shape.x = e.target.x();
-                  shape.y = e.target.y();
-                }}
+                onDragStart={(e) => handleObjectDragStart(e, shape.id)}
+                onDragMove={(e) => handleObjectDragMove(e, shape.id)}
+                onDragEnd={(e) => handleObjectDragEnd(e, shape.id)}
                 onTransformEnd={(e) => {
                   const node = e.target;
                   shape.x = node.x();
@@ -3759,18 +4174,14 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
                 points={line.points}
                 stroke={line.color}
                 strokeWidth={line.brushSize}
+                hitStrokeWidth={Math.max(28, (line.brushSize || 3) + 16)}
                 tension={(line as any).tension ?? 0.4}
                 lineCap="round"
                 lineJoin="round"
                 draggable={tool === 'select' && !(line as any).isLocked}
-                onDragEnd={(e) => {
-                  line.points = line.points.map((p, idx) => {
-                    const deltaX = e.target.x();
-                    const deltaY = e.target.y();
-                    return idx % 2 === 0 ? p + deltaX : p + deltaY;
-                  });
-                  e.target.position({ x: 0, y: 0 });
-                }}
+                onDragStart={(e) => handleObjectDragStart(e, line.id)}
+                onDragMove={(e) => handleObjectDragMove(e, line.id)}
+                onDragEnd={(e) => handleObjectDragEnd(e, line.id)}
                 onTransformEnd={(e) => {
                   const node = e.target;
                   (line as any).scaleX = node.scaleX();

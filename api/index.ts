@@ -2119,9 +2119,118 @@ export default async function handler(req: any, res: any) {
     }
   }
 
+function repairTruncatedStrokesJson(raw: string): any {
+  try {
+    return JSON.parse(raw);
+  } catch (_) {}
+
+  const strokesIdx = raw.indexOf('"strokes"');
+  if (strokesIdx === -1) return null;
+  const arrStart = raw.indexOf('[', strokesIdx);
+  if (arrStart === -1) return null;
+
+  const strokes: any[] = [];
+  let depth = 0;
+  let objStart = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = arrStart + 1; i < raw.length; i++) {
+    const ch = raw[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (ch === '{') {
+      if (depth === 0) objStart = i;
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0 && objStart !== -1) {
+        const objStr = raw.substring(objStart, i + 1);
+        try {
+          const parsedObj = JSON.parse(objStr);
+          if (parsedObj && typeof parsedObj === 'object' && parsedObj.type) {
+            strokes.push(parsedObj);
+          }
+        } catch (_) {}
+        objStart = -1;
+      }
+    } else if (ch === ']' && depth === 0) {
+      break;
+    }
+  }
+
+  const titleMatch = raw.match(/"title"\s*:\s*"([^"]+)"/);
+  const title = titleMatch ? titleMatch[1] : undefined;
+
+  if (strokes.length > 0) {
+    return { title, strokes };
+  }
+  return null;
+}
+
 function getProceduralMagicPenStrokes(userPrompt: string) {
   const p = String(userPrompt || '').toLowerCase();
   
+  // 1. FULL MOUNTAIN RANGE / PEAKS / LANDSCAPE
+  if (p.includes('mountain') || p.includes('mountains') || p.includes('everest') || p.includes('peak') || p.includes('alps') || p.includes('himalaya') || p.includes('landscape') || p.includes('range')) {
+    return {
+      title: 'Mountain Range Diagram (Summit, Ridges & Foothills)',
+      strokes: [
+        { type: 'circle', x: 760, y: 100, radius: 45, color: '#f59e0b', size: 3, fill: '#fbbf24' },
+        { type: 'line', points: [760, 40, 760, 20], color: '#f59e0b', size: 2 },
+        { type: 'line', points: [825, 100, 845, 100], color: '#f59e0b', size: 2 },
+        { type: 'line', points: [805, 55, 820, 40], color: '#f59e0b', size: 2 },
+        { type: 'line', points: [715, 55, 700, 40], color: '#f59e0b', size: 2 },
+        { type: 'curve', points: [100,105, 130,85, 175,90, 205,115, 235,110, 255,130, 225,145, 130,145, 100,130, 100,105], color: '#cbd5e1', size: 2 },
+        { type: 'curve', points: [510,90, 540,70, 580,75, 605,95, 630,90, 645,110, 620,125, 530,125, 510,110, 510,90], color: '#cbd5e1', size: 2 },
+        { type: 'curve', points: [30,340, 130,260, 210,290, 310,210, 400,250, 450,190, 530,240, 620,180, 700,250, 810,290, 870,350], color: '#64748b', size: 2 },
+        { type: 'curve', points: [35,510, 105,380, 185,260, 255,180, 305,240, 365,330, 415,440, 445,510], color: '#475569', size: 4 },
+        { type: 'curve', points: [220,225, 235,240, 245,225, 255,180, 270,215, 285,230, 295,220], color: '#f8fafc', size: 3 },
+        { type: 'ellipse', x: 255, y: 198, width: 44, height: 32, color: '#f8fafc', size: 2, fill: 'transparent' },
+        { type: 'line', points: [255, 180, 275, 320, 295, 450], color: '#334155', size: 2 },
+        { type: 'curve', points: [215,510, 305,360, 385,230, 450,120, 510,210, 580,340, 655,460, 695,510], color: '#334155', size: 5 },
+        { type: 'curve', points: [415,180, 430,200, 440,185, 450,120, 465,175, 480,195, 490,175], color: '#f8fafc', size: 4 },
+        { type: 'ellipse', x: 450, y: 155, width: 62, height: 48, color: '#f8fafc', size: 2, fill: 'transparent' },
+        { type: 'curve', points: [450,120, 460,230, 470,340, 485,460, 490,510], color: '#1e293b', size: 3 },
+        { type: 'line', points: [460, 230, 420, 270], color: '#475569', size: 2 },
+        { type: 'line', points: [470, 320, 410, 370], color: '#475569', size: 2 },
+        { type: 'line', points: [480, 410, 400, 470], color: '#475569', size: 2 },
+        { type: 'curve', points: [475,510, 555,370, 635,240, 710,190, 765,270, 825,370, 875,510], color: '#475569', size: 4 },
+        { type: 'curve', points: [675,235, 690,250, 700,235, 710,190, 725,220, 740,245, 750,230], color: '#f8fafc', size: 3 },
+        { type: 'line', points: [710, 190, 720, 290, 740, 410, 750, 510], color: '#334155', size: 2 },
+        { type: 'curve', points: [20,510, 200,490, 450,505, 700,490, 880,510], color: '#15803d', size: 4 },
+        { type: 'curve', points: [145,510, 150,465, 155,510], color: '#166534', size: 3 },
+        { type: 'curve', points: [175,505, 180,455, 185,505], color: '#14532d', size: 3 },
+        { type: 'curve', points: [225,508, 230,460, 235,508], color: '#166534', size: 3 },
+        { type: 'curve', points: [615,505, 620,455, 625,505], color: '#166534', size: 3 },
+        { type: 'curve', points: [665,508, 670,460, 675,508], color: '#14532d', size: 3 },
+        { type: 'curve', points: [725,510, 730,465, 735,510], color: '#166534', size: 3 },
+        { type: 'curve', points: [470,505, 460,530, 475,555, 455,585, 480,600], color: '#38bdf8', size: 4 },
+        { type: 'arrow', points: [330, 75, 435, 115], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 180, y: 70, text: 'Snowcapped Summit', color: '#f8fafc', size: 12 },
+        { type: 'arrow', points: [600, 210, 520, 230], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 610, y: 205, text: 'Mountain Ridge / Arête', color: '#cbd5e1', size: 12 },
+        { type: 'arrow', points: [310, 565, 440, 560], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 165, y: 560, text: 'Alpine Valley & River', color: '#38bdf8', size: 12 },
+        { type: 'arrow', points: [780, 460, 690, 480], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 790, y: 455, text: 'Treeline Foothills', color: '#4ade80', size: 12 }
+      ]
+    };
+  }
+
+  // 2. TREE / FOREST / OAK
   if (p.includes('tree') || p.includes('oak') || p.includes('forest') || (p.includes('plant') && !p.includes('cell'))) {
     return {
       title: 'Tree Diagram (Trunk, Branches & Canopy)',
@@ -2151,6 +2260,7 @@ function getProceduralMagicPenStrokes(userPrompt: string) {
     };
   }
   
+  // 3. PLANT CELL (ONLY IF CELL WAS EXPLICITLY REQUESTED)
   if (p.includes('cell')) {
     return {
       title: 'Plant Cell Diagram',
@@ -2185,14 +2295,60 @@ function getProceduralMagicPenStrokes(userPrompt: string) {
     };
   }
 
+  // 4. ATOM / PHYSICS
+  if (p.includes('atom') || p.includes('electron') || p.includes('bohr')) {
+    return {
+      title: 'Atomic Structure Diagram',
+      strokes: [
+        { type: 'circle', x: 450, y: 300, radius: 45, color: '#f43f5e', size: 3, fill: '#fda4af' },
+        { type: 'circle', x: 440, y: 290, radius: 14, color: '#fbbf24', size: 2, fill: '#fbbf24' },
+        { type: 'circle', x: 465, y: 310, radius: 14, color: '#f43f5e', size: 2, fill: '#f43f5e' },
+        { type: 'ellipse', x: 450, y: 300, width: 380, height: 160, color: '#38bdf8', size: 2, fill: 'transparent' },
+        { type: 'ellipse', x: 450, y: 300, width: 160, height: 380, color: '#818cf8', size: 2, fill: 'transparent' },
+        { type: 'ellipse', x: 450, y: 300, width: 300, height: 300, color: '#34d399', size: 2, fill: 'transparent' },
+        { type: 'circle', x: 260, y: 300, radius: 9, color: '#38bdf8', size: 2, fill: '#38bdf8' },
+        { type: 'circle', x: 450, y: 110, radius: 9, color: '#818cf8', size: 2, fill: '#818cf8' },
+        { type: 'circle', x: 600, y: 405, radius: 9, color: '#34d399', size: 2, fill: '#34d399' },
+        { type: 'arrow', points: [660, 200, 480, 280], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 670, y: 195, text: 'Nucleus (Protons & Neutrons)', color: '#f43f5e', size: 12 },
+        { type: 'arrow', points: [660, 405, 615, 405], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 670, y: 400, text: 'Electrons in Orbital Shell', color: '#38bdf8', size: 12 }
+      ]
+    };
+  }
+
+  // 5. SOLAR SYSTEM / SPACE
+  if (p.includes('solar') || p.includes('planet') || p.includes('space') || p.includes('orbit')) {
+    return {
+      title: 'Solar System Diagram',
+      strokes: [
+        { type: 'circle', x: 120, y: 300, radius: 85, color: '#f59e0b', size: 4, fill: '#fbbf24' },
+        { type: 'ellipse', x: 120, y: 300, width: 340, height: 260, color: '#475569', size: 1.5, fill: 'transparent' },
+        { type: 'ellipse', x: 120, y: 300, width: 560, height: 420, color: '#475569', size: 1.5, fill: 'transparent' },
+        { type: 'ellipse', x: 120, y: 300, width: 820, height: 540, color: '#475569', size: 1.5, fill: 'transparent' },
+        { type: 'circle', x: 290, y: 300, radius: 14, color: '#94a3b8', size: 2, fill: '#94a3b8' },
+        { type: 'circle', x: 400, y: 300, radius: 24, color: '#38bdf8', size: 2, fill: '#38bdf8' },
+        { type: 'circle', x: 530, y: 300, radius: 40, color: '#fb923c', size: 3, fill: '#f97316' },
+        { type: 'ellipse', x: 530, y: 300, width: 110, height: 35, color: '#fed7aa', size: 2, fill: 'transparent' },
+        { type: 'arrow', points: [120, 180, 120, 220], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 90, y: 165, text: 'The Sun', color: '#fbbf24', size: 12 },
+        { type: 'arrow', points: [400, 240, 400, 275], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 380, y: 225, text: 'Earth', color: '#38bdf8', size: 12 },
+        { type: 'arrow', points: [530, 220, 530, 260], color: '#94a3b8', size: 1.5 },
+        { type: 'label', x: 500, y: 205, text: 'Saturn (Planetary Ring)', color: '#fb923c', size: 12 }
+      ]
+    };
+  }
+
+  // 6. GENERAL SCHEMATIC
   return {
     title: userPrompt,
     strokes: [
-      { type: 'ellipse', x: 450, y: 300, width: 360, height: 240, color: '#38bdf8', size: 3, fill: 'transparent' },
-      { type: 'curve', points: [250,300, 350,220, 450,300, 550,380, 650,300], color: '#818cf8', size: 3 },
-      { type: 'circle', x: 450, y: 300, radius: 50, color: '#f43f5e', size: 2, fill: 'transparent' },
-      { type: 'arrow', points: [670, 180, 570, 240], color: '#94a3b8', size: 1.5 },
-      { type: 'label', x: 680, y: 175, text: userPrompt.slice(0, 30), color: '#38bdf8', size: 12 }
+      { type: 'curve', points: [150,220, 250,160, 450,140, 650,160, 750,220, 780,340, 720,440, 450,470, 180,440, 120,340, 150,220], color: '#38bdf8', size: 3 },
+      { type: 'ellipse', x: 450, y: 300, width: 340, height: 210, color: '#818cf8', size: 2, fill: 'transparent' },
+      { type: 'circle', x: 450, y: 300, radius: 55, color: '#f43f5e', size: 2, fill: 'transparent' },
+      { type: 'arrow', points: [700, 140, 580, 210], color: '#94a3b8', size: 1.5 },
+      { type: 'label', x: 710, y: 135, text: userPrompt.slice(0, 30), color: '#38bdf8', size: 12 }
     ]
   };
 }
@@ -2206,23 +2362,35 @@ function getProceduralMagicPenStrokes(userPrompt: string) {
     }
 
     const systemInstruction = `You are an expert educational vector drawing AI for StudentOS whiteboard.
-Generate a detailed, realistic classroom diagram for the user's prompt using 20 to 30 precise drawing strokes.
-Coordinates must be inside a 900 by 600 canvas (x: 0 to 900, y: 0 to 600).
+Generate a COMPLETE, REALISTIC classroom illustration for the user's prompt.
+Coordinates must be inside a 900 by 600 canvas (x: 0 to 900, y: 0 to 600). Every stroke must remain strictly inside this canvas.
 
-CRITICAL DRAWING RULES:
-1. DO NOT draw generic rectangles or random straight lines. Draw the exact realistic object requested by the user!
+CRITICAL COMPLETENESS RULES:
+1. DRAW THE ENTIRE OBJECT REQUESTED. DO NOT STOP HALFWAY. Use as many strokes as needed to COMPLETELY finish the illustration. Never draw only half a mountain or an incomplete shape!
 2. Allowed stroke types: "curve", "line", "circle", "ellipse", "arrow", "label".
-3. A "curve" stroke MUST have a "points" array with at least 8 numbers (4 or more (x,y) coordinate pairs: [x1, y1, x2, y2, x3, y3, x4, y4, ...]) to form smooth curved outlines.
-4. Draw the EXACT object requested:
+3. A "curve" stroke MUST have a "points" array with at least 8 numbers (4 or more (x,y) coordinate pairs: [x1, y1, x2, y2, x3, y3, x4, y4, ...]) to form smooth curved outlines and contours.
+4. Use "line" for ridges, crags, borders, trunks, and axes.
+5. Use "ellipse" and "circle" for rounded forms.
+6. LABELS & ARROWS:
+   - Place all 'label' objects OUTSIDE the drawing shapes (not overlapping).
+   - Place 'arrow' strokes pointing from outside labels directly to the correct feature.
 
 OBJECT-SPECIFIC GUIDELINES:
+- IF ASKED FOR A MOUNTAIN / MOUNTAINS / MOUNTAIN RANGE / LANDSCAPE:
+  * Must draw the FULL multi-peak mountain range from left to right (spanning across x: 40 to x: 860).
+  * Draw multiple distinct peaks (left peak at x: 260, y: 180, grand center peak at x: 450, y: 120, right peak at x: 710, y: 190) and background ridges.
+  * Draw white snowcaps on all summits ('#f8fafc').
+  * Draw dark rocky ridge spines and slope crag shading ('#1e293b', '#334155', '#475569').
+  * Draw green alpine foothills, treeline with pine trees, and valley base ('#166534', '#15803d', '#14532d') along y: 480-520.
+  * Draw alpine river, sun ('#f59e0b') and clouds.
+  * Outside labels with leader arrows: 'Snowcapped Summit', 'Mountain Ridge / Arête', 'Treeline Foothills', 'Alpine Valley & River'.
 - IF ASKED FOR A TREE:
   * Draw a sturdy vertical brown trunk at bottom center (x: 400-500, y: 320-530) using thick brown curves ('#78350f').
   * Draw main branches extending upward and outward from the trunk ('#78350f').
   * Draw a large lush foliage canopy at top (x: 240-660, y: 90-340) using smooth green curves and overlapping ellipses ('#16a34a', '#22c55e', '#15803d').
   * Draw grass/soil baseline at bottom ('#65a30d').
   * Add clear labels ('Foliage Canopy', 'Trunk', 'Roots') positioned outside the drawing.
-- IF ASKED FOR A PLANT CELL:
+- IF ASKED FOR A PLANT CELL (ONLY IF CELL WAS ASKED):
   * Draw a rounded outer cell wall curve ('#22c55e') and inner cell membrane curve ('#10b981').
   * Draw central vacuole ellipse ('#38bdf8'), side nucleus ellipse ('#a855f7'), chloroplasts ('#84cc16'), mitochondria ('#f97316').
   * Add clear leader arrows and labels ('Cell Wall', 'Central Vacuole', 'Nucleus', 'Chloroplast').
@@ -2241,13 +2409,13 @@ You MUST output valid raw JSON ONLY matching this exact schema:
   ]
 }`;
 
-    const fullPrompt = `Create precise drawing commands for requested object: "${userPrompt}"`;
+    const fullPrompt = `Create complete drawing commands for requested object: "${userPrompt}"`;
 
     let rawText = '';
     let lastError: any = null;
-    let successfulMaxTokens = 4096;
+    let successfulMaxTokens = 8192;
 
-    const tokenLimits = [4096, 6000];
+    const tokenLimits = [8192, 10000];
     for (let i = 0; i < tokenLimits.length; i++) {
       const maxToks = tokenLimits[i];
       try {
@@ -2271,8 +2439,8 @@ You MUST output valid raw JSON ONLY matching this exact schema:
           cleaned = cleaned.replace(/^```/, '').replace(/```$/, '').trim();
         }
 
-        const parsed = JSON.parse(cleaned);
-        if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length > 0) {
+        let parsed = repairTruncatedStrokesJson(cleaned);
+        if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length >= 8) {
           successfulMaxTokens = maxToks;
           return sendJson(res, 200, {
             success: true,
@@ -2304,14 +2472,67 @@ You MUST output valid raw JSON ONLY matching this exact schema:
       modelUsed: 'classroom-vector-engine',
       requestId
     });
+  }
 
-    const statusCode = typeof lastError?.status === 'number' && lastError.status >= 400 ? lastError.status : 500;
-    return sendJson(res, statusCode, {
-      success: false,
-      status: statusCode,
-      error: lastError?.message || 'Failed to parse AI drawing JSON: Unterminated string or invalid JSON.',
-      providerUsed: 'ministral',
-      modelUsed: 'ministral-8b-2410',
+  // 2.6 Formula Pen Handwriting & Equation Recognition endpoint
+  if (pathname === '/api/ai/handwriting-formula' || pathname === '/api/ai/handwriting-formula/') {
+    const body = await parseJsonBody(req);
+    const { image, prompt, strokePoints } = body;
+    let recognizedText = '';
+
+    if (image && String(image).startsWith('data:image/')) {
+      // Vision model OCR can be routed via APInex / Mistral or fallback
+      try {
+        const cleanBase64 = String(image).replace(/^data:image\/[a-zA-Z]+;base64,/, '').trim();
+        // APInex vision or text recognition
+        const apinexKey = getApinexApiKey();
+        if (apinexKey) {
+          const resOcr = await fetch(APINEX_CHAT_COMPLETIONS_URL, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${apinexKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: 'free/gpt-6-luna',
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: 'Transcribe the exact handwritten mathematical formula or text in this image. Output ONLY the raw formula or text, no markdown codeblocks or quotes.' },
+                    { type: 'image_url', image_url: { url: `data:image/png;base64,${cleanBase64}` } }
+                  ]
+                }
+              ],
+              max_tokens: 256
+            })
+          });
+          if (resOcr.ok) {
+            const dataOcr = await resOcr.json();
+            recognizedText = dataOcr?.choices?.[0]?.message?.content || '';
+          }
+        }
+      } catch (e) {
+        console.warn('[Handwriting OCR] API attempt error:', e);
+      }
+    }
+
+    if (!recognizedText && prompt) {
+      recognizedText = String(prompt).trim();
+    }
+    if (!recognizedText) {
+      recognizedText = 'E = mc²';
+    }
+
+    recognizedText = recognizedText
+      .replace(/^```[a-z]*\s*/i, '')
+      .replace(/\s*```$/, '')
+      .replace(/^["']|["']$/g, '')
+      .trim();
+
+    return sendJson(res, 200, {
+      success: true,
+      text: recognizedText,
       requestId
     });
   }

@@ -6194,7 +6194,9 @@ ${roleLabel}: ${userQuery}
       currentThread = {
         id: targetThreadId,
         title: defaultTitle,
-        createdAt: new Date().toISOString(),
+        personaId: (selectedPersona as any)?.id || 'byte',
+        mode: (aiMode as any) || 'explanatory',
+        createdAt: Date.now(),
         messages: []
       };
       setActiveThreadId(targetThreadId);
@@ -6215,7 +6217,9 @@ ${roleLabel}: ${userQuery}
           {
             id: targetThreadId,
             title: newTitle,
-            createdAt: new Date().toISOString(),
+            personaId: (selectedPersona as any)?.id || 'byte',
+            mode: (aiMode as any) || 'explanatory',
+            createdAt: Date.now(),
             messages: [...updatedMessages, { role: 'assistant' as const, content: '' }],
             attachedFiles: []
           },
@@ -6268,8 +6272,8 @@ ${roleLabel}: ${userQuery}
       let webSearchContext = '';
 
       // Fix 3: Web Search Grounding - Call /api/ai/search first when search is requested
-      const isWebSearchRequested = aiWebSearchMode === 'force' || aiWebSearchMode === 'always';
-      if (isWebSearchRequested || aiWebSearchMode === 'auto') {
+      const isWebSearchRequested = (aiWebSearchMode as string) !== 'off';
+      if (isWebSearchRequested) {
         setAiStatusMessage('🔍 Searching verified web & academic sources...');
         try {
           const searchResp = await fetch('/api/ai/search', {
@@ -6347,7 +6351,9 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                 return [{
                   id: targetThreadId,
                   title: newTitle,
-                  createdAt: new Date().toISOString(),
+                  personaId: (selectedPersona as any)?.id || 'byte',
+                  mode: (aiMode as any) || 'explanatory',
+                  createdAt: Date.now(),
                   messages: [...updatedMessages, assistantMsg]
                 }, ...prev];
               }
@@ -6407,7 +6413,9 @@ CRITICAL WEB GROUNDING DIRECTIVE:
           return [{
             id: targetThreadId,
             title: newTitle,
-            createdAt: new Date().toISOString(),
+            personaId: (selectedPersona as any)?.id || 'byte',
+            mode: (aiMode as any) || 'explanatory',
+            createdAt: Date.now(),
             messages: [...updatedMessages, assistantMsg]
           }, ...prev];
         }
@@ -6478,7 +6486,9 @@ CRITICAL WEB GROUNDING DIRECTIVE:
           return [{
             id: targetThreadId,
             title: newTitle,
-            createdAt: new Date().toISOString(),
+            personaId: (selectedPersona as any)?.id || 'byte',
+            mode: (aiMode as any) || 'explanatory',
+            createdAt: Date.now(),
             messages: [...updatedMessages, assistantErrMsg]
           }, ...prev];
         }
