@@ -506,6 +506,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     x2: number;
     y2: number;
   }>({ visible: false, x1: 0, y1: 0, x2: 0, y2: 0 });
+  const marqueeRectRef = useRef<{ visible: boolean; x1: number; y1: number; x2: number; y2: number }>({ visible: false, x1: 0, y1: 0, x2: 0, y2: 0 });
   const isMarqueeSelecting = useRef(false);
 
   // Interactive Three.js 3D WebGL Scene Studio Modal
@@ -1520,6 +1521,11 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       const r = (sh.radius || 30) * Math.max(Math.abs(sx), Math.abs(sy));
       return { x: sh.x - r, y: sh.y - r, width: r * 2, height: r * 2 };
     }
+    if (sh.type === 'ellipse') {
+      const rx = (Math.abs(sh.width || 60) / 2) * Math.abs(sx);
+      const ry = (Math.abs(sh.height || 40) / 2) * Math.abs(sy);
+      return { x: sh.x - rx, y: sh.y - ry, width: rx * 2, height: ry * 2 };
+    }
     if (sh.type === 'line' || sh.type === 'arrow') {
       const pts = sh.points || [0, 0, 0, 0];
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -1542,7 +1548,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     const rawH = (sh.height ?? (sh.type === 'model_3d' ? 410 : sh.type === 'svg_node' ? 360 : 90)) * sy;
     const bx = rawW < 0 ? sh.x + rawW : sh.x;
     const by = rawH < 0 ? sh.y + rawH : sh.y;
-    return { x: bx, y: by, width: Math.abs(rawW), height: Math.abs(rawH) };
+    return { x: bx, y: by, width: Math.max(6, Math.abs(rawW)), height: Math.max(6, Math.abs(rawH)) };
   };
 
   // Geometry hit-testing helpers for precise selection
@@ -1602,6 +1608,17 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       ) {
         return true;
       }
+    }
+    // Also check if marquee box is completely inside stroke bounding box
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let i = 0; i < points.length; i += 2) {
+      if (points[i] < minX) minX = points[i];
+      if (points[i] > maxX) maxX = points[i];
+      if (points[i + 1] < minY) minY = points[i + 1];
+      if (points[i + 1] > maxY) maxY = points[i + 1];
+    }
+    if (minX <= rx && maxX >= rx + rw && minY <= ry && maxY >= ry + rh) {
+      return true;
     }
     return false;
   };
@@ -2055,13 +2072,15 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
 
       // No object under pointer: Start Rectangular Marquee Selection Box
       isMarqueeSelecting.current = true;
-      setMarqueeRect({
+      const initialMarquee = {
         visible: true,
         x1: pos.x,
         y1: pos.y,
         x2: pos.x,
         y2: pos.y
-      });
+      };
+      marqueeRectRef.current = initialMarquee;
+      setMarqueeRect(initialMarquee);
       if (!e.evt?.shiftKey && !e.evt?.ctrlKey && !e.evt?.metaKey) {
         setSelectedIds([]);
       }
@@ -2265,12 +2284,14 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
 
     // Update rectangular marquee selection box while dragging on empty canvas
     if (tool === 'select' && isMarqueeSelecting.current && point) {
-      setMarqueeRect(prev => ({
-        ...prev,
+      const updatedMarquee = {
+        ...marqueeRectRef.current,
         visible: true,
         x2: point.x,
         y2: point.y
-      }));
+      };
+      marqueeRectRef.current = updatedMarquee;
+      setMarqueeRect(updatedMarquee);
       return;
     }
 
@@ -2385,13 +2406,22 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     // Complete rectangular marquee selection
     if (tool === 'select' && isMarqueeSelecting.current) {
       isMarqueeSelecting.current = false;
-      const rx = Math.min(marqueeRect.x1, marqueeRect.x2);
-      const ry = Math.min(marqueeRect.y1, marqueeRect.y2);
-      const rw = Math.abs(marqueeRect.x2 - marqueeRect.x1);
-      const rh = Math.abs(marqueeRect.y2 - marqueeRect.y1);
-      setMarqueeRect(prev => ({ ...prev, visible: false }));
+      const stage = e?.target?.getStage();
+      const point = stage ? getRelativePointerPosition(stage) : null;
+      const endX = point ? point.x : marqueeRectRef.current.x2;
+      const endY = point ? point.y : marqueeRectRef.current.y2;
+      const startX = marqueeRectRef.current.x1;
+      const startY = marqueeRectRef.current.y1;
 
-      if (rw > 4 || rh > 4) {
+      const rx = Math.min(startX, endX);
+      const ry = Math.min(startY, endY);
+      const rw = Math.abs(endX - startX);
+      const rh = Math.abs(endY - startY);
+
+      setMarqueeRect({ visible: false, x1: 0, y1: 0, x2: 0, y2: 0 });
+      marqueeRectRef.current = { visible: false, x1: 0, y1: 0, x2: 0, y2: 0 };
+
+      if (rw > 3 || rh > 3) {
         const current = slides[activeSlideIdx];
         if (current) {
           const matches: { id: string; type: 'shape' | 'line' }[] = [];
