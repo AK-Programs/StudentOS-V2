@@ -3544,47 +3544,35 @@ Schema:
 }`;
 
     const fullPrompt = `Generate a detailed vector drawing of: "${userPrompt}"`;
-    const ministralKey = (process.env.MINISTRAL_API_KEY || process.env.MISTRAL_API_KEY || process.env.VITE_MINISTRAL_API_KEY || '').trim().replace(/^["']|["']$/g, '');
-
+    let providerUsed = 'ai';
+    let modelUsed = 'ai_model';
     let rawText = '';
-    let providerUsed = 'ministral';
-    let modelUsed = 'ministral-8b-2410';
-
-    // Increased timeout to 9 seconds to allow for more complex generation
-    if (ministralKey) {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 9000);
-        const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${ministralKey}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            model: 'ministral-8b-2410',
-            messages: [
-              { role: 'system', content: systemInstruction },
-              { role: 'user', content: fullPrompt }
-            ],
+    
+    try {
+        const aiResponse = await generateAICompletion({
+            systemInstruction: systemInstruction,
+            prompt: fullPrompt,
+            jsonMode: true,
             temperature: 0.3,
-            max_tokens: 4000,
-            response_format: { type: 'json_object' }
-          }),
-          signal: controller.signal
+            maxTokens: 4000
         });
-        clearTimeout(timeout);
-        if (response.ok) {
-          const data = await response.json();
-          rawText = data?.choices?.[0]?.message?.content || '';
+        rawText = aiResponse;
+    } catch (err) {
+        console.error('[Magic Draw AI] Initial attempt failed, retrying with Byte AI model:', err);
+        try {
+            const retryResponse = await generateAICompletion({
+                systemInstruction: systemInstruction,
+                prompt: fullPrompt,
+                jsonMode: true,
+                temperature: 0.3,
+                maxTokens: 4000,
+                modelOverride: 'apinex' 
+            });
+            rawText = retryResponse;
+        } catch (retryErr) {
+            console.error('[Magic Draw AI] Retry failed:', retryErr);
         }
-      } catch (mErr) {
-        console.warn('[Magic Draw Ministral] Attempt timed out or failed:', mErr);
-      }
     }
-
-
 
     let parsed: any = null;
     if (rawText) {
@@ -3602,7 +3590,7 @@ Schema:
       }
     }
 
-    if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length >= 2) {
+    if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length >= 1) {
       return res.status(200).json({
         success: true,
         title: parsed.title || userPrompt,
@@ -3610,26 +3598,19 @@ Schema:
         providerUsed,
         modelUsed
       });
+    } else {
+        return res.status(200).json({
+            success: false,
+            error: 'Drawing failed: Model could not generate valid strokes.'
+        });
     }
 
-    // High-quality procedural vector fallback (returns instantly!)
-    const fallback = getProceduralMagicPenStrokes(userPrompt);
-    return res.status(200).json({
-      success: true,
-      title: fallback.title,
-      strokes: fallback.strokes,
-      providerUsed: 'procedural_vector',
-      modelUsed: 'classroom-vector-engine'
-    });
+    // fallback removed per requirements
   } catch (err: any) {
     console.error('[Magic Draw Error]', err);
-    const fallback = getProceduralMagicPenStrokes(req.body?.prompt || 'Diagram');
     return res.status(200).json({
-      success: true,
-      title: fallback.title,
-      strokes: fallback.strokes,
-      providerUsed: 'procedural_vector',
-      modelUsed: 'classroom-vector-engine'
+        success: false,
+        error: 'Drawing failed: ' + err.message
     });
   }
 });
