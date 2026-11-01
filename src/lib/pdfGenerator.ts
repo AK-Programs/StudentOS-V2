@@ -9,16 +9,12 @@
  * - Code blocks with dark terminal containers and monospaced text
  * - Callout blocks and blockquotes with colored accent borders
  * - Task list checkboxes ([x], [ ]) and bullet lists
- * - Inline formatting (bold, italic, inline code)
+ * - Inline formatting cleanup (bold, italic, inline code)
+ * - Unicode emoji & non-Latin1 character sanitization (eliminates encoding junk like "Ø=ÜÚ")
  * - Multi-page headers, footers with page numbers, and institutional branding
  */
 
 import { jsPDF } from 'jspdf';
-
-interface TableRow {
-  isHeader: boolean;
-  cells: string[];
-}
 
 interface ParsedTable {
   type: 'table';
@@ -76,6 +72,48 @@ type ParsedBlock =
   | ParsedDivider;
 
 /**
+ * Strips raw markdown tags (bold, italic, code, links, math) for clean text rendering
+ */
+function cleanInlineMarkdown(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') // Markdown links [Label](url) -> Label
+    .replace(/\*\*(.*?)\*\*/g, '$1') // Bold **text**
+    .replace(/\*(.*?)\*/g, '$1')     // Italic *text*
+    .replace(/__(.*?)__/g, '$1')     // Bold __text__
+    .replace(/_(.*?)_/g, '$1')       // Italic _text_
+    .replace(/~~(.*?)~~/g, '$1')     // Strikethrough ~~text~~
+    .replace(/`(.*?)`/g, '$1')       // Inline code `text`
+    .replace(/\$\$(.*?)\$\$/g, '$1') // Math block $$text$$
+    .replace(/\$(.*?)\$/g, '$1');    // Math inline $text$
+}
+
+/**
+ * Sanitizes string input for standard jsPDF fonts (Helvetica/Courier/Times).
+ * Removes emojis and non-WinAnsi characters to prevent encoding artifacts like "Ø=ÜÚ".
+ */
+function sanitizeTextForPdf(text: string): string {
+  if (!text) return '';
+
+  // 1. Strip inline markdown markup
+  let cleaned = cleanInlineMarkdown(text);
+
+  // 2. Remove emojis, surrogate pairs, and non-printable unicode symbol ranges
+  cleaned = cleaned.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2300}-\u{23FF}\u{2B00}-\u{2BFF}\u{200D}\u{FE0F}]/gu, '');
+
+  // 3. Filter characters outside printable ASCII (0x20-0x7E) and Latin-1 supplement (0xA0-0xFF)
+  cleaned = cleaned.replace(/[^\x20-\x7E\xA0-\xFF\n\r\t]/g, '');
+
+  // 4. Remove leftover markdown '#' symbols at start of text if any
+  cleaned = cleaned.replace(/^#+\s*/, '');
+
+  // 5. Clean up redundant whitespace
+  cleaned = cleaned.replace(/[ \t]{2,}/g, ' ');
+
+  return cleaned.trim();
+}
+
+/**
  * Parses markdown text into structured semantic blocks.
  */
 function parseMarkdownToBlocks(content: string): ParsedBlock[] {
@@ -120,24 +158,29 @@ function parseMarkdownToBlocks(content: string): ParsedBlock[] {
       continue;
     }
 
-    // Table Detection: Line starts and ends with |
-    if (trimmed.startsWith('|') && trimmed.endsWith('|') && trimmed.includes('|')) {
+    // Table Detection: Lines containing column separator '|'
+    if (trimmed.includes('|') && (trimmed.startsWith('|') || trimmed.split('|').length >= 3)) {
       const tableLines: string[] = [];
-      while (i < lines.length && lines[i].trim().startsWith('|') && lines[i].trim().endsWith('|')) {
+      while (
+        i < lines.length &&
+        lines[i].trim().includes('|') &&
+        (lines[i].trim().startsWith('|') || lines[i].trim().split('|').length >= 3)
+      ) {
         tableLines.push(lines[i].trim());
         i++;
       }
 
       if (tableLines.length >= 1) {
         const parseRowCells = (rowStr: string): string[] => {
-          return rowStr
-            .slice(1, -1)
-            .split('|')
-            .map(c => c.trim());
+          const cells = rowStr.split('|').map(c => c.trim());
+          if (cells.length > 0 && cells[0] === '') cells.shift();
+          if (cells.length > 0 && cells[cells.length - 1] === '') cells.pop();
+          return cells;
         };
 
         const isSeparatorRow = (rowStr: string): boolean => {
-          return /^\|[\s\-:|]+\|$/.test(rowStr);
+          const cells = parseRowCells(rowStr);
+          return cells.length > 0 && cells.every(c => /^[:\-\s]+$/.test(c));
         };
 
         let headers: string[] = [];
@@ -151,7 +194,6 @@ function parseMarkdownToBlocks(content: string): ParsedBlock[] {
             }
           }
         } else {
-          // No explicit separator row, use first as header
           headers = parseRowCells(tableLines[0]);
           for (let r = 1; r < tableLines.length; r++) {
             if (!isSeparatorRow(tableLines[r])) {
@@ -160,12 +202,14 @@ function parseMarkdownToBlocks(content: string): ParsedBlock[] {
           }
         }
 
-        blocks.push({
-          type: 'table',
-          headers,
-          rows
-        });
-        continue;
+        if (headers.length > 0) {
+          blocks.push({
+            type: 'table',
+            headers,
+            rows
+          });
+          continue;
+        }
       }
     }
 
@@ -183,19 +227,15 @@ function parseMarkdownToBlocks(content: string): ParsedBlock[] {
       continue;
     }
 
-    // Headings
-    if (trimmed.startsWith('# ')) {
-      blocks.push({ type: 'heading', level: 1, text: trimmed.slice(2).trim() });
-      i++;
-      continue;
-    }
-    if (trimmed.startsWith('## ')) {
-      blocks.push({ type: 'heading', level: 2, text: trimmed.slice(3).trim() });
-      i++;
-      continue;
-    }
-    if (trimmed.startsWith('### ')) {
-      blocks.push({ type: 'heading', level: 3, text: trimmed.slice(4).trim() });
+    // Headings: #, ##, ###, ####, #####, ######
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)/);
+    if (headingMatch) {
+      const level = Math.min(headingMatch[1].length, 3) as 1 | 2 | 3;
+      blocks.push({
+        type: 'heading',
+        level,
+        text: headingMatch[2].trim()
+      });
       i++;
       continue;
     }
@@ -248,17 +288,6 @@ function parseMarkdownToBlocks(content: string): ParsedBlock[] {
 }
 
 /**
- * Strips raw markdown tags for length calculation or clean drawing
- */
-function cleanInlineMarkdown(text: string): string {
-  return text
-    .replace(/\*\*(.*?)\*\*/g, '$1')
-    .replace(/\*(.*?)\*/g, '$1')
-    .replace(/`(.*?)`/g, '$1')
-    .replace(/\$\$(.*?)\$\$/g, '$1');
-}
-
-/**
  * Main export function for Lecture Notes PDF generation.
  */
 export async function generateFormattedPdf(title: string, subject: string, content: string): Promise<void> {
@@ -292,9 +321,9 @@ export async function generateFormattedPdf(title: string, subject: string, conte
   doc.rect(margin, y, 6, 54, 'F');
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
+  doc.setFontSize(15);
   doc.setTextColor(255, 255, 255);
-  const safeDocTitle = title || 'Veylentra Lecture Note';
+  const safeDocTitle = sanitizeTextForPdf(title) || 'Veylentra Lecture Note';
   const truncatedTitle = doc.splitTextToSize(safeDocTitle, contentWidth - 30)[0] || safeDocTitle;
   doc.text(truncatedTitle, margin + 16, y + 24);
 
@@ -307,13 +336,14 @@ export async function generateFormattedPdf(title: string, subject: string, conte
     day: 'numeric',
     year: 'numeric'
   });
+  const safeSubj = sanitizeTextForPdf(subject) || 'GENERAL';
   doc.text(
-    `SUBJECT: ${(subject || 'GENERAL').toUpperCase()}  •  DATE: ${dateStr.toUpperCase()}  •  VEYLENTRA ACADEMIC OS`,
+    `SUBJECT: ${safeSubj.toUpperCase()}  •  DATE: ${dateStr.toUpperCase()}  •  VEYLENTRA ACADEMIC OS`,
     margin + 16,
     y + 42
   );
 
-  y += 66;
+  y += 68;
 
   // Parse structured markdown content
   const blocks = parseMarkdownToBlocks(content);
@@ -321,13 +351,16 @@ export async function generateFormattedPdf(title: string, subject: string, conte
   for (const block of blocks) {
     switch (block.type) {
       case 'heading': {
+        const headingText = sanitizeTextForPdf(block.text);
+        if (!headingText) break;
+
         if (block.level === 1) {
+          y += 6;
           checkPageBreak(36);
-          y += 10;
           doc.setFont('helvetica', 'bold');
           doc.setFontSize(15);
           doc.setTextColor(15, 23, 42); // Slate-900
-          const hLines = doc.splitTextToSize(cleanInlineMarkdown(block.text), contentWidth);
+          const hLines = doc.splitTextToSize(headingText, contentWidth);
           doc.text(hLines, margin, y);
           y += hLines.length * 18 + 4;
 
@@ -335,31 +368,32 @@ export async function generateFormattedPdf(title: string, subject: string, conte
           doc.setDrawColor(226, 232, 240);
           doc.setLineWidth(1);
           doc.line(margin, y, margin + contentWidth, y);
-          y += 8;
+          y += 10;
         } else if (block.level === 2) {
+          y += 6;
           checkPageBreak(28);
-          y += 8;
           doc.setFont('helvetica', 'bold');
           doc.setFontSize(13);
           doc.setTextColor(67, 56, 202); // Indigo-700
-          const hLines = doc.splitTextToSize(cleanInlineMarkdown(block.text), contentWidth);
+          const hLines = doc.splitTextToSize(headingText, contentWidth);
           doc.text(hLines, margin, y);
-          y += hLines.length * 16 + 4;
+          y += hLines.length * 16 + 6;
         } else {
+          y += 4;
           checkPageBreak(24);
-          y += 6;
           doc.setFont('helvetica', 'bold');
           doc.setFontSize(11);
           doc.setTextColor(79, 70, 229); // Indigo-600
-          const hLines = doc.splitTextToSize(cleanInlineMarkdown(block.text), contentWidth);
+          const hLines = doc.splitTextToSize(headingText, contentWidth);
           doc.text(hLines, margin, y);
-          y += hLines.length * 14 + 3;
+          y += hLines.length * 14 + 5;
         }
         break;
       }
 
       case 'paragraph': {
-        const cleanText = cleanInlineMarkdown(block.text);
+        const cleanText = sanitizeTextForPdf(block.text);
+        if (!cleanText) break;
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(10);
         doc.setTextColor(51, 65, 85); // Slate-700
@@ -372,36 +406,36 @@ export async function generateFormattedPdf(title: string, subject: string, conte
       }
 
       case 'list': {
-        const cleanText = cleanInlineMarkdown(block.text);
-        const prefix = block.ordered ? `${block.number || '1'}. ` : '•  ';
+        const cleanText = sanitizeTextForPdf(block.text);
+        if (!cleanText) break;
+        const prefix = block.ordered ? `${block.number || '1'}. ` : '- ';
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(10);
-        doc.setTextColor(51, 65, 85);
 
         const indent = 16;
         const listLines = doc.splitTextToSize(cleanText, contentWidth - indent);
-        const listHeight = listLines.length * 13.5;
-        checkPageBreak(listHeight + 3);
+        const listHeight = listLines.length * 14;
+        checkPageBreak(listHeight + 4);
 
         doc.setFont('helvetica', 'bold');
-        doc.setTextColor(79, 70, 229);
+        doc.setTextColor(79, 70, 229); // Indigo-600
         doc.text(prefix, margin, y);
 
         doc.setFont('helvetica', 'normal');
-        doc.setTextColor(51, 65, 85);
+        doc.setTextColor(51, 65, 85); // Slate-700
         doc.text(listLines, margin + indent, y);
         y += listHeight + 4;
         break;
       }
 
       case 'task': {
-        const cleanText = cleanInlineMarkdown(block.text);
+        const cleanText = sanitizeTextForPdf(block.text);
+        if (!cleanText) break;
         const boxSize = 9;
         const textLines = doc.splitTextToSize(cleanText, contentWidth - 22);
-        const taskHeight = Math.max(boxSize, textLines.length * 13.5);
+        const taskHeight = Math.max(boxSize, textLines.length * 14);
         checkPageBreak(taskHeight + 4);
 
-        // Draw Checkbox Box
         doc.setDrawColor(148, 163, 184); // Slate-400
         doc.setLineWidth(1);
         if (block.checked) {
@@ -410,19 +444,18 @@ export async function generateFormattedPdf(title: string, subject: string, conte
           doc.setTextColor(255, 255, 255);
           doc.setFontSize(7);
           doc.setFont('helvetica', 'bold');
-          doc.text('✓', margin + 2, y - 1);
+          doc.text('X', margin + 2, y - 1);
         } else {
           doc.setFillColor(255, 255, 255);
           doc.roundedRect(margin, y - 8, boxSize, boxSize, 2, 2, 'S');
         }
 
-        // Draw Task Label
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(10);
         if (block.checked) {
-          doc.setTextColor(148, 163, 184); // Slate-400 strike style
+          doc.setTextColor(148, 163, 184); // Slate-400
         } else {
-          doc.setTextColor(51, 65, 85);
+          doc.setTextColor(51, 65, 85); // Slate-700
         }
         doc.text(textLines, margin + 18, y);
         y += taskHeight + 4;
@@ -430,15 +463,16 @@ export async function generateFormattedPdf(title: string, subject: string, conte
       }
 
       case 'callout': {
-        const cleanText = cleanInlineMarkdown(block.text);
+        const cleanText = sanitizeTextForPdf(block.text);
+        if (!cleanText) break;
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(9.5);
         const calloutLines = doc.splitTextToSize(cleanText, contentWidth - 24);
-        const boxHeight = calloutLines.length * 13.5 + 14;
+        const boxHeight = calloutLines.length * 14 + 14;
         checkPageBreak(boxHeight + 6);
 
         // Background Tint Box
-        doc.setFillColor(243, 244, 246); // Slate-100 / Indigo-50 tint
+        doc.setFillColor(243, 244, 246); // Slate-100
         doc.roundedRect(margin, y - 4, contentWidth, boxHeight, 4, 4, 'F');
 
         // Left Border Bar
@@ -453,9 +487,11 @@ export async function generateFormattedPdf(title: string, subject: string, conte
       }
 
       case 'code': {
+        const cleanLang = sanitizeTextForPdf(block.language).toUpperCase() || 'CODE';
         doc.setFont('courier', 'normal');
         doc.setFontSize(8.5);
-        const codeLines = block.code.split('\n');
+        const rawCodeLines = block.code.split('\n');
+        const codeLines = rawCodeLines.map(line => sanitizeTextForPdf(line));
         const codeBoxHeight = codeLines.length * 12 + 18;
         checkPageBreak(Math.min(codeBoxHeight, 140));
 
@@ -467,7 +503,7 @@ export async function generateFormattedPdf(title: string, subject: string, conte
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(7.5);
         doc.setTextColor(148, 163, 184); // Slate-400
-        doc.text(block.language.toUpperCase() || 'CODE', margin + 10, y + 6);
+        doc.text(cleanLang, margin + 10, y + 6);
 
         // Code Content
         doc.setFont('courier', 'normal');
@@ -495,26 +531,53 @@ export async function generateFormattedPdf(title: string, subject: string, conte
           1
         );
 
-        // Normalize column count
         const colWidth = contentWidth / numCols;
         const cellPadding = 6;
         const cellTextWidth = colWidth - cellPadding * 2;
 
         const renderTableHeader = (currentY: number): number => {
-          doc.setFillColor(30, 41, 59); // Slate-800
-          doc.rect(margin, currentY, contentWidth, 22, 'F');
-
           doc.setFont('helvetica', 'bold');
           doc.setFontSize(9);
-          doc.setTextColor(255, 255, 255);
 
+          const headerWrappedLines: string[][] = [];
+          let maxHeaderLines = 1;
           for (let c = 0; c < numCols; c++) {
-            const hText = cleanInlineMarkdown(block.headers[c] || `Col ${c + 1}`);
-            const cellX = margin + c * colWidth + cellPadding;
-            const truncated = doc.splitTextToSize(hText, cellTextWidth)[0] || hText;
-            doc.text(truncated, cellX, currentY + 15);
+            const hText = sanitizeTextForPdf(block.headers[c] || `Column ${c + 1}`);
+            const wrapped = doc.splitTextToSize(hText, Math.max(cellTextWidth, 20));
+            headerWrappedLines.push(wrapped);
+            if (wrapped.length > maxHeaderLines) {
+              maxHeaderLines = wrapped.length;
+            }
           }
-          return currentY + 22;
+          const headerHeight = maxHeaderLines * 12 + 10;
+
+          // Header background
+          doc.setFillColor(30, 41, 59); // Slate-800
+          doc.rect(margin, currentY, contentWidth, headerHeight, 'F');
+
+          // Header outer border & column dividers
+          doc.setDrawColor(71, 85, 105); // Slate-600
+          doc.setLineWidth(0.5);
+          doc.rect(margin, currentY, contentWidth, headerHeight, 'S');
+
+          for (let c = 1; c < numCols; c++) {
+            const divX = margin + c * colWidth;
+            doc.line(divX, currentY, divX, currentY + headerHeight);
+          }
+
+          // Header text
+          doc.setTextColor(255, 255, 255);
+          for (let c = 0; c < numCols; c++) {
+            const linesToPrint = headerWrappedLines[c] || [];
+            const cellX = margin + c * colWidth + cellPadding;
+            let textY = currentY + 13;
+            for (const line of linesToPrint) {
+              doc.text(line, cellX, textY);
+              textY += 12;
+            }
+          }
+
+          return currentY + headerHeight;
         };
 
         checkPageBreak(50);
@@ -527,20 +590,19 @@ export async function generateFormattedPdf(title: string, subject: string, conte
         for (let rIdx = 0; rIdx < block.rows.length; rIdx++) {
           const rowData = block.rows[rIdx];
 
-          // Compute max height needed for wrapped cells in this row
           const cellWrappedLines: string[][] = [];
           let maxLinesInRow = 1;
 
           for (let c = 0; c < numCols; c++) {
-            const rawCell = cleanInlineMarkdown(rowData[c] || '');
-            const wrapped = doc.splitTextToSize(rawCell, cellTextWidth);
+            const rawCell = sanitizeTextForPdf(rowData[c] || '');
+            const wrapped = doc.splitTextToSize(rawCell, Math.max(cellTextWidth, 20));
             cellWrappedLines.push(wrapped);
             if (wrapped.length > maxLinesInRow) {
               maxLinesInRow = wrapped.length;
             }
           }
 
-          const rowHeight = maxLinesInRow * 11 + 10;
+          const rowHeight = maxLinesInRow * 12 + 10;
 
           if (y + rowHeight > pageHeight - bottomMargin) {
             doc.addPage();
@@ -575,10 +637,10 @@ export async function generateFormattedPdf(title: string, subject: string, conte
           for (let c = 0; c < numCols; c++) {
             const linesToPrint = cellWrappedLines[c] || [];
             const cellX = margin + c * colWidth + cellPadding;
-            let textY = y + 10;
+            let textY = y + 12;
             for (const line of linesToPrint) {
               doc.text(line, cellX, textY);
-              textY += 11;
+              textY += 12;
             }
           }
 
@@ -619,7 +681,8 @@ export async function generateFormattedPdf(title: string, subject: string, conte
   }
 
   // Save the PDF
-  const safeFilename = (title || 'lecture_note')
+  const rawTitle = sanitizeTextForPdf(title) || 'lecture_note';
+  const safeFilename = rawTitle
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9_-]/g, '_')
