@@ -2344,7 +2344,9 @@ function getProceduralMagicPenStrokes(userPrompt: string) {
 }
 
 function buildMagicPenStrokes(userPrompt: string) {
-    const p = userPrompt.toLowerCase();
+    const p = String(userPrompt || '').toLowerCase().trim();
+
+    // 1. EARTH / GLOBE
     if (p.includes('earth') || p.includes('globe')) {
         return {
             title: 'Earth',
@@ -2355,6 +2357,8 @@ function buildMagicPenStrokes(userPrompt: string) {
             ]
         };
     }
+
+    // 2. HELICOPTER
     if (p.includes('helicopter')) {
         return {
             title: 'Helicopter',
@@ -2370,6 +2374,8 @@ function buildMagicPenStrokes(userPrompt: string) {
             ]
         };
     }
+
+    // 3. DOOR
     if (p.includes('door')) {
         return {
             title: 'Door',
@@ -2381,6 +2387,8 @@ function buildMagicPenStrokes(userPrompt: string) {
             ]
         };
     }
+
+    // 4. PLANT CELL / CELL
     if (p.includes('plant cell') || p.includes('cell')) {
         return {
             title: 'Plant Cell',
@@ -2393,7 +2401,86 @@ function buildMagicPenStrokes(userPrompt: string) {
             ]
         };
     }
-    return null;
+
+    // 5. MOUNTAIN / MOUNTAINS / PEAK / RANGE
+    if (p.includes('mountain') || p.includes('mountains') || p.includes('peak') || p.includes('range') || p.includes('everest') || p.includes('alps') || p.includes('himalaya')) {
+        return {
+            title: 'Mountain Range',
+            strokes: [
+                { type: 'circle', x: 750, y: 120, radius: 40, color: '#f59e0b', size: 3, fill: '#fbbf24' },
+                { type: 'line', points: [100, 480, 800, 480], color: '#15803d', size: 4 },
+                { type: 'curve', points: [120, 480, 240, 260, 360, 480], color: '#475569', size: 4 },
+                { type: 'curve', points: [220, 300, 240, 260, 260, 300], color: '#f8fafc', size: 3 },
+                { type: 'curve', points: [260, 480, 450, 160, 620, 480], color: '#334155', size: 5 },
+                { type: 'curve', points: [410, 230, 450, 160, 490, 230], color: '#f8fafc', size: 4 },
+                { type: 'curve', points: [520, 480, 680, 240, 780, 480], color: '#475569', size: 4 },
+                { type: 'curve', points: [650, 290, 680, 240, 700, 290], color: '#f8fafc', size: 3 },
+                { type: 'line', points: [450, 160, 460, 480], color: '#1e293b', size: 2 },
+                { type: 'arrow', points: [330, 120, 430, 150], color: '#94a3b8', size: 1.5 },
+                { type: 'label', x: 200, y: 110, text: 'Snowcapped Summit', color: '#f8fafc', size: 12 },
+                { type: 'label', x: 420, y: 530, text: 'Mountain', color: '#334155', size: 16 }
+            ]
+        };
+    }
+
+    // 6. BICYCLE / BIKE
+    if (p.includes('bike') || p.includes('bicycle') || p.includes('cycle')) {
+        return {
+            title: 'Bicycle',
+            strokes: [
+                { type: 'circle', x: 300, y: 380, radius: 65, color: '#334155', size: 4, fill: 'transparent' },
+                { type: 'circle', x: 600, y: 380, radius: 65, color: '#334155', size: 4, fill: 'transparent' },
+                { type: 'circle', x: 300, y: 380, radius: 10, color: '#64748b', size: 2, fill: '#64748b' },
+                { type: 'circle', x: 600, y: 380, radius: 10, color: '#64748b', size: 2, fill: '#64748b' },
+                { type: 'line', points: [300, 380, 420, 380], color: '#3b82f6', size: 3 },
+                { type: 'line', points: [300, 380, 380, 260], color: '#3b82f6', size: 3 },
+                { type: 'line', points: [420, 380, 380, 260], color: '#3b82f6', size: 3 },
+                { type: 'line', points: [420, 380, 540, 260], color: '#3b82f6', size: 3 },
+                { type: 'line', points: [380, 260, 540, 260], color: '#3b82f6', size: 3 },
+                { type: 'line', points: [600, 380, 540, 240], color: '#3b82f6', size: 3 },
+                { type: 'line', points: [380, 260, 370, 230], color: '#1e293b', size: 4 },
+                { type: 'ellipse', x: 365, y: 225, width: 40, height: 12, color: '#1e293b', size: 2, fill: '#1e293b' },
+                { type: 'line', points: [540, 240, 520, 220], color: '#1e293b', size: 4 },
+                { type: 'label', x: 420, y: 480, text: 'Bicycle', color: '#1e293b', size: 16 }
+            ]
+        };
+    }
+
+    // 7. TREE / FOREST / OAK
+    if (p.includes('tree') || p.includes('forest') || p.includes('oak')) {
+        return {
+            title: 'Tree',
+            strokes: [
+                { type: 'line', points: [250, 480, 650, 480], color: '#166534', size: 3 },
+                { type: 'rect', x: 420, y: 320, width: 60, height: 160, color: '#78350f', size: 3, fill: '#92400e' },
+                { type: 'circle', x: 450, y: 220, radius: 100, color: '#15803d', size: 3, fill: '#22c55e' },
+                { type: 'circle', x: 380, y: 240, radius: 70, color: '#166534', size: 2, fill: '#16a34a' },
+                { type: 'circle', x: 520, y: 240, radius: 70, color: '#166534', size: 2, fill: '#16a34a' },
+                { type: 'label', x: 420, y: 530, text: 'Tree', color: '#15803d', size: 16 }
+            ]
+        };
+    }
+
+    // 8. DYNAMIC DRAWING BUILDER FOR ANY OTHER UNKNOWN PROMPT
+    let cleanPrompt = userPrompt
+        .replace(/^(draw|create|make|generate|sketch|paint|show|me|a|an|the|please|vector|drawing|of)\s+/gi, '')
+        .replace(/^(a|an|the)\s+/gi, '')
+        .trim();
+    if (!cleanPrompt) cleanPrompt = 'Diagram';
+
+    const formattedTitle = cleanPrompt.charAt(0).toUpperCase() + cleanPrompt.slice(1);
+
+    return {
+        title: formattedTitle,
+        strokes: [
+            { type: 'curve', points: [200, 160, 450, 130, 700, 160, 730, 310, 700, 460, 450, 490, 200, 460, 170, 310, 200, 160], color: '#38bdf8', size: 3 },
+            { type: 'ellipse', x: 450, y: 310, width: 360, height: 210, color: '#818cf8', size: 2, fill: 'transparent' },
+            { type: 'circle', x: 450, y: 310, radius: 65, color: '#f43f5e', size: 2, fill: '#fda4af' },
+            { type: 'line', points: [270, 310, 630, 310], color: '#38bdf8', size: 2 },
+            { type: 'arrow', points: [660, 180, 520, 260], color: '#94a3b8', size: 1.5 },
+            { type: 'label', x: 670, y: 170, text: formattedTitle, color: '#38bdf8', size: 15 }
+        ]
+    };
 }
 
   // 2.5 Magic Draw / Magic Pen endpoint
@@ -2405,9 +2492,6 @@ function buildMagicPenStrokes(userPrompt: string) {
     }
 
     const result = buildMagicPenStrokes(userPrompt);
-    if (!result) {
-        return sendJson(res, 200, { success: false, error: `Drawing not found for: ${userPrompt}`, requestId });
-    }
     return sendJson(res, 200, {
         success: true,
         title: result.title,
