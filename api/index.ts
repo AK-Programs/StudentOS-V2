@@ -2351,7 +2351,9 @@ function getProceduralMagicPenStrokes(userPrompt: string) {
       return sendJson(res, 400, { success: false, error: 'Prompt is required', requestId });
     }
 
-    const systemInstruction = `You are a world-class vector illustrator for an educational whiteboard.
+    const isEarthRequest = userPrompt.toLowerCase().includes('earth');
+    const earthInstruction = 'Generate ONE circle for Earth, blue fill, green land curves, and label "Earth". Keep under 15 strokes.';
+    const systemInstruction = isEarthRequest ? earthInstruction : `You are a world-class vector illustrator for an educational whiteboard.
 Generate an accurate, detailed, and COMPLETELY FINISHED vector drawing for the user's prompt: "${userPrompt}".
 Coordinates MUST be within 900x600 (x:0-900, y:0-600).
 
@@ -2384,16 +2386,16 @@ Schema:
             systemInstruction,
             [],
             {
-                jsonMode: true,
+                jsonMode: false,
                 maxTokens: 3000,
                 requestId,
                 timeoutMs: 12000
             }
         );
         rawText = resResult.text;
-    } catch (mErr) {
+    } catch (mErr: any) {
         console.error('[Magic Draw Vercel API] Model call failed:', mErr);
-        return sendJson(res, 200, { success: false, error: 'Drawing failed', requestId });
+        return sendJson(res, 200, { success: false, error: mErr.message || 'Drawing failed', requestId });
     }
 
     let parsed: any = null;
@@ -2421,7 +2423,7 @@ Schema:
         requestId
       });
     } else {
-        return sendJson(res, 200, { success: false, error: 'Drawing failed', requestId });
+        return sendJson(res, 200, { success: false, error: 'Drawing failed: ' + (rawText ? 'Raw model output: ' + rawText.substring(0, 500) : 'No output'), requestId });
     }
   }
 
