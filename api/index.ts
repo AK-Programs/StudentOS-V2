@@ -2352,7 +2352,7 @@ function getProceduralMagicPenStrokes(userPrompt: string) {
     }
 
     const systemInstruction = `You are a world-class vector illustrator for an educational whiteboard.
-Generate an accurate, detailed, and COMPLETELY FINISHED vector drawing for the user's prompt: "${userPrompt}".
+Generate an accurate, highly detailed, and COMPLETELY FINISHED vector drawing for the user's prompt: "${userPrompt}".
 
 Output Format:
 You MUST return ONLY valid JSON matching this exact schema:
@@ -2371,19 +2371,42 @@ You MUST return ONLY valid JSON matching this exact schema:
 
 CRITICAL CANVAS & DRAWING RULES:
 1. Coordinates MUST stay inside 900x600 canvas (x: 50 to 850, y: 50 to 550).
-2. DRAW THE REAL SPECIFIC OBJECT WITH MULTIPLE STROKES:
-   - Rocket: fuselage body tube, sharp nose cone, side fins at base, thruster flame (yellow/orange), and a "Rocket" label.
-   - Helicopter: cabin body, main rotor, tail boom, tail rotor, skids, label.
-   - Bicycle: two wheels (circles), frame tubes (lines), seat, handlebars, label.
-   - Earth: ocean circle, continent curves, label.
-   - Door: rectangular frame, panel, door knob circle, label.
-   - Plant Cell: rectangular wall, inner membrane, nucleus, vacuole, chloroplasts, labels.
-3. Use 10 to 30 strokes per drawing to capture the actual structure of the requested object.
-4. Colors should be clean and educational (e.g. #3b82f6 for sky/water, #ef4444 for red/accent, #22c55e for green, #f59e0b for yellow, #334155 for dark frame).
-5. Always include at least one "label" stroke indicating the main object or key parts.
-6. Return ONLY the JSON object. Do not include markdown codeblocks or conversational text.`;
+2. DRAW THE REAL COMPLETE OBJECT WITH ALL NECESSARY STROKES (do NOT cap stroke count):
+   - Rocket: pointed nose cone, cylindrical fuselage body, side stabilizer fins, thruster nozzle at base, orange/yellow exhaust flame, porthole window, and descriptive labels ("Nose Cone", "Fuselage", "Fin", "Flame").
+   - Bicycle: two wheels (circles with spokes), full diamond frame (chain stay, seat tube, down tube, top tube), seat, handlebars, pedals, and labels.
+   - Helicopter: cabin body, main rotor blades, tail boom, tail rotor, landing skids, labels.
+   - Earth: ocean sphere circle, detailed continent curves, equator line, labels.
+   - Door: outer frame, inner door panel, door handle knob, hinges, labels.
+   - Plant Cell: outer cell wall, cell membrane, nucleus, vacuole, chloroplasts, labels.
+3. Use as many strokes as the object needs to be visually complete and accurate. Never draw a sparse sketch or a single generic oval.
+4. Colors should be clean, vibrant, and educational (e.g. #3b82f6 for sky/water, #ef4444 for accents/red, #22c55e for green/vegetation, #f59e0b for yellow/flame, #334155 for dark frame/steel).
+5. Always include descriptive "label" and "arrow" strokes pointing to key parts of the object.
+6. Return ONLY the JSON object. Do not include markdown text or conversational explanations.`;
 
-    const fullPrompt = `Generate complete vector drawing JSON commands for requested object: "${userPrompt}"`;
+    const fullPrompt = `Generate complete vector drawing JSON commands with all detailed parts for: "${userPrompt}"`;
+
+    const parseStrokesFromText = (rawText: string) => {
+      if (!rawText) return null;
+      let cleaned = rawText.trim();
+      const jsonMatch = cleaned.match(/\{[\s\S]*"strokes"[\s\S]*\}/);
+      if (jsonMatch) {
+        cleaned = jsonMatch[0];
+      } else {
+        if (cleaned.startsWith('```json')) {
+          cleaned = cleaned.replace(/^```json/, '').replace(/```$/, '').trim();
+        } else if (cleaned.startsWith('```')) {
+          cleaned = cleaned.replace(/^```/, '').replace(/```$/, '').trim();
+        }
+      }
+      try {
+        const parsed = JSON.parse(cleaned);
+        if (parsed && Array.isArray(parsed.strokes)) return parsed;
+      } catch (pErr) {
+        const repaired = repairTruncatedStrokesJson(cleaned);
+        if (repaired && Array.isArray(repaired.strokes)) return repaired;
+      }
+      return null;
+    };
 
     try {
       const resResult = await callRoutedCompletion(
@@ -2400,27 +2423,30 @@ CRITICAL CANVAS & DRAWING RULES:
       );
 
       const rawText = resResult?.text || '';
-      let parsed: any = null;
+      let parsed = parseStrokesFromText(rawText);
 
-      if (rawText) {
-        let cleaned = rawText.trim();
-
-        // Extract JSON object if wrapped in codeblocks or embedded in prose
-        const jsonMatch = cleaned.match(/\{[\s\S]*"strokes"[\s\S]*\}/);
-        if (jsonMatch) {
-          cleaned = jsonMatch[0];
-        } else {
-          if (cleaned.startsWith('```json')) {
-            cleaned = cleaned.replace(/^```json/, '').replace(/```$/, '').trim();
-          } else if (cleaned.startsWith('```')) {
-            cleaned = cleaned.replace(/^```/, '').replace(/```$/, '').trim();
-          }
-        }
-
+      // If response is missing key details (fewer than 12 strokes), prompt for completion pass
+      if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length < 12) {
         try {
-          parsed = JSON.parse(cleaned);
-        } catch (pErr) {
-          parsed = repairTruncatedStrokesJson(cleaned);
+          const retryPrompt = `The vector drawing for "${userPrompt}" needs more details. Add missing parts (like fins, flames, handles, labels, spokes, or structural lines). Return full JSON with ALL combined strokes for "${userPrompt}".`;
+          const retryResult = await callRoutedCompletion(
+            retryPrompt,
+            systemInstruction,
+            [],
+            {
+              taskType: 'fast',
+              modelOverride: 'apinex',
+              jsonMode: true,
+              maxTokens: 3500,
+              requestId
+            }
+          );
+          const retryParsed = parseStrokesFromText(retryResult?.text || '');
+          if (retryParsed && Array.isArray(retryParsed.strokes) && retryParsed.strokes.length > parsed.strokes.length) {
+            parsed = retryParsed;
+          }
+        } catch (retryErr) {
+          console.warn('[Magic Draw Elaboration Pass] Optional pass skipped, using initial pass strokes:', retryErr);
         }
       }
 
@@ -2430,7 +2456,7 @@ CRITICAL CANVAS & DRAWING RULES:
           title: parsed.title || userPrompt,
           strokes: parsed.strokes,
           providerUsed: 'ai',
-          modelUsed: resResult.modelUsed || 'byte-model',
+          modelUsed: resResult?.modelUsed || 'byte-model',
           requestId
         });
       }
