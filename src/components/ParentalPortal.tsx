@@ -12,7 +12,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Shield, User, Award, BookOpen, Clock, Calendar, CheckCircle, 
-  AlertTriangle, Sparkles, Plus, ChevronRight, FileText, Bell, 
+  AlertTriangle, AlertCircle, Sparkles, Plus, ChevronRight, FileText, Bell, 
   BarChart2, CheckSquare, RefreshCw, MessageSquare, Users, X, 
   GraduationCap, Mail, KeyRound, ArrowRight, Check, Activity
 } from 'lucide-react';
@@ -139,7 +139,7 @@ export const ParentalPortal: React.FC<ParentalPortalProps> = ({ currentUser, sho
 
     const checkOnlineStatus = () => {
       const pres = presenceService.getUserPresence(activeStudent.uid);
-      setIsChildOnline(Boolean(pres && pres.isOnline));
+      setIsChildOnline(Boolean(pres && ((pres as any).isOnline || pres.status === 'online')));
     };
 
     checkOnlineStatus();
@@ -200,6 +200,7 @@ export const ParentalPortal: React.FC<ParentalPortalProps> = ({ currentUser, sho
             studentName: a.student_name || activeStudent.name,
             date: a.date,
             status: a.status,
+            grade: a.grade || activeStudent.grade || '',
             classGrade: a.grade || activeStudent.grade,
             section: a.section || activeStudent.section
           }));

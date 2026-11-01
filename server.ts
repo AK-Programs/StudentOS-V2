@@ -33,7 +33,7 @@ import {
   revokeClassroomPanel,
   getRealClassroomMetadata
 } from './server/panelBoardService';
-import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 import { createClient } from '@supabase/supabase-js';
 
 dotenv.config();
@@ -4716,12 +4716,21 @@ let globalHomeworkState: any[] = [];
 
 // Configure Vite middleware in development or static serving in production
 // ========================================================================
-// AUTHENTICATION & PASSWORD RESET API (RESEND POWERED)
+// AUTHENTICATION & PASSWORD RESET API (GMAIL SMTP POWERED)
 // ========================================================================
-const getResendClient = () => {
-  const apiKey = (process.env.RESEND_API_KEY || process.env.VITE_RESEND_API_KEY || '').trim();
-  if (!apiKey) return null;
-  return new Resend(apiKey);
+const getGmailTransporter = () => {
+  const user = (process.env.GMAIL_USER || 'visualstudystudio@gmail.com').trim();
+  const pass = (process.env.GMAIL_APP_PASSWORD || '').trim();
+  if (!pass) return null;
+  return nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: {
+      user,
+      pass
+    }
+  });
 };
 
 const getSupabaseAdmin = () => {
@@ -4807,9 +4816,7 @@ function verifySignedResetToken(tokenString: string): { valid: boolean; email?: 
   }
 }
 
-const RESEND_FROM_EMAIL = (process.env.RESEND_FROM_EMAIL || '').trim() || 'StudentOS <onboarding@resend.dev>';
-
-// 1. Password Reset Request Route: email in, creates HMAC-signed token, sends link via Resend only (No Supabase dependency)
+// 1. Password Reset Request Route: email in, creates HMAC-signed token, sends link via Gmail SMTP
 async function handlePasswordResetRequest(req: express.Request, res: express.Response) {
   const { email } = req.body || {};
   if (!email || typeof email !== 'string' || !email.includes('@')) {
@@ -4818,11 +4825,11 @@ async function handlePasswordResetRequest(req: express.Request, res: express.Res
 
   const normEmail = email.trim().toLowerCase();
 
-  const resend = getResendClient();
-  if (!resend) {
+  const transporter = getGmailTransporter();
+  if (!transporter) {
     return res.status(500).json({
       success: false,
-      error: 'Resend API key is not configured on the server. Set RESEND_API_KEY or VITE_RESEND_API_KEY.'
+      error: 'Gmail SMTP is not configured on the server. GMAIL_APP_PASSWORD environment variable is missing.'
     });
   }
 
@@ -4830,12 +4837,13 @@ async function handlePasswordResetRequest(req: express.Request, res: express.Res
     // 1. Create stateless signed reset token (contains email + 1-hour expiry signed with server secret)
     const token = createSignedResetToken(normEmail, 3600000);
 
-    // 2. Send reset link via Resend only
+    // 2. Send reset link via Gmail SMTP
     const origin = req.get('origin') || `${req.protocol}://${req.get('host')}` || 'http://localhost:3000';
     const resetLink = `${origin}?reset_token=${token}`;
+    const gmailUser = (process.env.GMAIL_USER || 'visualstudystudio@gmail.com').trim();
 
-    const { data, error } = await resend.emails.send({
-      from: RESEND_FROM_EMAIL,
+    await transporter.sendMail({
+      from: gmailUser,
       to: normEmail,
       subject: 'Reset your StudentOS account password',
       html: `
@@ -4851,14 +4859,6 @@ async function handlePasswordResetRequest(req: express.Request, res: express.Res
         </div>
       `
     });
-
-    if (error) {
-      console.error('[Resend Error]', error);
-      return res.status((error as any).statusCode || 500).json({
-        success: false,
-        error: error.message || 'Resend email dispatch failed.'
-      });
-    }
 
     return res.json({
       success: true,
@@ -5143,17 +5143,18 @@ app.post('/api/parent/request-child-link-otp', async (req, res) => {
     const verifKey = `${parentUid}_${normChildEmail}`;
     childLinkVerifications.set(verifKey, record);
 
-    // 2. Dispatch 6-digit OTP email via Resend only (matching forgot-password pattern)
-    const resend = getResendClient();
-    if (!resend) {
+    // 2. Dispatch 6-digit OTP email via Gmail SMTP
+    const transporter = getGmailTransporter();
+    if (!transporter) {
       return res.status(500).json({
         success: false,
-        error: 'Resend API key is not configured on the server. Set RESEND_API_KEY or VITE_RESEND_API_KEY.'
+        error: 'Gmail SMTP is not configured on the server. GMAIL_APP_PASSWORD environment variable is missing.'
       });
     }
 
-    const { data: resendData, error: resendError } = await resend.emails.send({
-      from: RESEND_FROM_EMAIL,
+    const gmailUser = (process.env.GMAIL_USER || 'visualstudystudio@gmail.com').trim();
+    const mailInfo = await transporter.sendMail({
+      from: gmailUser,
       to: normChildEmail,
       subject: 'StudentOS / Veylentra — Child Account Verification Code',
       html: `
@@ -5187,20 +5188,12 @@ app.post('/api/parent/request-child-link-otp', async (req, res) => {
       `
     });
 
-    if (resendError) {
-      console.error('[Resend Error]', resendError);
-      return res.status((resendError as any).statusCode || 500).json({
-        success: false,
-        error: resendError.message || 'Resend email dispatch failed.'
-      });
-    }
-
-    console.log(`[Parent Link] Resend dispatched OTP to student email: ${normChildEmail} (Resend ID: ${resendData?.id})`);
+    console.log(`[Parent Link] Gmail SMTP dispatched OTP to student email: ${normChildEmail} (Message ID: ${mailInfo?.messageId})`);
 
     return res.json({
       success: true,
       status: 'ok',
-      message: `A 6-digit verification code was sent to ${normChildEmail} via Resend.`,
+      message: `A 6-digit verification code was sent to ${normChildEmail} via Gmail SMTP.`,
       expiresInMinutes: 10
     });
   } catch (err: any) {

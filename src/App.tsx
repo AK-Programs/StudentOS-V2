@@ -8568,7 +8568,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                               </button>
                             )}
 
-                            {(effectiveRole === 'parent' || isSuperAdmin || effectiveRole === 'admin') && matchesFilter('Parental Portal', 'parent guardian monitoring reports') && (
+                            {((effectiveRole as string) === 'parent' || isSuperAdmin || effectiveRole === 'admin') && matchesFilter('Parental Portal', 'parent guardian monitoring reports') && (
                               <button
                                 type="button"
                                 onClick={() => handleTabSelect('parent_portal')}
