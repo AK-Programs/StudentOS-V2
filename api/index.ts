@@ -2381,7 +2381,19 @@ function buildMagicPenStrokes(userPrompt: string) {
             ]
         };
     }
-    return { title: 'Unknown', strokes: [] };
+    if (p.includes('plant cell') || p.includes('cell')) {
+        return {
+            title: 'Plant Cell',
+            strokes: [
+                { type: 'rect', x: 300, y: 150, width: 300, height: 400, color: '#166534', size: 3, fill: '#f0fdf4' },
+                { type: 'rect', x: 310, y: 160, width: 280, height: 380, color: '#22c55e', size: 2, fill: 'transparent' },
+                { type: 'ellipse', x: 450, y: 350, width: 100, height: 80, color: '#1e3a8a', size: 2, fill: '#bfdbfe' },
+                { type: 'rect', x: 350, y: 200, width: 80, height: 100, color: '#166534', size: 2, fill: '#86efac' },
+                { type: 'label', x: 450, y: 570, text: 'Plant Cell', color: '#166534', size: 16 }
+            ]
+        };
+    }
+    return null;
 }
 
   // 2.5 Magic Draw / Magic Pen endpoint
@@ -2393,6 +2405,9 @@ function buildMagicPenStrokes(userPrompt: string) {
     }
 
     const result = buildMagicPenStrokes(userPrompt);
+    if (!result) {
+        return sendJson(res, 200, { success: false, error: `Drawing not found for: ${userPrompt}`, requestId });
+    }
     return sendJson(res, 200, {
         success: true,
         title: result.title,
