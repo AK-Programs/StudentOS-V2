@@ -2340,17 +2340,7 @@ function getProceduralMagicPenStrokes(userPrompt: string) {
     };
   }
 
-  // 6. GENERAL SCHEMATIC
-  return {
-    title: userPrompt,
-    strokes: [
-      { type: 'curve', points: [150,220, 250,160, 450,140, 650,160, 750,220, 780,340, 720,440, 450,470, 180,440, 120,340, 150,220], color: '#38bdf8', size: 3 },
-      { type: 'ellipse', x: 450, y: 300, width: 340, height: 210, color: '#818cf8', size: 2, fill: 'transparent' },
-      { type: 'circle', x: 450, y: 300, radius: 55, color: '#f43f5e', size: 2, fill: 'transparent' },
-      { type: 'arrow', points: [700, 140, 580, 210], color: '#94a3b8', size: 1.5 },
-      { type: 'label', x: 710, y: 135, text: userPrompt.slice(0, 30), color: '#38bdf8', size: 12 }
-    ]
-  };
+  // 6. GENERAL SCHEMATIC REMOVED
 }
 
   // 2.5 Magic Draw / Magic Pen endpoint
@@ -2387,25 +2377,41 @@ Schema:
     const fullPrompt = `Create complete drawing commands for requested object: "${userPrompt}"`;
 
     let rawText = '';
-    let lastError: any = null;
-    let successfulMaxTokens = 8192;
 
     try {
-      const resResult = await callMinistralCompletion(
-        fullPrompt,
-        systemInstruction,
-        [],
-        {
-          jsonMode: true,
-          maxTokens: 3000,
-          requestId,
-          timeoutMs: 5500
-        }
-      );
-      rawText = resResult.text;
+        const resResult = await callMinistralCompletion(
+            fullPrompt,
+            systemInstruction,
+            [],
+            {
+                jsonMode: true,
+                maxTokens: 3000,
+                requestId,
+                timeoutMs: 15000
+            }
+        );
+        rawText = resResult.text;
     } catch (mErr) {
-      console.warn('[Magic Draw Vercel API] Timeout or error, falling back to procedural:', mErr);
+        console.warn('[Magic Draw Vercel API] First attempt failed, retrying:', mErr);
+        try {
+            const resResult = await callMinistralCompletion(
+                fullPrompt,
+                systemInstruction,
+                [],
+                {
+                    jsonMode: true,
+                    maxTokens: 3000,
+                    requestId,
+                    timeoutMs: 15000
+                }
+            );
+            rawText = resResult.text;
+        } catch (mErrRetry) {
+            console.error('[Magic Draw Vercel API] Retry failed:', mErrRetry);
+            return sendJson(res, 200, { success: false, error: 'Drawing failed', requestId });
+        }
     }
+
     let parsed: any = null;
     if (rawText) {
       try {
@@ -2421,7 +2427,7 @@ Schema:
       }
     }
 
-    if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length >= 6) {
+    if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length >= 1) {
       return sendJson(res, 200, {
         success: true,
         title: parsed.title || userPrompt,
@@ -2430,17 +2436,9 @@ Schema:
         modelUsed: 'ministral-8b-2410',
         requestId
       });
+    } else {
+        return sendJson(res, 200, { success: false, error: 'Drawing failed', requestId });
     }
-
-    const fallback = getProceduralMagicPenStrokes(userPrompt);
-    return sendJson(res, 200, {
-      success: true,
-      title: fallback.title,
-      strokes: fallback.strokes,
-      providerUsed: 'procedural_vector',
-      modelUsed: 'classroom-vector-engine',
-      requestId
-    });
   }
 
   // 2.6 Formula Pen Handwriting & Equation Recognition endpoint
