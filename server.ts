@@ -5143,56 +5143,64 @@ app.post('/api/parent/request-child-link-otp', async (req, res) => {
     const verifKey = `${parentUid}_${normChildEmail}`;
     childLinkVerifications.set(verifKey, record);
 
-    // Send email via Resend if configured
+    // 2. Dispatch 6-digit OTP email via Resend only (matching forgot-password pattern)
     const resend = getResendClient();
-    if (resend) {
-      try {
-        await resend.emails.send({
-          from: RESEND_FROM_EMAIL,
-          to: normChildEmail,
-          subject: 'Veylentra Parental Portal — Child Account Verification Code',
-          html: `
-            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 580px; margin: 0 auto; padding: 28px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
-              <div style="border-bottom: 2px solid #4f46e5; padding-bottom: 12px; margin-bottom: 20px;">
-                <h2 style="color: #4f46e5; margin: 0; font-size: 20px; font-weight: 800;">Veylentra Academic OS</h2>
-                <p style="color: #64748b; margin: 4px 0 0; font-size: 12px;">Parent & Guardian Security Verification</p>
-              </div>
-              <p style="color: #1e293b; font-size: 14px; line-height: 1.6;">
-                Hello <strong>${student.name || 'Student'}</strong>,
-              </p>
-              <p style="color: #334155; font-size: 14px; line-height: 1.6;">
-                A parent or guardian account (<strong>${normParentEmail}</strong>) has requested to link your Veylentra school profile to their Parental Portal.
-              </p>
-              <p style="color: #334155; font-size: 14px; line-height: 1.6;">
-                To confirm that this is your parent or guardian, provide them with this 6-digit verification code:
-              </p>
-              <div style="text-align: center; margin: 24px 0;">
-                <span style="display: inline-block; background-color: #f1f5f9; border: 2px dashed #4f46e5; border-radius: 12px; padding: 16px 36px; font-size: 32px; font-weight: 900; letter-spacing: 6px; color: #4f46e5; font-family: monospace;">
-                  ${rawOtp}
-                </span>
-              </div>
-              <p style="color: #64748b; font-size: 12px; line-height: 1.5;">
-                ⏰ This single-use code will expire in <strong>10 minutes</strong>. If you do not recognize this parent email address, do not share this code.
-              </p>
-              <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
-              <p style="color: #94a3b8; font-size: 11px; text-align: center; margin: 0;">
-                Veylentra Institutional Security • Student Privacy Protected
-              </p>
-            </div>
-          `
-        });
-        console.log(`[Parent Link] Resend dispatched OTP to student email: ${normChildEmail}`);
-      } catch (emailErr) {
-        console.warn(`[Parent Link] Resend email dispatch warning:`, emailErr);
-      }
-    } else {
-      // In development or when no Resend API key is present, log OTP securely to server console
-      console.log(`[Parent Link Dev OTP] Verification code for ${normChildEmail} is: ${rawOtp}`);
+    if (!resend) {
+      return res.status(500).json({
+        success: false,
+        error: 'Resend API key is not configured on the server. Set RESEND_API_KEY or VITE_RESEND_API_KEY.'
+      });
     }
+
+    const { data: resendData, error: resendError } = await resend.emails.send({
+      from: RESEND_FROM_EMAIL,
+      to: normChildEmail,
+      subject: 'StudentOS / Veylentra — Child Account Verification Code',
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 28px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+          <div style="border-bottom: 2px solid #4f46e5; padding-bottom: 12px; margin-bottom: 20px;">
+            <h2 style="color: #4f46e5; margin: 0; font-size: 20px; font-weight: 800;">StudentOS Academic Portal</h2>
+            <p style="color: #64748b; margin: 4px 0 0; font-size: 12px;">Parent & Guardian Account Link Verification</p>
+          </div>
+          <p style="color: #1e293b; font-size: 14px; line-height: 1.6;">
+            Hello <strong>${student.name || 'Student'}</strong>,
+          </p>
+          <p style="color: #334155; font-size: 14px; line-height: 1.6;">
+            A parent or guardian account (<strong>${normParentEmail}</strong>) has requested to link your student account to their Parental Portal.
+          </p>
+          <p style="color: #334155; font-size: 14px; line-height: 1.6;">
+            To verify this request and authorize parental access to your academic attendance and homework, enter or share this 6-digit verification code with your parent:
+          </p>
+          <div style="text-align: center; margin: 28px 0;">
+            <span style="display: inline-block; background-color: #f1f5f9; border: 2px dashed #4f46e5; border-radius: 10px; padding: 16px 36px; font-size: 32px; font-weight: 800; letter-spacing: 6px; color: #4f46e5; font-family: monospace;">
+              ${rawOtp}
+            </span>
+          </div>
+          <p style="color: #64748b; font-size: 13px; line-height: 1.5;">
+            This single-use code will expire in <strong>10 minutes</strong>. If you did not recognize this parent email address, do not share this code.
+          </p>
+          <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+          <p style="color: #94a3b8; font-size: 11px; text-align: center; margin-bottom: 0;">
+            StudentOS Institutional Security · Authorized Campus Access Only
+          </p>
+        </div>
+      `
+    });
+
+    if (resendError) {
+      console.error('[Resend Error]', resendError);
+      return res.status((resendError as any).statusCode || 500).json({
+        success: false,
+        error: resendError.message || 'Resend email dispatch failed.'
+      });
+    }
+
+    console.log(`[Parent Link] Resend dispatched OTP to student email: ${normChildEmail} (Resend ID: ${resendData?.id})`);
 
     return res.json({
       success: true,
-      message: `A 6-digit verification code was sent to ${normChildEmail}.`,
+      status: 'ok',
+      message: `A 6-digit verification code was sent to ${normChildEmail} via Resend.`,
       expiresInMinutes: 10
     });
   } catch (err: any) {
