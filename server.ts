@@ -5044,6 +5044,396 @@ app.post('/api/auth/reset-password', async (req, res) => {
   return handlePasswordResetConfirm(req, res);
 });
 
+// ========================================================================
+// PARENT PORTAL: SECURE CHILD ACCOUNT LINKING WITH EMAIL OTP
+// ========================================================================
+interface ChildLinkVerificationRecord {
+  parentUid: string;
+  parentEmail: string;
+  childEmail: string;
+  childUid: string;
+  childName: string;
+  otpHash: string;
+  attempts: number;
+  expiresAt: number;
+  requestedAt: number;
+}
+
+const childLinkVerifications = new Map<string, ChildLinkVerificationRecord>();
+const parentOtpRateLimits = new Map<string, { count: number; windowStart: number }>();
+
+// 1. Request OTP route: sends 6-digit OTP to the CHILD'S registered email
+app.post('/api/parent/request-child-link-otp', async (req, res) => {
+  const { parentUid, parentEmail, childEmail } = req.body || {};
+
+  if (!parentUid || !parentEmail || !childEmail || typeof childEmail !== 'string' || !childEmail.includes('@')) {
+    return res.status(400).json({
+      success: false,
+      error: 'Valid parent account and child school email are required.'
+    });
+  }
+
+  const normParentEmail = String(parentEmail).trim().toLowerCase();
+  const normChildEmail = String(childEmail).trim().toLowerCase();
+
+  if (normParentEmail === normChildEmail) {
+    return res.status(400).json({
+      success: false,
+      error: 'Parent account cannot link its own email address.'
+    });
+  }
+
+  // Rate Limiting: Max 4 requests per 10 minutes per parent
+  const now = Date.now();
+  const rateKey = `${parentUid}_${normChildEmail}`;
+  const rateData = parentOtpRateLimits.get(rateKey);
+  if (rateData && now - rateData.windowStart < 600000) {
+    if (rateData.count >= 4) {
+      return res.status(429).json({
+        success: false,
+        error: 'Too many verification attempts. Please wait 10 minutes before requesting a new code.'
+      });
+    }
+    rateData.count++;
+  } else {
+    parentOtpRateLimits.set(rateKey, { count: 1, windowStart: now });
+  }
+
+  try {
+    const { url: supabaseUrl, key: supabaseKey } = getSupabaseServerConfig();
+    if (!supabaseKey) {
+      return res.status(500).json({ success: false, error: 'Database service is temporarily unavailable.' });
+    }
+
+    // Query user_profiles to verify that child exists and is a student
+    const profileResp = await fetch(`${supabaseUrl}/rest/v1/user_profiles?email=eq.${encodeURIComponent(normChildEmail)}&select=*`, {
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+    });
+
+    if (!profileResp.ok) {
+      return res.status(500).json({ success: false, error: 'Unable to query student directory.' });
+    }
+
+    const profiles = await profileResp.json().catch(() => []);
+    const student = Array.isArray(profiles) && profiles.length > 0 ? profiles[0] : null;
+
+    if (!student || (student.role !== 'student' && student.requested_role !== 'student')) {
+      return res.status(404).json({
+        success: false,
+        error: 'No active student account found for that school email address.'
+      });
+    }
+
+    // Generate cryptographically secure 6-digit OTP
+    const rawOtp = String(crypto.randomInt(100000, 999999));
+    const otpHash = crypto.createHash('sha256').update(rawOtp + normChildEmail).digest('hex');
+
+    const record: ChildLinkVerificationRecord = {
+      parentUid: String(parentUid).trim(),
+      parentEmail: normParentEmail,
+      childEmail: normChildEmail,
+      childUid: student.uid || student.id,
+      childName: student.name || 'Student',
+      otpHash,
+      attempts: 0,
+      expiresAt: now + 600000, // 10 minutes expiry
+      requestedAt: now
+    };
+
+    const verifKey = `${parentUid}_${normChildEmail}`;
+    childLinkVerifications.set(verifKey, record);
+
+    // Send email via Resend if configured
+    const resend = getResendClient();
+    if (resend) {
+      try {
+        await resend.emails.send({
+          from: RESEND_FROM_EMAIL,
+          to: normChildEmail,
+          subject: 'Veylentra Parental Portal — Child Account Verification Code',
+          html: `
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 580px; margin: 0 auto; padding: 28px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
+              <div style="border-bottom: 2px solid #4f46e5; padding-bottom: 12px; margin-bottom: 20px;">
+                <h2 style="color: #4f46e5; margin: 0; font-size: 20px; font-weight: 800;">Veylentra Academic OS</h2>
+                <p style="color: #64748b; margin: 4px 0 0; font-size: 12px;">Parent & Guardian Security Verification</p>
+              </div>
+              <p style="color: #1e293b; font-size: 14px; line-height: 1.6;">
+                Hello <strong>${student.name || 'Student'}</strong>,
+              </p>
+              <p style="color: #334155; font-size: 14px; line-height: 1.6;">
+                A parent or guardian account (<strong>${normParentEmail}</strong>) has requested to link your Veylentra school profile to their Parental Portal.
+              </p>
+              <p style="color: #334155; font-size: 14px; line-height: 1.6;">
+                To confirm that this is your parent or guardian, provide them with this 6-digit verification code:
+              </p>
+              <div style="text-align: center; margin: 24px 0;">
+                <span style="display: inline-block; background-color: #f1f5f9; border: 2px dashed #4f46e5; border-radius: 12px; padding: 16px 36px; font-size: 32px; font-weight: 900; letter-spacing: 6px; color: #4f46e5; font-family: monospace;">
+                  ${rawOtp}
+                </span>
+              </div>
+              <p style="color: #64748b; font-size: 12px; line-height: 1.5;">
+                ⏰ This single-use code will expire in <strong>10 minutes</strong>. If you do not recognize this parent email address, do not share this code.
+              </p>
+              <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+              <p style="color: #94a3b8; font-size: 11px; text-align: center; margin: 0;">
+                Veylentra Institutional Security • Student Privacy Protected
+              </p>
+            </div>
+          `
+        });
+        console.log(`[Parent Link] Resend dispatched OTP to student email: ${normChildEmail}`);
+      } catch (emailErr) {
+        console.warn(`[Parent Link] Resend email dispatch warning:`, emailErr);
+      }
+    } else {
+      // In development or when no Resend API key is present, log OTP securely to server console
+      console.log(`[Parent Link Dev OTP] Verification code for ${normChildEmail} is: ${rawOtp}`);
+    }
+
+    return res.json({
+      success: true,
+      message: `A 6-digit verification code was sent to ${normChildEmail}.`,
+      expiresInMinutes: 10
+    });
+  } catch (err: any) {
+    console.error('[Parent OTP Request Error]:', err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Failed to dispatch verification code.'
+    });
+  }
+});
+
+// 2. Verify OTP route: checks code hash, verifies relationship and creates link
+app.post('/api/parent/verify-child-link-otp', async (req, res) => {
+  const { parentUid, parentEmail, childEmail, otp } = req.body || {};
+
+  if (!parentUid || !childEmail || !otp) {
+    return res.status(400).json({
+      success: false,
+      error: 'Parent UID, child email, and 6-digit verification code are required.'
+    });
+  }
+
+  const normParentEmail = String(parentEmail || '').trim().toLowerCase();
+  const normChildEmail = String(childEmail).trim().toLowerCase();
+  const cleanOtp = String(otp).trim();
+  const verifKey = `${parentUid}_${normChildEmail}`;
+
+  const record = childLinkVerifications.get(verifKey);
+  if (!record) {
+    return res.status(400).json({
+      success: false,
+      error: 'No active verification code found for this child email. Please request a new code.'
+    });
+  }
+
+  if (Date.now() > record.expiresAt) {
+    childLinkVerifications.delete(verifKey);
+    return res.status(400).json({
+      success: false,
+      error: 'Verification code has expired. Please request a new code.'
+    });
+  }
+
+  record.attempts++;
+  if (record.attempts > 5) {
+    childLinkVerifications.delete(verifKey);
+    return res.status(429).json({
+      success: false,
+      error: 'Too many incorrect attempts. For security, please request a new verification code.'
+    });
+  }
+
+  // Verify SHA-256 hash
+  const computedHash = crypto.createHash('sha256').update(cleanOtp + normChildEmail).digest('hex');
+  if (computedHash !== record.otpHash) {
+    return res.status(400).json({
+      success: false,
+      error: `Invalid verification code. (${5 - record.attempts} attempts remaining)`
+    });
+  }
+
+  // Code verified! Delete OTP record immediately (single-use)
+  childLinkVerifications.delete(verifKey);
+
+  try {
+    const { url: supabaseUrl, key: supabaseKey } = getSupabaseServerConfig();
+    if (!supabaseKey) {
+      return res.status(500).json({ success: false, error: 'Database service is temporarily unavailable.' });
+    }
+
+    // Fetch complete student profile
+    const studentResp = await fetch(`${supabaseUrl}/rest/v1/user_profiles?email=eq.${encodeURIComponent(normChildEmail)}&select=*`, {
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+    });
+
+    const students = await studentResp.json().catch(() => []);
+    const student = Array.isArray(students) && students.length > 0 ? students[0] : null;
+
+    if (!student) {
+      return res.status(404).json({ success: false, error: 'Student record could not be found.' });
+    }
+
+    const studentUid = student.uid || student.id;
+
+    // 1. Try to persist link in parent_child_links table in Supabase
+    try {
+      await fetch(`${supabaseUrl}/rest/v1/parent_child_links`, {
+        method: 'POST',
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+          Prefer: 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({
+          parent_uid: parentUid,
+          parent_email: normParentEmail,
+          student_uid: studentUid,
+          student_email: normChildEmail,
+          verified_at: new Date().toISOString()
+        })
+      });
+    } catch (_) {}
+
+    // 2. Also persist in parent's user_profile raw_data.linked_children
+    try {
+      const parentResp = await fetch(`${supabaseUrl}/rest/v1/user_profiles?uid=eq.${encodeURIComponent(parentUid)}&select=*`, {
+        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+      });
+      const pRows = await parentResp.json().catch(() => []);
+      const parentProf = Array.isArray(pRows) && pRows.length > 0 ? pRows[0] : null;
+
+      if (parentProf) {
+        const rawData = parentProf.raw_data || {};
+        const existingLinks = Array.isArray(rawData.linked_children) ? rawData.linked_children : [];
+        if (!existingLinks.some((l: any) => l.student_uid === studentUid || l.student_email === normChildEmail)) {
+          const updatedLinks = [
+            ...existingLinks,
+            {
+              student_uid: studentUid,
+              student_email: normChildEmail,
+              student_name: student.name,
+              verified_at: new Date().toISOString()
+            }
+          ];
+          await fetch(`${supabaseUrl}/rest/v1/user_profiles?uid=eq.${encodeURIComponent(parentUid)}`, {
+            method: 'PATCH',
+            headers: {
+              apikey: supabaseKey,
+              Authorization: `Bearer ${supabaseKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              raw_data: { ...rawData, linked_children: updatedLinks }
+            })
+          });
+        }
+      }
+    } catch (_) {}
+
+    return res.json({
+      success: true,
+      message: `Verified and linked ${student.name} to your Parental Portal.`,
+      student: {
+        uid: studentUid,
+        name: student.name,
+        email: student.email,
+        role: 'student',
+        grade: student.grade || 'Grade 10',
+        section: student.section || 'Solara',
+        house: student.house || 'Emerald',
+        studyHours: student.study_hours || 0,
+        quizzesTaken: student.quizzes_taken || 0,
+        streakDays: student.streak_days || 0,
+        accountStatus: 'approved'
+      }
+    });
+  } catch (err: any) {
+    console.error('[Verify OTP Link Error]:', err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Verification succeeded but failed to persist student link.'
+    });
+  }
+});
+
+// 3. Query linked children for a parent
+app.get('/api/parent/linked-children', async (req, res) => {
+  const parentUid = String(req.query.parentUid || '').trim();
+  if (!parentUid) {
+    return res.status(400).json({ success: false, error: 'parentUid is required.' });
+  }
+
+  try {
+    const { url: supabaseUrl, key: supabaseKey } = getSupabaseServerConfig();
+    if (!supabaseKey) {
+      return res.status(500).json({ success: false, error: 'Database service is unavailable.' });
+    }
+
+    let studentUids: string[] = [];
+
+    // Query parent_child_links table
+    try {
+      const linkResp = await fetch(`${supabaseUrl}/rest/v1/parent_child_links?parent_uid=eq.${encodeURIComponent(parentUid)}&select=student_uid,student_email`, {
+        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+      });
+      if (linkResp.ok) {
+        const linkRows = await linkResp.json().catch(() => []);
+        if (Array.isArray(linkRows)) {
+          studentUids = linkRows.map((r: any) => r.student_uid).filter(Boolean);
+        }
+      }
+    } catch (_) {}
+
+    // Fallback: Check parent profile raw_data.linked_children
+    if (studentUids.length === 0) {
+      try {
+        const parentResp = await fetch(`${supabaseUrl}/rest/v1/user_profiles?uid=eq.${encodeURIComponent(parentUid)}&select=raw_data`, {
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+        });
+        if (parentResp.ok) {
+          const pRows = await parentResp.json().catch(() => []);
+          const raw = pRows?.[0]?.raw_data;
+          if (raw && Array.isArray(raw.linked_children)) {
+            studentUids = raw.linked_children.map((c: any) => c.student_uid).filter(Boolean);
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (studentUids.length === 0) {
+      return res.json({ success: true, children: [] });
+    }
+
+    // Fetch full profiles for each student UID
+    const profileResp = await fetch(`${supabaseUrl}/rest/v1/user_profiles?uid=in.(${studentUids.map(u => encodeURIComponent(u)).join(',')})&select=*`, {
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+    });
+
+    const students = await profileResp.json().catch(() => []);
+    const mapped = (Array.isArray(students) ? students : []).map((s: any) => ({
+      uid: s.uid || s.id,
+      name: s.name,
+      email: s.email,
+      role: 'student',
+      grade: s.grade || 'Grade 10',
+      section: s.section || 'Solara',
+      house: s.house || 'Emerald',
+      studyHours: s.study_hours || 0,
+      quizzesTaken: s.quizzes_taken || 0,
+      streakDays: s.streak_days || 0,
+      accountStatus: 'approved'
+    }));
+
+    return res.json({ success: true, children: mapped });
+  } catch (err: any) {
+    console.error('[Get Linked Children Error]:', err);
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to fetch linked children.' });
+  }
+});
+
 
 async function startServer() {
   if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {

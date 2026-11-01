@@ -321,6 +321,10 @@ export function getUserProfileTitle(profile: UserProfile | null, effectiveRole?:
     return 'Academic Coordinator';
   }
 
+  if (role === 'parent') {
+    return 'Parent / Guardian';
+  }
+
   if (role === 'admin') {
     return 'School Administrator';
   }
@@ -565,6 +569,16 @@ export default function App() {
     } catch (_) {}
   }, [activeTab, currentUser]);
 
+  // Ensure Parent role always defaults to parental portal
+  useEffect(() => {
+    if (effectiveRole === 'parent') {
+      const allowedParentTabs = ['parent_portal', 'profile', 'whats_new', 'about'];
+      if (!allowedParentTabs.includes(activeTab)) {
+        setActiveTab('parent_portal');
+      }
+    }
+  }, [effectiveRole, activeTab]);
+
   useEffect(() => {
     const handlePopState = () => {
       const path = window.location.pathname.toLowerCase();
@@ -696,7 +710,7 @@ export default function App() {
     regStepRef.current = regStep;
   }, [regStep]);
 
-  const [regRole, setRegRole] = useState<'student' | 'teacher' | 'coordinator' | 'admin'>('student');
+  const [regRole, setRegRole] = useState<'student' | 'teacher' | 'coordinator' | 'admin' | 'parent'>('student');
   const [regName, setRegName] = useState('');
   const [regNameError, setRegNameError] = useState('');
   const [regPhone, setRegPhone] = useState('');
@@ -3870,8 +3884,9 @@ ${resultText}
 
     }
 
-    const statusMap = {
+    const statusMap: Record<string, string> = {
       student: 'approved',
+      parent: 'approved',
       teacher: 'pending_teacher',
       coordinator: 'pending_coordinator',
       admin: 'pending_admin'
@@ -3882,7 +3897,7 @@ ${resultText}
       'naitik.kashyap5205@gmail.com'
     ].includes(finalEmail.toLowerCase());
 
-    const status = isWhitelisted ? 'approved' : (statusMap[regRole] || 'approved');
+    const status = isWhitelisted ? 'approved' : regRole === 'parent' ? 'approved' : (statusMap[regRole] || 'approved');
     // Using the auth user id if available, otherwise it will just use a fallback which shouldn't happen with real Auth
     const uid = actualUid || `manual-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
@@ -3891,7 +3906,7 @@ ${resultText}
       name: regName.trim(),
       email: finalEmail,
       photoURL: regPhoto.trim() || linkedGooglePhoto || '',
-      role: isWhitelisted ? 'super_admin' : 'student', // Everyone starts as student except whitelisted
+      role: isWhitelisted ? 'super_admin' : regRole === 'parent' ? 'parent' : 'student',
       requestedRole: isWhitelisted ? 'admin' : regRole,
       accountStatus: status,
       phone: regPhone.trim(),
@@ -3909,6 +3924,10 @@ ${resultText}
       newProfile.grade = regGrade;
       newProfile.section = regSection;
       newProfile.house = regHouse;
+    } else if (regRole === 'parent') {
+      newProfile.role = 'parent';
+      newProfile.requestedRole = 'parent';
+      newProfile.accountStatus = 'approved';
     } else if (regRole === 'teacher') {
       newProfile.specialtySubject = regSubjects.split(',')[0]?.trim() || 'General';
       newProfile.department = regDept.trim();
@@ -3953,11 +3972,13 @@ ${resultText}
       
       if (regRole === 'student') {
         showNotification(`Welcome to Veylentra, ${newProfile.name}!`);
+      } else if (regRole === 'parent') {
+        showNotification(`Welcome to Veylentra Family Portal, ${newProfile.name}!`);
+        setActiveTab('parent_portal');
       } else {
         showNotification(`Request submitted for ${regRole.toUpperCase()} approval. Exploring as Student in the meantime!`);
       }
 
-      
       setRegStep('login');
     } catch (error: any) {
       console.error('Failed to register user:', error);
@@ -7502,6 +7523,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                   <div className="grid grid-cols-2 gap-2.5">
                     {[
                       { type: 'student', icon: '🎓', label: 'Student', desc: 'Classes, AI Tutor & Homework' },
+                      { type: 'parent', icon: '👨‍👩‍👧', label: 'Parent / Guardian', desc: 'Child Monitoring & Reports' },
                       { type: 'teacher', icon: '👩‍🏫', label: 'Teacher', desc: 'Classes, Grading & Smartboard' },
                       { type: 'coordinator', icon: '🧭', label: 'Coordinator', desc: 'Schedules & Department Wing' },
                       { type: 'admin', icon: '⚙️', label: 'Admin', desc: 'School Management & Approvals' }
@@ -7683,6 +7705,16 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                         placeholder="Create a strong password"
                         className="w-full text-xs px-3 py-2 rounded-xl bg-slate-900 border border-white/10 focus:outline-none focus:border-indigo-500 text-white"
                       />
+                    </div>
+                  )}
+
+                  {regRole === 'parent' && (
+                    <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-200 text-xs flex items-start gap-2.5">
+                      <Shield className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+                      <div className="leading-relaxed">
+                        <span className="font-bold text-white block mb-0.5">Parent / Guardian Workspace</span>
+                        As a verified parent, you will link your children's accounts inside the Parental Portal using secure 6-digit email OTP verification. No student grade or teacher department details are required.
+                      </div>
                     </div>
                   )}
 
@@ -8018,6 +8050,58 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                   if (!q) return true;
                   return label.toLowerCase().includes(q) || keywords.toLowerCase().includes(q);
                 };
+
+                // DEDICATED STREAMLINED NAVIGATION FOR PARENTS
+                if (effectiveRole === 'parent') {
+                  return (
+                    <div className="space-y-1.5 px-1">
+                      {sidebarOpen && (
+                        <div className="px-2.5 py-1 text-[11px] font-bold text-indigo-400 uppercase tracking-wider">
+                          Family Workspace
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleTabSelect('parent_portal')}
+                        className={getSidebarBtnClass('parent_portal')}
+                        title="Parental Portal"
+                      >
+                        <Shield className="w-4 h-4 shrink-0 text-violet-400" />
+                        {sidebarOpen && <span className="truncate">Family Portal</span>}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleTabSelect('whats_new')}
+                        className={getSidebarBtnClass('whats_new')}
+                        title="School Bulletins & Announcements"
+                      >
+                        <Zap className="w-4 h-4 shrink-0 text-amber-400" />
+                        {sidebarOpen && <span className="truncate">School Bulletin</span>}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleTabSelect('profile')}
+                        className={getSidebarBtnClass('profile')}
+                        title="Parent Profile & Preferences"
+                      >
+                        <User className="w-4 h-4 shrink-0 text-indigo-400" />
+                        {sidebarOpen && <span className="truncate">Parent Profile</span>}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleTabSelect('about')}
+                        className={getSidebarBtnClass('about')}
+                        title="About Veylentra"
+                      >
+                        <Info className="w-4 h-4 shrink-0 text-slate-400" />
+                        {sidebarOpen && <span className="truncate">About Veylentra</span>}
+                      </button>
+                    </div>
+                  );
+                }
 
                 return (
                   <>
@@ -8484,7 +8568,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                               </button>
                             )}
 
-                            {matchesFilter('Parental Portal', 'parent guardian monitoring reports') && (
+                            {(effectiveRole === 'parent' || isSuperAdmin || effectiveRole === 'admin') && matchesFilter('Parental Portal', 'parent guardian monitoring reports') && (
                               <button
                                 type="button"
                                 onClick={() => handleTabSelect('parent_portal')}

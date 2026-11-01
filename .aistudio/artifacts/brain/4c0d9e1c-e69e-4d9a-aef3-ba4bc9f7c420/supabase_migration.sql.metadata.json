@@ -1,6 +1,6 @@
 {
-  "summary":  "SQL migration script for adding sort_order columns and a dedicated personal_tasks table to support drag-and-drop reordering and improved Material Hub folder operations.",
-  "updatedAt":  "2026-10-31T06:17:11.511500086Z",
+  "summary":  "Database migration script adding parent_child_links table with secure RLS policies and performance indexes, plus notes schema columns for permissions, icons, and collab codes.",
+  "updatedAt":  "2026-11-01T09:20:14.626084260Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
