@@ -2387,29 +2387,13 @@ Schema:
                 jsonMode: true,
                 maxTokens: 3000,
                 requestId,
-                timeoutMs: 15000
+                timeoutMs: 12000
             }
         );
         rawText = resResult.text;
     } catch (mErr) {
-        console.warn('[Magic Draw Vercel API] First attempt failed, retrying:', mErr);
-        try {
-            const resResult = await callMinistralCompletion(
-                fullPrompt,
-                systemInstruction,
-                [],
-                {
-                    jsonMode: true,
-                    maxTokens: 3000,
-                    requestId,
-                    timeoutMs: 15000
-                }
-            );
-            rawText = resResult.text;
-        } catch (mErrRetry) {
-            console.error('[Magic Draw Vercel API] Retry failed:', mErrRetry);
-            return sendJson(res, 200, { success: false, error: 'Drawing failed', requestId });
-        }
+        console.error('[Magic Draw Vercel API] Model call failed:', mErr);
+        return sendJson(res, 200, { success: false, error: 'Drawing failed', requestId });
     }
 
     let parsed: any = null;

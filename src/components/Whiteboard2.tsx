@@ -830,7 +830,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     try {
       let rawStrokes: any[] = [];
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 7500);
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
 
       try {
         const res = await fetch('/api/ai/magic-draw', {
@@ -842,17 +842,25 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
         clearTimeout(timeoutId);
         if (res.ok) {
           const data = await res.json();
-          if (data?.success && Array.isArray(data.strokes) && data.strokes.length >= 4) {
+          if (data?.success && Array.isArray(data.strokes) && data.strokes.length >= 1) {
             rawStrokes = data.strokes;
+          } else {
+            setMagicPenModal({ ...magicPenModal, error: 'Drawing failed', loading: false });
+            return;
           }
+        } else {
+            setMagicPenModal({ ...magicPenModal, error: 'Drawing failed', loading: false });
+            return;
         }
       } catch (fErr) {
-        console.warn('[Magic Pen Client Fetch] Timed out or failed, using client procedural engine:', fErr);
+        console.warn('[Magic Pen Client Fetch] Timed out or failed:', fErr);
+        setMagicPenModal({ ...magicPenModal, error: 'Drawing failed', loading: false });
+        return;
       }
 
-      if (!rawStrokes || rawStrokes.length < 4) {
-        const fallback = getProceduralMagicPenStrokesClient(promptText);
-        rawStrokes = fallback.strokes;
+      if (!rawStrokes || rawStrokes.length < 1) {
+        setMagicPenModal({ ...magicPenModal, error: 'Drawing failed', loading: false });
+        return;
       }
 
       pushHistory();
