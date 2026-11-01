@@ -3827,7 +3827,7 @@ ${resultText}
       showNotification('Please provide a valid phone number.');
       return;
     }
-    if (!regBirthdate) {
+    if (regRole !== 'parent' && !regBirthdate) {
       showNotification('Please provide a valid birthdate.');
       return;
     }
@@ -7584,10 +7584,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                     if (
                       regNameError ||
                       regPhoneError ||
-                      regBirthdateError ||
+                      (regRole !== 'parent' && regBirthdateError) ||
                       !regName ||
                       !regPhone ||
-                      !regBirthdate ||
+                      (regRole !== 'parent' && !regBirthdate) ||
                       !regEmail
                     ) {
                       return;
@@ -7670,26 +7670,28 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                       {regPhoneError && <p className="text-rose-400 text-[10px] mt-0.5">{regPhoneError}</p>}
                     </div>
 
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-300 mb-0.5">Birthdate *</label>
-                      <input
-                        type="date"
-                        required
-                        value={regBirthdate}
-                        onChange={(e) => {
-                          setRegBirthdate(e.target.value);
-                          if (e.target.value && new Date(e.target.value) > new Date()) {
-                            setRegBirthdateError('Cannot be in the future');
-                          } else {
-                            setRegBirthdateError('');
-                          }
-                        }}
-                        className={`w-full text-xs px-3 py-2 rounded-xl bg-slate-900 border ${
-                          regBirthdateError ? 'border-rose-500' : 'border-white/10 focus:border-indigo-500'
-                        } focus:outline-none text-white`}
-                      />
-                      {regBirthdateError && <p className="text-rose-400 text-[10px] mt-0.5">{regBirthdateError}</p>}
-                    </div>
+                    {regRole !== 'parent' && (
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-300 mb-0.5">Birthdate *</label>
+                        <input
+                          type="date"
+                          required
+                          value={regBirthdate}
+                          onChange={(e) => {
+                            setRegBirthdate(e.target.value);
+                            if (e.target.value && new Date(e.target.value) > new Date()) {
+                              setRegBirthdateError('Cannot be in the future');
+                            } else {
+                              setRegBirthdateError('');
+                            }
+                          }}
+                          className={`w-full text-xs px-3 py-2 rounded-xl bg-slate-900 border ${
+                            regBirthdateError ? 'border-rose-500' : 'border-white/10 focus:border-indigo-500'
+                          } focus:outline-none text-white`}
+                        />
+                        {regBirthdateError && <p className="text-rose-400 text-[10px] mt-0.5">{regBirthdateError}</p>}
+                      </div>
+                    )}
                   </div>
 
                   {!isGoogleLinked && (

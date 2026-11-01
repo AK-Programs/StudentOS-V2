@@ -44,24 +44,10 @@ export const ParentalPortal: React.FC<ParentalPortalProps> = ({ currentUser, sho
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
     } catch {}
-    return [
-      {
-        uid: 'demo-student-uid',
-        name: 'Naitik Kashyap',
-        email: 'naitik.kashyap0015@gmail.com',
-        role: 'student',
-        grade: 'Grade 10',
-        section: 'Solara',
-        house: 'Emerald',
-        studyHours: 18.5,
-        quizzesTaken: 12,
-        streakDays: 9,
-        accountStatus: 'approved'
-      }
-    ];
+    return [];
   });
 
-  const [activeStudent, setActiveStudent] = useState<UserProfile>(() => linkedStudents[0]);
+  const [activeStudent, setActiveStudent] = useState<UserProfile | null>(() => linkedStudents[0] || null);
 
   // Two-Step OTP Verification Link Modal
   const [showLinkModal, setShowLinkModal] = useState<boolean>(false);
@@ -463,21 +449,132 @@ export const ParentalPortal: React.FC<ParentalPortalProps> = ({ currentUser, sho
 
   if (!activeStudent) {
     return (
-      <div className="py-20 text-center space-y-4 max-w-md mx-auto">
-        <Shield className="w-12 h-12 text-indigo-400 mx-auto" />
-        <h2 className="text-xl font-bold text-white">No Linked Student Profile</h2>
-        <p className="text-xs text-slate-400">
-          Add your child's Veylentra school account to monitor attendance, homework, and academic progress.
-        </p>
-        <button
-          onClick={() => {
-            setShowLinkModal(true);
-            setLinkStep('email');
-          }}
-          className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-bold text-xs shadow-lg cursor-pointer"
-        >
-          Add Child with Email OTP
-        </button>
+      <div className="py-8 px-4 max-w-xl mx-auto space-y-6 animate-fadeIn">
+        <div className="bento-card p-6 sm:p-8 rounded-3xl border border-indigo-500/30 text-center space-y-6 shadow-2xl relative overflow-hidden">
+          <div className="w-16 h-16 rounded-2xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 mx-auto shadow-inner">
+            <Shield className="w-8 h-8" />
+          </div>
+
+          <div className="space-y-2">
+            <h2 className="text-2xl font-black font-display text-white tracking-tight">
+              Link Your Child's Account
+            </h2>
+            <p className="text-xs text-slate-300 leading-relaxed max-w-md mx-auto">
+              Welcome to Veylentra Family Portal! To view your child's real-time attendance, homework, academic marks, and online activity, link their student account using email OTP verification.
+            </p>
+          </div>
+
+          {linkError && (
+            <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300 flex items-center gap-2 text-left">
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+              <span className="leading-tight">{linkError}</span>
+            </div>
+          )}
+
+          {linkSuccessMsg && (
+            <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-300 flex items-center gap-2 text-left">
+              <CheckCircle className="w-4 h-4 shrink-0 text-emerald-400" />
+              <span className="leading-tight">{linkSuccessMsg}</span>
+            </div>
+          )}
+
+          {linkStep === 'email' ? (
+            <form onSubmit={handleRequestOtp} className="space-y-4 text-left">
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                  Child's Registered Student Email *
+                </label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="email"
+                    required
+                    value={linkInputEmail}
+                    onChange={(e) => setLinkInputEmail(e.target.value)}
+                    placeholder="student@academy.edu or naitik.kashyap0015@gmail.com"
+                    className="w-full pl-10 pr-4 py-3 bg-slate-950 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  A 6-digit security verification code will be sent to this email via Gmail SMTP.
+                </p>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isRequestingOtp || !linkInputEmail.trim()}
+                className="uiverse-btn-primary w-full py-3 rounded-xl font-bold text-xs text-white flex items-center justify-center gap-2 shadow-lg disabled:opacity-50 cursor-pointer"
+              >
+                {isRequestingOtp ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Sending Code via Gmail SMTP...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Send Verification OTP</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleVerifyOtp} className="space-y-4 text-left">
+              <div className="p-3 bg-slate-950/60 rounded-xl border border-white/5 text-xs text-slate-300">
+                Enter the 6-digit code sent to <strong className="text-white">{linkInputEmail}</strong>:
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                  6-Digit Verification OTP *
+                </label>
+                <div className="relative">
+                  <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    required
+                    maxLength={6}
+                    value={linkOtpInput}
+                    onChange={(e) => setLinkOtpInput(e.target.value.replace(/\D/g, ''))}
+                    placeholder="123456"
+                    className="w-full pl-10 pr-4 py-3 bg-slate-950 border border-white/10 rounded-xl text-lg font-mono tracking-widest text-white text-center focus:outline-none focus:border-indigo-500 transition-colors"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLinkStep('email');
+                    setLinkOtpInput('');
+                    setLinkError(null);
+                  }}
+                  className="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+                >
+                  Change Email
+                </button>
+                <button
+                  type="submit"
+                  disabled={isVerifyingOtp || linkOtpInput.length < 5}
+                  className="uiverse-btn-primary flex-1 py-3 rounded-xl font-bold text-xs text-white flex items-center justify-center gap-2 shadow-lg disabled:opacity-50 cursor-pointer"
+                >
+                  {isVerifyingOtp ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Verifying Code...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      <span>Confirm & Link Child Account</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
       </div>
     );
   }
