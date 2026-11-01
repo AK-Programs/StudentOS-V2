@@ -2343,163 +2343,111 @@ function getProceduralMagicPenStrokes(userPrompt: string) {
   // 6. GENERAL SCHEMATIC REMOVED
 }
 
-function buildMagicPenStrokes(userPrompt: string) {
-    const p = String(userPrompt || '').toLowerCase().trim();
-
-    // 1. EARTH / GLOBE
-    if (p.includes('earth') || p.includes('globe')) {
-        return {
-            title: 'Earth',
-            strokes: [
-                { type: 'circle', x: 450, y: 300, radius: 150, color: '#1e3a8a', size: 2, fill: '#3b82f6' },
-                { type: 'curve', points: [350, 250, 400, 280, 450, 250, 500, 280, 550, 250], color: '#16a34a', size: 3 },
-                { type: 'label', x: 400, y: 500, text: 'Earth', color: '#1e40af', size: 16 }
-            ]
-        };
-    }
-
-    // 2. HELICOPTER
-    if (p.includes('helicopter')) {
-        return {
-            title: 'Helicopter',
-            strokes: [
-                { type: 'ellipse', x: 450, y: 300, width: 200, height: 100, color: '#334155', size: 2, fill: '#94a3b8' },
-                { type: 'ellipse', x: 500, y: 280, width: 60, height: 40, color: '#334155', size: 2, fill: '#e2e8f0' },
-                { type: 'line', points: [550, 300, 650, 250], color: '#334155', size: 4 },
-                { type: 'line', points: [600, 250, 700, 250], color: '#334155', size: 3 },
-                { type: 'line', points: [450, 250, 450, 200], color: '#334155', size: 3 },
-                { type: 'line', points: [400, 350, 420, 400], color: '#334155', size: 3 },
-                { type: 'line', points: [500, 350, 480, 400], color: '#334155', size: 3 },
-                { type: 'label', x: 400, y: 450, text: 'Helicopter', color: '#334155', size: 16 }
-            ]
-        };
-    }
-
-    // 3. DOOR
-    if (p.includes('door')) {
-        return {
-            title: 'Door',
-            strokes: [
-                { type: 'rect', x: 350, y: 200, width: 200, height: 300, color: '#78350f', size: 3, fill: '#d97706' },
-                { type: 'rect', x: 370, y: 220, width: 160, height: 260, color: '#92400e', size: 2, fill: '#b45309' },
-                { type: 'circle', x: 500, y: 350, radius: 10, color: '#92400e', size: 2, fill: '#f59e0b' },
-                { type: 'label', x: 400, y: 550, text: 'Door', color: '#78350f', size: 16 }
-            ]
-        };
-    }
-
-    // 4. PLANT CELL / CELL
-    if (p.includes('plant cell') || p.includes('cell')) {
-        return {
-            title: 'Plant Cell',
-            strokes: [
-                { type: 'rect', x: 300, y: 150, width: 300, height: 400, color: '#166534', size: 3, fill: '#f0fdf4' },
-                { type: 'rect', x: 310, y: 160, width: 280, height: 380, color: '#22c55e', size: 2, fill: 'transparent' },
-                { type: 'ellipse', x: 450, y: 350, width: 100, height: 80, color: '#1e3a8a', size: 2, fill: '#bfdbfe' },
-                { type: 'rect', x: 350, y: 200, width: 80, height: 100, color: '#166534', size: 2, fill: '#86efac' },
-                { type: 'label', x: 450, y: 570, text: 'Plant Cell', color: '#166534', size: 16 }
-            ]
-        };
-    }
-
-    // 5. MOUNTAIN / MOUNTAINS / PEAK / RANGE
-    if (p.includes('mountain') || p.includes('mountains') || p.includes('peak') || p.includes('range') || p.includes('everest') || p.includes('alps') || p.includes('himalaya')) {
-        return {
-            title: 'Mountain Range',
-            strokes: [
-                { type: 'circle', x: 750, y: 120, radius: 40, color: '#f59e0b', size: 3, fill: '#fbbf24' },
-                { type: 'line', points: [100, 480, 800, 480], color: '#15803d', size: 4 },
-                { type: 'curve', points: [120, 480, 240, 260, 360, 480], color: '#475569', size: 4 },
-                { type: 'curve', points: [220, 300, 240, 260, 260, 300], color: '#f8fafc', size: 3 },
-                { type: 'curve', points: [260, 480, 450, 160, 620, 480], color: '#334155', size: 5 },
-                { type: 'curve', points: [410, 230, 450, 160, 490, 230], color: '#f8fafc', size: 4 },
-                { type: 'curve', points: [520, 480, 680, 240, 780, 480], color: '#475569', size: 4 },
-                { type: 'curve', points: [650, 290, 680, 240, 700, 290], color: '#f8fafc', size: 3 },
-                { type: 'line', points: [450, 160, 460, 480], color: '#1e293b', size: 2 },
-                { type: 'arrow', points: [330, 120, 430, 150], color: '#94a3b8', size: 1.5 },
-                { type: 'label', x: 200, y: 110, text: 'Snowcapped Summit', color: '#f8fafc', size: 12 },
-                { type: 'label', x: 420, y: 530, text: 'Mountain', color: '#334155', size: 16 }
-            ]
-        };
-    }
-
-    // 6. BICYCLE / BIKE
-    if (p.includes('bike') || p.includes('bicycle') || p.includes('cycle')) {
-        return {
-            title: 'Bicycle',
-            strokes: [
-                { type: 'circle', x: 300, y: 380, radius: 65, color: '#334155', size: 4, fill: 'transparent' },
-                { type: 'circle', x: 600, y: 380, radius: 65, color: '#334155', size: 4, fill: 'transparent' },
-                { type: 'circle', x: 300, y: 380, radius: 10, color: '#64748b', size: 2, fill: '#64748b' },
-                { type: 'circle', x: 600, y: 380, radius: 10, color: '#64748b', size: 2, fill: '#64748b' },
-                { type: 'line', points: [300, 380, 420, 380], color: '#3b82f6', size: 3 },
-                { type: 'line', points: [300, 380, 380, 260], color: '#3b82f6', size: 3 },
-                { type: 'line', points: [420, 380, 380, 260], color: '#3b82f6', size: 3 },
-                { type: 'line', points: [420, 380, 540, 260], color: '#3b82f6', size: 3 },
-                { type: 'line', points: [380, 260, 540, 260], color: '#3b82f6', size: 3 },
-                { type: 'line', points: [600, 380, 540, 240], color: '#3b82f6', size: 3 },
-                { type: 'line', points: [380, 260, 370, 230], color: '#1e293b', size: 4 },
-                { type: 'ellipse', x: 365, y: 225, width: 40, height: 12, color: '#1e293b', size: 2, fill: '#1e293b' },
-                { type: 'line', points: [540, 240, 520, 220], color: '#1e293b', size: 4 },
-                { type: 'label', x: 420, y: 480, text: 'Bicycle', color: '#1e293b', size: 16 }
-            ]
-        };
-    }
-
-    // 7. TREE / FOREST / OAK
-    if (p.includes('tree') || p.includes('forest') || p.includes('oak')) {
-        return {
-            title: 'Tree',
-            strokes: [
-                { type: 'line', points: [250, 480, 650, 480], color: '#166534', size: 3 },
-                { type: 'rect', x: 420, y: 320, width: 60, height: 160, color: '#78350f', size: 3, fill: '#92400e' },
-                { type: 'circle', x: 450, y: 220, radius: 100, color: '#15803d', size: 3, fill: '#22c55e' },
-                { type: 'circle', x: 380, y: 240, radius: 70, color: '#166534', size: 2, fill: '#16a34a' },
-                { type: 'circle', x: 520, y: 240, radius: 70, color: '#166534', size: 2, fill: '#16a34a' },
-                { type: 'label', x: 420, y: 530, text: 'Tree', color: '#15803d', size: 16 }
-            ]
-        };
-    }
-
-    // 8. DYNAMIC DRAWING BUILDER FOR ANY OTHER UNKNOWN PROMPT
-    let cleanPrompt = userPrompt
-        .replace(/^(draw|create|make|generate|sketch|paint|show|me|a|an|the|please|vector|drawing|of)\s+/gi, '')
-        .replace(/^(a|an|the)\s+/gi, '')
-        .trim();
-    if (!cleanPrompt) cleanPrompt = 'Diagram';
-
-    const formattedTitle = cleanPrompt.charAt(0).toUpperCase() + cleanPrompt.slice(1);
-
-    return {
-        title: formattedTitle,
-        strokes: [
-            { type: 'curve', points: [200, 160, 450, 130, 700, 160, 730, 310, 700, 460, 450, 490, 200, 460, 170, 310, 200, 160], color: '#38bdf8', size: 3 },
-            { type: 'ellipse', x: 450, y: 310, width: 360, height: 210, color: '#818cf8', size: 2, fill: 'transparent' },
-            { type: 'circle', x: 450, y: 310, radius: 65, color: '#f43f5e', size: 2, fill: '#fda4af' },
-            { type: 'line', points: [270, 310, 630, 310], color: '#38bdf8', size: 2 },
-            { type: 'arrow', points: [660, 180, 520, 260], color: '#94a3b8', size: 1.5 },
-            { type: 'label', x: 670, y: 170, text: formattedTitle, color: '#38bdf8', size: 15 }
-        ]
-    };
-}
-
   // 2.5 Magic Draw / Magic Pen endpoint
   if (pathname === '/api/ai/magic-draw' || pathname === '/api/ai/magic-draw/') {
     const body = await parseJsonBody(req);
     const { prompt: userPrompt } = body;
     if (!userPrompt) {
-        return sendJson(res, 400, { success: false, error: 'Prompt is required', requestId });
+      return sendJson(res, 400, { success: false, error: 'Prompt is required', requestId });
     }
 
-    const result = buildMagicPenStrokes(userPrompt);
-    return sendJson(res, 200, {
-        success: true,
-        title: result.title,
-        strokes: result.strokes,
-        providerUsed: 'built',
-        modelUsed: 'procedural-builder',
+    const systemInstruction = `You are a world-class vector illustrator for an educational whiteboard.
+Generate an accurate, detailed, and COMPLETELY FINISHED vector drawing for the user's prompt: "${userPrompt}".
+
+Output Format:
+You MUST return ONLY valid JSON matching this exact schema:
+{
+  "title": "Clear Descriptive Title",
+  "strokes": [
+    { "type": "curve", "points": [x1, y1, x2, y2, ...], "color": "#hex", "size": 3 },
+    { "type": "line", "points": [x1, y1, x2, y2], "color": "#hex", "size": 2 },
+    { "type": "circle", "x": center_x, "y": center_y, "radius": r, "color": "#hex", "size": 2, "fill": "#hex" },
+    { "type": "ellipse", "x": center_x, "y": center_y, "width": w, "height": h, "color": "#hex", "size": 2, "fill": "transparent" },
+    { "type": "rect", "x": x, "y": y, "width": w, "height": h, "color": "#hex", "size": 2, "fill": "transparent" },
+    { "type": "arrow", "points": [x1, y1, x2, y2], "color": "#hex", "size": 1.5 },
+    { "type": "label", "x": x, "y": y, "text": "Label Text", "color": "#hex", "size": 16 }
+  ]
+}
+
+CRITICAL CANVAS & DRAWING RULES:
+1. Coordinates MUST stay inside 900x600 canvas (x: 50 to 850, y: 50 to 550).
+2. DRAW THE REAL SPECIFIC OBJECT WITH MULTIPLE STROKES:
+   - Rocket: fuselage body tube, sharp nose cone, side fins at base, thruster flame (yellow/orange), and a "Rocket" label.
+   - Helicopter: cabin body, main rotor, tail boom, tail rotor, skids, label.
+   - Bicycle: two wheels (circles), frame tubes (lines), seat, handlebars, label.
+   - Earth: ocean circle, continent curves, label.
+   - Door: rectangular frame, panel, door knob circle, label.
+   - Plant Cell: rectangular wall, inner membrane, nucleus, vacuole, chloroplasts, labels.
+3. Use 10 to 30 strokes per drawing to capture the actual structure of the requested object.
+4. Colors should be clean and educational (e.g. #3b82f6 for sky/water, #ef4444 for red/accent, #22c55e for green, #f59e0b for yellow, #334155 for dark frame).
+5. Always include at least one "label" stroke indicating the main object or key parts.
+6. Return ONLY the JSON object. Do not include markdown codeblocks or conversational text.`;
+
+    const fullPrompt = `Generate complete vector drawing JSON commands for requested object: "${userPrompt}"`;
+
+    try {
+      const resResult = await callRoutedCompletion(
+        fullPrompt,
+        systemInstruction,
+        [],
+        {
+          taskType: 'fast',
+          modelOverride: 'apinex',
+          jsonMode: true,
+          maxTokens: 3500,
+          requestId
+        }
+      );
+
+      const rawText = resResult?.text || '';
+      let parsed: any = null;
+
+      if (rawText) {
+        let cleaned = rawText.trim();
+
+        // Extract JSON object if wrapped in codeblocks or embedded in prose
+        const jsonMatch = cleaned.match(/\{[\s\S]*"strokes"[\s\S]*\}/);
+        if (jsonMatch) {
+          cleaned = jsonMatch[0];
+        } else {
+          if (cleaned.startsWith('```json')) {
+            cleaned = cleaned.replace(/^```json/, '').replace(/```$/, '').trim();
+          } else if (cleaned.startsWith('```')) {
+            cleaned = cleaned.replace(/^```/, '').replace(/```$/, '').trim();
+          }
+        }
+
+        try {
+          parsed = JSON.parse(cleaned);
+        } catch (pErr) {
+          parsed = repairTruncatedStrokesJson(cleaned);
+        }
+      }
+
+      if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length >= 1) {
+        return sendJson(res, 200, {
+          success: true,
+          title: parsed.title || userPrompt,
+          strokes: parsed.strokes,
+          providerUsed: 'ai',
+          modelUsed: resResult.modelUsed || 'byte-model',
+          requestId
+        });
+      }
+
+      return sendJson(res, 200, {
+        success: false,
+        error: rawText ? `Failed to parse AI strokes: ${rawText.slice(0, 500)}` : 'Model returned empty response',
         requestId
-    });
+      });
+    } catch (mErr: any) {
+      console.error('[Magic Draw AI Error]', mErr);
+      return sendJson(res, 200, {
+        success: false,
+        error: mErr?.message || 'Drawing failed',
+        requestId
+      });
+    }
   }
 
   // 2.6 Formula Pen Handwriting & Equation Recognition endpoint
