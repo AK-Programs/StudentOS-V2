@@ -3440,7 +3440,7 @@ ${resultText}
         console.warn('Supabase Auth signIn failed, attempting fallback:', authErr);
       }
 
-      // 2. If Supabase Auth failed, attempt signUp to establish session or verify via backend
+      // 2. If Supabase Auth failed, attempt signUp to check/establish session
       if (!authenticated) {
         try {
           const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
@@ -3454,31 +3454,37 @@ ${resultText}
         } catch (_) {}
       }
 
-      // 3. Fallback to server endpoint if needed
+      // 3. Fallback to Supabase user_profiles table database lookup
       if (!authenticated) {
-        const res = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: loginEmail.trim(), password: loginPassword })
-        });
-        const resData = await res.json();
-        if (res.ok && resData.success && resData.profile) {
-          authenticated = true;
-          const userProfile = resData.profile;
-          setCurrentUser(userProfile);
-          try {
-            localStorage.setItem('s_os_user', JSON.stringify(userProfile));
-          } catch (_) {}
-          updateRecentAccounts(userProfile);
-          try {
-            sessionStorage.removeItem('s_os_startup_shown');
-          } catch (_) {}
-          setShowStartup(true);
-          setFirebaseLoading(false);
-          showNotification(`Welcome back, ${userProfile.name}! ✅`);
-          return;
+        const profile = await getSupabaseUserProfile(undefined, loginEmail.trim(), true);
+        if (profile) {
+          let pwdMatch = true;
+          if (profile.raw_data?.password_hash) {
+            const enteredHash = await hashPassword(loginPassword);
+            if (profile.raw_data.password_hash !== enteredHash) {
+              pwdMatch = false;
+            }
+          }
+          if (pwdMatch) {
+            authenticated = true;
+            setCurrentUser(profile);
+            localStorage.setItem('s_os_user', JSON.stringify(profile));
+            updateRecentAccounts(profile);
+            try {
+              sessionStorage.removeItem('s_os_startup_shown');
+            } catch (_) {}
+            setShowStartup(true);
+            setFirebaseLoading(false);
+            if (profile.role === 'parent') {
+              setActiveTab('parent_portal');
+            }
+            showNotification(`Welcome back, ${profile.name}! ✅`);
+            return;
+          } else {
+            throw new Error('Incorrect password. Please verify your credentials.');
+          }
         } else {
-          throw new Error(resData.error || 'Invalid credentials or incorrect password.');
+          throw new Error('No registered account found with this email. Please create an account.');
         }
       }
 
@@ -3487,7 +3493,7 @@ ${resultText}
         if (!profile) {
           profile = {
             uid: authUser.id,
-            name: authUser.user_metadata?.full_name || loginEmail.split('@')[0] || 'Student',
+            name: authUser.user_metadata?.full_name || loginEmail.split('@')[0] || 'User',
             email: authUser.email || loginEmail.trim(),
             role: 'student',
             accountStatus: 'approved',
@@ -3501,6 +3507,9 @@ ${resultText}
         setCurrentUser(profile);
         localStorage.setItem('s_os_user', JSON.stringify(profile));
         updateRecentAccounts(profile);
+        if (profile.role === 'parent') {
+          setActiveTab('parent_portal');
+        }
       }
 
       try {
@@ -3816,17 +3825,11 @@ ${resultText}
       return;
     }
     
-    // NEW: Full name validation (only letters and spaces)
-    const nameRegex = /^[a-zA-Z\s]+$/;
-    if (!nameRegex.test(regName.trim()) || regName.trim().length < 2) {
-      showNotification('Full name must contain only letters and spaces (min 2 characters).');
+    if (!regName.trim() || regName.trim().length < 2) {
+      showNotification('Full name must be at least 2 characters.');
       return;
     }
 
-    if (!regPhone.trim() || !/^[+0-9\-\s()]+$/.test(regPhone.trim())) {
-      showNotification('Please provide a valid phone number.');
-      return;
-    }
     if (regRole !== 'parent' && !regBirthdate) {
       showNotification('Please provide a valid birthdate.');
       return;
@@ -3838,7 +3841,6 @@ ${resultText}
       return;
     }
 
-    
     const finalEmail = regEmail.trim();
 
     // Sign up with Supabase Auth if not linked via Google
@@ -3853,35 +3855,29 @@ ${resultText}
       
       passwordHash = await hashPassword(regPassword);
 
-      const { data, error: authError } = await supabase.auth.signUp({
-        email: finalEmail,
-        password: regPassword,
-        options: {
-          data: {
-            full_name: regName.trim(),
+      try {
+        const { data, error: authError } = await supabase.auth.signUp({
+          email: finalEmail,
+          password: regPassword,
+          options: {
+            data: {
+              full_name: regName.trim(),
+            }
+          }
+        });
+        
+        if (authError) {
+          console.warn('[Supabase Auth Signup Notice]:', authError.message);
+        } else {
+          authData = data;
+          if (authData && authData.user) {
+            setLinkedGoogleUid(authData.user.id);
+            actualUid = authData.user.id;
           }
         }
-      });
-      
-      if (authError) {
-        console.error('Supabase Auth Signup Error:', authError);
-        showNotification(`Signup failed: ${authError.message}`);
-        return;
+      } catch (authException) {
+        console.warn('[Supabase Auth Signup Exception]:', authException);
       }
-      
-      authData = data;
-      
-      if (authData && authData.user) {
-         setLinkedGoogleUid(authData.user.id);
-         actualUid = authData.user.id;
-         
-         if (!authData.session) {
-            // Email verification is required
-            // Save their profile, but don't log them in automatically
-            console.log('Email verification required');
-         }
-      }
-
     }
 
     const statusMap: Record<string, string> = {
@@ -3898,7 +3894,6 @@ ${resultText}
     ].includes(finalEmail.toLowerCase());
 
     const status = isWhitelisted ? 'approved' : regRole === 'parent' ? 'approved' : (statusMap[regRole] || 'approved');
-    // Using the auth user id if available, otherwise it will just use a fallback which shouldn't happen with real Auth
     const uid = actualUid || `manual-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
     const newProfile: any = {
@@ -3910,13 +3905,14 @@ ${resultText}
       requestedRole: isWhitelisted ? 'admin' : regRole,
       accountStatus: status,
       phone: regPhone.trim(),
-      birthdate: regBirthdate,
+      birthdate: regRole === 'parent' ? '' : regBirthdate,
       studyHours: 8,
       quizzesTaken: 2,
       streakDays: 4,
       lastLogin: Date.now(),
       raw_data: {
-        password_hash: passwordHash
+        password_hash: passwordHash,
+        phone: regPhone.trim()
       }
     };
 
@@ -3952,14 +3948,6 @@ ${resultText}
         await saveSupabaseUserProfile(newProfile);
       } catch (sbErr) {
         console.error('[Supabase] Failed to save new registration to Supabase:', sbErr);
-        throw sbErr;
-      }
-      
-      
-      if (!isGoogleLinked && authData && authData.user && !authData.session) {
-        showNotification('Please check your email to verify your account. You can log in after verification.');
-        setRegStep('login');
-        return;
       }
 
       setCurrentUser(newProfile);
@@ -3976,7 +3964,7 @@ ${resultText}
         showNotification(`Welcome to Veylentra Family Portal, ${newProfile.name}!`);
         setActiveTab('parent_portal');
       } else {
-        showNotification(`Request submitted for ${regRole.toUpperCase()} approval. Exploring as Student in the meantime!`);
+        showNotification(`Request submitted for ${regRole.toUpperCase()} approval. Exploring in the meantime!`);
       }
 
       setRegStep('login');
@@ -7621,8 +7609,8 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                         onChange={(e) => {
                           const val = e.target.value;
                           setRegName(val);
-                          if (val && !/^[A-Za-z\s]+$/.test(val)) {
-                            setRegNameError('Letters and spaces only');
+                          if (val && val.trim().length < 2) {
+                            setRegNameError('Name must be at least 2 characters');
                           } else {
                             setRegNameError('');
                           }
@@ -7648,26 +7636,18 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                     </div>
 
                     <div>
-                      <label className="block text-[11px] font-semibold text-slate-300 mb-0.5">Phone *</label>
+                      <label className="block text-[11px] font-semibold text-slate-300 mb-0.5">Phone (Optional for Parent)</label>
                       <input
                         type="tel"
-                        required
                         value={regPhone}
                         onChange={(e) => {
                           const val = e.target.value;
                           setRegPhone(val);
-                          if (val && !/^[+0-9\-\s()]+$/.test(val)) {
-                            setRegPhoneError('Invalid phone format');
-                          } else {
-                            setRegPhoneError('');
-                          }
+                          setRegPhoneError('');
                         }}
                         placeholder="+91 98765 43210"
-                        className={`w-full text-xs px-3 py-2 rounded-xl bg-slate-900 border ${
-                          regPhoneError ? 'border-rose-500' : 'border-white/10 focus:border-indigo-500'
-                        } focus:outline-none text-white`}
+                        className="w-full text-xs px-3 py-2 rounded-xl bg-slate-900 border border-white/10 focus:outline-none focus:border-indigo-500 text-white"
                       />
-                      {regPhoneError && <p className="text-rose-400 text-[10px] mt-0.5">{regPhoneError}</p>}
                     </div>
 
                     {regRole !== 'parent' && (
