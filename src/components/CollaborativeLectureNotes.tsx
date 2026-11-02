@@ -880,18 +880,25 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
     }
   };
 
-  const filteredNotes = notesList.filter(n => {
+  const safeNotesList = notesList || [];
+  const filteredNotes = safeNotesList.filter(n => {
+    if (!n) return false;
     const matchesSub = subjectFilter === 'All Subjects' || n.subject === subjectFilter;
-    const q = searchQuery.trim().toLowerCase();
-    const matchesSearch = !q || n.title.toLowerCase().includes(q) || n.content.toLowerCase().includes(q) || n.subject.toLowerCase().includes(q);
+    const q = (searchQuery || '').trim().toLowerCase();
+    const titleStr = (n.title || '').toLowerCase();
+    const contentStr = (n.content || '').toLowerCase();
+    const subjectStr = (n.subject || '').toLowerCase();
+    const matchesSearch = !q || titleStr.includes(q) || contentStr.includes(q) || subjectStr.includes(q);
     return matchesSub && matchesSearch;
   });
 
-  const wordCount = content.trim() ? content.trim().split(/\s+/).length : 0;
+  const safeContent = content || '';
+  const wordCount = safeContent.trim() ? safeContent.trim().split(/\s+/).length : 0;
 
   // 14. High-Fidelity Reader View Renderer with Markdown Tables, Code Blocks, and Callouts
   const renderFormattedPreview = (raw: string) => {
-    if (!raw.trim()) {
+    const safeRaw = raw || '';
+    if (!safeRaw.trim()) {
       return (
         <div className="py-12 text-center text-slate-500 italic text-xs">
           No content written yet. Switch to Write mode to take notes.
@@ -899,7 +906,7 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
       );
     }
 
-    const lines = raw.split('\n');
+    const lines = safeRaw.split('\n');
     const elements: React.ReactNode[] = [];
     let i = 0;
 
@@ -1169,10 +1176,10 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
         <div className="flex items-center justify-between sm:justify-end gap-2.5 bg-slate-900 px-3 py-1.5 rounded-xl border border-white/10 shrink-0">
           <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-bold">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>{Math.max(1, activeEditors.length)} Active</span>
+            <span>{Math.max(1, (activeEditors || []).length)} Active</span>
           </div>
           <div className="flex -space-x-1.5">
-            {(activeEditors.length > 0 ? activeEditors : [{ uid: currentUser?.uid || 'me', name: currentUser?.name || 'You' }])
+            {((activeEditors && activeEditors.length > 0) ? activeEditors : [{ uid: currentUser?.uid || 'me', name: currentUser?.name || 'You' }])
               .slice(0, 4)
               .map((ed) => (
                 <div

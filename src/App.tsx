@@ -9955,18 +9955,21 @@ CRITICAL WEB GROUNDING DIRECTIVE:
 
                       {/* File Manager Breadcrumb & Action Bar */}
                       {(() => {
-                        const activeVaultFolder = vaultFolders.find(f => f.id === activeVaultFolderId);
-                        const currentNotes = vaultNotes
+                        const safeVaultFolders = vaultFolders || [];
+                        const safeVaultNotes = vaultNotes || [];
+                        const activeVaultFolder = safeVaultFolders.find(f => f && f.id === activeVaultFolderId);
+                        const currentNotes = safeVaultNotes
                           .filter(n => {
+                            if (!n) return false;
                             if (activeVaultFolderId) {
                               return n.folder_id === activeVaultFolderId;
                             }
                             return !n.folder_id;
                           })
-                          .filter(n => !newNoteTitle.trim() || n.title.toLowerCase().includes(newNoteTitle.toLowerCase()) || n.subject.toLowerCase().includes(newNoteTitle.toLowerCase()))
+                          .filter(n => !n || !newNoteTitle.trim() || ((n.title || '').toLowerCase().includes(newNoteTitle.toLowerCase())) || ((n.subject || '').toLowerCase().includes(newNoteTitle.toLowerCase())))
                           .sort((a, b) => {
-                            if ((a as any).isPinned && !(b as any).isPinned) return -1;
-                            if (!(a as any).isPinned && (b as any).isPinned) return 1;
+                            if ((a as any)?.isPinned && !(b as any)?.isPinned) return -1;
+                            if (!(a as any)?.isPinned && (b as any)?.isPinned) return 1;
                             return 0;
                           });
 
@@ -10013,16 +10016,16 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                             </div>
 
                             {/* Windows / Android-Like File Manager: Folder Cards Grid (at Root Level) */}
-                            {!activeVaultFolderId && vaultFolders.length > 0 && (
+                            {!activeVaultFolderId && safeVaultFolders.length > 0 && (
                               <div className="space-y-1.5">
                                 <div className="flex items-center justify-between px-1">
                                   <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider flex items-center gap-1">
-                                    <span>📁 Folders ({vaultFolders.length})</span>
+                                    <span>📁 Folders ({safeVaultFolders.length})</span>
                                   </span>
                                 </div>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                  {vaultFolders.map(f => {
-                                    const noteCount = vaultNotes.filter(n => n.folder_id === f.id).length;
+                                  {safeVaultFolders.map(f => {
+                                    const noteCount = safeVaultNotes.filter(n => n && n.folder_id === f.id).length;
                                     return (
                                       <motion.div
                                         key={f.id}
@@ -10074,7 +10077,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                             {/* List of notes */}
                             <Reorder.Group 
                               axis="y" 
-                              values={vaultNotes} 
+                              values={safeVaultNotes} 
                               onReorder={handleReorderNotes}
                               className="space-y-1.5 max-h-[460px] overflow-y-auto pr-1"
                             >
@@ -10121,14 +10124,14 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                     }}
                                     className={`w-full text-left p-2.5 rounded-xl border transition-all flex items-center justify-between relative ${isDraggingAllowed ? 'cursor-grab active:cursor-grabbing border-indigo-500 shadow-xl' : 'cursor-pointer'} ${isActive ? 'bg-indigo-600/20 border-indigo-500/40 text-white shadow-sm ring-1 ring-indigo-500/30' : 'border-white/5 bg-slate-900/40 hover:bg-white/5 text-slate-300'}`}
                                   >
-                                    {(note as any).isPinned && <Pin className="w-2.5 h-2.5 text-amber-400 absolute top-1 right-1 rotate-45" />}
+                                    {(note as any)?.isPinned && <Pin className="w-2.5 h-2.5 text-amber-400 absolute top-1 right-1 rotate-45" />}
                                     <div className="flex items-center gap-2 min-w-0 pointer-events-none">
                                       <span className="text-sm flex-shrink-0">{note.icon || '📝'}</span>
                                       <div className="min-w-0">
                                         <p className="text-xs font-bold truncate leading-snug">{note.title || 'Untitled Note'}</p>
                                         <div className="flex flex-wrap items-center gap-1 mt-0.5">
                                           <span className="text-[8px] uppercase tracking-wider font-extrabold text-indigo-400 bg-indigo-500/10 px-1 py-0.2 rounded">
-                                            {note.subject}
+                                            {note.subject || 'General'}
                                           </span>
                                           {note.collabCode && (
                                             <span className="text-[8px] uppercase tracking-wider font-extrabold text-emerald-400 bg-emerald-500/10 px-1 py-0.2 rounded border border-emerald-500/20 flex items-center gap-0.5">
@@ -10159,7 +10162,8 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                     {/* Center Column: Clean Writing Surface (Notion/Obsidian style) */}
                     <div className={`${showNoteOutline ? 'lg:col-span-6' : 'lg:col-span-9'} space-y-4`}>
                       {(() => {
-                        const activeNote = vaultNotes.find(n => n.id === selectedNoteId);
+                        const safeVaultNotes = vaultNotes || [];
+                        const activeNote = safeVaultNotes.find(n => n && n.id === selectedNoteId);
                         if (!activeNote) {
                           return (
                             <div className="smart-glass p-12 rounded-3xl text-center space-y-4 border border-dashed border-white/5">
@@ -10176,14 +10180,24 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           );
                         }
 
+                        const noteContent = activeNote.content || '';
+
                         // Character & Word Counter
-                        const charCount = activeNote.content.length;
-                        const wordCount = activeNote.content.trim() === '' ? 0 : activeNote.content.trim().split(/\s+/).length;
+                        const charCount = noteContent.length;
+                        const wordCount = noteContent.trim() === '' ? 0 : noteContent.trim().split(/\s+/).length;
                         const readTimeMin = Math.max(1, Math.ceil(wordCount / 200));
 
                         // Dynamically parse headings for Table of Contents
                         const parsedHeadings: { level: number; text: string; id: string }[] = [];
-                        const lines = activeNote.content.split('\n');
+                        const lines = noteContent.split('\n');
+                        lines.forEach((line, idx) => {
+                          const h1Match = line.match(/^#\s+(.+)/);
+                          const h2Match = line.match(/^##\s+(.+)/);
+                          const h3Match = line.match(/^###\s+(.+)/);
+                          if (h1Match) parsedHeadings.push({ level: 1, text: h1Match[1], id: `h-${idx}` });
+                          else if (h2Match) parsedHeadings.push({ level: 2, text: h2Match[1], id: `h-${idx}` });
+                          else if (h3Match) parsedHeadings.push({ level: 3, text: h3Match[1], id: `h-${idx}` });
+                        });
                         lines.forEach((line, idx) => {
                           const h1Match = line.match(/^#\s+(.+)/);
                           const h2Match = line.match(/^##\s+(.+)/);
