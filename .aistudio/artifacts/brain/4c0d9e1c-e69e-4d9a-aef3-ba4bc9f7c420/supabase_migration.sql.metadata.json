@@ -1,6 +1,6 @@
 {
-  "summary":  "Database migration script adding parent_child_links table with secure RLS policies and performance indexes, plus notes schema columns for permissions, icons, and collab codes.",
-  "updatedAt":  "2026-11-01T09:20:14.626084260Z",
-  "requestFeedback":  true,
-  "userFacing":  true
+  "summary": "Complete SQL migration script for Supabase: adds notes.permission column and RLS policies, repairs attendance table columns (user_id, subject, updated_by, academic_year) and foreign key constraints, sets up parent_child_links, and configures realtime replication.",
+  "updatedAt": "2026-11-02T14:16:20.148111803Z",
+  "requestFeedback": true,
+  "userFacing": true
 }

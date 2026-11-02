@@ -16,7 +16,11 @@ export type AuditActionType =
   | 'feature_flag_toggle'
   | 'class_move'
   | 'leave_approval'
-  | 'circular_approval';
+  | 'circular_approval'
+  | 'role_override'
+  | 'account_status_change'
+  | 'user_delete'
+  | 'parent_unlink';
 
 export interface AuditLogEntry {
   id: string;

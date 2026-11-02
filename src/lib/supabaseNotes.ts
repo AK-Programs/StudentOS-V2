@@ -111,7 +111,8 @@ export async function getVaultNotes(userId: string): Promise<VaultNote[]> {
           isPinned: Boolean(n.is_pinned),
           collabCode: n.collab_code || undefined,
           isCollab: Boolean(n.is_collab || n.collab_code),
-          sort_order: n.sort_order || 0
+          sort_order: n.sort_order || 0,
+          permission: n.permission || (n.cover_bg === 'perm_view' ? 'view' : (n.collab_code ? 'edit' : 'private'))
         }));
       const mergedMap = new Map<string, VaultNote>();
       for (const ln of localNotes) mergedMap.set(ln.id, ln);
@@ -151,12 +152,13 @@ export async function saveVaultNoteToSupabase(note: VaultNote): Promise<void> {
       content: note.content,
       subject: note.subject,
       icon: note.icon,
-      cover_bg: note.coverBg,
+      cover_bg: note.permission === 'view' ? 'perm_view' : (note.coverBg || 'bg-gradient-to-r from-violet-600 to-indigo-900'),
       user_id: note.userId,
       created_at: note.createdAt,
       folder_id: (note as any).folder_id || null,
       is_pinned: (note as any).isPinned || false,
-      sort_order: note.sort_order || 0
+      sort_order: note.sort_order || 0,
+      permission: note.permission || (note.collabCode ? 'edit' : 'private')
     };
 
     if (note.collabCode) {
@@ -165,7 +167,12 @@ export async function saveVaultNoteToSupabase(note: VaultNote): Promise<void> {
     }
 
     const { error } = await supabase.from('notes').upsert(payload);
-    if (error && error.code !== '42P01') throw error;
+    if (error && error.code === 'PGRST204') {
+      delete payload.permission;
+      await supabase.from('notes').upsert(payload);
+    } else if (error && error.code !== '42P01') {
+      throw error;
+    }
   } catch (err) {
     console.error("Failed to save note to supabase", err);
   }
@@ -240,7 +247,8 @@ export async function getNoteByCollabCode(code: string): Promise<VaultNote | nul
         folder_id: null,
         isPinned: false,
         collabCode: cleanCode,
-        isCollab: true
+        isCollab: true,
+        permission: data.permission || (data.cover_bg === 'perm_view' ? 'view' : 'edit')
       };
     }
   } catch (err) {

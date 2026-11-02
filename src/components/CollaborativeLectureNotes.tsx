@@ -415,10 +415,16 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
         folder_id: current?.folder_id || null,
         collab_code: current?.collab_code || null,
         is_pinned: current?.isPinned || false,
+        permission: current?.permission || 'edit',
         created_at: current?.updatedAt || nowIso
       };
 
-      const { error: err } = await supabase.from('notes').upsert(payload);
+      let { error: err } = await supabase.from('notes').upsert(payload);
+      if (err && err.code === 'PGRST204') {
+        delete payload.permission;
+        const res = await supabase.from('notes').upsert(payload);
+        err = res.error;
+      }
       if (err) throw err;
 
       setIsSaving(false);
@@ -642,17 +648,25 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
       });
 
       // Save to Supabase `notes`
-      await supabase
+      const dbPayload: any = {
+        title: updatedNote.title,
+        icon: updatedNote.icon,
+        folder_id: updatedNote.folder_id,
+        subject: updatedNote.subject,
+        permission: updatedNote.permission,
+        cover_bg: updatedNote.permission === 'view' ? 'perm_view' : 'perm_edit',
+        collab_code: updatedNote.collab_code
+      };
+
+      const { error: updErr } = await supabase
         .from('notes')
-        .update({
-          title: updatedNote.title,
-          icon: updatedNote.icon,
-          folder_id: updatedNote.folder_id,
-          subject: updatedNote.subject,
-          cover_bg: updatedNote.permission === 'view' ? 'perm_view' : 'perm_edit',
-          collab_code: updatedNote.collab_code
-        })
+        .update(dbPayload)
         .eq('id', activeNote.id);
+
+      if (updErr && updErr.code === 'PGRST204') {
+        delete dbPayload.permission;
+        await supabase.from('notes').update(dbPayload).eq('id', activeNote.id);
+      }
 
       // Broadcast settings update to Realtime channel
       sendRealtimeEvent(`lecture_collab_${activeNote.id}`, 'note_settings_changed', {

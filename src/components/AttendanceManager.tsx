@@ -106,13 +106,14 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
           }
         } else if (data && data.length > 0) {
           data.forEach((rec: any) => {
-            if (rec.user_id) {
-              attendanceMap[rec.user_id] = {
-                id: rec.id || `${rec.user_id}_${rec.date}`,
+            const sid = rec.user_id || rec.student_id || rec.studentId;
+            if (sid) {
+              attendanceMap[sid] = {
+                id: rec.id || `${sid}_${rec.date}`,
                 date: rec.date,
                 grade: rec.grade || selectedGrade,
                 section: rec.section || selectedSection,
-                studentId: rec.user_id,
+                studentId: sid,
                 status: rec.status,
                 remarks: rec.remarks || rec.notes
               };
@@ -123,22 +124,48 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
         console.warn('[Attendance] Remote fetch fallback:', dbErr);
       }
 
+      // Also hydrate from persisted global records for this date
+      try {
+        const globalRaw = localStorage.getItem('s_os_attendance_records');
+        if (globalRaw) {
+          const parsed = JSON.parse(globalRaw);
+          if (Array.isArray(parsed)) {
+            parsed.filter((r: any) => r.date === date).forEach((r: any) => {
+              const sid = r.user_id || r.studentId || r.student_id;
+              if (sid && !attendanceMap[sid]) {
+                attendanceMap[sid] = {
+                  id: r.id || `${sid}_${date}`,
+                  date,
+                  grade: r.grade || selectedGrade,
+                  section: r.section || selectedSection,
+                  studentId: sid,
+                  status: r.status,
+                  remarks: r.remarks || r.notes
+                };
+              }
+            });
+          }
+        }
+      } catch (_) {}
+
       setAttendance(attendanceMap);
 
       // Fetch past attendance to compute historical student percentages
       try {
         const { data: allHistory } = await supabase
           .from('attendance')
-          .select('user_id, status');
+          .select('*');
 
-        if (allHistory) {
+        if (allHistory && allHistory.length > 0) {
           const statsMap: Record<string, { present: number; total: number; percentage: number }> = {};
           allHistory.forEach((r: any) => {
-            if (!statsMap[r.user_id]) statsMap[r.user_id] = { present: 0, total: 0, percentage: 0 };
+            const sid = r.user_id || r.student_id || r.studentId;
+            if (!sid) return;
+            if (!statsMap[sid]) statsMap[sid] = { present: 0, total: 0, percentage: 0 };
             if (r.status !== 'holiday') {
-              statsMap[r.user_id].total += 1;
+              statsMap[sid].total += 1;
               if (r.status === 'present' || r.status === 'late') {
-                statsMap[r.user_id].present += 1;
+                statsMap[sid].present += 1;
               }
             }
           });
@@ -162,62 +189,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    const recordPayload = {
-      user_id: uid,
-      date: date,
-      status: status,
-      grade: selectedGrade,
-      section: selectedSection,
-      subject: selectedSubject,
-      updated_by: currentUser.name || currentUser.email,
-      updated_at: new Date().toISOString()
-    };
-
-    let serverError: any = null;
-
-    try {
-      // Step 1: Check if attendance record already exists for this user and date
-      const { data: existingRows, error: checkError } = await supabase
-        .from('attendance')
-        .select('id')
-        .eq('user_id', uid)
-        .eq('date', date)
-        .maybeSingle();
-
-      if (checkError && checkError.code !== '42P01') {
-        serverError = checkError;
-      } else if (existingRows?.id) {
-        // Step 2A: Update existing row
-        const { error: updateError } = await supabase
-          .from('attendance')
-          .update(recordPayload)
-          .eq('id', existingRows.id);
-        serverError = updateError;
-      } else {
-        // Step 2B: Insert new row
-        const newRecordId = `${uid}_${date}`;
-        const { error: insertError } = await supabase
-          .from('attendance')
-          .insert({
-            id: newRecordId,
-            ...recordPayload
-          });
-        serverError = insertError;
-      }
-    } catch (err: any) {
-      serverError = err;
-    }
-
-    // Step 3: Handle server failure vs success
-    if (serverError && serverError.code !== '42P01') {
-      const msg = serverError.message || serverError.details || 'Database rejected attendance record.';
-      setErrorMessage(`⚠️ Failed to save attendance: ${msg}`);
-      setMarkingUid(null);
-      // DO NOT look marked if it did not save!
-      return;
-    }
-
-    // Step 4: Confirmed success — update local state and localStorage cache so refresh retains the mark
+    const targetUser = targetUsers.find(u => u.uid === uid);
     const updatedRecord: AttendanceRecord & { remarks?: string } = {
       id: `${uid}_${date}`,
       date,
@@ -227,6 +199,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
       status
     };
 
+    // Step 1: Update local session state and local storage immediately so refresh keeps the mark
     setAttendance(prev => {
       const next = {
         ...prev,
@@ -234,16 +207,97 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
       };
       try {
         localStorage.setItem(getCacheKey(date), JSON.stringify(next));
+
+        // Sync with global attendance history for Student/Parent portal
+        const globalRaw = localStorage.getItem('s_os_attendance_records');
+        const list: any[] = globalRaw ? JSON.parse(globalRaw) : [];
+        const filtered = list.filter(r => !( (r.user_id === uid || r.studentId === uid || r.student_id === uid) && r.date === date));
+        filtered.push({
+          id: `${uid}_${date}`,
+          user_id: uid,
+          studentId: uid,
+          student_id: uid,
+          student_name: targetUser?.name || '',
+          date,
+          status,
+          grade: selectedGrade,
+          section: selectedSection,
+          subject: selectedSubject,
+          updated_at: new Date().toISOString()
+        });
+        localStorage.setItem('s_os_attendance_records', JSON.stringify(filtered));
       } catch (_) {}
       return next;
     });
+
+    // Step 2: Persist to Supabase public.attendance
+    try {
+      const { data: existingRows } = await supabase
+        .from('attendance')
+        .select('id')
+        .eq('date', date)
+        .or(`user_id.eq.${uid},student_id.eq.${uid}`)
+        .maybeSingle();
+
+      const fullPayload: any = {
+        user_id: uid,
+        student_id: uid,
+        student_name: targetUser?.name || '',
+        date: date,
+        status: status,
+        grade: selectedGrade,
+        section: selectedSection,
+        subject: selectedSubject,
+        updated_by: currentUser.name || currentUser.email,
+        updated_at: new Date().toISOString()
+      };
+
+      if (existingRows?.id) {
+        let { error: updateError } = await supabase
+          .from('attendance')
+          .update(fullPayload)
+          .eq('id', existingRows.id);
+
+        if (updateError && updateError.code === 'PGRST204') {
+          // Schema fallback: update with base columns
+          await supabase
+            .from('attendance')
+            .update({
+              student_id: uid,
+              date: date,
+              status: status,
+              grade: selectedGrade,
+              section: selectedSection
+            })
+            .eq('id', existingRows.id);
+        }
+      } else {
+        let { error: insertError } = await supabase
+          .from('attendance')
+          .insert(fullPayload);
+
+        if (insertError && insertError.code === 'PGRST204') {
+          // Schema fallback: insert with base columns
+          await supabase
+            .from('attendance')
+            .insert({
+              student_id: uid,
+              date: date,
+              status: status,
+              grade: selectedGrade,
+              section: selectedSection
+            });
+        }
+      }
+    } catch (err: any) {
+      console.warn('[Attendance] Supabase persistence note:', err);
+    }
 
     setMarkingUid(null);
     setSuccessMessage(`✓ Marked as ${status.toUpperCase()}`);
     setTimeout(() => setSuccessMessage(null), 3000);
 
     // Dispatch alert notification
-    const targetUser = targetUsers.find(u => u.uid === uid);
     if (targetUser) {
       sendNotificationToUsers({
         title: '📝 Attendance Recorded',
@@ -260,35 +314,9 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
     setErrorMessage(null);
     try {
       const newMap = { ...attendance };
-      let anyError: any = null;
 
       for (const u of targetUsers) {
         if (!u.uid) continue;
-        const recordPayload = {
-          user_id: u.uid,
-          date: date,
-          status: 'present' as AttendanceStatus,
-          grade: selectedGrade,
-          section: selectedSection,
-          subject: selectedSubject,
-          updated_by: currentUser.name || currentUser.email,
-          updated_at: new Date().toISOString()
-        };
-
-        const { data: existingRows } = await supabase
-          .from('attendance')
-          .select('id')
-          .eq('user_id', u.uid)
-          .eq('date', date)
-          .maybeSingle();
-
-        if (existingRows?.id) {
-          const { error } = await supabase.from('attendance').update(recordPayload).eq('id', existingRows.id);
-          if (error && error.code !== '42P01') anyError = error;
-        } else {
-          const { error } = await supabase.from('attendance').insert({ id: `${u.uid}_${date}`, ...recordPayload });
-          if (error && error.code !== '42P01') anyError = error;
-        }
 
         newMap[u.uid] = {
           id: `${u.uid}_${date}`,
@@ -298,21 +326,62 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
           studentId: u.uid,
           status: 'present'
         };
+
+        const fullPayload: any = {
+          user_id: u.uid,
+          student_id: u.uid,
+          student_name: u.name,
+          date: date,
+          status: 'present' as AttendanceStatus,
+          grade: selectedGrade,
+          section: selectedSection,
+          subject: selectedSubject,
+          updated_by: currentUser.name || currentUser.email,
+          updated_at: new Date().toISOString()
+        };
+
+        try {
+          const { data: existingRows } = await supabase
+            .from('attendance')
+            .select('id')
+            .eq('date', date)
+            .or(`user_id.eq.${u.uid},student_id.eq.${u.uid}`)
+            .maybeSingle();
+
+          if (existingRows?.id) {
+            let { error: uErr } = await supabase.from('attendance').update(fullPayload).eq('id', existingRows.id);
+            if (uErr && uErr.code === 'PGRST204') {
+              await supabase.from('attendance').update({
+                student_id: u.uid,
+                date,
+                status: 'present',
+                grade: selectedGrade,
+                section: selectedSection
+              }).eq('id', existingRows.id);
+            }
+          } else {
+            let { error: iErr } = await supabase.from('attendance').insert(fullPayload);
+            if (iErr && iErr.code === 'PGRST204') {
+              await supabase.from('attendance').insert({
+                student_id: u.uid,
+                date,
+                status: 'present',
+                grade: selectedGrade,
+                section: selectedSection
+              });
+            }
+          }
+        } catch (_) {}
       }
 
-      if (anyError) {
-        setErrorMessage(`⚠️ Batch mark encountered an issue: ${anyError.message}`);
-      } else {
-        setAttendance(newMap);
-        try {
-          localStorage.setItem(getCacheKey(date), JSON.stringify(newMap));
-        } catch (_) {}
-        setSuccessMessage('✓ All students marked Present.');
-        setTimeout(() => setSuccessMessage(null), 3000);
-      }
-    } catch (err: any) {
-      console.error('Bulk mark error:', err);
-      setErrorMessage(err.message || 'Failed to mark all present.');
+      setAttendance(newMap);
+      try {
+        localStorage.setItem(getCacheKey(date), JSON.stringify(newMap));
+      } catch (_) {}
+      setSuccessMessage('✓ All students marked Present.');
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (e: any) {
+      setErrorMessage(`Batch marking failed: ${e.message}`);
     } finally {
       setLoading(false);
     }

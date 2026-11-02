@@ -22,7 +22,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { UserProfile, UserRole, SectionType, HouseType } from '../types';
-import { fetchAllSupabaseUsers, saveSupabaseUserProfile, getSupabaseUserProfile } from '../lib/supabaseUsers';
+import { motion, AnimatePresence } from 'motion/react';
+import { fetchAllSupabaseUsers, saveSupabaseUserProfile, getSupabaseUserProfile, deleteSupabaseUser } from '../lib/supabaseUsers';
 import { supabase } from '../lib/supabase';
 import { WhatsNewAdminTab } from './WhatsNewAdminTab';
 import { AdminReleaseManager } from './AdminReleaseManager';
@@ -46,13 +47,14 @@ import {
   BarChart2, School, Flag, FileText, CheckCircle2, AlertTriangle,
   ArrowRight, RefreshCw, Search, Plus, Filter, Lock, Unlock, Clock,
   Radio, ChevronRight, Check, X, Calendar, Bell, Download, Layers,
-  FlaskConical
+  FlaskConical, Trash2, Unlink, Sparkles, UserCheck, UserX
 } from 'lucide-react';
 import { ExperienceTestingTab } from './admin/ExperienceTestingTab';
 
 export type AdminSubTab =
   | 'overview'
   | 'users'
+  | 'parent_links'
   | 'classes'
   | 'promotion'
   | 'credentials'
@@ -66,6 +68,35 @@ export type AdminSubTab =
   | 'releases'
   | 'whats_new'
   | 'experience_testing';
+
+/**
+ * Animated stat counter for smooth count-up KPI metrics
+ */
+function StatCounter({ value, duration = 1.0 }: { value: number; duration?: number }) {
+  const [display, setDisplay] = useState(0);
+  useEffect(() => {
+    const end = Number(value) || 0;
+    if (end === 0) {
+      setDisplay(0);
+      return;
+    }
+    const startTime = performance.now();
+    const durationMs = duration * 1000;
+    let frameId: number;
+    const step = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / durationMs, 1);
+      const eased = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
+      setDisplay(Math.round(eased * end));
+      if (progress < 1) {
+        frameId = requestAnimationFrame(step);
+      }
+    };
+    frameId = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frameId);
+  }, [value, duration]);
+  return <span>{display.toLocaleString()}</span>;
+}
 
 interface AdminCenterProps {
   currentUser: UserProfile;
@@ -132,6 +163,17 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
   // Leaves & Circulars state
   const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
 
+  // Super Admin Command & UI states
+  const [selectedDetailUser, setSelectedDetailUser] = useState<UserProfile | null>(null);
+  const [deleteConfirmUser, setDeleteConfirmUser] = useState<UserProfile | null>(null);
+  const [isDeleteShaking, setIsDeleteShaking] = useState(false);
+  const [spectateTransitioningStudent, setSpectateTransitioningStudent] = useState<UserProfile | null>(null);
+  const [commandSearchQuery, setCommandSearchQuery] = useState('');
+  const [commandRoleFilter, setCommandRoleFilter] = useState('all');
+  const [parentLinks, setParentLinks] = useState<any[]>([]);
+  const [loadingLinks, setLoadingLinks] = useState(false);
+  const [unlinkConfirmLink, setUnlinkConfirmLink] = useState<any | null>(null);
+
   const isSuperAdmin = currentUser.role === 'super_admin';
 
   useEffect(() => {
@@ -139,6 +181,9 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
     loadAuditLogs();
     loadSchoolsAndFlags();
     loadLeaveRequests();
+    if (isSuperAdmin) {
+      loadParentLinks();
+    }
 
     // Subscribe to presence
     const unsubPresence = presenceService.subscribe(() => {
@@ -242,6 +287,180 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadParentLinks = async () => {
+    setLoadingLinks(true);
+    try {
+      const res = await fetch('/api/admin/all-parent-child-links');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.links)) {
+        setParentLinks(data.links);
+      }
+    } catch (_) {}
+    finally {
+      setLoadingLinks(false);
+    }
+  };
+
+  const handleQuickChangeRole = async (targetUser: UserProfile, newRole: UserRole) => {
+    if (!isSuperAdmin) {
+      showNotification('❌ Permission Denied: Only Super Admin can change user roles.');
+      return;
+    }
+    if (targetUser.uid === currentUser.uid && newRole !== 'super_admin') {
+      showNotification('⚠️ Safety Warning: You cannot remove your own Super Admin role.');
+      return;
+    }
+
+    try {
+      const updated: UserProfile = {
+        ...targetUser,
+        role: newRole,
+        requestedRole: newRole
+      };
+      await saveSupabaseUserProfile(updated);
+      setUsers(prev => prev.map(u => (u.uid === targetUser.uid || u.email === targetUser.email) ? updated : u));
+      if (selectedDetailUser?.uid === targetUser.uid || selectedDetailUser?.email === targetUser.email) {
+        setSelectedDetailUser(updated);
+      }
+      logAuditAction({
+        actor: currentUser,
+        action: 'role_override',
+        details: `Super Admin reassigned ${targetUser.name} (${targetUser.email}) to role: ${newRole.toUpperCase()}`,
+        targetStudentId: targetUser.uid,
+        targetStudentName: targetUser.name,
+        schoolId: activeSchoolId
+      });
+      loadAuditLogs();
+      showNotification(`✓ Role for ${targetUser.name} changed to ${newRole.toUpperCase()}`);
+    } catch (e: any) {
+      showNotification(`Failed to change role: ${e.message}`);
+    }
+  };
+
+  const handleToggleAccountStatus = async (targetUser: UserProfile) => {
+    if (!isSuperAdmin) {
+      showNotification('❌ Permission Denied: Only Super Admin can block or approve accounts.');
+      return;
+    }
+    const nextStatus = targetUser.accountStatus === 'blocked' ? 'approved' : 'blocked';
+    try {
+      const updated: UserProfile = {
+        ...targetUser,
+        accountStatus: nextStatus
+      };
+      await saveSupabaseUserProfile(updated);
+      setUsers(prev => prev.map(u => (u.uid === targetUser.uid || u.email === targetUser.email) ? updated : u));
+      if (selectedDetailUser?.uid === targetUser.uid || selectedDetailUser?.email === targetUser.email) {
+        setSelectedDetailUser(updated);
+      }
+      logAuditAction({
+        actor: currentUser,
+        action: 'account_status_change',
+        details: `Super Admin set account status of ${targetUser.name} (${targetUser.email}) to: ${nextStatus.toUpperCase()}`,
+        targetStudentId: targetUser.uid,
+        targetStudentName: targetUser.name,
+        schoolId: activeSchoolId
+      });
+      loadAuditLogs();
+      showNotification(`✓ ${targetUser.name}'s account is now ${nextStatus.toUpperCase()}`);
+    } catch (e: any) {
+      showNotification(`Failed to update status: ${e.message}`);
+    }
+  };
+
+  const handleExecuteDeleteUser = async (targetUser: UserProfile) => {
+    if (!isSuperAdmin) {
+      showNotification('❌ Permission Denied: Only Super Admin can delete users.');
+      return;
+    }
+    if (targetUser.role === 'super_admin') {
+      showNotification('⚠️ Security Policy: Cannot delete a Super Admin user.');
+      setIsDeleteShaking(true);
+      setTimeout(() => setIsDeleteShaking(false), 500);
+      return;
+    }
+
+    setIsDeleteShaking(true);
+    try {
+      await deleteSupabaseUser(targetUser.uid || targetUser.email);
+      setUsers(prev => prev.filter(u => u.uid !== targetUser.uid && u.email !== targetUser.email));
+      if (selectedDetailUser?.uid === targetUser.uid || selectedDetailUser?.email === targetUser.email) {
+        setSelectedDetailUser(null);
+      }
+      logAuditAction({
+        actor: currentUser,
+        action: 'user_delete',
+        details: `Super Admin permanently deleted user ${targetUser.name} (${targetUser.email}) [UID: ${targetUser.uid}]`,
+        targetStudentId: targetUser.uid,
+        targetStudentName: targetUser.name,
+        schoolId: activeSchoolId
+      });
+      loadAuditLogs();
+      setDeleteConfirmUser(null);
+      showNotification(`🗑️ Deleted ${targetUser.name} from the campus directory.`);
+    } catch (e: any) {
+      showNotification(`Error deleting user: ${e.message}`);
+    } finally {
+      setIsDeleteShaking(false);
+    }
+  };
+
+  const handleTriggerSpectate = (targetStudent: UserProfile) => {
+    if (!isSuperAdmin) {
+      showNotification('❌ Permission Denied: Only Super Admin can spectate student screens.');
+      return;
+    }
+    if (targetStudent.role === 'super_admin') {
+      showNotification('⚠️ Security Policy: Cannot spectate another Super Admin.');
+      return;
+    }
+    if (targetStudent.role !== 'student') {
+      showNotification('⚠️ Spectate mode is exclusively supported for students.');
+      return;
+    }
+
+    setSpectateTransitioningStudent(targetStudent);
+    setTimeout(() => {
+      setSpectatingStudent(targetStudent);
+      setSpectateTransitioningStudent(null);
+    }, 750);
+  };
+
+  const handleUnlinkParentChild = async (link: any) => {
+    if (!isSuperAdmin) {
+      showNotification('❌ Only Super Admin can unlink parent and child accounts.');
+      return;
+    }
+    try {
+      const res = await fetch('/api/admin/unlink-parent-child', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentUid: link.parent_uid,
+          studentUid: link.student_uid,
+          parentEmail: link.parent_email,
+          studentEmail: link.student_email
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setParentLinks(prev => prev.filter(l => l.id !== link.id && (l.parent_uid !== link.parent_uid || l.student_uid !== link.student_uid)));
+        setUnlinkConfirmLink(null);
+        showNotification(`✓ Successfully unlinked parent & child.`);
+        logAuditAction({
+          actor: currentUser,
+          action: 'parent_unlink',
+          details: `Super Admin unlinked parent ${link.parent_email} from child ${link.student_email}`,
+          schoolId: activeSchoolId
+        });
+      } else {
+        showNotification(`Failed to unlink: ${data.error || 'Server error'}`);
+      }
+    } catch (e: any) {
+      showNotification(`Unlink error: ${e.message}`);
     }
   };
 
@@ -631,6 +850,253 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
         </div>
       )}
 
+      {/* Super Admin User Detail Slide-In Drawer */}
+      <AnimatePresence>
+        {selectedDetailUser && (
+          <div className="fixed inset-0 z-50 overflow-hidden">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedDetailUser(null)}
+              className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            />
+            <div className="fixed inset-y-0 right-0 max-w-full flex pl-10 pointer-events-none">
+              <motion.div
+                initial={{ x: '100%' }}
+                animate={{ x: 0 }}
+                exit={{ x: '100%' }}
+                transition={{ type: 'spring', damping: 28, stiffness: 280 }}
+                className="w-screen max-w-md pointer-events-auto bg-slate-950/95 border-l border-white/10 shadow-2xl flex flex-col justify-between overflow-y-auto"
+              >
+                <div className="p-6 space-y-6">
+                  {/* Drawer Header */}
+                  <div className="flex items-start justify-between border-b border-white/10 pb-4">
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={selectedDetailUser.photoURL || selectedDetailUser.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${selectedDetailUser.uid || selectedDetailUser.name}`}
+                        alt={selectedDetailUser.name}
+                        className="w-14 h-14 rounded-2xl object-cover border-2 border-amber-500/30"
+                      />
+                      <div>
+                        <h4 className="text-base font-black text-white">{selectedDetailUser.name}</h4>
+                        <p className="text-xs text-slate-400 font-mono">{selectedDetailUser.email}</p>
+                        <span className="text-[10px] text-amber-400 font-mono mt-0.5 block">
+                          UID: {selectedDetailUser.uid || 'unregistered'}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setSelectedDetailUser(null)}
+                      className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {/* Role Switcher as Animated Pills */}
+                  <div className="space-y-2.5 p-4 rounded-2xl bg-slate-900/60 border border-white/10">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <Shield className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Role Switcher</span>
+                      </span>
+                      <span className="text-[10px] font-mono text-amber-400 uppercase font-black">
+                        Current: {selectedDetailUser.role}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-400">
+                      Instantly change and reassign this account's privilege level:
+                    </p>
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {(['student', 'teacher', 'coordinator', 'parent', 'admin', 'super_admin'] as UserRole[]).map(roleOption => {
+                        const isCurrent = selectedDetailUser.role === roleOption;
+                        return (
+                          <motion.button
+                            key={roleOption}
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            onClick={() => handleQuickChangeRole(selectedDetailUser, roleOption)}
+                            disabled={!isSuperAdmin}
+                            className={`px-3 py-1.5 rounded-full text-[11px] font-bold uppercase transition-all cursor-pointer ${
+                              isCurrent
+                                ? 'bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-400/50 font-black'
+                                : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700 hover:text-white border border-white/5'
+                            }`}
+                          >
+                            {roleOption.replace('_', ' ')}
+                          </motion.button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Account Status / Moderation */}
+                  <div className="space-y-3 p-4 rounded-2xl bg-slate-900/60 border border-white/10">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-white">Account Status</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                        selectedDetailUser.accountStatus === 'blocked' ? 'bg-rose-500/20 text-rose-300' : 'bg-emerald-500/20 text-emerald-300'
+                      }`}>
+                        {selectedDetailUser.accountStatus || 'approved'}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => handleToggleAccountStatus(selectedDetailUser)}
+                      className={`w-full py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                        selectedDetailUser.accountStatus === 'blocked'
+                          ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md'
+                          : 'bg-amber-600/30 hover:bg-amber-600 text-amber-200 hover:text-white border border-amber-500/40'
+                      }`}
+                    >
+                      {selectedDetailUser.accountStatus === 'blocked' ? (
+                        <>
+                          <Unlock className="w-4 h-4" />
+                          <span>Approve & Unblock Account</span>
+                        </>
+                      ) : (
+                        <>
+                          <Lock className="w-4 h-4" />
+                          <span>Block User Account</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Additional Actions */}
+                  <div className="space-y-2.5">
+                    {/* Password Reset Token Generator */}
+                    <button
+                      onClick={() => {
+                        handleIssuePasswordReset(selectedDetailUser);
+                      }}
+                      className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-850 border border-white/10 hover:border-emerald-500/30 text-white text-xs font-bold flex items-center justify-between transition-all cursor-pointer group"
+                    >
+                      <span className="flex items-center gap-2">
+                        <Key className="w-4 h-4 text-emerald-400" />
+                        <span>Issue Password Reset Token</span>
+                      </span>
+                      <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-emerald-400 transition-colors" />
+                    </button>
+
+                    {/* Spectate Button (Students only) */}
+                    {selectedDetailUser.role === 'student' && (
+                      <button
+                        onClick={() => {
+                          const stu = selectedDetailUser;
+                          setSelectedDetailUser(null);
+                          handleTriggerSpectate(stu);
+                        }}
+                        className="w-full py-2.5 px-4 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-center justify-between transition-all cursor-pointer group"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Eye className="w-4 h-4 text-amber-400" />
+                          <span>Spectate Student Workspace</span>
+                        </span>
+                        <ChevronRight className="w-4 h-4 text-amber-400" />
+                      </button>
+                    )}
+
+                    {/* Edit Profile Details */}
+                    <button
+                      onClick={() => {
+                        setEditingUser(selectedDetailUser);
+                        setSelectedDetailUser(null);
+                      }}
+                      className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-850 border border-white/10 text-white text-xs font-bold flex items-center justify-between transition-all cursor-pointer group"
+                    >
+                      <span className="flex items-center gap-2">
+                        <Users className="w-4 h-4 text-indigo-400" />
+                        <span>Edit Full Profile (Grade, Section, Name)</span>
+                      </span>
+                      <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-indigo-400 transition-colors" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Drawer Footer with Permanent Delete */}
+                <div className="p-6 border-t border-white/10 bg-slate-950/80">
+                  <button
+                    onClick={() => {
+                      setDeleteConfirmUser(selectedDetailUser);
+                      setSelectedDetailUser(null);
+                    }}
+                    className="w-full py-2.5 rounded-xl bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Permanently Delete User</span>
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete User Confirmation Modal with Shake Animation */}
+      {deleteConfirmUser && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-rose-500/30 rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3 text-rose-400">
+              <div className="p-3 bg-rose-500/10 rounded-2xl border border-rose-500/20">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h4 className="text-base font-black text-white">Delete User Account</h4>
+                <p className="text-xs text-rose-400">Irreversible Action</p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Are you sure you want to permanently delete <strong className="text-white">{deleteConfirmUser.name}</strong> ({deleteConfirmUser.email})? All profile data and session access will be removed.
+            </p>
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => setDeleteConfirmUser(null)}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <motion.button
+                animate={isDeleteShaking ? { x: [-10, 10, -8, 8, -4, 4, 0] } : {}}
+                transition={{ duration: 0.4 }}
+                onClick={() => handleExecuteDeleteUser(deleteConfirmUser)}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-all shadow-lg shadow-rose-600/30 cursor-pointer"
+              >
+                Confirm Delete
+              </motion.button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Spectate 3D Orb Transition */}
+      {spectateTransitioningStudent && (
+        <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-xl flex flex-col items-center justify-center p-6 animate-fadeIn">
+          <div className="relative w-36 h-36 flex items-center justify-center">
+            <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-amber-500 via-purple-600 to-indigo-500 blur-2xl opacity-75 animate-pulse" />
+            <motion.div
+              animate={{
+                scale: [1, 1.2, 0.95, 1.15, 1],
+                rotate: [0, 90, 180, 270, 360],
+                borderRadius: ["40% 60% 70% 30% / 40% 50% 60% 50%", "60% 40% 30% 70% / 60% 30% 70% 40%", "40% 60% 70% 30% / 40% 50% 60% 50%"]
+              }}
+              transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+              className="w-28 h-28 bg-gradient-to-br from-amber-400 via-rose-500 to-indigo-600 shadow-2xl flex items-center justify-center"
+            >
+              <Eye className="w-10 h-10 text-white drop-shadow-lg" />
+            </motion.div>
+          </div>
+          <div className="text-center mt-6 space-y-2">
+            <h3 className="text-lg font-black text-white font-display tracking-tight">
+              Connecting to {spectateTransitioningStudent.name}'s Workspace...
+            </h3>
+            <p className="text-xs text-amber-400/90 font-mono">
+              Securing audited read-only spectate session
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Top Console Header */}
       <div className="flex justify-between items-center flex-wrap gap-4 border-b border-white/5 pb-5">
         <div className="space-y-1">
@@ -706,6 +1172,7 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
               { id: 'presence', label: `Live Presence (${onlineUsersList.length})`, icon: Radio },
               { id: 'tab_usage', label: 'Tab Usage Report', icon: BarChart2 },
               { id: 'spectate', label: 'Spectate Student', icon: Eye },
+              { id: 'parent_links', label: `Parent Links (${parentLinks.length})`, icon: UserCheck },
               { id: 'schools', label: 'School Switcher', icon: School },
               { id: 'audit', label: `Audit Log (${auditLogs.length})`, icon: Shield },
               { id: 'flags', label: 'Feature Flags', icon: Flag },
@@ -741,13 +1208,13 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             <div className="p-4 bg-slate-900/80 border border-white/10 rounded-2xl space-y-1">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Students Enrolled</span>
-              <span className="text-2xl font-black text-white font-mono">{totalStudents > 0 ? totalStudents : 1420}</span>
+              <span className="text-2xl font-black text-white font-mono"><StatCounter value={totalStudents > 0 ? totalStudents : 1420} /></span>
               <span className="text-[10px] text-emerald-400 font-bold block">Active Roster</span>
             </div>
 
             <div className="p-4 bg-slate-900/80 border border-white/10 rounded-2xl space-y-1">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Faculty Members</span>
-              <span className="text-2xl font-black text-indigo-400 font-mono">{totalTeachers > 0 ? totalTeachers : 86}</span>
+              <span className="text-2xl font-black text-indigo-400 font-mono"><StatCounter value={totalTeachers > 0 ? totalTeachers : 86} /></span>
               <span className="text-[10px] text-slate-400 font-bold block">Certified Teachers</span>
             </div>
 
@@ -759,13 +1226,13 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
 
             <div className="p-4 bg-slate-900/80 border border-white/10 rounded-2xl space-y-1">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Pending Leaves</span>
-              <span className="text-2xl font-black text-amber-400 font-mono">{pendingLeaves.length}</span>
+              <span className="text-2xl font-black text-amber-400 font-mono"><StatCounter value={pendingLeaves.length} /></span>
               <span className="text-[10px] text-amber-400/80 font-bold block">Awaiting Decision</span>
             </div>
 
             <div className="p-4 bg-slate-900/80 border border-white/10 rounded-2xl space-y-1">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Pending Circulars</span>
-              <span className="text-2xl font-black text-purple-400 font-mono">2</span>
+              <span className="text-2xl font-black text-purple-400 font-mono"><StatCounter value={2} /></span>
               <span className="text-[10px] text-purple-400/80 font-bold block">Campus Notices</span>
             </div>
           </div>
@@ -1186,16 +1653,55 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
       )}
 
       {/* =========================================================================
-          VIEW 5: USER DIRECTORY
+          VIEW 5: USER DIRECTORY & SUPER ADMIN COMMAND CONSOLE
       ========================================================================= */}
       {adminSubTab === 'users' && (
         <div className="space-y-4 animate-fadeIn">
+          {/* Sticky Command Bar with Soft Glow on Focus */}
+          <div className="sticky top-0 z-20 bg-slate-950/85 backdrop-blur-xl p-3.5 rounded-2xl border border-white/10 shadow-2xl transition-all duration-300 focus-within:ring-2 focus-within:ring-amber-500/50 focus-within:border-amber-500/70 focus-within:shadow-[0_0_30px_rgba(245,158,11,0.28)]">
+            <div className="flex flex-col md:flex-row items-center gap-3">
+              <div className="relative flex-1 w-full">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                <input
+                  type="text"
+                  placeholder="Sticky Command Bar: Search user by name, email, grade, or role..."
+                  value={commandSearchQuery}
+                  onChange={e => setCommandSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 bg-slate-900/90 border border-white/10 rounded-xl text-white text-xs placeholder:text-slate-500 focus:outline-none"
+                />
+              </div>
+
+              {/* Quick Role Filter Pills */}
+              <div className="flex items-center gap-1.5 overflow-x-auto w-full md:w-auto scrollbar-none pb-1 md:pb-0">
+                {(['all', 'student', 'teacher', 'coordinator', 'parent', 'admin', 'super_admin'] as const).map(role => {
+                  const isSelected = commandRoleFilter === role;
+                  return (
+                    <button
+                      key={role}
+                      onClick={() => setCommandRoleFilter(role)}
+                      className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase transition-all whitespace-nowrap cursor-pointer ${
+                        isSelected
+                          ? 'bg-amber-500 text-slate-950 shadow-md font-black scale-105'
+                          : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800'
+                      }`}
+                    >
+                      {role.replace('_', ' ')}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
           {editingUser ? (
-            <form onSubmit={handleSaveUser} className="bg-slate-900 border border-indigo-500/30 p-6 rounded-2xl space-y-4">
-              <h4 className="font-bold text-white">Edit User: {editingUser.email}</h4>
+            <form onSubmit={handleSaveUser} className="bg-slate-900 border border-indigo-500/30 p-6 rounded-2xl space-y-4 shadow-xl">
+              <h4 className="font-bold text-white flex items-center justify-between">
+                <span>Edit User Profile: {editingUser.email}</span>
+                <span className="text-xs text-indigo-400 font-mono">UID: {editingUser.uid || '—'}</span>
+              </h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                 <div>
-                  <label className="text-slate-400 font-bold block mb-1">Name</label>
+                  <label className="text-slate-400 font-bold block mb-1">Full Name</label>
                   <input
                     type="text"
                     value={editingUser.name}
@@ -1205,7 +1711,7 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
                   />
                 </div>
                 <div>
-                  <label className="text-slate-400 font-bold block mb-1">Role</label>
+                  <label className="text-slate-400 font-bold block mb-1">Account Role</label>
                   <select
                     value={editingUser.role}
                     onChange={e => setEditingUser({ ...editingUser, role: e.target.value as UserRole })}
@@ -1214,6 +1720,7 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
                     <option value="student">Student</option>
                     <option value="teacher">Teacher</option>
                     <option value="coordinator">Coordinator</option>
+                    <option value="parent">Parent</option>
                     {isSuperAdmin && <option value="admin">Admin</option>}
                     {isSuperAdmin && <option value="super_admin">Super Admin</option>}
                   </select>
@@ -1251,61 +1758,111 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold"
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md"
                 >
                   Save Profile Changes
                 </button>
               </div>
             </form>
           ) : (
-            <div className="rounded-2xl border border-white/10 overflow-hidden bg-slate-950/60">
+            <div className="rounded-2xl border border-white/10 overflow-hidden bg-slate-950/70 shadow-2xl">
               <table className="w-full text-left text-xs">
                 <thead>
-                  <tr className="bg-slate-900 text-slate-400 uppercase tracking-wider text-[10px] font-bold border-b border-white/5">
-                    <th className="p-3">User</th>
-                    <th className="p-3">Role</th>
-                    <th className="p-3">Grade & Section</th>
-                    <th className="p-3">Status</th>
-                    <th className="p-3 text-right">Actions</th>
+                  <tr className="bg-slate-900/90 text-slate-400 uppercase tracking-wider text-[10px] font-bold border-b border-white/5">
+                    <th className="p-3.5">User</th>
+                    <th className="p-3.5">Role</th>
+                    <th className="p-3.5">Grade & Section</th>
+                    <th className="p-3.5">Status</th>
+                    <th className="p-3.5 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {users.map(u => (
-                    <tr key={u.uid || u.email} className="hover:bg-white/5">
-                      <td className="p-3">
-                        <div className="font-bold text-white">{u.name}</div>
-                        <div className="text-[10px] text-slate-400 font-mono">{u.email}</div>
-                      </td>
-                      <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                          u.role === 'super_admin' ? 'bg-amber-500/20 text-amber-300' :
-                          u.role === 'admin' ? 'bg-purple-500/20 text-purple-300' :
-                          u.role === 'teacher' ? 'bg-emerald-500/20 text-emerald-300' :
-                          'bg-indigo-500/20 text-indigo-300'
-                        }`}>
-                          {u.role}
-                        </span>
-                      </td>
-                      <td className="p-3 text-slate-400">
-                        {u.grade ? `${u.grade} - Section ${u.section || 'General'}` : '—'}
-                      </td>
-                      <td className="p-3">
-                        <span className="text-[10px] font-bold text-emerald-400 capitalize">
-                          {u.accountStatus || 'approved'}
-                        </span>
-                      </td>
-                      <td className="p-3 text-right">
-                        {(u.role !== 'super_admin' || isSuperAdmin) && (
-                          <button
-                            onClick={() => setEditingUser(u)}
-                            className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-white text-[10px] font-bold uppercase transition-all cursor-pointer"
-                          >
-                            Edit
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {users
+                    .filter(u => {
+                      if (commandRoleFilter !== 'all' && u.role !== commandRoleFilter) return false;
+                      if (commandSearchQuery.trim()) {
+                        const q = commandSearchQuery.toLowerCase();
+                        return (
+                          (u.name || '').toLowerCase().includes(q) ||
+                          (u.email || '').toLowerCase().includes(q) ||
+                          (u.role || '').toLowerCase().includes(q) ||
+                          (u.grade || '').toLowerCase().includes(q)
+                        );
+                      }
+                      return true;
+                    })
+                    .map(u => (
+                      <tr
+                        key={u.uid || u.email}
+                        onClick={() => setSelectedDetailUser(u)}
+                        className="group hover:bg-white/[0.07] transition-all duration-200 transform hover:-translate-y-0.5 hover:shadow-lg cursor-pointer"
+                      >
+                        <td className="p-3.5">
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={u.photoURL || u.avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${u.uid || u.name}`}
+                              alt={u.name}
+                              className="w-8 h-8 rounded-xl object-cover shrink-0 border border-white/10"
+                            />
+                            <div>
+                              <div className="font-bold text-white group-hover:text-amber-300 transition-colors flex items-center gap-2">
+                                <span>{u.name}</span>
+                                {u.accountStatus === 'blocked' && (
+                                  <span className="text-[9px] bg-rose-500/20 text-rose-300 px-1.5 py-0.2 rounded border border-rose-500/30 uppercase font-mono font-bold">
+                                    Blocked
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-slate-400 font-mono">{u.email}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="p-3.5">
+                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                            u.role === 'super_admin' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-black' :
+                            u.role === 'admin' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' :
+                            u.role === 'teacher' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
+                            u.role === 'parent' ? 'bg-teal-500/20 text-teal-300 border border-teal-500/30' :
+                            u.role === 'coordinator' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
+                            'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                          }`}>
+                            {u.role}
+                          </span>
+                        </td>
+                        <td className="p-3.5 text-slate-400">
+                          {u.grade ? `${u.grade} - Section ${u.section || 'General'}` : (u.role === 'student' ? 'Grade 10' : '—')}
+                        </td>
+                        <td className="p-3.5">
+                          <span className={`text-[10px] font-bold capitalize flex items-center gap-1.5 ${
+                            u.accountStatus === 'blocked' ? 'text-rose-400' : 'text-emerald-400'
+                          }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${
+                              u.accountStatus === 'blocked' ? 'bg-rose-400' : 'bg-emerald-400'
+                            }`} />
+                            <span>{u.accountStatus || 'approved'}</span>
+                          </span>
+                        </td>
+                        <td className="p-3.5 text-right">
+                          <div className="flex items-center justify-end gap-1.5" onClick={e => e.stopPropagation()}>
+                            {isSuperAdmin && u.role === 'student' && (
+                              <button
+                                onClick={() => handleTriggerSpectate(u)}
+                                title="Spectate Student"
+                                className="p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs transition-all cursor-pointer border border-amber-500/20"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setSelectedDetailUser(u)}
+                              className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-white text-[10px] font-bold uppercase transition-all cursor-pointer border border-white/5"
+                            >
+                              Details
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
                 </tbody>
               </table>
             </div>
@@ -1428,37 +1985,63 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
             </div>
           </div>
 
-          {/* Highlights */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="p-4 bg-slate-900/80 border border-white/10 rounded-2xl space-y-1">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Tab Opens</span>
-              <span className="text-2xl font-black text-white font-mono">{usageReport.totalOpens}</span>
-              <span className="text-[10px] text-slate-400 font-mono">Date Range: {usageReport.startDate} → {usageReport.endDate}</span>
+          {/* Top 3 Most Used and Bottom 3 Least Used Ranked Highlights */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Top 3 Most Used */}
+            <div className="p-5 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>🔥 Top 3 Most Used Tabs</span>
+                </span>
+                <span className="text-[10px] text-emerald-400 font-mono">Ranked by Total Opens</span>
+              </div>
+              <div className="space-y-2">
+                {usageReport.allTabs.slice(0, 3).map((tab, idx) => (
+                  <div key={tab.tabId} className="p-2.5 bg-slate-950/70 border border-emerald-500/20 rounded-xl flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-300 flex items-center justify-center text-[10px] font-black font-mono">
+                        #{idx + 1}
+                      </span>
+                      <span className="text-xs font-bold text-white">{tab.tabLabel}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs font-mono font-bold text-emerald-400">{tab.openCount} opens</span>
+                      <span className="text-[10px] text-slate-400 block font-mono">{tab.percentage}% share</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
 
-            <div className="p-4 bg-slate-900/80 border border-emerald-500/20 rounded-2xl space-y-1">
-              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">🔥 Most Used Module</span>
-              <span className="text-base font-black text-white truncate block">
-                {usageReport.mostUsedTab?.tabLabel || 'Study Hub & Planner'}
-              </span>
-              <span className="text-[10px] text-emerald-300 font-mono font-bold block">
-                {usageReport.mostUsedTab?.openCount || 0} Opens ({usageReport.mostUsedTab?.percentage || 0}%)
-              </span>
-            </div>
-
-            <div className="p-4 bg-slate-900/80 border border-amber-500/20 rounded-2xl space-y-1">
-              <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">❄️ Least Used Module</span>
-              <span className="text-base font-black text-white truncate block">
-                {usageReport.leastUsedTab?.tabLabel || 'Materials Hub'}
-              </span>
-              <span className="text-[10px] text-amber-300 font-mono font-bold block">
-                {usageReport.leastUsedTab?.openCount || 0} Opens ({usageReport.leastUsedTab?.percentage || 0}%)
-              </span>
+            {/* Bottom 3 Least Used */}
+            <div className="p-5 bg-amber-500/10 border border-amber-500/20 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>❄️ Bottom 3 Least Used Tabs</span>
+                </span>
+                <span className="text-[10px] text-amber-400 font-mono">Ranked by Fewest Opens</span>
+              </div>
+              <div className="space-y-2">
+                {[...usageReport.allTabs].reverse().slice(0, 3).map((tab, idx) => (
+                  <div key={tab.tabId} className="p-2.5 bg-slate-950/70 border border-amber-500/20 rounded-xl flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-300 flex items-center justify-center text-[10px] font-black font-mono">
+                        #{usageReport.allTabs.length - idx}
+                      </span>
+                      <span className="text-xs font-bold text-white">{tab.tabLabel}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-xs font-mono font-bold text-amber-400">{tab.openCount} opens</span>
+                      <span className="text-[10px] text-slate-400 block font-mono">{tab.percentage}% share</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
           {/* Detailed Usage Breakdown Table */}
-          <div className="rounded-2xl border border-white/10 overflow-hidden bg-slate-950/60">
+          <div className="rounded-2xl border border-white/10 overflow-hidden bg-slate-950/60 shadow-xl">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="bg-slate-900 text-slate-400 uppercase tracking-wider text-[10px] font-bold border-b border-white/5">
@@ -1536,8 +2119,8 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
                 </div>
 
                 <button
-                  onClick={() => setSpectatingStudent(stu)}
-                  className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 text-xs font-bold transition-all border border-amber-500/30 cursor-pointer whitespace-nowrap flex items-center gap-1.5"
+                  onClick={() => handleTriggerSpectate(stu)}
+                  className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 text-xs font-bold transition-all border border-amber-500/30 cursor-pointer whitespace-nowrap flex items-center gap-1.5 shadow-md"
                 >
                   <Eye className="w-3.5 h-3.5" />
                   <span>Spectate</span>
@@ -1545,6 +2128,75 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          VIEW: [SUPER ADMIN] PARENT-CHILD LINKS
+      ========================================================================= */}
+      {isSuperAdmin && adminSubTab === 'parent_links' && (
+        <div className="space-y-6 animate-fadeIn">
+          <div className="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl flex items-center justify-between text-xs text-indigo-300">
+            <div className="flex items-center gap-2">
+              <UserCheck className="w-4 h-4 shrink-0 text-indigo-400" />
+              <span>Parent-Child Guardian Roster: Audit and unlink verified parent accounts from students. Changes apply immediately.</span>
+            </div>
+            <button
+              onClick={loadParentLinks}
+              disabled={loadingLinks}
+              className="px-3 py-1 bg-white/5 hover:bg-white/10 rounded-lg text-xs font-bold text-white flex items-center gap-1.5 cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingLinks ? 'animate-spin' : ''}`} />
+              <span>Refresh Links</span>
+            </button>
+          </div>
+
+          {parentLinks.length === 0 ? (
+            <div className="p-8 text-center bg-slate-900/40 border border-white/5 rounded-3xl space-y-2">
+              <UserX className="w-8 h-8 text-slate-500 mx-auto" />
+              <h4 className="text-sm font-bold text-white">No Parent-Child Links Found</h4>
+              <p className="text-xs text-slate-400">When parents verify their child via OTP, active relationship records will appear here.</p>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-white/10 overflow-hidden bg-slate-950/60 shadow-xl">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="bg-slate-900 text-slate-400 uppercase tracking-wider text-[10px] font-bold border-b border-white/5">
+                    <th className="p-3">Parent User</th>
+                    <th className="p-3">Linked Child</th>
+                    <th className="p-3">Verified Date</th>
+                    <th className="p-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {parentLinks.map(link => (
+                    <tr key={link.id || `${link.parent_uid}_${link.student_uid}`} className="hover:bg-white/5">
+                      <td className="p-3">
+                        <div className="font-bold text-white">{link.parent_name || 'Parent User'}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">{link.parent_email}</div>
+                      </td>
+                      <td className="p-3">
+                        <div className="font-bold text-indigo-300">{link.student_name || 'Student'}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">{link.student_email}</div>
+                      </td>
+                      <td className="p-3 text-slate-400 font-mono text-[10px]">
+                        {link.created_at ? new Date(link.created_at).toLocaleDateString() : 'Active'}
+                      </td>
+                      <td className="p-3 text-right">
+                        <button
+                          onClick={() => handleUnlinkParentChild(link)}
+                          className="px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500 text-rose-300 hover:text-white text-xs font-bold transition-all border border-rose-500/30 flex items-center gap-1.5 ml-auto cursor-pointer"
+                        >
+                          <Unlink className="w-3.5 h-3.5" />
+                          <span>Unlink</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

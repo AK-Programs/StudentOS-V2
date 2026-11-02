@@ -2670,6 +2670,7 @@ ${combinedContext}
               ? 'Because you are Orion, you MUST clearly separate **Internal StudentOS Data** (from <studentos_authorized_context>) from **External Web Information** (from <untrusted_external_web_sources>) using clear headings, and cite the external source domains/titles.'
               : 'Synthesize the fresh web findings at an educational level appropriate for the student, and include a brief **Sources** list at the end attributing the domains/titles used.'
           }
+4. EDUCATIONAL VIDEO DISCIPLINE: Only recommend or display videos that explicitly appear inside <verified_educational_videos>. If <verified_educational_videos> says "No verified educational videos were found." or has no videos, you MUST output: "No verified educational videos were found." Do NOT invent, hallucinate, or guess YouTube links, video IDs, or video titles.
 
 ${searchRes.formattedContext}`;
         } else {
@@ -3747,7 +3748,7 @@ app.post('/api/ai/search', async (req, res) => {
 
     const cleanQ = String(query).toLowerCase();
     if (cleanQ.includes('video') && (!searchRes.videos || searchRes.videos.length === 0)) {
-      summaryText += '\n\nNote: No verified playable educational videos could be found for this specific query.';
+      summaryText += '\n\nNo verified educational videos were found.';
     }
 
     return res.json({
@@ -5432,6 +5433,95 @@ app.get('/api/parent/linked-children', async (req, res) => {
   } catch (err: any) {
     console.error('[Get Linked Children Error]:', err);
     return res.status(500).json({ success: false, error: err?.message || 'Failed to fetch linked children.' });
+  }
+});
+
+// Super Admin: List all parent-child links across the campus
+app.get('/api/admin/all-parent-child-links', async (req, res) => {
+  try {
+    const { url: supabaseUrl, key: supabaseKey } = getSupabaseServerConfig();
+    if (!supabaseKey) {
+      return res.status(500).json({ success: false, error: 'Database service is unavailable.' });
+    }
+
+    const resp = await fetch(`${supabaseUrl}/rest/v1/parent_child_links?select=*&order=created_at.desc`, {
+      headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+    });
+
+    if (!resp.ok) {
+      return res.json({ success: true, links: [] });
+    }
+
+    const links = await resp.json().catch(() => []);
+    return res.json({ success: true, links: Array.isArray(links) ? links : [] });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Super Admin: Unlink parent from child
+app.post('/api/admin/unlink-parent-child', async (req, res) => {
+  const { parentUid, studentUid, parentEmail, studentEmail } = req.body || {};
+  if (!parentUid && !parentEmail) {
+    return res.status(400).json({ success: false, error: 'Parent identification required.' });
+  }
+
+  try {
+    const { url: supabaseUrl, key: supabaseKey } = getSupabaseServerConfig();
+    if (!supabaseKey) {
+      return res.status(500).json({ success: false, error: 'Database service is unavailable.' });
+    }
+
+    // 1. Delete from parent_child_links
+    let queryParam = '';
+    if (parentUid && studentUid) {
+      queryParam = `parent_uid=eq.${encodeURIComponent(parentUid)}&student_uid=eq.${encodeURIComponent(studentUid)}`;
+    } else if (parentEmail && studentEmail) {
+      queryParam = `parent_email=eq.${encodeURIComponent(parentEmail)}&student_email=eq.${encodeURIComponent(studentEmail)}`;
+    } else if (parentUid) {
+      queryParam = `parent_uid=eq.${encodeURIComponent(parentUid)}`;
+    }
+
+    if (queryParam) {
+      await fetch(`${supabaseUrl}/rest/v1/parent_child_links?${queryParam}`, {
+        method: 'DELETE',
+        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+      });
+    }
+
+    // 2. Remove from parent user_profiles.raw_data.linked_children
+    if (parentUid) {
+      try {
+        const pResp = await fetch(`${supabaseUrl}/rest/v1/user_profiles?uid=eq.${encodeURIComponent(parentUid)}&select=*`, {
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+        });
+        if (pResp.ok) {
+          const pData = await pResp.json().catch(() => []);
+          const prof = pData?.[0];
+          if (prof && prof.raw_data) {
+            const raw = prof.raw_data;
+            if (Array.isArray(raw.linked_children)) {
+              raw.linked_children = raw.linked_children.filter(
+                (c: any) => c.student_uid !== studentUid && c.student_email !== studentEmail
+              );
+              await fetch(`${supabaseUrl}/rest/v1/user_profiles?uid=eq.${encodeURIComponent(parentUid)}`, {
+                method: 'PATCH',
+                headers: {
+                  apikey: supabaseKey,
+                  Authorization: `Bearer ${supabaseKey}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ raw_data: raw })
+              });
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    return res.json({ success: true, message: 'Parent and child successfully unlinked.' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Failed to unlink parent and child.' });
   }
 });
 

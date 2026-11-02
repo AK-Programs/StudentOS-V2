@@ -24,11 +24,13 @@ export function MajorReleaseBanner({
   effectiveRole,
   onNavigateTab
 }: MajorReleaseBannerProps) {
+  if (!currentUser) return null;
+
   const [activeMajorUpdate, setActiveMajorUpdate] = useState<SystemUpdate | null>(null);
   const [visible, setVisible] = useState<boolean>(false);
 
-  const userId = currentUser?.uid || currentUser?.email || 'guest';
-  const userRole = (effectiveRole as UserRole) || currentUser?.role || 'student';
+  const userId = currentUser.uid || currentUser.email || 'guest';
+  const userRole = (effectiveRole as UserRole) || currentUser.role || 'student';
 
   useEffect(() => {
     let isMounted = true;

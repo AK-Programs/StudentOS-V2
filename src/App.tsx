@@ -15524,12 +15524,14 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
         />
       )}
 
-      {/* Major Release Announcement Banner */}
-      <MajorReleaseBanner
-        currentUser={currentUser}
-        effectiveRole={effectiveRole}
-        onNavigateTab={handleTabSelect}
-      />
+      {/* Major Release Announcement Banner (Only for authenticated users; never on sign up / login) */}
+      {Boolean(currentUser) && (
+        <MajorReleaseBanner
+          currentUser={currentUser}
+          effectiveRole={effectiveRole}
+          onNavigateTab={handleTabSelect}
+        />
+      )}
 
       {/* Global Gamification XP & Level-Up Reward Toast */}
       <GamificationRewardToast />

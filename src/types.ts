@@ -27,8 +27,8 @@ export interface UserProfile {
   name: string;
   role: UserRole;
   uid?: string;
-  requestedRole?: 'student' | 'teacher' | 'coordinator' | 'admin';
-  accountStatus?: 'approved' | 'rejected' | 'pending_teacher' | 'pending_coordinator' | 'pending_admin' | 'active';
+  requestedRole?: UserRole;
+  accountStatus?: 'approved' | 'rejected' | 'blocked' | 'pending_teacher' | 'pending_coordinator' | 'pending_admin' | 'active';
   grade?: string; // e.g. "Grade 10"
   section?: SectionType;
   house?: HouseType;
@@ -245,6 +245,7 @@ export interface VaultNote {
   isCollab?: boolean;
   collaborators?: string[];
   sort_order?: number;
+  permission?: 'edit' | 'view' | 'private';
 }
 
 export interface Homework {

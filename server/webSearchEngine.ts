@@ -64,6 +64,31 @@ export function sanitizeWebSnippet(raw: string, maxLength = 420): string {
 }
 
 /**
+ * Checks if a domain is an e-commerce, social media, entertainment, or spam site.
+ * These are completely dropped from educational search results.
+ */
+export function isExcludedDomain(urlOrDomain: string): boolean {
+  try {
+    const domain = urlOrDomain.includes('://')
+      ? new URL(urlOrDomain).hostname.replace(/^www\./i, '').toLowerCase()
+      : urlOrDomain.replace(/^www\./i, '').toLowerCase();
+
+    const blockedList = [
+      'amazon.', 'flipkart.', 'ebay.', 'walmart.', 'aliexpress.', 'etsy.', 'target.',
+      'bestbuy.', 'shopify.', 'shein.', 'temu.', 'myntra.', 'ajio.', 'snapdeal.',
+      'facebook.', 'twitter.', 'x.com', 'instagram.', 'tiktok.', 'pinterest.',
+      'reddit.', 'linkedin.', 'snapchat.', 'tumblr.', 'quora.',
+      'tripadvisor.', 'booking.com', 'expedia.', 'agoda.', 'hotels.com', 'zillow.',
+      'netflix.com', 'imdb.com', 'rottentomatoes.com', 'primevideo.com', 'hotstar.com'
+    ];
+
+    return blockedList.some(b => domain.includes(b));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Classifies a domain into an authority tier so official/educational sources rank first.
  */
 function classifyDomainAuthority(urlStr: string): {
@@ -75,21 +100,37 @@ function classifyDomainAuthority(urlStr: string): {
     const parsed = new URL(urlStr);
     const domain = parsed.hostname.replace(/^www\./i, '').toLowerCase();
 
+    // Educational Reference Giants (Wikipedia, Wikimedia)
+    if (domain.includes('wikipedia.org') || domain.includes('wikimedia.org')) {
+      return { domain, sourceType: 'reference', priorityScore: 120 };
+    }
+
+    // Premier Academic & Curriculum Portals
+    if (
+      domain.includes('ncert.nic.in') ||
+      domain.includes('cbse.gov.in') ||
+      domain.includes('khanacademy.org') ||
+      domain.includes('britannica.com') ||
+      domain.includes('nationalgeographic.com')
+    ) {
+      return { domain, sourceType: 'academic', priorityScore: 115 };
+    }
+
+    // Government & Research Institutions
     if (
       domain.endsWith('.gov') ||
       domain.endsWith('.gov.in') ||
       domain.endsWith('.nic.in') ||
-      domain.includes('cbse.gov') ||
-      domain.includes('ncert.nic') ||
       domain.includes('nasa.gov') ||
       domain.includes('isro.gov') ||
       domain.includes('who.int') ||
       domain.includes('unesco.org') ||
       domain.includes('un.org')
     ) {
-      return { domain, sourceType: 'official', priorityScore: 100 };
+      return { domain, sourceType: 'official', priorityScore: 110 };
     }
 
+    // Universities and Scholarly Journals
     if (
       domain.endsWith('.edu') ||
       domain.endsWith('.ac.in') ||
@@ -98,9 +139,22 @@ function classifyDomainAuthority(urlStr: string): {
       domain.includes('nature.com') ||
       domain.includes('sciencedirect.com') ||
       domain.includes('science.org') ||
-      domain.includes('ieee.org') ||
-      domain.includes('khanacademy.org') ||
-      domain.includes('britannica.com')
+      domain.includes('scientificamerican.com') ||
+      domain.includes('ieee.org')
+    ) {
+      return { domain, sourceType: 'academic', priorityScore: 100 };
+    }
+
+    // Verified Educational Portals & Study Resources
+    if (
+      domain.includes('geeksforgeeks.org') ||
+      domain.includes('physicsclassroom.com') ||
+      domain.includes('chemguide.co.uk') ||
+      domain.includes('byjus.com') ||
+      domain.includes('topperlearning.com') ||
+      domain.includes('openstax.org') ||
+      domain.includes('coursera.org') ||
+      domain.includes('edx.org')
     ) {
       return { domain, sourceType: 'academic', priorityScore: 90 };
     }
@@ -113,16 +167,12 @@ function classifyDomainAuthority(urlStr: string): {
       domain.includes('thehindu.com') ||
       domain.includes('indianexpress.com')
     ) {
-      return { domain, sourceType: 'news', priorityScore: 80 };
+      return { domain, sourceType: 'news', priorityScore: 70 };
     }
 
-    if (domain.includes('wikipedia.org') || domain.includes('wikimedia.org')) {
-      return { domain, sourceType: 'reference', priorityScore: 75 };
-    }
-
-    return { domain, sourceType: 'web', priorityScore: 50 };
+    return { domain, sourceType: 'web', priorityScore: 40 };
   } catch {
-    return { domain: 'web-source', sourceType: 'web', priorityScore: 30 };
+    return { domain: 'web-source', sourceType: 'web', priorityScore: 20 };
   }
 }
 
@@ -224,6 +274,7 @@ async function searchViaApinex(query: string, apiKey: string, signal: AbortSigna
       for (const item of items) {
         if (!item || (!item.url && !item.link)) continue;
         const urlStr = item.url || item.link;
+        if (isExcludedDomain(urlStr)) continue; // Drop shopping, social, and spam
         const auth = classifyDomainAuthority(urlStr);
         sources.push({
           title: sanitizeWebSnippet(item.title || 'Web Search Result', 130),
@@ -247,7 +298,12 @@ async function searchViaApinex(query: string, apiKey: string, signal: AbortSigna
 async function searchViaWikipedia(query: string, signal: AbortSignal): Promise<WebSearchSource[]> {
   try {
     const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&origin=*`;
-    const resp = await fetch(url, { signal });
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent': 'VeylentraEducationalBot/1.0 (contact: support@veylentra.edu)'
+      },
+      signal
+    });
     if (!resp.ok) return [];
     const data = await resp.json();
     const items = data?.query?.search || [];
@@ -519,9 +575,17 @@ export async function searchRealEducationalVideos(
     return [];
   }
 
-  // Tier 3: Validation & Verification: keep only links that resolve (status 200 via oEmbed)
+  // Tier 3: Validation & Verification: keep only links that resolve and belong to verified educational creators
+  const VERIFIED_CHANNELS = [
+    'crashcourse', 'crash course', 'khan academy', 'national geographic', 'scishow',
+    'ted-ed', 'ncert', 'bbc earth', 'kurzgesagt', 'real science', 'minutephysics',
+    'veritasium', 'pbs eons', 'be smart', 'professor dave explains', 'bozeman science',
+    'freecodecamp', 'mit opencourseware', 'stanford', 'cbse', 'numberphile',
+    '3blue1brown', 'smartereveryday', 'asapscience'
+  ];
+
   const verifiedVideos: EducationalVideoItem[] = [];
-  const candidatesToCheck = pool.slice(0, 5);
+  const candidatesToCheck = pool.slice(0, 6);
 
   for (const c of candidatesToCheck) {
     try {
@@ -535,24 +599,43 @@ export async function searchRealEducationalVideos(
 
       if (checkRes.status === 200) {
         const oembedData: any = await checkRes.json();
-        const realTitle = oembedData.title || c.title || 'Curriculum Lesson';
-        const realChannel = oembedData.author_name || c.channel || 'Educational Channel';
+        const realTitle = (oembedData.title || c.title || '').trim();
+        const realChannel = (oembedData.author_name || c.channel || '').trim();
         const realThumbnail =
           oembedData.thumbnail_url || `https://img.youtube.com/vi/${c.id}/hqdefault.jpg`;
 
-        verifiedVideos.push({
-          id: c.id,
-          title: realTitle,
-          channel: realChannel,
-          url: `https://www.youtube.com/watch?v=${c.id}`,
-          thumbnail: realThumbnail,
-          reason: `Verified educational video on "${realTitle}" by ${realChannel}.`
-        });
+        const channelLower = realChannel.toLowerCase();
+        const titleLower = realTitle.toLowerCase();
 
-        if (verifiedVideos.length >= 4) break;
+        // Check if from verified educational creators or official institutions
+        const isVerifiedCreator =
+          VERIFIED_CHANNELS.some(vc => channelLower.includes(vc)) ||
+          channelLower.includes('education') ||
+          channelLower.includes('academy') ||
+          channelLower.includes('school') ||
+          channelLower.includes('university') ||
+          channelLower.includes('institute') ||
+          channelLower.includes('geology') ||
+          channelLower.includes('science') ||
+          titleLower.includes('documentary') ||
+          titleLower.includes('supercontinent') ||
+          titleLower.includes('lecture');
+
+        if (isVerifiedCreator && realTitle) {
+          verifiedVideos.push({
+            id: c.id,
+            title: realTitle,
+            channel: realChannel,
+            url: `https://www.youtube.com/watch?v=${c.id}`,
+            thumbnail: realThumbnail,
+            reason: `Verified educational video on "${realTitle}" by ${realChannel}.`
+          });
+
+          if (verifiedVideos.length >= 4) break;
+        }
       }
     } catch {
-      // Drop unresolving link
+      // Drop unresolving or non-educational link
     }
   }
 
@@ -586,14 +669,19 @@ export async function performControlledWebSearch(rawQuery: string): Promise<WebS
     const apinexKey = getApinexApiKey();
     let sources: WebSearchSource[] = [];
 
+    // 1. Fetch APInex if key is available
     if (apinexKey) {
-      sources = await searchViaApinex(queryUsed, apinexKey, abortController.signal);
+      const apinexSources = await searchViaApinex(queryUsed, apinexKey, abortController.signal);
+      sources.push(...apinexSources);
     }
 
-    if (sources.length === 0) {
-      sources = await searchViaWikipedia(queryUsed, abortController.signal);
-    }
+    // 2. Always fetch Wikipedia in tandem for educational grounding
+    try {
+      const wikiSources = await searchViaWikipedia(queryUsed, abortController.signal);
+      sources.push(...wikiSources);
+    } catch (_) {}
 
+    // 3. Fallbacks if primary sources yielded nothing
     if (sources.length === 0) {
       sources = await searchViaDuckDuckGoApi(queryUsed, abortController.signal);
     }
@@ -607,6 +695,7 @@ export async function performControlledWebSearch(rawQuery: string): Promise<WebS
 
     for (const src of sources) {
       const normUrl = src.url.toLowerCase().replace(/\/$/, '');
+      if (isExcludedDomain(normUrl)) continue; // Filter out shopping, social, and entertainment
       if (!seenUrls.has(normUrl) && src.snippet.length >= 10) {
         seenUrls.add(normUrl);
         uniqueSources.push(src);
@@ -645,11 +734,17 @@ export async function performControlledWebSearch(rawQuery: string): Promise<WebS
         }\nURL: ${s.url}\nExcerpt: ${s.snippet}`
     );
 
+    const videoSection = videos.length > 0
+      ? `<verified_educational_videos>\nVerified educational videos found (${videos.length}):\n${videos.map((v, i) => `[Video ${i + 1}] "${v.title}" by ${v.channel} | URL: ${v.url}`).join('\n')}\n</verified_educational_videos>`
+      : `<verified_educational_videos>\nNo verified educational videos were found.\n</verified_educational_videos>`;
+
     const formattedContext = `<untrusted_external_web_sources>
 Search Query Executed: "${queryUsed}"
 Retrieved Timestamp: ${new Date().toISOString()}
 
 ${formattedLines.join('\n\n')}
+
+${videoSection}
 </untrusted_external_web_sources>`;
 
     return {
