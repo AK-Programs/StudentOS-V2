@@ -115,6 +115,10 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
 
+  // AI Prompt & Proposal State
+  const [aiCustomPrompt, setAiCustomPrompt] = useState('');
+  const [aiProposedResult, setAiProposedResult] = useState<string | null>(null);
+
   // Note Settings Modal (Owner Only)
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [settingsTitle, setSettingsTitle] = useState('');
@@ -404,28 +408,62 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
 
     const nowIso = new Date().toISOString();
     try {
-      const payload: any = {
-        id: noteId,
-        title: newTitle,
-        content: newText,
-        subject: newSubject,
-        icon: current?.icon || '📝',
-        cover_bg: current?.permission === 'view' ? 'perm_view' : 'perm_edit',
-        user_id: current?.userId || currentUser?.uid || 'shared', // PRESERVE ORIGINAL OWNER UID
-        folder_id: current?.folder_id || null,
-        collab_code: current?.collab_code || null,
-        is_pinned: current?.isPinned || false,
-        permission: current?.permission || 'edit',
-        created_at: current?.updatedAt || nowIso
-      };
+      const isNoteOwner = !current?.userId || current.userId === currentUser?.uid || currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
 
-      let { error: err } = await supabase.from('notes').upsert(payload);
-      if (err && err.code === 'PGRST204') {
-        delete payload.permission;
-        const res = await supabase.from('notes').upsert(payload);
-        err = res.error;
+      if (!isNoteOwner && current?.collab_code) {
+        // Collaborator update: perform targeted UPDATE so RLS update policy passes
+        const updatePayload: any = {
+          title: newTitle,
+          content: newText,
+          subject: newSubject,
+          icon: current?.icon || '📝',
+          updated_at: nowIso
+        };
+        const { error: updErr } = await supabase
+          .from('notes')
+          .update(updatePayload)
+          .eq('id', noteId);
+
+        if (updErr) {
+          console.warn('[Collab Save Update Warning]:', updErr);
+          const payload: any = {
+            id: noteId,
+            title: newTitle,
+            content: newText,
+            subject: newSubject,
+            icon: current?.icon || '📝',
+            user_id: current?.userId,
+            collab_code: current?.collab_code,
+            permission: current?.permission || 'edit',
+            created_at: current?.updatedAt || nowIso
+          };
+          await supabase.from('notes').upsert(payload);
+        }
+      } else {
+        // Owner update or new note: perform UPSERT
+        const payload: any = {
+          id: noteId,
+          title: newTitle,
+          content: newText,
+          subject: newSubject,
+          icon: current?.icon || '📝',
+          cover_bg: current?.permission === 'view' ? 'perm_view' : 'perm_edit',
+          user_id: current?.userId || currentUser?.uid || 'shared',
+          folder_id: current?.folder_id || null,
+          collab_code: current?.collab_code || null,
+          is_pinned: current?.isPinned || false,
+          permission: current?.permission || 'edit',
+          created_at: current?.updatedAt || nowIso
+        };
+
+        let { error: err } = await supabase.from('notes').upsert(payload);
+        if (err && err.code === 'PGRST204') {
+          delete payload.permission;
+          const res = await supabase.from('notes').upsert(payload);
+          err = res.error;
+        }
+        if (err) throw err;
       }
-      if (err) throw err;
 
       setIsSaving(false);
       setSaveStateLabel('Synced to Cloud');
@@ -778,6 +816,54 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
     } finally {
       setAiBusy(null);
     }
+  };
+
+  const handleRunCustomAiPrompt = async (presetAction?: string, overridePrompt?: string) => {
+    if (!canEdit) {
+      showToast('🔒 View-only note: cannot modify with AI.');
+      return;
+    }
+    const targetPrompt = overridePrompt || aiCustomPrompt;
+    if (!targetPrompt.trim() && !presetAction) {
+      showToast('⚠️ Type an AI prompt or select a quick action chip first.');
+      return;
+    }
+    setAiBusy('custom');
+    try {
+      const res = await fetch('/api/ai/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: presetAction || 'custom',
+          content,
+          customPrompt: targetPrompt
+        })
+      });
+      const data = await res.json();
+      const text = (data?.text || '').trim();
+      if (text) {
+        setAiProposedResult(text);
+        showToast('✨ AI Proposal ready! Review changes below.');
+      } else {
+        showToast('⚠️ AI service returned an empty proposal.');
+      }
+    } catch (_) {
+      showToast('⚠️ Error generating AI proposal.');
+    } finally {
+      setAiBusy(null);
+    }
+  };
+
+  const handleApplyAiProposal = (mode: 'replace' | 'append') => {
+    if (!aiProposedResult || !canEdit) return;
+    const nextContent = mode === 'replace'
+      ? aiProposedResult
+      : `${content.trim()}\n\n---\n${aiProposedResult}`;
+    setContent(nextContent);
+    saveAndBroadcast(nextContent, title, currentSubject);
+    setAiProposedResult(null);
+    setAiCustomPrompt('');
+    showToast(mode === 'replace' ? '✨ Replaced note with AI proposal!' : '✨ Appended AI proposal to note!');
   };
 
   const handleSaveToFlashcards = async () => {
@@ -1341,6 +1427,75 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
         </div>
       )}
 
+      {/* AI Prompt & Quick Action Bar */}
+      {(viewMode === 'write' || viewMode === 'split') && (
+        <div className="flex flex-col gap-2.5 bg-gradient-to-r from-indigo-950/40 via-purple-950/30 to-slate-950/60 p-3 rounded-2xl border border-indigo-500/20 shadow-inner">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-indigo-400 shrink-0 animate-pulse" />
+            <input
+              type="text"
+              value={aiCustomPrompt}
+              onChange={(e) => setAiCustomPrompt(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !aiBusy) {
+                  e.preventDefault();
+                  handleRunCustomAiPrompt();
+                }
+              }}
+              placeholder="Ask Orion AI to generate, rewrite, format table, add examples, or solve problems..."
+              className="flex-1 bg-slate-950/80 border border-indigo-500/30 px-3.5 py-1.5 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 font-medium"
+            />
+            <button
+              onClick={() => handleRunCustomAiPrompt()}
+              disabled={Boolean(aiBusy) || !canEdit || !aiCustomPrompt.trim()}
+              className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-bold flex items-center gap-1.5 shrink-0 shadow-md cursor-pointer transition-all"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>{aiBusy === 'custom' ? 'Thinking...' : 'AI Generate'}</span>
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+            <span className="text-slate-500 font-bold uppercase tracking-wider text-[9px]">Quick Chips:</span>
+            <button
+              onClick={() => handleRunCustomAiPrompt('improve', 'Format into clear structured headings, bullet points, definitions, and code/math blocks.')}
+              disabled={Boolean(aiBusy) || !canEdit}
+              className="px-2.5 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/30 text-indigo-300 font-bold transition-all cursor-pointer disabled:opacity-40"
+            >
+              ✨ Improve Structure
+            </button>
+            <button
+              onClick={() => handleRunCustomAiPrompt('summarize', 'Create key takeaways, core definitions, and 3 high-yield exam Q&A questions.')}
+              disabled={Boolean(aiBusy) || !canEdit}
+              className="px-2.5 py-1 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 text-purple-300 font-bold transition-all cursor-pointer disabled:opacity-40"
+            >
+              📝 Summarize
+            </button>
+            <button
+              onClick={() => handleRunCustomAiPrompt('expand', 'Expand this note with real-world examples, step-by-step solutions, and detailed explanations.')}
+              disabled={Boolean(aiBusy) || !canEdit}
+              className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-bold transition-all cursor-pointer disabled:opacity-40"
+            >
+              🔍 Expand Examples
+            </button>
+            <button
+              onClick={() => handleRunCustomAiPrompt('simplify', 'Simplify this note into plain, easy-to-understand student language.')}
+              disabled={Boolean(aiBusy) || !canEdit}
+              className="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-bold transition-all cursor-pointer disabled:opacity-40"
+            >
+              💡 Simplify Language
+            </button>
+            <button
+              onClick={() => handleRunCustomAiPrompt('fixGrammar', 'Fix all spelling, grammar, punctuation, and typographical mistakes without changing content meaning.')}
+              disabled={Boolean(aiBusy) || !canEdit}
+              className="px-2.5 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-300 font-bold transition-all cursor-pointer disabled:opacity-40"
+            >
+              🛠️ Fix Grammar
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Editor & Reader View Container */}
       <div className={`grid gap-4 min-h-[380px] sm:min-h-[460px] relative ${viewMode === 'split' ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
         {!activeNoteId ? (
@@ -1649,6 +1804,55 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
                 className="flex-1 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-lg cursor-pointer"
               >
                 Create Folder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Proposal Preview Modal */}
+      {aiProposedResult && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
+          <div className="w-full max-w-2xl bg-slate-900 border border-indigo-500/30 rounded-3xl p-6 shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
+            <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-4">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-indigo-400 animate-pulse" />
+                <h3 className="text-base sm:text-lg font-black text-white">Orion AI Note Proposal</h3>
+              </div>
+              <button
+                onClick={() => setAiProposedResult(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400 mb-3">
+              Review the AI proposed update below. You can replace the whole note or append it to the end of your current text.
+            </p>
+
+            <div className="flex-1 overflow-y-auto p-4 rounded-2xl bg-slate-950 border border-white/10 text-xs font-mono text-slate-200 leading-relaxed scrollbar-thin whitespace-pre-wrap">
+              {aiProposedResult}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-3 mt-5 pt-3 border-t border-white/10">
+              <button
+                onClick={() => setAiProposedResult(null)}
+                className="px-4 py-2.5 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold hover:bg-slate-700 cursor-pointer"
+              >
+                Discard
+              </button>
+              <button
+                onClick={() => handleApplyAiProposal('append')}
+                className="px-4 py-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold shadow-lg cursor-pointer"
+              >
+                Append to End
+              </button>
+              <button
+                onClick={() => handleApplyAiProposal('replace')}
+                className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-lg cursor-pointer"
+              >
+                Replace Entire Note
               </button>
             </div>
           </div>

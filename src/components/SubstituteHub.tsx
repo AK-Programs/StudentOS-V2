@@ -56,6 +56,18 @@ const DEFAULT_SUBJECTS = [
 ];
 
 export const SubstituteHub = ({ currentUser, effectiveRole, showNotification }: any) => {
+  if (effectiveRole === 'student') {
+    return (
+      <div className="p-12 text-center bg-slate-900 border border-white/10 rounded-3xl max-w-lg mx-auto my-12 space-y-4">
+        <ShieldAlert className="w-12 h-12 text-rose-500 mx-auto animate-bounce" />
+        <h3 className="text-lg font-black text-white">Staff Access Only</h3>
+        <p className="text-xs text-slate-400 leading-relaxed">
+          The Substitute Teacher & Period Coverage Board is exclusively available to school faculty and administrative staff.
+        </p>
+      </div>
+    );
+  }
+
   const [assignments, setAssignments] = useState<SubstituteAssignment[]>([]);
   const [formOpen, setFormOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'assignments' | 'emergencies' | 'swaps'>('assignments');

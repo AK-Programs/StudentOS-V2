@@ -467,8 +467,8 @@ export async function saveSupabaseUserProfile(profile: UserProfile): Promise<Use
 /**
  * Fetches all registered users from Supabase `user_profiles`
  */
-export async function fetchAllSupabaseUsers(): Promise<UserProfile[]> {
-  console.log('[SUPABASE-USERS] Fetching all registered users...');
+export async function fetchAllSupabaseUsers(callerRole?: string): Promise<UserProfile[]> {
+  console.log('[SUPABASE-USERS] Fetching all registered users for callerRole:', callerRole);
   
   const results: UserProfile[] = [];
   const addedIds = new Set<string>();
@@ -661,6 +661,16 @@ export async function fetchAllSupabaseUsers(): Promise<UserProfile[]> {
       addedIds.add(mock.uid);
     }
   });
+
+  if (callerRole === 'admin') {
+    return results.filter(u => u.role !== 'super_admin');
+  }
+  if (callerRole === 'coordinator') {
+    return results.filter(u => u.role !== 'super_admin' && u.role !== 'admin');
+  }
+  if (callerRole === 'teacher' || callerRole === 'student' || callerRole === 'parent') {
+    return results.filter(u => u.role !== 'super_admin' && u.role !== 'admin' && u.role !== 'coordinator');
+  }
   
   return results;
 }

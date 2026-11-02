@@ -44,6 +44,34 @@ export default function DigitalReportCards({ currentUser, effectiveRole }: Digit
   const [principalRemarkInput, setPrincipalRemarkInput] = useState('Promoted with honors. Demonstrates commendable diligence.');
 
   const printableRef = useRef<HTMLDivElement>(null);
+  const [exportingFormat, setExportingFormat] = useState<'pdf' | 'png' | null>(null);
+
+  const handleExportPdf = () => {
+    window.print();
+  };
+
+  const handleExportPng = async () => {
+    if (!printableRef.current) return;
+    setExportingFormat('png');
+    try {
+      const html2canvasModule = await import('html2canvas');
+      const html2canvasFn = (html2canvasModule as any).default || html2canvasModule;
+      const canvas = await html2canvasFn(printableRef.current, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#020617'
+      });
+      const link = document.createElement('a');
+      link.download = `Transcript_${(selectedReportCard?.studentName || 'Student').replace(/\s+/g, '_')}_${selectedPeriod.split(' ')[0]}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    } catch (err) {
+      console.warn('PNG export fallback to print:', err);
+      window.print();
+    } finally {
+      setExportingFormat(null);
+    }
+  };
 
   // 1. Fetch Students
   useEffect(() => {
@@ -556,6 +584,31 @@ export default function DigitalReportCards({ currentUser, effectiveRole }: Digit
                   </div>
                 </div>
               )}
+
+              {/* PDF & High-Res PNG Export Action Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-slate-900 border border-white/10 rounded-2xl shadow-md print:hidden">
+                <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                  <FileText className="w-4 h-4 text-indigo-400" />
+                  <span>Official Transcript Export</span>
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleExportPng}
+                    disabled={Boolean(exportingFormat)}
+                    className="px-3.5 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>{exportingFormat === 'png' ? 'Capturing PNG...' : 'High-Res PNG'}</span>
+                  </button>
+                  <button
+                    onClick={handleExportPdf}
+                    className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-all shadow-lg shadow-rose-600/20 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Export Official PDF</span>
+                  </button>
+                </div>
+              </div>
 
               {/* Printable Official Certificate Document */}
               <div 

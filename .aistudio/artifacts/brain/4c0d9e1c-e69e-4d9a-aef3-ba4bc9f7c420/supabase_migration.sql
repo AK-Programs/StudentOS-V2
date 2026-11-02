@@ -152,31 +152,56 @@ CREATE POLICY "Authorized deletions for parent_child_links"
 
 
 -- ------------------------------------------------------------------------
--- 4. REALTIME REPLICATION CONFIGURATION
+-- 5. LEAVE REQUESTS TABLE: STUDENT APPLICATION & STATUS TRACKING
 -- ------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.leave_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    student_id TEXT NOT NULL,
+    student_name TEXT NOT NULL,
+    grade TEXT,
+    section TEXT,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    details TEXT,
+    status TEXT DEFAULT 'pending',
+    feedback TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_leave_requests_student_id ON public.leave_requests(student_id);
+CREATE INDEX IF NOT EXISTS idx_leave_requests_status ON public.leave_requests(status);
+
+ALTER TABLE public.leave_requests ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Authenticated users can read leave_requests" ON public.leave_requests;
+CREATE POLICY "Authenticated users can read leave_requests"
+    ON public.leave_requests
+    FOR SELECT
+    USING (true);
+
+DROP POLICY IF EXISTS "Students can insert leave_requests" ON public.leave_requests;
+CREATE POLICY "Students can insert leave_requests"
+    ON public.leave_requests
+    FOR INSERT
+    WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Teachers and Admins can update leave_requests" ON public.leave_requests;
+CREATE POLICY "Teachers and Admins can update leave_requests"
+    ON public.leave_requests
+    FOR UPDATE
+    USING (true)
+    WITH CHECK (true);
+
 DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' AND tablename = 'notes'
+        WHERE pubname = 'supabase_realtime' AND tablename = 'leave_requests'
     ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.notes;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' AND tablename = 'attendance'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.attendance;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' AND tablename = 'parent_child_links'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.parent_child_links;
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.leave_requests;
     END IF;
 EXCEPTION WHEN OTHERS THEN
-    -- Fallback if publication is managed by Supabase dashboard
     NULL;
 END $$;
+

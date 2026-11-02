@@ -296,15 +296,6 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
     setMarkingUid(null);
     setSuccessMessage(`✓ Marked as ${status.toUpperCase()}`);
     setTimeout(() => setSuccessMessage(null), 3000);
-
-    // Dispatch alert notification
-    if (targetUser) {
-      sendNotificationToUsers({
-        title: '📝 Attendance Recorded',
-        message: `${targetUser.name} was marked "${status.toUpperCase()}" for ${selectedSubject} on ${date}.`,
-        type: 'attendance'
-      }).catch(e => console.error(e));
-    }
   };
 
   // Bulk action: Mark all visible students present

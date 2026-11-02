@@ -1742,6 +1742,7 @@ export default function App() {
   // Auth & Assignment Filter UI States
   const [showLoginPassword, setShowLoginPassword] = useState<boolean>(false);
   const [hwStatusFilter, setHwStatusFilter] = useState<'all' | 'pending' | 'completed'>('all');
+  const [activeDragNoteId, setActiveDragNoteId] = useState<string | null>(null);
 
   // Study Planner States
   const [schSubject, setSchSubject] = useState<string>('');
@@ -8518,7 +8519,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                               </button>
                             )}
 
-                            {matchesFilter('Substitute Board', 'teacher duty cover') && (
+                            {matchesFilter('Substitute Board', 'teacher duty cover') && ['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '') && (
                               <button
                                 type="button"
                                 onClick={() => handleTabSelect('substitutes')}
@@ -10079,10 +10080,12 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                             >
                               {currentNotes.map(note => {
                                 const isActive = selectedNoteId === note.id;
+                                const isDraggingAllowed = activeDragNoteId === note.id;
                                 return (
                                   <Reorder.Item
                                     key={note.id}
                                     value={note}
+                                    dragListener={isDraggingAllowed}
                                     whileTap={{ scale: 0.99 }}
                                     onClick={() => {
                                       setSelectedNoteId(note.id);
@@ -10092,20 +10095,31 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                       const x = e.clientX;
                                       const y = e.clientY;
                                       holdTimerRef.current = setTimeout(() => {
+                                        setActiveDragNoteId(note.id);
                                         setVaultItemHoldMenu({ noteId: note.id, x, y });
                                       }, 1500);
                                     }}
-                                    onMouseUp={() => clearTimeout(holdTimerRef.current)}
-                                    onMouseLeave={() => clearTimeout(holdTimerRef.current)}
+                                    onMouseUp={() => {
+                                      clearTimeout(holdTimerRef.current);
+                                      setActiveDragNoteId(null);
+                                    }}
+                                    onMouseLeave={() => {
+                                      clearTimeout(holdTimerRef.current);
+                                      setActiveDragNoteId(null);
+                                    }}
                                     onTouchStart={(e) => {
                                       const x = e.touches[0].clientX;
                                       const y = e.touches[0].clientY;
                                       holdTimerRef.current = setTimeout(() => {
+                                        setActiveDragNoteId(note.id);
                                         setVaultItemHoldMenu({ noteId: note.id, x, y });
                                       }, 1500);
                                     }}
-                                    onTouchEnd={() => clearTimeout(holdTimerRef.current)}
-                                    className={`w-full text-left p-2.5 rounded-xl border transition-all flex items-center justify-between relative cursor-grab active:cursor-grabbing ${isActive ? 'bg-indigo-600/20 border-indigo-500/40 text-white shadow-sm ring-1 ring-indigo-500/30' : 'border-white/5 bg-slate-900/40 hover:bg-white/5 text-slate-300'}`}
+                                    onTouchEnd={() => {
+                                      clearTimeout(holdTimerRef.current);
+                                      setActiveDragNoteId(null);
+                                    }}
+                                    className={`w-full text-left p-2.5 rounded-xl border transition-all flex items-center justify-between relative ${isDraggingAllowed ? 'cursor-grab active:cursor-grabbing border-indigo-500 shadow-xl' : 'cursor-pointer'} ${isActive ? 'bg-indigo-600/20 border-indigo-500/40 text-white shadow-sm ring-1 ring-indigo-500/30' : 'border-white/5 bg-slate-900/40 hover:bg-white/5 text-slate-300'}`}
                                   >
                                     {(note as any).isPinned && <Pin className="w-2.5 h-2.5 text-amber-400 absolute top-1 right-1 rotate-45" />}
                                     <div className="flex items-center gap-2 min-w-0 pointer-events-none">
@@ -12084,12 +12098,13 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                         if (effectiveRole === 'student') {
                           const normG = (g?: string) => g ? g.toLowerCase().replace(/grade|class/g, '').trim() : '';
                           const normS = (s?: string) => s ? s.toLowerCase().trim() : '';
-                          const sg = normG(currentUser?.grade);
+                          const studentGrade = currentUser?.grade || 'Grade 10';
+                          const sg = normG(studentGrade);
                           const hg = normG(hw.classGrade);
-                          const ss = normS(currentUser?.section);
+                          const ss = normS(currentUser?.section || 'A');
                           const hs = normS(hw.classSection);
-                          const gradeMatches = !sg || !hg || sg === hg || hw.classGrade === 'All Grades';
-                          const secMatches = hw.classSection === 'All Sections' || !ss || !hs || ss === hs;
+                          const gradeMatches = !hg || hg === 'all' || hw.classGrade === 'All Grades' || sg === hg || hw.classGrade === studentGrade;
+                          const secMatches = !hs || hs === 'all' || hw.classSection === 'All Sections' || !ss || ss === hs;
                           roleAllowed = gradeMatches && secMatches;
                         } else if (effectiveRole === 'teacher') {
                           const gradeMatch = !currentUser?.assignedGrades || currentUser.assignedGrades.length === 0 || currentUser.assignedGrades.includes(hw.classGrade);

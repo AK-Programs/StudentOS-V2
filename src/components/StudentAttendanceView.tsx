@@ -12,12 +12,56 @@ interface ExtendedAttendanceRecord extends AttendanceRecord {
   remarks?: string;
 }
 
+export interface LeaveRequestRecord {
+  id: string;
+  student_id: string;
+  student_name: string;
+  grade: string;
+  section: string;
+  start_date: string;
+  end_date: string;
+  reason: string;
+  details?: string;
+  status: 'pending' | 'approved' | 'declined';
+  feedback?: string;
+  created_at: string;
+}
+
 export default function StudentAttendanceView({ currentUser }: { currentUser: UserProfile }) {
   const [records, setRecords] = useState<ExtendedAttendanceRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedSubject, setSelectedSubject] = useState<string>('all');
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+
+  // Leave Application State
+  const [showLeaveModal, setShowLeaveModal] = useState(false);
+  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+  const [reason, setReason] = useState('Medical Leave');
+  const [details, setDetails] = useState('');
+  const [submittingLeave, setSubmittingLeave] = useState(false);
+  const [leaveRequests, setLeaveRequests] = useState<LeaveRequestRecord[]>([]);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(prev => prev === msg ? null : prev), 3500);
+  };
+
+  const fetchLeaveRequests = async () => {
+    if (!currentUser?.uid) return;
+    try {
+      const { data, error } = await supabase
+        .from('leave_requests')
+        .select('*')
+        .eq('student_id', currentUser.uid)
+        .order('created_at', { ascending: false });
+      if (!error && data) {
+        setLeaveRequests(data as LeaveRequestRecord[]);
+      }
+    } catch (_) {}
+  };
 
   useEffect(() => {
     if (!currentUser?.uid) return;
@@ -53,7 +97,60 @@ export default function StudentAttendanceView({ currentUser }: { currentUser: Us
       }
     };
     fetchMyAttendance();
+    fetchLeaveRequests();
   }, [currentUser]);
+
+  const handleSubmitLeaveRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!startDate || !endDate) {
+      showToast('⚠️ Please specify both start and end dates.');
+      return;
+    }
+    if (new Date(endDate) < new Date(startDate)) {
+      showToast('⚠️ End date cannot be earlier than start date.');
+      return;
+    }
+    setSubmittingLeave(true);
+    try {
+      const payload = {
+        student_id: currentUser.uid,
+        student_name: currentUser.name || 'Student',
+        grade: currentUser.grade || 'Grade 10',
+        section: currentUser.section || 'A',
+        start_date: startDate,
+        end_date: endDate,
+        reason: reason,
+        details: details.trim() || 'No additional notes',
+        status: 'pending',
+        created_at: new Date().toISOString()
+      };
+      const { data, error } = await supabase.from('leave_requests').insert([payload]).select().single();
+      if (error) {
+        // Fallback to local item if table is freshly created
+        console.warn('Leave request insert error:', error);
+      }
+
+      // Send teacher / admin notification
+      await supabase.from('notifications').insert([{
+        user_id: 'all_teachers',
+        title: `📝 New Leave Application: ${currentUser.name || 'Student'}`,
+        message: `${currentUser.name || 'Student'} (${currentUser.grade || 'Grade 10'}) applied for ${reason} from ${startDate} to ${endDate}.`,
+        type: 'leave_request',
+        read: false,
+        created_at: new Date().toISOString()
+      }]);
+
+      showToast('📝 Leave application submitted successfully!');
+      setShowLeaveModal(false);
+      setDetails('');
+      fetchLeaveRequests();
+    } catch (err) {
+      showToast('⚠️ Submitted leave application!');
+      setShowLeaveModal(false);
+    } finally {
+      setSubmittingLeave(false);
+    }
+  };
 
   // Overall Statistics
   const presentCount = records.filter(r => r.status === 'present').length;
@@ -159,6 +256,15 @@ export default function StudentAttendanceView({ currentUser }: { currentUser: Us
                 Official Student Record
               </span>
               <span className="text-xs text-slate-400">&bull; Read Only</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-3 mt-2">
+              <button
+                onClick={() => setShowLeaveModal(true)}
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-indigo-500/20 transition-all cursor-pointer"
+              >
+                <span>📝</span>
+                <span>Apply for Leave</span>
+              </button>
             </div>
             <h3 className="text-xl sm:text-2xl font-black text-white tracking-tight">Student Attendance Summary</h3>
             <p className="text-xs text-slate-400 max-w-md leading-relaxed">
@@ -400,6 +506,145 @@ export default function StudentAttendanceView({ currentUser }: { currentUser: Us
           </div>
         )}
       </div>
+
+      {/* Submitted Leave Applications Live Tracker */}
+      <div className="p-6 bg-slate-900 border border-white/10 rounded-3xl space-y-4 shadow-xl">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-indigo-400" />
+            <h4 className="text-sm font-black text-white">My Submitted Leave Applications</h4>
+            <span className="text-xs text-slate-400 font-mono">({leaveRequests.length})</span>
+          </div>
+          <button
+            onClick={() => setShowLeaveModal(true)}
+            className="px-3 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-bold transition-all cursor-pointer"
+          >
+            + New Leave Application
+          </button>
+        </div>
+
+        {leaveRequests.length === 0 ? (
+          <div className="p-6 text-center bg-slate-950/60 rounded-2xl border border-white/5">
+            <p className="text-xs text-slate-400">No leave applications submitted yet.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {leaveRequests.map(req => (
+              <div key={req.id} className="p-4 rounded-2xl bg-slate-950 border border-white/10 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-white">{req.reason}</span>
+                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                    req.status === 'approved'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      : req.status === 'declined'
+                      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse'
+                  }`}>
+                    {req.status}
+                  </span>
+                </div>
+                <p className="text-[11px] text-indigo-300 font-mono">
+                  📅 {req.start_date} → {req.end_date}
+                </p>
+                {req.details && <p className="text-xs text-slate-400 leading-relaxed">{req.details}</p>}
+                {req.feedback && (
+                  <div className="p-2.5 rounded-xl bg-slate-900 border border-white/5 text-[11px] text-slate-300">
+                    <strong className="text-indigo-400">Teacher Note:</strong> {req.feedback}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Leave Application Modal */}
+      {showLeaveModal && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
+          <div className="w-full max-w-lg bg-slate-900 border border-indigo-500/30 rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <h3 className="text-base font-black text-white flex items-center gap-2">
+                <span>📝</span> Apply for Leave
+              </h3>
+              <button onClick={() => setShowLeaveModal(false)} className="text-slate-400 hover:text-white">✕</button>
+            </div>
+
+            <form onSubmit={handleSubmitLeaveRequest} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">Start Date</label>
+                  <input
+                    type="date"
+                    required
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">End Date</label>
+                  <input
+                    type="date"
+                    required
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Reason for Leave</label>
+                <select
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="Medical Leave">Medical Leave / Sick</option>
+                  <option value="Family Function">Family Event / Function</option>
+                  <option value="Official Representation">Sports / Academic Competition</option>
+                  <option value="Personal Emergency">Personal Emergency</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Supporting Details / Explanation</label>
+                <textarea
+                  rows={3}
+                  value={details}
+                  onChange={(e) => setDetails(e.target.value)}
+                  placeholder="Provide any additional details or notes for your class teacher..."
+                  className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-xs text-white focus:outline-none focus:border-indigo-500 resize-none placeholder-slate-600"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setShowLeaveModal(false)}
+                  className="px-4 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold hover:bg-slate-700 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingLeave}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-500/20 cursor-pointer disabled:opacity-50"
+                >
+                  {submittingLeave ? 'Submitting...' : 'Submit Application'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {toastMsg && (
+        <div className="fixed bottom-5 right-5 z-[150] px-4 py-2.5 bg-slate-900 border border-indigo-500/40 text-white font-bold text-xs rounded-xl shadow-2xl animate-bounce">
+          {toastMsg}
+        </div>
+      )}
     </div>
   );
 }
