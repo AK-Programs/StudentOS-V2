@@ -92,6 +92,7 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
   const [saveStateLabel, setSaveStateLabel] = useState<string>('Synced');
   const [lastSavedTime, setLastSavedTime] = useState<string>('');
   const [activeEditors, setActiveEditors] = useState<{ uid: string; name: string; avatar?: string }[]>([]);
+  const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'reconnecting' | 'offline' | 'error'>('connecting');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState<string | null>(null);
   const [statusToast, setStatusToast] = useState<string | null>(null);
@@ -395,8 +396,8 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
   }, [activeNoteId, currentUser?.uid]);
 
   // 4. Persistence to Supabase canonical `notes` table
-  const flushSaveToCloud = async (noteId: string, newText: string, newTitle: string, newSubject: string) => {
-    const current = notesList.find(n => n.id === noteId);
+  const flushSaveToCloud = async (noteId: string, newText: string, newTitle: string, newSubject: string, overrideNote?: Partial<LectureNoteItem>) => {
+    const current = overrideNote || notesList.find(n => n.id === noteId);
 
     // Permission check: if note is view-only for non-owners, reject edit
     if (current && current.permission === 'view' && current.userId && current.userId !== currentUser?.uid && currentUser?.role !== 'admin' && currentUser?.role !== 'super_admin') {
@@ -612,7 +613,7 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
     setTitle(newNote.title);
     setContent(newNote.content);
     setCurrentSubject(newNote.subject);
-    flushSaveToCloud(newId, newNote.content, newNote.title, newNote.subject);
+    flushSaveToCloud(newId, newNote.content, newNote.title, newNote.subject, newNote);
     showToast('📝 Created new lecture note');
   };
 

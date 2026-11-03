@@ -58,6 +58,7 @@ import { InAppDocumentViewer } from './components/InAppDocumentViewer';
 import { PanelBoardSetupDialog } from './components/panel/PanelBoardSetupDialog';
 import { ClassroomPanelBoard } from './components/panel/ClassroomPanelBoard';
 import { checkPanelRegistration, PanelBoardRegistrationData } from './lib/panelBoardDetector';
+import { FeedbackBoard } from './components/FeedbackBoard';
 import { StudentOSJarvis } from './components/StudentOSJarvis';
 import AttendanceManager from './components/AttendanceManager';
 import AdminCenter from './components/AdminCenter';
@@ -14007,127 +14008,66 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
 
               {/* Tab 6: Collaborative Feedback Portal */}
               {activeTab === 'feedback' && (
-                <div className="space-y-6 animate-fadeIn">
-                  
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                    
-                    {/* Add feedback form pane */}
-                    <div className="lg:col-span-4 space-y-6">
-                      <div className="smart-glass p-6 rounded-3xl space-y-4 shadow-sm">
-                        <div className="space-y-1">
-                          <h3 className="font-extrabold text-base text-white">Create Campus Suggestion</h3>
-                          <p className="text-xs text-slate-400">Post constructive notes about facilities, scheduling resources, or calendar conflicts.</p>
-                        </div>
-
-                        <form onSubmit={handleAddFeedback} className="space-y-4">
-                          <div className="space-y-1.5">
-                            <label className="text-xs text-slate-400">Category Tag</label>
-                            <select 
-                              value={newFeedbackCategory} 
-                              onChange={e => setNewFeedbackCategory(e.target.value as any)}
-                              className="w-full text-xs px-3.5 py-3 rounded-xl bg-slate-900 border border-white/10 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                            >
-                              <option value="facilities">🏫 Facilities & Labs</option>
-                              <option value="academic">📚 Coursework Research</option>
-                              <option value="events">🏆 House events & Challenges</option>
-                            </select>
-                          </div>
-
-                          <div className="space-y-1.5">
-                            <label className="text-xs text-slate-400">Feedback Details</label>
-                            <textarea 
-                              rows={4}
-                              value={newFeedbackText}
-                              onChange={e => setNewFeedbackText(e.target.value)}
-                              placeholder="Please draft details constructively..." 
-                              className="w-full p-3.5 text-xs rounded-xl bg-slate-900 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-                              required
-                            />
-                          </div>
-
-                          <button 
-                            type="submit"
-                            className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs tracking-wide uppercase transition-all shadow-md hover:scale-[1.01]"
-                          >
-                            🚀 Publish on Student Board
-                          </button>
-                        </form>
-                      </div>
-                    </div>
-
-                    {/* Feed display pane */}
-                    <div className="lg:col-span-8 space-y-4">
-                      <div className="smart-glass p-6 rounded-3xl space-y-4">
-                        <h3 className="text-lg font-black font-display text-white">Active Forums</h3>
-                        
-                        <div className="space-y-4">
-                          {feedbackPosts.map(post => (
-                            <div key={post.id} className="p-5 rounded-2xl bg-white/5 border border-white/5 hover:border-white/10 transition-all space-y-3.5">
-                              
-                              {/* Header info */}
-                              <div className="flex justify-between items-center flex-wrap gap-2 text-xs">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-bold text-white">{post.author}</span>
-                                  <span className="text-[10px] text-slate-500 lowercase opacity-80 font-mono">({post.role})</span>
-                                </div>
-                                <div className="flex items-center gap-1.5 font-mono text-[10px]">
-                                  <span className="px-2 py-0.5 rounded bg-slate-900 border border-white/5 text-indigo-400 font-bold uppercase">{post.category}</span>
-                                  <span className={`px-2 py-0.5 rounded uppercase font-bold tracking-wider ${post.status === 'solved' ? 'bg-emerald-500/20 text-emerald-400' : post.status === 'in-progress' ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-840 text-slate-400'}`}>
-                                    {post.status}
-                                  </span>
-                                </div>
-                              </div>
-
-                              <p className="text-xs text-slate-300 leading-relaxed">{post.text}</p>
-
-                              {/* Footer action detail */}
-                              <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-white/5 text-xs">
-                                <button 
-                                  onClick={() => upvoteFeedback(post.id)}
-                                  className="flex items-center gap-1 bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg text-slate-300 font-bold transition-all"
-                                >
-                                  👍 Upvote <span className="text-indigo-400 bg-white/5 px-1.5 py-0.5 rounded ml-1 font-extrabold">{post.votes}</span>
-                                </button>
-
-                                {/* Faculty specific override action buttons */}
-                                {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '') && (
-                                  <div className="flex flex-wrap items-center gap-1.5 font-mono text-[9px] font-black uppercase">
-                                    <button 
-                                      onClick={() => handleFacultyStatusUpdate(post.id, 'in-progress')}
-                                      className="p-1 px-2 border border-amber-500/20 text-amber-400 hover:bg-amber-500/10 rounded"
-                                    >
-                                      Mark Progress
-                                    </button>
-                                    <button 
-                                      onClick={() => handleFacultyStatusUpdate(post.id, 'solved')}
-                                      className="p-1 px-2 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/10 rounded"
-                                    >
-                                      Mark Addressed/Solved
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-
-                              {/* Nested comments reply stream */}
-                              {post.replies.length > 0 && (
-                                <div className="space-y-2 pt-2 border-t border-white/5 bg-black/30 p-3.5 rounded-xl border border-white/5">
-                                  <p className="text-[10px] uppercase font-bold text-indigo-300 tracking-wider">Faculty Feedback</p>
-                                  {post.replies.map((rep, idx) => (
-                                    <div key={idx} className="space-y-0.5 leading-relaxed text-[11px]">
-                                      <p className="font-extrabold text-white">{rep.author} <span className="font-mono text-slate-500 text-[9px]">({rep.role})</span></p>
-                                      <p className="text-slate-300">{rep.text}</p>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <FeedbackBoard
+                  currentUser={currentUser}
+                  effectiveRole={(effectiveRole as UserRole) || 'student'}
+                  feedbackPosts={feedbackPosts}
+                  handleAddFeedback={(newPost) => {
+                    const createdPost: FeedbackPost = {
+                      id: `fb-${Date.now()}`,
+                      author: newPost.author,
+                      role: newPost.role,
+                      category: newPost.category,
+                      title: newPost.title,
+                      text: newPost.text,
+                      votes: 0,
+                      status: 'pending',
+                      replies: [],
+                      createdAt: Date.now()
+                    };
+                    setFeedbackPosts(prev => [createdPost, ...prev]);
+                    showNotification('🚀 Published suggestion on Student Board!');
+                  }}
+                  upvoteFeedback={(id) => {
+                    setFeedbackPosts(prev => prev.map(post => {
+                      if (post.id === id) {
+                        const uid = currentUser?.uid || 'guest';
+                        const upvotedBy = post.upvotedBy || [];
+                        const hasUpvoted = upvotedBy.includes(uid);
+                        return {
+                          ...post,
+                          votes: hasUpvoted ? Math.max(0, post.votes - 1) : post.votes + 1,
+                          upvotedBy: hasUpvoted ? upvotedBy.filter(u => u !== uid) : [...upvotedBy, uid]
+                        };
+                      }
+                      return post;
+                    }));
+                  }}
+                  handleFacultyStatusUpdate={(id, status) => {
+                    setFeedbackPosts(prev => prev.map(post => post.id === id ? { ...post, status } : post));
+                    showNotification(`Status updated to ${status}`);
+                  }}
+                  handleAddReply={(postId, replyText) => {
+                    setFeedbackPosts(prev => prev.map(post => {
+                      if (post.id === postId) {
+                        return {
+                          ...post,
+                          replies: [
+                            ...(post.replies || []),
+                            {
+                              author: currentUser?.name || 'Faculty Member',
+                              role: effectiveRole || 'teacher',
+                              text: replyText,
+                              createdAt: Date.now()
+                            }
+                          ]
+                        };
+                      }
+                      return post;
+                    }));
+                    showNotification('Official response added.');
+                  }}
+                />
               )}
               {/* Tab 7: AI Teacher Chat Dialog */}
               {activeTab === 'ai_teacher' && (

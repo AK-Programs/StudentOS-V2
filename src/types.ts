@@ -277,15 +277,16 @@ export interface Lesson {
 export interface FeedbackPost {
   id: string;
   author: string;
-  authorId?: string; // Add authorId
+  authorId?: string;
   role: UserRole;
   text: string;
+  title?: string;
   votes: number;
-  upvotedBy?: string[]; // Add upvotedBy tracking
-  replies: { author: string; role: UserRole; text: string; createdAt: string }[];
-  category: 'facilities' | 'academic' | 'events' | 'other';
-  status: 'pending' | 'in-progress' | 'solved' | 'planned';
-  createdAt: string;
+  upvotedBy?: string[];
+  replies: { author: string; role: UserRole; text: string; createdAt: number | string }[];
+  category: 'facilities' | 'academic' | 'events' | 'bug_report' | 'feature_request' | 'other';
+  status: 'pending' | 'under-review' | 'in-progress' | 'solved' | 'planned';
+  createdAt: number | string;
 }
 
 export type ResourceCategory = 'material' | 'timetable' | 'assignment' | 'worksheet' | 'notice' | 'homework' | 'gallery';
