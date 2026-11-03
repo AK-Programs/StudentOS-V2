@@ -345,6 +345,70 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
   const [newServerIcon, setNewServerIcon] = useState('🏰');
   const [newServerDesc, setNewServerDesc] = useState('');
 
+  // Join Server State
+  const [showJoinServerModal, setShowJoinServerModal] = useState(false);
+  const [joinServerCodeInput, setJoinServerCodeInput] = useState('');
+  const [joinServerError, setJoinServerError] = useState('');
+  const [joinServerLoading, setJoinServerLoading] = useState(false);
+
+  // Server Invite & Member Add State
+  const [showServerInviteModal, setShowServerInviteModal] = useState(false);
+  const [serverInviteSearchQuery, setServerInviteSearchQuery] = useState('');
+
+  // Join Server Handler
+  const handleJoinServerByCode = async (codeToJoin?: string) => {
+    const targetCode = (codeToJoin || joinServerCodeInput).trim();
+    if (!targetCode) {
+      setJoinServerError('Please enter a valid server code.');
+      return;
+    }
+    if (!currentUser?.uid) {
+      setJoinServerError('You must be signed in to join servers.');
+      return;
+    }
+    setJoinServerLoading(true);
+    setJoinServerError('');
+
+    try {
+      const res = await joinChatServer(targetCode, currentUser.uid);
+      setJoinServerLoading(false);
+
+      if (res.success && res.server) {
+        const updatedServers = await getChatServers();
+        setChatServers(updatedServers);
+        setActiveServerId(res.server.id);
+        if (res.server.channels && res.server.channels.length > 0) {
+          setActiveChatTargetId(res.server.channels[0].id);
+        }
+        setShowJoinServerModal(false);
+        setJoinServerCodeInput('');
+        showNotification(res.message || `Joined server "${res.server.name}"!`);
+      } else {
+        setJoinServerError(res.message || 'Server code not found.');
+      }
+    } catch (e) {
+      setJoinServerLoading(false);
+      setJoinServerError('Failed to join server. Please try again.');
+    }
+  };
+
+  // Add Member to Server Handler
+  const handleAddUserToServer = async (server: ChatServer, targetUser: UserProfile) => {
+    if (!targetUser.uid) return;
+    const currentMembers = server.members || [];
+    if (currentMembers.includes(targetUser.uid)) {
+      showNotification(`${targetUser.name} is already a member of ${server.name}!`);
+      return;
+    }
+
+    const updatedMembers = [...currentMembers, targetUser.uid];
+    const updatedServer = { ...server, members: updatedMembers };
+    await saveChatServer(updatedServer);
+    const updatedList = await getChatServers();
+    setChatServers(updatedList);
+    showNotification(`Added ${targetUser.name} to "${server.name}"!`);
+  };
+
   // Server Channel Creation
   const [showCreateChannelModal, setShowCreateChannelModal] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
@@ -1552,13 +1616,28 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
               );
             })}
 
-            {/* Add Server Button */}
+            {/* Create Server (+) */}
             <button
               onClick={() => setShowCreateServerModal(true)}
-              className="w-10 h-10 sm:w-11 sm:h-11 rounded-3xl hover:rounded-2xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-dashed border-emerald-500/40 flex items-center justify-center transition-all hover:scale-105"
+              className="w-10 h-10 sm:w-11 sm:h-11 rounded-3xl hover:rounded-2xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-dashed border-emerald-500/40 flex flex-col items-center justify-center transition-all hover:scale-105"
               title="Create New Server"
             >
-              <Plus className="w-5 h-5" />
+              <Plus className="w-4 h-4" />
+              <span className="text-[8px] font-bold tracking-tighter uppercase -mt-0.5">New</span>
+            </button>
+
+            {/* Join Server (🔑 Code) */}
+            <button
+              onClick={() => {
+                setJoinServerCodeInput('');
+                setJoinServerError('');
+                setShowJoinServerModal(true);
+              }}
+              className="w-10 h-10 sm:w-11 sm:h-11 rounded-3xl hover:rounded-2xl bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-dashed border-indigo-500/40 flex flex-col items-center justify-center transition-all hover:scale-105"
+              title="Join Server via Invite Code"
+            >
+              <Globe className="w-4 h-4" />
+              <span className="text-[8px] font-bold tracking-tighter uppercase -mt-0.5">Join</span>
             </button>
           </div>
 
@@ -1789,34 +1868,34 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                           <p className="text-[9px] text-indigo-300 truncate">{channels.length} channels</p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1.5">
                         <button
                           onClick={() => {
-                            const code = currentServer.inviteCode || currentServer.id.split('_').pop()?.toUpperCase() || '';
-                            navigator.clipboard.writeText(code);
-                            showNotification(`Server invite code copied: ${code}`);
+                            setServerInviteSearchQuery('');
+                            setShowServerInviteModal(true);
                           }}
-                          className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-emerald-400 hover:text-white border border-white/10 text-[10px] font-bold"
-                          title="Copy Server Invite Code"
+                          className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white shadow-md text-xs font-bold flex items-center gap-1 transition-all active:scale-95"
+                          title="Invite & Add Members to Server"
                         >
-                          <Link className="w-3.5 h-3.5" />
+                          <UserPlus className="w-3.5 h-3.5" />
+                          <span>Invite</span>
                         </button>
                         <button
                           onClick={() => {
                             setRolesTargetId(currentServer.id);
                             setShowManageRolesModal(true);
                           }}
-                          className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-indigo-300 hover:text-white border border-white/10 text-[10px] font-bold"
+                          className="p-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-indigo-300 hover:text-white border border-white/10 text-xs font-bold"
                           title="Manage Custom Roles"
                         >
-                          <ShieldCheck className="w-3.5 h-3.5" />
+                          <ShieldCheck className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => setShowCreateChannelModal(true)}
-                          className="p-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-md text-[10px] font-bold flex items-center gap-1"
+                          className="p-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white shadow-md text-xs font-bold flex items-center gap-1"
                           title="Create Channel"
                         >
-                          <Plus className="w-3.5 h-3.5" />
+                          <Plus className="w-4 h-4" />
                         </button>
                       </div>
                     </div>
@@ -3817,6 +3896,229 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
           </motion.div>
         </div>
       )}
+
+      {/* MODAL 6: JOIN SERVER BY CODE */}
+      {showJoinServerModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[9999] flex items-center justify-center p-4 animate-fadeIn">
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-slate-900 border border-white/10 rounded-3xl max-w-md w-full p-6 shadow-2xl relative space-y-4"
+          >
+            <button
+              onClick={() => setShowJoinServerModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-full bg-white/5 hover:bg-white/10"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                <Globe className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-white">Join a Community Guild</h3>
+                <p className="text-xs text-slate-400">Enter a server invite code or select a community</p>
+              </div>
+            </div>
+
+            {joinServerError && (
+              <div className="p-3 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span>{joinServerError}</span>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Server Code</label>
+              <input
+                type="text"
+                value={joinServerCodeInput}
+                onChange={(e) => setJoinServerCodeInput(e.target.value.toUpperCase())}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleJoinServerByCode();
+                }}
+                placeholder="e.g. CAMPUS, ROBOTICS, STATED"
+                className="w-full bg-slate-950 border border-white/15 rounded-2xl px-4 py-3 text-sm font-mono tracking-widest text-white uppercase placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+
+            {/* Quick-Join Public Community Chips */}
+            <div className="space-y-2 pt-1">
+              <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Quick Join Featured Communities</span>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { code: 'server_campus_main', name: '🏛️ Campus Central' },
+                  { code: 'server_stem_society', name: '⚡ STEM Society' },
+                  { code: 'server_academic_houses', name: '🛡️ Academic Houses' }
+                ].map(item => (
+                  <button
+                    key={item.code}
+                    onClick={() => {
+                      setJoinServerCodeInput(item.code);
+                      handleJoinServerByCode(item.code);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-white/10 text-xs font-semibold text-slate-300 hover:text-white transition-all flex items-center gap-1.5"
+                  >
+                    <span>{item.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/10">
+              <button
+                onClick={() => setShowJoinServerModal(false)}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white hover:bg-white/5 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={joinServerLoading || !joinServerCodeInput.trim()}
+                onClick={() => handleJoinServerByCode()}
+                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold shadow-lg shadow-indigo-600/30 transition-all flex items-center gap-2"
+              >
+                {joinServerLoading ? (
+                  <span>Joining...</span>
+                ) : (
+                  <>
+                    <Globe className="w-4 h-4" />
+                    <span>Join Server</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* MODAL 7: SERVER INVITE & ADD MEMBERS */}
+      {showServerInviteModal && (() => {
+        const currentServer = chatServers.find(s => s.id === activeServerId) || chatServers[0];
+        const serverCode = currentServer?.inviteCode || currentServer?.id.split('_').pop()?.toUpperCase() || 'SERVER';
+        const filteredUsers = availableUsersList.filter(u => {
+          if (!serverInviteSearchQuery) return true;
+          const q = serverInviteSearchQuery.toLowerCase();
+          return u.name.toLowerCase().includes(q) || (u.email && u.email.toLowerCase().includes(q)) || (u.role && u.role.toLowerCase().includes(q));
+        });
+
+        return (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[9999] flex items-center justify-center p-4 animate-fadeIn">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="bg-slate-900 border border-white/10 rounded-3xl max-w-lg w-full p-6 shadow-2xl relative space-y-5"
+            >
+              <button
+                onClick={() => setShowServerInviteModal(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-full bg-white/5 hover:bg-white/10"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="flex items-center gap-3">
+                <span className="text-3xl p-2 bg-slate-950 border border-white/10 rounded-2xl">{currentServer?.icon || '🏰'}</span>
+                <div>
+                  <h3 className="text-lg font-black text-white">Invite to {currentServer?.name}</h3>
+                  <p className="text-xs text-slate-400">Share code or add members directly to this server</p>
+                </div>
+              </div>
+
+              {/* Share Code Section */}
+              <div className="p-4 rounded-2xl bg-slate-950 border border-white/10 space-y-2">
+                <span className="text-[10px] font-black uppercase text-emerald-400 tracking-wider">Server Invite Code</span>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 bg-slate-900 border border-white/10 rounded-xl px-4 py-2.5 font-mono text-sm font-bold text-white tracking-widest select-all">
+                    {serverCode}
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(serverCode);
+                      showNotification(`Copied invite code: ${serverCode}`);
+                    }}
+                    className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-md flex items-center gap-1.5 active:scale-95 shrink-0"
+                  >
+                    <Copy className="w-4 h-4" />
+                    <span>Copy Code</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Add Member Direct Search Section */}
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Add StudentOS Member</span>
+                  <span className="text-[10px] text-slate-500">{filteredUsers.length} members found</span>
+                </div>
+
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  <input
+                    type="text"
+                    value={serverInviteSearchQuery}
+                    onChange={(e) => setServerInviteSearchQuery(e.target.value)}
+                    placeholder="Search by user name, email, or role..."
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl pl-9 pr-3 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div className="max-h-56 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
+                  {filteredUsers.length === 0 ? (
+                    <p className="text-xs text-slate-500 text-center py-4">No matching members found.</p>
+                  ) : (
+                    filteredUsers.map(user => {
+                      const isAlreadyInServer = (currentServer?.members || []).includes(user.uid || '');
+                      return (
+                        <div
+                          key={user.uid || user.email}
+                          className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-white/10 transition-all"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            {user.avatar || user.photoURL ? (
+                              <img src={user.avatar || user.photoURL} alt="" className="w-8 h-8 rounded-full object-cover border border-white/10 shrink-0" />
+                            ) : (
+                              <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold text-white shrink-0">
+                                {user.name.charAt(0)}
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-white truncate">{user.name}</p>
+                              <p className="text-[10px] text-slate-400 truncate">{user.role.toUpperCase()} • {user.grade || 'G10'}</p>
+                            </div>
+                          </div>
+
+                          {isAlreadyInServer ? (
+                            <span className="px-2.5 py-1 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold flex items-center gap-1 shrink-0">
+                              <Check className="w-3 h-3" /> Member
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleAddUserToServer(currentServer, user)}
+                              className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold shadow-md transition-all flex items-center gap-1 active:scale-95 shrink-0"
+                            >
+                              <UserPlus className="w-3.5 h-3.5" />
+                              <span>Add</span>
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2 border-t border-white/10">
+                <button
+                  onClick={() => setShowServerInviteModal(false)}
+                  className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-all"
+                >
+                  Done
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        );
+      })()}
     </>
   );
 };
