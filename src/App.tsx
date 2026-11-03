@@ -1203,10 +1203,11 @@ export default function App() {
     let collabCode = note.collabCode;
     if (!collabCode) {
       collabCode = Math.floor(100000 + Math.random() * 900000).toString();
-      const updated = { ...note, collabCode, isCollab: true };
+      const updated = { ...note, collabCode, isCollab: true, permission: note.permission || 'edit' };
       setVaultNotes(prev => prev.map(n => n.id === note.id ? updated : n));
-      await saveVaultNoteToSupabase(updated);
+      await saveVaultNoteToSupabase(updated, currentUser?.uid);
     }
+    subscribeRealtimeEvents(`lecture_collab_${note.id}`, {});
     setActiveNoteCollabModalOpen(true);
   };
 
@@ -1221,10 +1222,17 @@ export default function App() {
     try {
       const found = await getNoteByCollabCode(cleanCode);
       if (found) {
-        // Add to user's notes if not already present
+        // Subscribe realtime channel immediately before editing
+        subscribeRealtimeEvents(`lecture_collab_${found.id}`, {});
+        await saveVaultNoteToSupabase(found, currentUser?.uid);
+        
         setVaultNotes(prev => {
-          const exists = prev.find(n => n.id === found.id || n.collabCode === cleanCode);
-          if (exists) return prev;
+          const idx = prev.findIndex(n => n.id === found.id || n.collabCode === cleanCode);
+          if (idx >= 0) {
+            const copy = [...prev];
+            copy[idx] = { ...copy[idx], ...found };
+            return copy;
+          }
           return [found, ...prev];
         });
         setSelectedNoteId(found.id);
@@ -2794,7 +2802,7 @@ export default function App() {
     return () => {
       unsubscribe();
     };
-  }, [selectedNoteId, activeTab, currentUser?.uid]);
+  }, [selectedNoteId, activeTab, currentUser?.uid, vaultNotes]);
 
   // Homework Persistence Sync (Staggered)
   const isHomeworkLoaded = useRef<boolean>(false);
@@ -10239,13 +10247,21 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                             else if (h3Match) parsedHeadings.push({ level: 3, text: h3Match[1], id: `h-${idx}` });
                           });
 
+                          const isNoteOwner = !currentUser?.uid || !activeNote.userId || activeNote.userId === currentUser?.uid;
+                          const isReadOnlyNote = !isNoteOwner && (activeNote.permission === 'view' || activeNote.permission === 'private');
+
                           // Autosave updater with state indicator and real-time collaboration broadcast
                           const updateActiveNote = async (updates: Partial<VaultNote>) => {
+                            if (isReadOnlyNote) {
+                              showNotification('🔒 This shared note is in Read-Only mode.');
+                              return;
+                            }
                             setAutoSaveState('saving');
                             const updated = { ...activeNote, ...updates };
                             setVaultNotes(prev => prev.map(n => n.id === activeNote.id ? updated : n));
 
                             if (activeNote.collabCode) {
+                              subscribeRealtimeEvents(`lecture_collab_${activeNote.id}`, {});
                               sendRealtimeEvent(`lecture_collab_${activeNote.id}`, 'note_content_changed', {
                                 content: updated.content,
                                 title: updated.title,
@@ -10257,7 +10273,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                             }
 
                             try {
-                              await saveVaultNoteToSupabase(updated);
+                              await saveVaultNoteToSupabase(updated, currentUser?.uid);
                             } catch (_) {}
                             setTimeout(() => setAutoSaveState('saved'), 400);
                           };
@@ -10389,6 +10405,13 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                         </button>
                                       )}
 
+                                      {/* Read-only status pill if collaborator has view/private permission */}
+                                      {isReadOnlyNote && (
+                                        <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+                                          🔒 Read-Only
+                                        </span>
+                                      )}
+
                                       {/* Outline toggle button */}
                                       <button
                                         onClick={() => setShowNoteOutline(!showNoteOutline)}
@@ -10409,6 +10432,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                       <input 
                                         type="text"
                                         value={activeNote.title}
+                                        readOnly={isReadOnlyNote}
                                         onChange={e => updateActiveNote({ title: e.target.value })}
                                         placeholder="Untitled Study Note..."
                                         className="w-full text-xl sm:text-2xl font-black font-display tracking-tight text-white border-b border-transparent focus:border-indigo-500/40 pb-1 bg-transparent focus:outline-none transition-colors"
@@ -10417,8 +10441,9 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                     <div className="md:col-span-1">
                                       <select
                                         value={activeNote.subject}
+                                        disabled={isReadOnlyNote}
                                         onChange={e => updateActiveNote({ subject: e.target.value })}
-                                        className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-slate-900 border border-white/5 text-slate-300 font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                                        className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-slate-900 border border-white/5 text-slate-300 font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer disabled:opacity-50"
                                       >
                                         {['Physics', 'Chemistry', 'Computer Science', 'Mathematics', 'Syllabus General', 'Biology', 'Geography', 'History', 'English'].map(sub => (
                                           <option key={sub} value={sub}>{sub}</option>
@@ -10594,7 +10619,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                   <button onClick={() => handleToolbarInject('\n---\n')} className="hover:text-white px-2 py-1 rounded bg-slate-900 hover:bg-slate-800">Line</button>
                                 </div>
 
-                                {/* Canvas Editor: Split View or Standard Mode */}
+                                 {/* Canvas Editor: Split View or Standard Mode */}
                                 {viewSplitPreview ? (
                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div className="relative">
@@ -10602,6 +10627,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                         id="notion-editor-textarea"
                                         rows={18}
                                         value={activeNote.content || ''}
+                                        readOnly={isReadOnlyNote}
                                         onChange={e => updateActiveNote({ content: e.target.value })}
                                         className={`w-full px-4 py-3 bg-slate-950/70 border border-white/5 rounded-2xl focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs text-slate-200 leading-relaxed resize-none ${noteFont === 'serif' ? 'font-serif' : noteFont === 'mono' ? 'font-mono' : 'font-sans'}`}
                                         placeholder="Write anything in Markdown... (Type / for quick commands)"
@@ -10625,6 +10651,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                       id="notion-editor-textarea"
                                       rows={16}
                                       value={activeNote.content || ''}
+                                      readOnly={isReadOnlyNote}
                                       onChange={e => {
                                         const val = e.target.value;
                                         if (val.endsWith('/') && !(slashMenuOpen || false)) {

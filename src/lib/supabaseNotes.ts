@@ -135,8 +135,8 @@ export async function getVaultNotes(userId: string): Promise<VaultNote[]> {
   return localNotes;
 }
 
-export async function saveVaultNoteToSupabase(note: VaultNote): Promise<void> {
-  const uid = note.userId || 'guest';
+export async function saveVaultNoteToSupabase(note: VaultNote, currentUserId?: string): Promise<void> {
+  const uid = currentUserId || note.userId || 'guest';
   const current = getLocalVaultNotes(uid);
   const idx = current.findIndex(n => n.id === note.id);
   if (idx >= 0) {
@@ -153,51 +153,65 @@ export async function saveVaultNoteToSupabase(note: VaultNote): Promise<void> {
     } catch (_) {}
   }
 
+  const isOwner = !currentUserId || !note.userId || note.userId === currentUserId;
+
   try {
-    const payload: any = {
-      id: note.id,
-      title: note.title,
-      content: note.content,
-      subject: note.subject,
-      icon: note.icon,
-      cover_bg: note.permission === 'view' ? 'perm_view' : (note.coverBg || 'bg-gradient-to-r from-violet-600 to-indigo-900'),
-      user_id: note.userId,
-      created_at: note.createdAt,
-      folder_id: (note as any).folder_id || null,
-      is_pinned: (note as any).isPinned || false,
-      sort_order: note.sort_order || 0,
-      permission: note.permission || (note.collabCode ? 'edit' : 'private')
-    };
+    if (isOwner) {
+      const payload: any = {
+        id: note.id,
+        title: note.title,
+        content: note.content,
+        subject: note.subject,
+        icon: note.icon,
+        cover_bg: note.permission === 'view' ? 'perm_view' : (note.coverBg || 'bg-gradient-to-r from-violet-600 to-indigo-900'),
+        user_id: note.userId,
+        created_at: note.createdAt,
+        folder_id: (note as any).folder_id || null,
+        is_pinned: (note as any).isPinned || false,
+        sort_order: note.sort_order || 0,
+        permission: note.permission || (note.collabCode ? 'edit' : 'private')
+      };
 
-    if (note.collabCode) {
-      payload.collab_code = note.collabCode;
-      payload.is_collab = true;
-    }
+      if (note.collabCode) {
+        payload.collab_code = note.collabCode;
+        payload.is_collab = true;
+      }
 
-    // First attempt upsert
-    let { error } = await supabase.from('notes').upsert(payload);
-    
-    // If column 'permission' not yet present in old schema, retry without it
-    if (error && error.code === 'PGRST204') {
-      delete payload.permission;
-      const retry = await supabase.from('notes').upsert(payload);
-      error = retry.error;
-    }
+      // First attempt upsert for owner
+      let { error } = await supabase.from('notes').upsert(payload);
+      
+      // If column 'permission' not yet present in old schema, retry without it
+      if (error && error.code === 'PGRST204') {
+        delete payload.permission;
+        const retry = await supabase.from('notes').upsert(payload);
+        error = retry.error;
+      }
 
-    // If upsert failed due to collaborator RLS or check constraint, attempt targeted update
-    if (error && note.collabCode) {
+      if (error && error.code !== '42P01') {
+        console.warn('[Notes] Owner upsert warning:', error.message);
+      }
+    } else {
+      // Non-owner (collaborator): execute direct UPDATE so owner's user_id is untouched and RLS policy 3 applies
       const updatePayload: any = {
         title: note.title,
         content: note.content,
-        subject: note.subject
+        subject: note.subject,
+        icon: note.icon,
+        cover_bg: note.permission === 'view' ? 'perm_view' : (note.coverBg || 'bg-gradient-to-r from-violet-600 to-indigo-900')
       };
-      if (note.permission) updatePayload.permission = note.permission;
-      const { error: updErr } = await supabase.from('notes').update(updatePayload).eq('id', note.id);
-      if (updErr && updErr.code !== '42P01') {
-        console.warn('[Notes] Collaborator update fallback notice:', updErr.message);
+      if (note.permission) {
+        updatePayload.permission = note.permission;
       }
-    } else if (error && error.code !== '42P01') {
-      throw error;
+
+      let { error } = await supabase.from('notes').update(updatePayload).eq('id', note.id);
+      if (error && error.code === 'PGRST204') {
+        delete updatePayload.permission;
+        const retry = await supabase.from('notes').update(updatePayload).eq('id', note.id);
+        error = retry.error;
+      }
+      if (error && error.code !== '42P01') {
+        console.warn('[Notes] Collaborator update warning:', error.message);
+      }
     }
   } catch (err) {
     console.error("Failed to save note to supabase", err);
@@ -235,24 +249,13 @@ export async function updateNoteOrder(notes: VaultNote[], userId: string): Promi
 
 /**
  * Searches for a note by a 6-digit collab code.
- * Checks local cache first for instant sync, then queries Supabase.
+ * Queries Supabase remote database first, then falls back to local cache.
  */
 export async function getNoteByCollabCode(code: string): Promise<VaultNote | null> {
   const cleanCode = code.trim();
   if (!cleanCode) return null;
 
-  // 1. Try local cache
-  try {
-    const cached = localStorage.getItem(`s_os_collab_note_${cleanCode}`);
-    if (cached) {
-      const parsed = JSON.parse(cached);
-      if (parsed && parsed.title) {
-        return parsed as VaultNote;
-      }
-    }
-  } catch (_) {}
-
-  // 2. Query Supabase
+  // 1. Query Supabase Remote First
   try {
     const { data, error } = await supabase
       .from('notes')
@@ -261,7 +264,7 @@ export async function getNoteByCollabCode(code: string): Promise<VaultNote | nul
       .maybeSingle();
 
     if (!error && data) {
-      return {
+      const remoteNote: VaultNote = {
         id: data.id,
         title: data.title,
         content: data.content || '',
@@ -276,10 +279,27 @@ export async function getNoteByCollabCode(code: string): Promise<VaultNote | nul
         isCollab: true,
         permission: data.permission || (data.cover_bg === 'perm_view' ? 'view' : 'edit')
       };
+
+      try {
+        localStorage.setItem(`s_os_collab_note_${cleanCode}`, JSON.stringify(remoteNote));
+      } catch (_) {}
+
+      return remoteNote;
     }
   } catch (err) {
     console.warn('[Collab] Remote lookup error:', err);
   }
+
+  // 2. Fallback to local cache if network/remote query failed
+  try {
+    const cached = localStorage.getItem(`s_os_collab_note_${cleanCode}`);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed && parsed.title) {
+        return parsed as VaultNote;
+      }
+    }
+  } catch (_) {}
 
   return null;
 }
