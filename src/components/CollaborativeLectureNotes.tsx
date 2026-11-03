@@ -686,25 +686,35 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
         return next;
       });
 
-      // Save to Supabase `notes`
+      // Save to Supabase `notes` via robust UPSERT so non-persisted notes are created
       const dbPayload: any = {
+        id: activeNote.id,
         title: updatedNote.title,
-        icon: updatedNote.icon,
-        folder_id: updatedNote.folder_id,
+        content: activeNote.content || '',
         subject: updatedNote.subject,
+        icon: updatedNote.icon,
+        user_id: activeNote.userId || currentUser?.uid || 'shared',
+        folder_id: updatedNote.folder_id || null,
         permission: updatedNote.permission,
         cover_bg: updatedNote.permission === 'view' ? 'perm_view' : 'perm_edit',
-        collab_code: updatedNote.collab_code
+        collab_code: updatedNote.collab_code,
+        created_at: updatedNote.updatedAt || new Date().toISOString()
       };
 
-      const { error: updErr } = await supabase
+      let { error: updErr } = await supabase
         .from('notes')
-        .update(dbPayload)
-        .eq('id', activeNote.id);
+        .upsert(dbPayload);
 
       if (updErr && updErr.code === 'PGRST204') {
         delete dbPayload.permission;
-        await supabase.from('notes').update(dbPayload).eq('id', activeNote.id);
+        await supabase.from('notes').upsert(dbPayload);
+      }
+
+      // Mirror into local collab cache
+      if (updatedNote.collab_code) {
+        try {
+          localStorage.setItem(`s_os_collab_note_${updatedNote.collab_code}`, JSON.stringify(updatedNote));
+        } catch (_) {}
       }
 
       // Broadcast settings update to Realtime channel
@@ -718,7 +728,7 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
       });
 
       setShowSettingsModal(false);
-      showToast('⚙️ Note settings saved successfully');
+      showToast('⚙️ Note settings saved & synced to cloud');
     } catch (err: any) {
       showToast('⚠️ Failed to save note settings: ' + (err.message || 'Error'));
     } finally {
@@ -931,7 +941,7 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
     };
 
     while (i < lines.length) {
-      const line = lines[i];
+      const line = lines[i] || '';
       const trimmed = line.trim();
 
       if (!trimmed) {
@@ -952,11 +962,11 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
         const lang = trimmed.slice(3).trim() || 'code';
         const codeLines: string[] = [];
         i++;
-        while (i < lines.length && !lines[i].trim().startsWith('```')) {
-          codeLines.push(lines[i]);
+        while (i < lines.length && !((lines[i] || '').trim().startsWith('```'))) {
+          codeLines.push(lines[i] || '');
           i++;
         }
-        if (i < lines.length && lines[i].trim().startsWith('```')) {
+        if (i < lines.length && (lines[i] || '').trim().startsWith('```')) {
           i++;
         }
         const fullCode = codeLines.join('\n');
@@ -986,8 +996,8 @@ export const CollaborativeLectureNotes: React.FC<CollaborativeLectureNotesProps>
       // Markdown Table: Detect rows starting and ending with |
       if (trimmed.startsWith('|') && trimmed.endsWith('|') && trimmed.includes('|')) {
         const tableLines: string[] = [];
-        while (i < lines.length && lines[i].trim().startsWith('|') && lines[i].trim().endsWith('|')) {
-          tableLines.push(lines[i].trim());
+        while (i < lines.length && (lines[i] || '').trim().startsWith('|') && (lines[i] || '').trim().endsWith('|')) {
+          tableLines.push((lines[i] || '').trim());
           i++;
         }
 

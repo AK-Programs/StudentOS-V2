@@ -399,6 +399,68 @@ export interface ChatRoom {
   inviteExpiresAt?: string;
   isReadOnlyForStudents?: boolean;
   pinnedMessageIds?: string[];
+  serverId?: string;
+}
+
+export interface RolePermissions {
+  canSendMessages: boolean;
+  canAttachFiles: boolean;
+  canManageMessages: boolean;
+  canManageChannels: boolean;
+  canManageRoles: boolean;
+  canKickMembers?: boolean;
+}
+
+export interface CustomRole {
+  id: string;
+  serverId?: string;
+  groupId?: string;
+  name: string;
+  color: string;
+  priority: number;
+  isDefault?: boolean;
+  permissions: RolePermissions;
+}
+
+export interface ServerChannel {
+  id: string;
+  serverId: string;
+  name: string;
+  type: 'text' | 'announcement' | 'class' | 'voice';
+  category?: 'General' | 'Announcements' | 'Class & Doubts' | 'Study Lounge';
+  topic?: string;
+  isPrivate?: boolean;
+  allowedRoleIds?: string[];
+  createdAt?: string;
+}
+
+export interface ServerMember {
+  userId: string;
+  serverId: string;
+  roleIds: string[];
+  nickname?: string;
+  joinedAt: string;
+}
+
+export interface ChatServer {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  ownerId: string;
+  bannerUrl?: string;
+  channels?: ServerChannel[];
+  roles?: CustomRole[];
+  members?: string[];
+  createdAt: string;
+}
+
+export interface MessageReadReceiptDetail {
+  userId: string;
+  userName: string;
+  userAvatar?: string;
+  role?: string;
+  readAt: string;
 }
 
 export interface AppNotification {

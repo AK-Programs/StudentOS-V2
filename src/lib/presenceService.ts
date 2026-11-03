@@ -19,7 +19,8 @@ export interface UserPresence {
   currentTab?: string;
   schoolId?: string;
   avatar?: string;
-  status: 'online' | 'away' | 'offline';
+  status: 'online' | 'idle' | 'dnd' | 'away' | 'offline';
+  statusMessage?: string;
   lastSeen: number;
 }
 
@@ -95,6 +96,7 @@ class PresenceService {
   private callbacks: Set<PresenceCallback> = new Set();
   private currentUserUid: string | null = null;
   private currentPayload: Partial<UserPresence> | null = null;
+  private heartbeatInterval: any = null;
 
   constructor() {
     // Populate default campus peers
@@ -187,6 +189,14 @@ class PresenceService {
       console.warn('[Presence] Supabase realtime channel init fallback:', e);
     }
 
+    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+    this.heartbeatInterval = setInterval(() => {
+      if (this.currentUserUid && this.currentPayload && this.channel?.state === 'joined') {
+        this.currentPayload.lastSeen = Date.now();
+        this.channel.track(this.currentPayload).catch(() => {});
+      }
+    }, 45000); // 45s heartbeat
+
     window.addEventListener('beforeunload', () => {
       this.cleanup();
     });
@@ -201,6 +211,29 @@ class PresenceService {
     const existing = this.onlineMap.get(this.currentUserUid);
     if (existing) {
       existing.currentTab = tabId;
+      existing.lastSeen = Date.now();
+      this.onlineMap.set(this.currentUserUid, existing);
+      this.notifySubscribers();
+    }
+
+    if (this.channel && this.channel.state === 'joined') {
+      this.channel.track(this.currentPayload).catch(() => {});
+    }
+  }
+
+  public updateStatus(status: 'online' | 'idle' | 'dnd' | 'away' | 'offline', statusMessage?: string) {
+    if (!this.currentUserUid || !this.currentPayload) return;
+
+    this.currentPayload.status = status;
+    if (statusMessage !== undefined) {
+      this.currentPayload.statusMessage = statusMessage;
+    }
+    this.currentPayload.lastSeen = Date.now();
+
+    const existing = this.onlineMap.get(this.currentUserUid);
+    if (existing) {
+      existing.status = status;
+      if (statusMessage !== undefined) existing.statusMessage = statusMessage;
       existing.lastSeen = Date.now();
       this.onlineMap.set(this.currentUserUid, existing);
       this.notifySubscribers();
@@ -276,6 +309,10 @@ class PresenceService {
   }
 
   public cleanup() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
     if (this.channel) {
       supabase.removeChannel(this.channel);
       this.channel = null;

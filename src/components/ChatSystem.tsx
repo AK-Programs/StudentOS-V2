@@ -1,17 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Send, Image as ImageIcon, Paperclip, Mic, MicOff, Square, Smile, Reply, Forward, 
   Trash2, Edit3, Pin, Shield, QrCode, UserPlus, LogOut, Settings, X, Search, 
   CheckCheck, Check, Volume2, VolumeX, Video, VideoOff, Phone, PhoneOff, PhoneIncoming, PhoneOutgoing,
   AlertTriangle, Info, Sparkles, Filter, Bell, Copy, Link, Eye, UserCheck, Flame, ThumbsUp, Heart,
   Trophy, Megaphone, BookOpen, Users, Hash, MoreHorizontal, ArrowLeft, Monitor, User as UserIcon,
-  ShieldCheck, Download
+  ShieldCheck, Download, Plus, Globe, ChevronDown, ChevronRight, MessageSquare, AtSign, Radio, Clock, ShieldAlert, Award
 } from 'lucide-react';
-import { ChatMessage, ChatRoom, UserRole, HouseType, ChatAttachment, UserProfile } from '../types';
+import { 
+  ChatMessage, ChatRoom, UserRole, HouseType, ChatAttachment, UserProfile,
+  ChatServer, ServerChannel, CustomRole, ServerMember, MessageReadReceiptDetail 
+} from '../types';
 import { moderateChatMessage } from '../lib/aiModeration';
 import { 
   savePeerMessage, deletePeerMessage, saveChatRoom, joinChatRoom, leaveChatRoom, 
-  deleteChatRoom, regenerateRoomCode, getPeerMessages, getAllUserProfiles, getOrCreateDirectMessageRoom 
+  deleteChatRoom, regenerateRoomCode, getPeerMessages, getAllUserProfiles, getOrCreateDirectMessageRoom,
+  getChatServers, saveChatServer, createChatServerChannel, deleteChatServerChannel,
+  saveCustomRole, deleteCustomRole, markMessageAsRead, getMessageReadReceipts, DEFAULT_SERVERS
 } from '../lib/supabaseChat';
 import { saveAppNotification } from '../lib/notifications';
 import { supabase } from '../lib/supabase';
@@ -112,6 +118,159 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
     return () => { isMounted = false; };
   }, [currentUser?.uid, students?.length]);
 
+  // Load Discord-style servers
+  useEffect(() => {
+    let isMounted = true;
+    const fetchServers = async () => {
+      try {
+        const sList = await getChatServers();
+        if (isMounted) setChatServers(sList);
+      } catch (e) {
+        console.warn('Failed to load chat servers:', e);
+      }
+    };
+    fetchServers();
+
+    const unsub = subscribeRealtimeEvents('student-os-public', {
+      server_updated: () => {
+        fetchServers();
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsub();
+    };
+  }, []);
+
+  // Update read receipts when active room messages change
+  useEffect(() => {
+    if (!activeChatTargetId || !currentUser?.uid) return;
+    const targetRoomMessages = chats.filter(c => c.targetId === activeChatTargetId);
+    if (targetRoomMessages.length > 0) {
+      const lastMsg = targetRoomMessages[targetRoomMessages.length - 1];
+      markMessageAsRead(lastMsg.id, {
+        uid: currentUser.uid,
+        name: currentUser.name || 'Member',
+        avatar: currentUser.avatar || currentUser.photoURL,
+        role: currentUser.role
+      });
+    }
+  }, [activeChatTargetId, chats.length, currentUser?.uid]);
+
+  const handleUpdatePresence = (status: 'online' | 'idle' | 'dnd' | 'offline') => {
+    setMyPresenceStatus(status);
+    presenceService.updateStatus(status);
+    setShowPresencePicker(false);
+    showNotification(`Presence updated to ${status.toUpperCase()}`);
+  };
+
+  const handleOpenReceiptsModal = async (msg: ChatMessage) => {
+    setReceiptsModalMsg(msg);
+    setReceiptsLoading(true);
+    try {
+      const activeRoom = chatRooms.find(r => r.id === activeChatTargetId);
+      const members = activeRoom?.members || [];
+      const res = await getMessageReadReceipts(msg.id, members);
+      setReceiptsData(res);
+    } catch (e) {
+      console.warn('Failed to fetch receipts:', e);
+    } finally {
+      setReceiptsLoading(false);
+    }
+  };
+
+  const handleCreateServer = async () => {
+    if (!newServerName.trim()) return;
+    const sId = `server_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const newServer: ChatServer = {
+      id: sId,
+      name: newServerName.trim(),
+      icon: newServerIcon || '🏰',
+      description: newServerDesc.trim() || 'A vibrant StudentOS community guild.',
+      ownerId: currentUser?.uid || 'guest',
+      bannerUrl: 'https://images.unsplash.com/photo-1541339907198-e08756dedf3f?auto=format&fit=crop&w=1200&q=80',
+      channels: [
+        {
+          id: `channel_gen_${Date.now()}`,
+          serverId: sId,
+          name: '💬-general-chat',
+          type: 'text',
+          category: 'General',
+          topic: 'General discussion and member chat.'
+        }
+      ],
+      roles: [
+        {
+          id: `role_owner_${Date.now()}`,
+          name: 'Guildmaster',
+          color: '#f59e0b',
+          priority: 100,
+          permissions: {
+            canSendMessages: true,
+            canAttachFiles: true,
+            canManageMessages: true,
+            canManageChannels: true,
+            canManageRoles: true
+          }
+        }
+      ],
+      members: [currentUser?.uid || 'guest'],
+      createdAt: new Date().toISOString()
+    };
+
+    await saveChatServer(newServer);
+    setChatServers(prev => [...prev, newServer]);
+    setActiveServerId(newServer.id);
+    setActiveChatTargetId(newServer.channels![0].id);
+    setShowCreateServerModal(false);
+    setNewServerName('');
+    setNewServerDesc('');
+    showNotification(`Created server "${newServer.name}"!`);
+  };
+
+  const handleCreateChannel = async () => {
+    if (!newChannelName.trim()) return;
+    const currentServer = chatServers.find(s => s.id === activeServerId);
+    if (!currentServer) return;
+
+    const formattedName = newChannelName.toLowerCase().trim().replace(/\s+/g, '-');
+    const channelId = `ch_${currentServer.id}_${Date.now()}`;
+    const channel: ServerChannel = {
+      id: channelId,
+      serverId: currentServer.id,
+      name: `${newChannelType === 'announcement' ? '📢' : newChannelType === 'class' ? '💡' : '💬'}-${formattedName}`,
+      type: newChannelType,
+      category: newServerChannelCategory,
+      topic: `${newServerChannelCategory} channel in ${currentServer.name}`
+    };
+
+    await createChatServerChannel(currentServer.id, channel);
+    const updatedServers = await getChatServers();
+    setChatServers(updatedServers);
+    setActiveChatTargetId(channel.id);
+    setShowCreateChannelModal(false);
+    setNewChannelName('');
+    showNotification(`Created channel #${channel.name}!`);
+  };
+
+  const handleSaveCustomRole = async () => {
+    if (!newRoleName.trim()) return;
+    const role: CustomRole = {
+      id: `role_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name: newRoleName.trim(),
+      color: newRoleColor,
+      priority: Number(newRolePriority) || 50,
+      permissions: newRolePerms
+    };
+
+    await saveCustomRole(rolesTargetId, role);
+    const updatedServers = await getChatServers();
+    setChatServers(updatedServers);
+    setNewRoleName('');
+    showNotification(`Saved role "${role.name}"!`);
+  };
+
   // Helper to resolve user info reliably without displaying UUIDs
   const resolveUser = (uid?: string): UserProfile => {
     if (!uid) {
@@ -167,6 +326,46 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
 
   // Member Profile Card Modal
   const [selectedProfileUser, setSelectedProfileUser] = useState<UserProfile | null>(null);
+
+  // Discord-style Community Servers & Server Channels state
+  const [chatServers, setChatServers] = useState<ChatServer[]>(DEFAULT_SERVERS);
+  const [activeServerId, setActiveServerId] = useState<string>('home');
+  const [showCreateServerModal, setShowCreateServerModal] = useState(false);
+  const [newServerName, setNewServerName] = useState('');
+  const [newServerIcon, setNewServerIcon] = useState('🏰');
+  const [newServerDesc, setNewServerDesc] = useState('');
+
+  // Server Channel Creation
+  const [showCreateChannelModal, setShowCreateChannelModal] = useState(false);
+  const [newChannelName, setNewChannelName] = useState('');
+  const [newServerChannelCategory, setNewServerChannelCategory] = useState<'General' | 'Announcements' | 'Class & Doubts' | 'Study Lounge'>('General');
+  const [newChannelType, setNewChannelType] = useState<'text' | 'announcement' | 'class'>('text');
+
+  // Custom Roles & Permissions Management
+  const [showManageRolesModal, setShowManageRolesModal] = useState(false);
+  const [rolesTargetId, setRolesTargetId] = useState<string>('server_campus_main');
+  const [newRoleName, setNewRoleName] = useState('');
+  const [newRoleColor, setNewRoleColor] = useState('#6366f1');
+  const [newRolePriority, setNewRolePriority] = useState(50);
+  const [newRolePerms, setNewRolePerms] = useState({
+    canSendMessages: true,
+    canAttachFiles: true,
+    canManageMessages: false,
+    canManageChannels: false,
+    canManageRoles: false
+  });
+
+  // Read Receipts & Unread Recipients Modal
+  const [receiptsModalMsg, setReceiptsModalMsg] = useState<ChatMessage | null>(null);
+  const [receiptsData, setReceiptsData] = useState<{ readBy: MessageReadReceiptDetail[]; unreadBy: string[] } | null>(null);
+  const [receiptsLoading, setReceiptsLoading] = useState(false);
+
+  // User Presence & Heartbeat Status Picker
+  const [myPresenceStatus, setMyPresenceStatus] = useState<'online' | 'idle' | 'dnd' | 'offline'>('online');
+  const [showPresencePicker, setShowPresencePicker] = useState(false);
+
+  // Rich Community User Profile Modal
+  const [communityProfileUser, setCommunityProfileUser] = useState<UserProfile | null>(null);
 
   // Voice & Video Calls State
   const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
@@ -1265,190 +1464,411 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
       <div className={activeTab === 'peer_chat' || !activeTab ? 'h-full flex flex-col' : 'hidden'}>
         <div className="grid grid-cols-1 md:grid-cols-12 gap-5 h-[calc(100vh-8.5rem)] md:h-[calc(100vh-9.5rem)] min-h-[500px] max-w-7xl mx-auto shadow-2xl animate-fadeIn font-sans">
       
-      {/* Left Column: Chat Rooms & Direct Messages Sidebar */}
-      <div className={`md:col-span-4 bg-slate-900/90 border border-white/10 rounded-3xl p-3 sm:p-4 flex flex-col min-h-0 justify-between ${showChatSidebarMobile ? 'flex h-full' : 'hidden md:flex'}`}>
-        <div className="space-y-3.5 flex-1 flex flex-col min-h-0">
-          
-          {/* Header & New Actions */}
-          <div className="flex justify-between items-center shrink-0">
-            <h3 className="font-black text-xs uppercase tracking-wider text-white flex items-center gap-1.5">
-              <Megaphone className="w-4 h-4 text-indigo-400" />
-              StudentOS Chat
-            </h3>
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => setShowNewDmModal(true)}
-                title="Start Direct Message"
-                className="bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] px-2.5 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md active:scale-95 flex items-center gap-1"
-              >
-                <UserPlus className="w-3 h-3" />
-                <span className="hidden sm:inline">DM</span>
-              </button>
-              <button
-                onClick={() => setIsCreatingRoom(true)}
-                title="Create or Join Group"
-                className="bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] px-2.5 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md active:scale-95 flex items-center gap-1"
-              >
-                <Users className="w-3 h-3" />
-                <span className="hidden sm:inline">Group</span>
-              </button>
-            </div>
+      {/* Left Column: Discord-style Server Rail + Channel/DM Sidebar */}
+      <div className={`md:col-span-5 lg:col-span-4 bg-slate-900/90 border border-white/10 rounded-3xl overflow-hidden flex min-h-0 ${showChatSidebarMobile ? 'flex h-full' : 'hidden md:flex'}`}>
+        
+        {/* Tier 1: Discord Server Rail */}
+        <div className="w-14 sm:w-16 shrink-0 bg-slate-950 flex flex-col items-center py-3 gap-2.5 border-r border-white/10 select-none">
+          {/* Home / Direct Messages Icon */}
+          <div className="relative group">
+            {activeServerId === 'home' && (
+              <span className="absolute -left-3 top-1/2 -translate-y-1/2 w-1.5 h-7 bg-white rounded-r-full" />
+            )}
+            <button
+              onClick={() => {
+                setActiveServerId('home');
+                if (dmRooms.length > 0) setActiveChatTargetId(dmRooms[0].id);
+              }}
+              className={`w-10 h-10 sm:w-11 sm:h-11 flex items-center justify-center transition-all ${
+                activeServerId === 'home' 
+                  ? 'bg-indigo-600 text-white rounded-2xl shadow-lg shadow-indigo-600/30' 
+                  : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 rounded-3xl hover:rounded-2xl border border-white/5'
+              }`}
+              title="Direct Messages & Groups"
+            >
+              <MessageSquare className="w-5 h-5" />
+            </button>
           </div>
 
-          {/* Search Bar */}
-          <div className="relative shrink-0">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-            <input
-              type="text"
-              value={chatSearchQuery}
-              onChange={(e) => setChatSearchQuery(e.target.value)}
-              placeholder="Search users, groups, or phone..."
-              className="w-full bg-slate-950 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            />
+          <div className="w-7 h-[2px] bg-white/10 rounded-full my-0.5" />
+
+          {/* Server Icons List */}
+          <div className="flex-1 overflow-y-auto space-y-2.5 w-full flex flex-col items-center pr-0.5 scrollbar-none">
+            {chatServers.map(server => {
+              const isActive = activeServerId === server.id;
+              return (
+                <div key={server.id} className="relative group">
+                  {isActive && (
+                    <span className="absolute -left-3 top-1/2 -translate-y-1/2 w-1.5 h-7 bg-white rounded-r-full" />
+                  )}
+                  <button
+                    onClick={() => {
+                      setActiveServerId(server.id);
+                      if (server.channels && server.channels.length > 0) {
+                        setActiveChatTargetId(server.channels[0].id);
+                      }
+                    }}
+                    className={`w-10 h-10 sm:w-11 sm:h-11 flex items-center justify-center text-lg transition-all ${
+                      isActive 
+                        ? 'bg-gradient-to-tr from-indigo-600 to-purple-600 text-white shadow-lg ring-2 ring-white/20 rounded-2xl' 
+                        : 'bg-slate-900 text-slate-300 hover:bg-slate-800 hover:rounded-2xl rounded-3xl border border-white/5'
+                    }`}
+                    title={server.name}
+                  >
+                    <span>{server.icon || '💬'}</span>
+                  </button>
+                </div>
+              );
+            })}
+
+            {/* Add Server Button */}
+            <button
+              onClick={() => setShowCreateServerModal(true)}
+              className="w-10 h-10 sm:w-11 sm:h-11 rounded-3xl hover:rounded-2xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-dashed border-emerald-500/40 flex items-center justify-center transition-all hover:scale-105"
+              title="Create New Server"
+            >
+              <Plus className="w-5 h-5" />
+            </button>
           </div>
 
-          {/* Sidebar Chat List (Separated DMs and Groups) */}
-          <div className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1 scrollbar-thin">
-            
-            {/* DIRECT MESSAGES SECTION */}
-            <div className="space-y-1">
-              <div className="flex justify-between items-center px-1 py-1">
-                <span className="text-[10px] font-black uppercase text-teal-400 tracking-wider flex items-center gap-1">
-                  <UserIcon className="w-3 h-3" />
-                  Direct Messages ({dmRooms.length})
-                </span>
-                <button
-                  onClick={() => setShowNewDmModal(true)}
-                  className="text-[10px] text-teal-400 hover:underline font-bold"
-                >
-                  + New
-                </button>
-              </div>
-
-              {dmRooms.length === 0 ? (
-                <p className="text-[10px] text-slate-500 italic px-2 py-1">No direct messages yet. Click + New to chat!</p>
+          {/* User Presence & Status Picker Orb at Bottom */}
+          <div className="relative pt-2 border-t border-white/10 w-full flex justify-center">
+            <button
+              onClick={() => setShowPresencePicker(!showPresencePicker)}
+              className="relative group p-0.5"
+              title={`Presence: ${myPresenceStatus.toUpperCase()} (Click to toggle)`}
+            >
+              {currentUser?.avatar || currentUser?.photoURL ? (
+                <img src={currentUser.avatar || currentUser.photoURL} alt="" className="w-9 h-9 rounded-full object-cover ring-2 ring-white/20" />
               ) : (
-                dmRooms
-                  .filter(r => {
-                    if (!chatSearchQuery) return true;
-                    const otherUid = (r.members || []).find(m => m !== currentUser?.uid);
-                    const user = otherUid ? resolveUser(otherUid) : null;
-                    const query = chatSearchQuery.toLowerCase();
-                    return r.name.toLowerCase().includes(query) || 
-                           (user && (user.name.toLowerCase().includes(query) || user.email.toLowerCase().includes(query)));
-                  })
-                  .map(room => {
-                    const isActive = activeChatTargetId === room.id;
-                    const otherUid = (room.members || []).find(m => m !== currentUser?.uid);
-                    const otherUser = otherUid ? resolveUser(otherUid) : null;
-                    const displayName = otherUser ? otherUser.name : room.name;
-
-                    // Get last message in this room
-                    const lastMsg = chats.filter(c => c.targetId === room.id).pop();
-
-                    return (
-                      <button
-                        key={room.id}
-                        onClick={() => {
-                          setActiveChatTargetId(room.id);
-                          setShowChatSidebarMobile(false);
-                        }}
-                        className={`w-full text-left p-2.5 rounded-2xl border transition-all flex items-center gap-2.5 ${isActive ? 'bg-teal-600/20 border-teal-500/50 text-white shadow-lg' : 'bg-slate-950/40 border-white/5 hover:border-white/10 hover:bg-slate-950/70 text-slate-300'}`}
-                      >
-                        <div className="relative shrink-0">
-                          {otherUser?.avatar || otherUser?.photoURL ? (
-                            <img src={otherUser.avatar || otherUser.photoURL} alt="" className="w-9 h-9 rounded-full object-cover border border-white/10" />
-                          ) : (
-                            <div className="w-9 h-9 rounded-full bg-teal-600/30 text-teal-300 font-black text-xs flex items-center justify-center border border-teal-500/30">
-                              {displayName.charAt(0).toUpperCase()}
-                            </div>
-                          )}
-                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 border border-slate-900 absolute bottom-0 right-0" />
-                        </div>
-
-                        <div className="flex-1 min-w-0">
-                          <div className="flex justify-between items-center">
-                            <span className="text-xs font-bold truncate text-white">{displayName}</span>
-                            {lastMsg && (
-                              <span className="text-[9px] text-slate-500 shrink-0">
-                                {new Date(lastMsg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                            {lastMsg ? lastMsg.message : (otherUser ? `${otherUser.role.toUpperCase()} • ${otherUser.grade || 'Direct Message'}` : 'Start conversation')}
-                          </p>
-                        </div>
-                      </button>
-                    );
-                  })
+                <div className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold text-white ring-2 ring-white/20">
+                  {(currentUser?.name || 'U').charAt(0)}
+                </div>
               )}
-            </div>
+              <span className={`w-3 h-3 rounded-full border-2 border-slate-950 absolute bottom-0 right-0 ${
+                myPresenceStatus === 'online' ? 'bg-emerald-400 ring-2 ring-emerald-500/30' :
+                myPresenceStatus === 'idle' ? 'bg-amber-400' :
+                myPresenceStatus === 'dnd' ? 'bg-rose-500' : 'bg-slate-500'
+              }`} />
+            </button>
 
-            {/* GROUP ROOMS SECTION */}
-            <div className="space-y-1 border-t border-white/10 pt-2.5">
-              <div className="flex justify-between items-center px-1 py-1">
-                <span className="text-[10px] font-black uppercase text-indigo-400 tracking-wider flex items-center gap-1">
-                  <Hash className="w-3 h-3" />
-                  Groups & Channels ({groupRooms.length})
-                </span>
-                <button
-                  onClick={() => setIsCreatingRoom(true)}
-                  className="text-[10px] text-indigo-400 hover:underline font-bold"
-                >
-                  + Create
-                </button>
+            {showPresencePicker && (
+              <div className="absolute left-14 bottom-1 bg-slate-900 border border-white/15 rounded-2xl p-2 w-48 shadow-2xl z-50 space-y-1">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2 py-1">Set Online Presence</p>
+                {[
+                  { id: 'online', label: 'Online', color: 'bg-emerald-400' },
+                  { id: 'idle', label: 'Idle / Away', color: 'bg-amber-400' },
+                  { id: 'dnd', label: 'Do Not Disturb', color: 'bg-rose-500' },
+                  { id: 'offline', label: 'Invisible', color: 'bg-slate-500' }
+                ].map(st => (
+                  <button
+                    key={st.id}
+                    onClick={() => handleUpdatePresence(st.id as any)}
+                    className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-xl text-xs font-semibold hover:bg-white/10 text-left transition-colors ${myPresenceStatus === st.id ? 'text-white bg-indigo-600/30 font-bold' : 'text-slate-300'}`}
+                  >
+                    <span className={`w-2.5 h-2.5 rounded-full ${st.color}`} />
+                    <span>{st.label}</span>
+                  </button>
+                ))}
               </div>
-
-              {groupRooms
-                .filter(room => {
-                  if (!chatSearchQuery) return true;
-                  return room.name.toLowerCase().includes(chatSearchQuery.toLowerCase()) || 
-                         room.type.toLowerCase().includes(chatSearchQuery.toLowerCase());
-                })
-                .map((room) => {
-                  const isActive = activeChatTargetId === room.id;
-                  let badgeStyle = "bg-indigo-500/10 text-indigo-400 border-indigo-500/20";
-                  if (room.type === "channel") badgeStyle = "bg-rose-500/10 text-rose-400 border-rose-500/20";
-
-                  const lastMsg = chats.filter(c => c.targetId === room.id || (!c.targetId && room.id === 'group-all')).pop();
-
-                  return (
-                    <button
-                      key={room.id}
-                      onClick={() => {
-                        setActiveChatTargetId(room.id);
-                        setShowChatSidebarMobile(false);
-                      }}
-                      className={`w-full text-left p-2.5 rounded-2xl border transition-all flex items-center gap-2.5 ${isActive ? 'bg-indigo-600/20 border-indigo-500/50 text-white shadow-lg' : 'bg-slate-950/40 border-white/5 hover:border-white/10 hover:bg-slate-950/70 text-slate-300'}`}
-                    >
-                      <span className="text-xl shrink-0 p-1.5 bg-slate-900 border border-white/10 rounded-xl">{room.icon}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex justify-between items-center">
-                          <span className="text-xs font-bold truncate text-white">{room.name}</span>
-                          <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border ${badgeStyle}`}>
-                            {room.type}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                          {lastMsg ? `${lastMsg.name.split(' ')[0]}: ${lastMsg.message}` : room.description}
-                        </p>
-                      </div>
-                    </button>
-                  );
-                })}
-            </div>
-
+            )}
           </div>
         </div>
 
-        {/* Footer info */}
-        <div className="pt-3 border-t border-white/10 flex justify-between items-center text-[11px] text-slate-400 shrink-0">
-          <span className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            Live Sync
-          </span>
-          <span className="font-bold text-indigo-400 truncate max-w-[150px]">{currentUser?.name}</span>
+        {/* Tier 2: Channels or DM list */}
+        <div className="flex-1 flex flex-col min-h-0 p-3 sm:p-3.5 space-y-3">
+          
+          {/* HOME MODE: Direct Messages & Groups */}
+          {activeServerId === 'home' ? (
+            <>
+              {/* Header & New Actions */}
+              <div className="flex justify-between items-center shrink-0">
+                <h3 className="font-black text-xs uppercase tracking-wider text-white flex items-center gap-1.5">
+                  <Megaphone className="w-4 h-4 text-indigo-400" />
+                  Direct Messages
+                </h3>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setShowNewDmModal(true)}
+                    title="Start Direct Message"
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] px-2.5 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md active:scale-95 flex items-center gap-1"
+                  >
+                    <UserPlus className="w-3 h-3" />
+                    <span>DM</span>
+                  </button>
+                  <button
+                    onClick={() => setIsCreatingRoom(true)}
+                    title="Create or Join Group"
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] px-2.5 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md active:scale-95 flex items-center gap-1"
+                  >
+                    <Users className="w-3 h-3" />
+                    <span>Group</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Search Bar */}
+              <div className="relative shrink-0">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  value={chatSearchQuery}
+                  onChange={(e) => setChatSearchQuery(e.target.value)}
+                  placeholder="Search DMs and groups..."
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+
+              {/* Direct Messages & Groups Lists */}
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1 scrollbar-thin">
+                {/* DIRECT MESSAGES SECTION */}
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center px-1 py-1">
+                    <span className="text-[10px] font-black uppercase text-teal-400 tracking-wider flex items-center gap-1">
+                      <UserIcon className="w-3 h-3" />
+                      Direct Messages ({dmRooms.length})
+                    </span>
+                  </div>
+
+                  {dmRooms.length === 0 ? (
+                    <p className="text-[10px] text-slate-500 italic px-2 py-1">No direct messages yet. Click + DM to chat!</p>
+                  ) : (
+                    dmRooms
+                      .filter(r => {
+                        if (!chatSearchQuery) return true;
+                        const otherUid = (r.members || []).find(m => m !== currentUser?.uid);
+                        const user = otherUid ? resolveUser(otherUid) : null;
+                        const query = chatSearchQuery.toLowerCase();
+                        return r.name.toLowerCase().includes(query) || 
+                              (user && (user.name.toLowerCase().includes(query) || user.email.toLowerCase().includes(query)));
+                      })
+                      .map(room => {
+                        const isActive = activeChatTargetId === room.id;
+                        const otherUid = (room.members || []).find(m => m !== currentUser?.uid);
+                        const otherUser = otherUid ? resolveUser(otherUid) : null;
+                        const displayName = otherUser ? otherUser.name : room.name;
+                        const lastMsg = chats.filter(c => c.targetId === room.id).pop();
+
+                        return (
+                          <button
+                            key={room.id}
+                            onClick={() => {
+                              setActiveChatTargetId(room.id);
+                              setShowChatSidebarMobile(false);
+                            }}
+                            className={`w-full text-left p-2.5 rounded-2xl border transition-all flex items-center gap-2.5 ${isActive ? 'bg-teal-600/20 border-teal-500/50 text-white shadow-lg' : 'bg-slate-950/40 border-white/5 hover:border-white/10 hover:bg-slate-950/70 text-slate-300'}`}
+                          >
+                            <div className="relative shrink-0">
+                              {otherUser?.avatar || otherUser?.photoURL ? (
+                                <img src={otherUser.avatar || otherUser.photoURL} alt="" className="w-9 h-9 rounded-full object-cover border border-white/10" />
+                              ) : (
+                                <div className="w-9 h-9 rounded-full bg-teal-600/30 text-teal-300 font-black text-xs flex items-center justify-center border border-teal-500/30">
+                                  {displayName.charAt(0).toUpperCase()}
+                                </div>
+                              )}
+                              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 border border-slate-900 absolute bottom-0 right-0" />
+                            </div>
+
+                            <div className="flex-1 min-w-0">
+                              <div className="flex justify-between items-center">
+                                <span className="text-xs font-bold truncate text-white">{displayName}</span>
+                                {lastMsg && (
+                                  <span className="text-[9px] text-slate-500 shrink-0">
+                                    {new Date(lastMsg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                                {lastMsg ? lastMsg.message : (otherUser ? `${otherUser.role.toUpperCase()} • ${otherUser.grade || 'Direct Message'}` : 'Start conversation')}
+                              </p>
+                            </div>
+                          </button>
+                        );
+                      })
+                  )}
+                </div>
+
+                {/* GROUP ROOMS SECTION */}
+                <div className="space-y-1 border-t border-white/10 pt-2.5">
+                  <div className="flex justify-between items-center px-1 py-1">
+                    <span className="text-[10px] font-black uppercase text-indigo-400 tracking-wider flex items-center gap-1">
+                      <Hash className="w-3 h-3" />
+                      Groups & Channels ({groupRooms.length})
+                    </span>
+                  </div>
+
+                  {groupRooms
+                    .filter(room => {
+                      if (!chatSearchQuery) return true;
+                      return room.name.toLowerCase().includes(chatSearchQuery.toLowerCase()) || 
+                            room.type.toLowerCase().includes(chatSearchQuery.toLowerCase());
+                    })
+                    .map((room) => {
+                      const isActive = activeChatTargetId === room.id;
+                      let badgeStyle = "bg-indigo-500/10 text-indigo-400 border-indigo-500/20";
+                      if (room.type === "channel") badgeStyle = "bg-rose-500/10 text-rose-400 border-rose-500/20";
+                      const lastMsg = chats.filter(c => c.targetId === room.id || (!c.targetId && room.id === 'group-all')).pop();
+
+                      return (
+                        <button
+                          key={room.id}
+                          onClick={() => {
+                            setActiveChatTargetId(room.id);
+                            setShowChatSidebarMobile(false);
+                          }}
+                          className={`w-full text-left p-2.5 rounded-2xl border transition-all flex items-center gap-2.5 ${isActive ? 'bg-indigo-600/20 border-indigo-500/50 text-white shadow-lg' : 'bg-slate-950/40 border-white/5 hover:border-white/10 hover:bg-slate-950/70 text-slate-300'}`}
+                        >
+                          <span className="text-xl shrink-0 p-1.5 bg-slate-900 border border-white/10 rounded-xl">{room.icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex justify-between items-center">
+                              <span className="text-xs font-bold truncate text-white">{room.name}</span>
+                              <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border ${badgeStyle}`}>
+                                {room.type}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                              {lastMsg ? `${lastMsg.name.split(' ')[0]}: ${lastMsg.message}` : room.description}
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                </div>
+              </div>
+            </>
+          ) : (
+            /* SERVER MODE: Categorized Server Channels */
+            (() => {
+              const currentServer = chatServers.find(s => s.id === activeServerId);
+              if (!currentServer) return null;
+              const channels = currentServer.channels || [];
+              const categories: ('Announcements' | 'General' | 'Class & Doubts' | 'Study Lounge')[] = [
+                'Announcements', 'General', 'Class & Doubts', 'Study Lounge'
+              ];
+
+              return (
+                <>
+                  {/* Server Banner & Header */}
+                  <div className="relative rounded-2xl overflow-hidden border border-white/10 p-3 bg-gradient-to-r from-indigo-950/80 to-slate-900 shrink-0">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-2xl shrink-0">{currentServer.icon}</span>
+                        <div className="min-w-0">
+                          <h4 className="text-xs font-black text-white truncate">{currentServer.name}</h4>
+                          <p className="text-[9px] text-indigo-300 truncate">{channels.length} channels</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => {
+                            setRolesTargetId(currentServer.id);
+                            setShowManageRolesModal(true);
+                          }}
+                          className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-indigo-300 hover:text-white border border-white/10 text-[10px] font-bold"
+                          title="Manage Custom Roles"
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setShowCreateChannelModal(true)}
+                          className="p-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-md text-[10px] font-bold flex items-center gap-1"
+                          title="Create Channel"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Channel Search */}
+                  <div className="relative shrink-0">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                    <input
+                      type="text"
+                      value={chatSearchQuery}
+                      onChange={(e) => setChatSearchQuery(e.target.value)}
+                      placeholder="Search channels..."
+                      className="w-full bg-slate-950 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  {/* Categorized Channels Stream */}
+                  <div className="flex-1 min-h-0 overflow-y-auto space-y-3.5 pr-1 scrollbar-thin">
+                    {categories.map(cat => {
+                      const catChannels = channels.filter(c => (c.category || 'General') === cat);
+                      if (catChannels.length === 0 && cat !== 'General') return null;
+
+                      return (
+                        <div key={cat} className="space-y-1">
+                          <div className="flex items-center justify-between px-1 py-0.5">
+                            <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">
+                              {cat}
+                            </span>
+                            <span className="text-[9px] text-slate-600 font-mono">{catChannels.length}</span>
+                          </div>
+
+                          {catChannels
+                            .filter(ch => !chatSearchQuery || ch.name.toLowerCase().includes(chatSearchQuery.toLowerCase()))
+                            .map(ch => {
+                              const isActive = activeChatTargetId === ch.id;
+                              return (
+                                <button
+                                  key={ch.id}
+                                  onClick={() => {
+                                    setActiveChatTargetId(ch.id);
+                                    setShowChatSidebarMobile(false);
+                                  }}
+                                  className={`w-full text-left px-2.5 py-1.5 rounded-xl border transition-all flex items-center justify-between group ${
+                                    isActive 
+                                      ? 'bg-indigo-600/25 border-indigo-500/50 text-white shadow-md' 
+                                      : 'bg-transparent border-transparent hover:bg-slate-950/60 hover:border-white/5 text-slate-300'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2 truncate">
+                                    <span className="text-xs text-indigo-400 font-bold shrink-0">
+                                      {ch.type === 'announcement' ? '📢' : ch.type === 'class' ? '💡' : '#'}
+                                    </span>
+                                    <span className="text-xs font-semibold truncate group-hover:text-white">
+                                      {ch.name.replace(/^📢-|^💡-|^💬-/, '')}
+                                    </span>
+                                  </div>
+                                  {ch.topic && (
+                                    <span className="text-[8px] text-slate-500 truncate max-w-[80px] hidden group-hover:inline">
+                                      {ch.topic}
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                        </div>
+                      );
+                    })}
+
+                    {/* Roles Overview in Server */}
+                    {currentServer.roles && currentServer.roles.length > 0 && (
+                      <div className="pt-2 border-t border-white/5 space-y-1">
+                        <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 px-1">
+                          Community Roles
+                        </span>
+                        <div className="flex flex-wrap gap-1 px-1">
+                          {currentServer.roles.map(r => (
+                            <span
+                              key={r.id}
+                              style={{ borderColor: `${r.color}40`, color: r.color, backgroundColor: `${r.color}15` }}
+                              className="px-2 py-0.5 rounded-full text-[9px] font-bold border flex items-center gap-1"
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: r.color }} />
+                              <span>{r.name}</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
+              );
+            })()
+          )}
         </div>
       </div>
 
@@ -1628,8 +2048,9 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                     {/* Header info */}
                     <div className={`flex items-center gap-1.5 text-[10px] ${isMine ? 'justify-end' : 'justify-start'}`}>
                       <button
-                        onClick={() => setSelectedProfileUser(senderUser)}
-                        className="font-bold text-slate-300 hover:text-indigo-400 transition-colors inline-flex items-center gap-1"
+                        onClick={() => setCommunityProfileUser(senderUser)}
+                        className="font-bold text-slate-300 hover:text-indigo-400 transition-colors inline-flex items-center gap-1 cursor-pointer"
+                        title="View Community Profile"
                       >
                         <span>{displayName}</span>
                         {senderUser && getVerificationStatus(senderUser).isVerified && (
@@ -1641,12 +2062,33 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                       <span className="text-[9px] text-indigo-400 uppercase font-black bg-indigo-500/10 px-1.5 py-0.2 rounded border border-indigo-500/20">
                         {senderUser?.role || msg.role}
                       </span>
+                      {(() => {
+                        const currentServer = chatServers.find(s => s.id === activeServerId);
+                        const serverRoles = currentServer?.roles || [];
+                        const matchedRole = serverRoles.find(r => (senderUser?.role && r.name.toLowerCase().includes(senderUser.role.toLowerCase())) || r.id === (senderUser as any)?.customRoleId);
+                        if (matchedRole) {
+                          return (
+                            <span 
+                              style={{ borderColor: `${matchedRole.color}50`, color: matchedRole.color, backgroundColor: `${matchedRole.color}20` }}
+                              className="text-[9px] font-bold px-1.5 py-0.2 rounded border"
+                            >
+                              {matchedRole.name}
+                            </span>
+                          );
+                        }
+                        return null;
+                      })()}
                       <div className="flex items-center gap-1">
                         <span className="text-[9px] text-slate-500">
                           {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
                         {isMine && (
-                          <span className="text-[10px]" title={msg.readBy && msg.readBy.length > 1 ? 'Read' : msg.deliveredTo ? 'Delivered' : 'Sent'}>
+                          <button 
+                            type="button"
+                            onClick={() => handleOpenReceiptsModal(msg)}
+                            className="text-[10px] hover:scale-110 transition-transform cursor-pointer flex items-center" 
+                            title="Click to view Read Receipts & Unread Recipients"
+                          >
                             {msg.readBy && msg.readBy.length > 1 ? (
                               <CheckCheck className="w-3.5 h-3.5 text-sky-400 inline" />
                             ) : msg.deliveredTo && msg.deliveredTo.length > 0 ? (
@@ -1654,7 +2096,7 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                             ) : (
                               <Check className="w-3.5 h-3.5 text-slate-400 inline" />
                             )}
-                          </span>
+                          </button>
                         )}
                       </div>
                     </div>
@@ -2758,6 +3200,523 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                   <Trash2 className="w-4 h-4 text-rose-400" />
                   <span>Delete Message</span>
                 </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 1: CREATE COMMUNITY SERVER */}
+      {showCreateServerModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[9999] flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-slate-900 border border-white/10 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl relative">
+            <button
+              onClick={() => setShowCreateServerModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-full bg-white/5"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <div className="flex items-center gap-3">
+              <span className="text-3xl p-2.5 bg-indigo-600/20 border border-indigo-500/30 rounded-2xl">🏛️</span>
+              <div>
+                <h3 className="text-base font-black text-white">Create Community Server</h3>
+                <p className="text-xs text-slate-400">Launch a dedicated guild for your class, club, or society.</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 pt-2">
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">Server Name</label>
+                <input
+                  type="text"
+                  value={newServerName}
+                  onChange={e => setNewServerName(e.target.value)}
+                  placeholder="e.g. Robotics Guild, Grade 10 A"
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">Server Icon Emoji</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={newServerIcon}
+                    onChange={e => setNewServerIcon(e.target.value)}
+                    className="w-16 bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-lg text-center text-white"
+                  />
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {['🏛️', '⚡', '🛡️', '🚀', '🎨', '🔬', '🏆', '💻'].map(em => (
+                      <button
+                        key={em}
+                        type="button"
+                        onClick={() => setNewServerIcon(em)}
+                        className="text-lg p-1.5 bg-slate-950 hover:bg-slate-800 rounded-xl border border-white/5"
+                      >
+                        {em}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">Description</label>
+                <textarea
+                  value={newServerDesc}
+                  onChange={e => setNewServerDesc(e.target.value)}
+                  placeholder="What is this community space about?"
+                  rows={2}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end pt-3 border-t border-white/10">
+                <button
+                  onClick={() => setShowCreateServerModal(false)}
+                  className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreateServer}
+                  disabled={!newServerName.trim()}
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/30 disabled:opacity-50"
+                >
+                  Create Guild
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: CREATE SERVER CHANNEL */}
+      {showCreateChannelModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[9999] flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-slate-900 border border-white/10 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl relative">
+            <button
+              onClick={() => setShowCreateChannelModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-full bg-white/5"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <div className="flex items-center gap-3">
+              <span className="text-2xl p-2 bg-indigo-600/20 border border-indigo-500/30 rounded-2xl text-indigo-400">#</span>
+              <div>
+                <h3 className="text-base font-black text-white">Create Channel</h3>
+                <p className="text-xs text-slate-400">Add a categorized discussion channel to this server.</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 pt-2">
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">Channel Name</label>
+                <input
+                  type="text"
+                  value={newChannelName}
+                  onChange={e => setNewChannelName(e.target.value)}
+                  placeholder="e.g. homework-help, general-lounge"
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">Category</label>
+                <select
+                  value={newServerChannelCategory}
+                  onChange={e => setNewServerChannelCategory(e.target.value as any)}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  <option value="General">💬 General Lounge</option>
+                  <option value="Announcements">📢 Official Announcements</option>
+                  <option value="Class & Doubts">💡 Class & Doubts Clearing</option>
+                  <option value="Study Lounge">🎧 Silent Study Lounge</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1">Channel Type</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'text', label: 'Text', icon: '💬' },
+                    { id: 'announcement', label: 'Notice', icon: '📢' },
+                    { id: 'class', label: 'Academic', icon: '💡' }
+                  ].map(t => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setNewChannelType(t.id as any)}
+                      className={`p-2 rounded-xl border text-xs font-bold flex flex-col items-center gap-1 ${newChannelType === t.id ? 'bg-indigo-600/30 border-indigo-500 text-white' : 'bg-slate-950 border-white/5 text-slate-400'}`}
+                    >
+                      <span className="text-base">{t.icon}</span>
+                      <span>{t.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex gap-2 justify-end pt-3 border-t border-white/10">
+                <button
+                  onClick={() => setShowCreateChannelModal(false)}
+                  className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreateChannel}
+                  disabled={!newChannelName.trim()}
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/30 disabled:opacity-50"
+                >
+                  Create Channel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: MANAGE CUSTOM ROLES & PERMISSIONS */}
+      {showManageRolesModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[9999] flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-slate-900 border border-white/10 rounded-3xl max-w-lg w-full p-6 space-y-4 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => setShowManageRolesModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-full bg-white/5"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <div className="flex items-center gap-3">
+              <span className="text-2xl p-2 bg-indigo-600/20 border border-indigo-500/30 rounded-2xl text-indigo-400">🛡️</span>
+              <div>
+                <h3 className="text-base font-black text-white">Community Roles & Permissions</h3>
+                <p className="text-xs text-slate-400">Configure hierarchy, role colors, and moderation rights.</p>
+              </div>
+            </div>
+
+            {/* Existing Roles list */}
+            <div className="space-y-2 pt-2">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">Existing Roles</span>
+              <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                {(chatServers.find(s => s.id === rolesTargetId)?.roles || []).map(r => (
+                  <div key={r.id} className="flex items-center justify-between p-2 rounded-xl bg-slate-950 border border-white/5">
+                    <div className="flex items-center gap-2">
+                      <span className="w-3 h-3 rounded-full" style={{ backgroundColor: r.color }} />
+                      <span className="text-xs font-bold text-white">{r.name}</span>
+                      <span className="text-[9px] text-slate-500 font-mono">Priority: {r.priority}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[9px] text-slate-400">
+                      {r.permissions.canManageChannels && <span className="bg-purple-500/10 text-purple-300 px-1.5 py-0.5 rounded">Channels</span>}
+                      {r.permissions.canManageMessages && <span className="bg-rose-500/10 text-rose-300 px-1.5 py-0.5 rounded">Mod</span>}
+                      <button
+                        onClick={async () => {
+                          await deleteCustomRole(rolesTargetId, r.id);
+                          const updated = await getChatServers();
+                          setChatServers(updated);
+                        }}
+                        className="text-rose-400 hover:text-rose-300 p-1"
+                        title="Delete Role"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Create New Role Form */}
+            <div className="pt-3 border-t border-white/10 space-y-3">
+              <span className="text-[10px] font-black uppercase tracking-wider text-indigo-400 block">Add New Custom Role</span>
+              
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">Role Title</label>
+                  <input
+                    type="text"
+                    value={newRoleName}
+                    onChange={e => setNewRoleName(e.target.value)}
+                    placeholder="e.g. Code Reviewer"
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">Priority (1-100)</label>
+                  <input
+                    type="number"
+                    value={newRolePriority}
+                    onChange={e => setNewRolePriority(Number(e.target.value))}
+                    min={1}
+                    max={100}
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Role Color Accent</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={newRoleColor}
+                    onChange={e => setNewRoleColor(e.target.value)}
+                    className="w-8 h-8 rounded-lg cursor-pointer bg-transparent border-0"
+                  />
+                  <div className="flex items-center gap-1.5">
+                    {['#ef4444', '#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'].map(c => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setNewRoleColor(c)}
+                        style={{ backgroundColor: c }}
+                        className="w-5 h-5 rounded-full border border-white/20 hover:scale-110 transition-transform"
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Permissions Granted</label>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <label className="flex items-center gap-2 p-2 bg-slate-950 rounded-xl border border-white/5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={newRolePerms.canSendMessages}
+                      onChange={e => setNewRolePerms(p => ({ ...p, canSendMessages: e.target.checked }))}
+                    />
+                    <span className="text-slate-300 text-[11px]">Send Messages</span>
+                  </label>
+                  <label className="flex items-center gap-2 p-2 bg-slate-950 rounded-xl border border-white/5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={newRolePerms.canAttachFiles}
+                      onChange={e => setNewRolePerms(p => ({ ...p, canAttachFiles: e.target.checked }))}
+                    />
+                    <span className="text-slate-300 text-[11px]">Attach Files</span>
+                  </label>
+                  <label className="flex items-center gap-2 p-2 bg-slate-950 rounded-xl border border-white/5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={newRolePerms.canManageMessages}
+                      onChange={e => setNewRolePerms(p => ({ ...p, canManageMessages: e.target.checked }))}
+                    />
+                    <span className="text-slate-300 text-[11px]">Manage Messages</span>
+                  </label>
+                  <label className="flex items-center gap-2 p-2 bg-slate-950 rounded-xl border border-white/5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={newRolePerms.canManageChannels}
+                      onChange={e => setNewRolePerms(p => ({ ...p, canManageChannels: e.target.checked }))}
+                    />
+                    <span className="text-slate-300 text-[11px]">Manage Channels</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex gap-2 justify-end pt-3">
+                <button
+                  onClick={() => setShowManageRolesModal(false)}
+                  className="px-4 py-2 rounded-xl bg-white/5 text-slate-300 text-xs font-bold"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={handleSaveCustomRole}
+                  disabled={!newRoleName.trim()}
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold disabled:opacity-50"
+                >
+                  Save Role
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: MESSAGE READ RECEIPTS & UNREAD RECIPIENTS */}
+      {receiptsModalMsg && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[9999] flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-slate-900 border border-white/10 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl relative">
+            <button
+              onClick={() => {
+                setReceiptsModalMsg(null);
+                setReceiptsData(null);
+              }}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-full bg-white/5"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <div className="flex items-center gap-3">
+              <span className="text-2xl p-2 bg-sky-500/20 border border-sky-500/30 rounded-2xl text-sky-400">
+                <CheckCheck className="w-6 h-6" />
+              </span>
+              <div>
+                <h3 className="text-base font-black text-white">Message Read Status</h3>
+                <p className="text-xs text-slate-400">Recipient audit & real-time delivery logs.</p>
+              </div>
+            </div>
+
+            {/* Message snippet preview */}
+            <div className="p-3 bg-slate-950 rounded-2xl border border-white/5 text-xs text-slate-300 italic line-clamp-2">
+              "{receiptsModalMsg.message}"
+            </div>
+
+            {receiptsLoading ? (
+              <div className="p-8 text-center text-slate-500 text-xs animate-pulse">
+                Inspecting read receipts...
+              </div>
+            ) : (
+              <div className="space-y-4 pt-1">
+                {/* READ BY SECTION */}
+                <div>
+                  <div className="flex items-center justify-between text-xs font-bold text-emerald-400 mb-2">
+                    <span className="flex items-center gap-1.5">
+                      <CheckCheck className="w-4 h-4 text-sky-400" />
+                      Read by ({receiptsData?.readBy?.length || 0})
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                    {(!receiptsData?.readBy || receiptsData.readBy.length === 0) ? (
+                      <p className="text-[11px] text-slate-500 italic px-2">No read receipts logged yet.</p>
+                    ) : (
+                      receiptsData.readBy.map(r => (
+                        <div key={r.userId} className="flex items-center justify-between p-2 rounded-xl bg-slate-950/70 border border-white/5">
+                          <div className="flex items-center gap-2">
+                            {r.userAvatar ? (
+                              <img src={r.userAvatar} alt="" className="w-6 h-6 rounded-full object-cover" />
+                            ) : (
+                              <div className="w-6 h-6 rounded-full bg-indigo-600 flex items-center justify-center text-[10px] font-bold text-white">
+                                {r.userName.charAt(0)}
+                              </div>
+                            )}
+                            <span className="text-xs font-bold text-white">{r.userName}</span>
+                            <span className="text-[9px] uppercase px-1.5 py-0.2 rounded bg-indigo-500/10 text-indigo-300 font-bold">
+                              {r.role || 'Member'}
+                            </span>
+                          </div>
+                          <span className="text-[9px] text-slate-500 font-mono">
+                            {new Date(r.readAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {/* UNREAD BY SECTION */}
+                {receiptsData?.unreadBy && receiptsData.unreadBy.length > 0 && (
+                  <div className="pt-2 border-t border-white/5">
+                    <div className="flex items-center justify-between text-xs font-bold text-slate-400 mb-2">
+                      <span className="flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-amber-400" />
+                        Unread by ({receiptsData.unreadBy.length})
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
+                      {receiptsData.unreadBy.map(uid => {
+                        const u = resolveUser(uid);
+                        return (
+                          <span key={uid} className="px-2 py-0.5 rounded-lg bg-slate-950 text-slate-400 border border-white/5 text-[10px] font-medium">
+                            {u.name}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: RICH COMMUNITY USER PROFILE CARD */}
+      {communityProfileUser && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[9999] flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-slate-900 border border-white/10 rounded-3xl max-w-sm w-full overflow-hidden shadow-2xl relative">
+            <button
+              onClick={() => setCommunityProfileUser(null)}
+              className="absolute top-3 right-3 text-white/80 hover:text-white p-1 rounded-full bg-black/40 backdrop-blur-md z-10"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            {/* Gradient Top Banner */}
+            <div className="h-24 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 relative p-4 flex justify-between items-start">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-black/40 text-white backdrop-blur-md border border-white/10">
+                {communityProfileUser.role.toUpperCase()}
+              </span>
+            </div>
+
+            {/* Avatar & Details */}
+            <div className="p-5 pt-0 relative space-y-3">
+              <div className="flex justify-between items-end -mt-10 mb-2">
+                <div className="relative">
+                  {communityProfileUser.avatar || communityProfileUser.photoURL ? (
+                    <img
+                      src={communityProfileUser.avatar || communityProfileUser.photoURL}
+                      alt=""
+                      className="w-20 h-20 rounded-2xl object-cover ring-4 ring-slate-900 shadow-xl border border-white/10"
+                    />
+                  ) : (
+                    <div className="w-20 h-20 rounded-2xl bg-indigo-600 ring-4 ring-slate-900 flex items-center justify-center text-2xl font-black text-white shadow-xl">
+                      {communityProfileUser.name.charAt(0)}
+                    </div>
+                  )}
+                  <span className="w-4 h-4 rounded-full border-2 border-slate-900 bg-emerald-400 absolute bottom-0 right-0 ring-2 ring-emerald-500/30" />
+                </div>
+
+                {currentUser?.uid !== communityProfileUser.uid && (
+                  <button
+                    onClick={async () => {
+                      if (!currentUser) return;
+                      const room = await getOrCreateDirectMessageRoom(currentUser as any, communityProfileUser as any);
+                      if (!chatRooms.some(r => r.id === room.id)) {
+                        setChatRooms(prev => [room, ...prev]);
+                      }
+                      setActiveServerId('home');
+                      setActiveChatTargetId(room.id);
+                      setCommunityProfileUser(null);
+                      showNotification(`Opened direct chat with ${communityProfileUser.name}`);
+                    }}
+                    className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-lg shadow-emerald-600/30 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    <span>Message</span>
+                  </button>
+                )}
+              </div>
+
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <h4 className="text-base font-black text-white">{communityProfileUser.name}</h4>
+                  {getVerificationStatus(communityProfileUser).isVerified && (
+                    <ShieldCheck className="w-4 h-4 text-indigo-400" />
+                  )}
+                </div>
+                <p className="text-xs text-slate-400">{communityProfileUser.email || 'StudentOS Community Member'}</p>
+              </div>
+
+              {/* Badges Box */}
+              <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
+                <div className="p-2.5 rounded-xl bg-slate-950 border border-white/5 space-y-0.5">
+                  <span className="text-[9px] uppercase tracking-wider font-bold text-slate-500 block">Class / Grade</span>
+                  <span className="font-bold text-slate-200">{communityProfileUser.grade || 'Grade 10'} • {communityProfileUser.section || 'Solara'}</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-950 border border-white/5 space-y-0.5">
+                  <span className="text-[9px] uppercase tracking-wider font-bold text-slate-500 block">Academic House</span>
+                  <span className="font-bold text-indigo-400">{communityProfileUser.house || 'Solara'}</span>
+                </div>
+              </div>
+
+              {/* Bio snippet if available */}
+              {communityProfileUser.bio && (
+                <div className="p-2.5 rounded-xl bg-slate-950 border border-white/5 text-xs text-slate-300">
+                  <p className="italic">"{communityProfileUser.bio}"</p>
+                </div>
               )}
             </div>
           </div>

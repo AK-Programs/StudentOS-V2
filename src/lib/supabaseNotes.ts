@@ -85,10 +85,18 @@ function saveLocalVaultNotes(userId: string, notes: VaultNote[]): void {
 export async function getVaultNotes(userId: string): Promise<VaultNote[]> {
   const localNotes = getLocalVaultNotes(userId);
   try {
-    const { data, error } = await supabase.from('notes')
-      .select('*')
-      .eq('user_id', userId)
-      .order('sort_order', { ascending: true });
+    // Fetch personal notes, plus any active collaborative notes
+    const query = userId
+      ? supabase.from('notes')
+          .select('*')
+          .or(`user_id.eq.${userId},collab_code.not.is.null`)
+          .order('sort_order', { ascending: true })
+      : supabase.from('notes')
+          .select('*')
+          .not('collab_code', 'is', null)
+          .order('sort_order', { ascending: true });
+
+    const { data, error } = await query;
     if (error) {
       if (error.code === '42P01') {
         return localNotes;
@@ -166,10 +174,28 @@ export async function saveVaultNoteToSupabase(note: VaultNote): Promise<void> {
       payload.is_collab = true;
     }
 
-    const { error } = await supabase.from('notes').upsert(payload);
+    // First attempt upsert
+    let { error } = await supabase.from('notes').upsert(payload);
+    
+    // If column 'permission' not yet present in old schema, retry without it
     if (error && error.code === 'PGRST204') {
       delete payload.permission;
-      await supabase.from('notes').upsert(payload);
+      const retry = await supabase.from('notes').upsert(payload);
+      error = retry.error;
+    }
+
+    // If upsert failed due to collaborator RLS or check constraint, attempt targeted update
+    if (error && note.collabCode) {
+      const updatePayload: any = {
+        title: note.title,
+        content: note.content,
+        subject: note.subject
+      };
+      if (note.permission) updatePayload.permission = note.permission;
+      const { error: updErr } = await supabase.from('notes').update(updatePayload).eq('id', note.id);
+      if (updErr && updErr.code !== '42P01') {
+        console.warn('[Notes] Collaborator update fallback notice:', updErr.message);
+      }
     } else if (error && error.code !== '42P01') {
       throw error;
     }

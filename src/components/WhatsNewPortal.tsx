@@ -7,7 +7,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Sparkles, Check, CheckCheck, Search, ArrowRight, Calendar, User, Eye, 
-  RefreshCw, X, Image as ImageIcon, Edit3, Layers
+  RefreshCw, X, Image as ImageIcon, Edit3, Layers, ShieldCheck
 } from 'lucide-react';
 import { SystemUpdate, SystemUpdateCategory, UserProfile, UserRole } from '../types';
 import { 
@@ -17,6 +17,7 @@ import {
   markAllUpdatesAsRead 
 } from '../lib/supabaseUpdates';
 import { soundService } from '../lib/soundService';
+import { supabase } from '../lib/supabase';
 import {
   BorderBeam,
   CardSpotlight,
@@ -167,6 +168,8 @@ export function WhatsNewPortal({
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [publisherMap, setPublisherMap] = useState<Map<string, { name: string; avatar?: string; role: string }>>(new Map());
+  const [primarySuperAdmin, setPrimarySuperAdmin] = useState<{ name: string; avatar?: string; role: string } | null>(null);
 
   const isSuperAdmin = (currentUser?.role === 'super_admin') || (effectiveRole === 'super_admin');
   const userRole = (effectiveRole as UserRole) || currentUser?.role || 'student';
@@ -175,10 +178,31 @@ export function WhatsNewPortal({
   const loadData = async () => {
     setLoading(true);
     try {
-      const [fetchedUpdates, userReads] = await Promise.all([
+      const [fetchedUpdates, userReads, superAdminRes] = await Promise.all([
         getPublishedUpdates(userRole),
-        getUserReadUpdateIds(userId)
+        getUserReadUpdateIds(userId),
+        supabase.from('user_profiles').select('uid, name, role, photo_url, email').eq('role', 'super_admin')
       ]);
+
+      if (superAdminRes?.data && superAdminRes.data.length > 0) {
+        const pMap = new Map<string, { name: string; avatar?: string; role: string }>();
+        superAdminRes.data.forEach((p: any) => {
+          const prof = {
+            name: p.name || 'Super Administrator',
+            avatar: p.photo_url || '',
+            role: 'super_admin'
+          };
+          if (p.uid) pMap.set(p.uid, prof);
+          if (p.email) pMap.set(p.email, prof);
+        });
+        setPublisherMap(pMap);
+        setPrimarySuperAdmin({
+          name: superAdminRes.data[0].name || 'Super Administrator',
+          avatar: superAdminRes.data[0].photo_url || '',
+          role: 'super_admin'
+        });
+      }
+
       // De-duplicate by id to prevent duplicate release entries
       const seen = new Set<string>();
       const uniqueUpdates = fetchedUpdates.filter(u => {
@@ -234,6 +258,27 @@ export function WhatsNewPortal({
       else next.add(id);
       return next;
     });
+  };
+
+  const resolvePublisher = (update: SystemUpdate) => {
+    if (update.authorId && publisherMap.has(update.authorId)) {
+      return publisherMap.get(update.authorId)!;
+    }
+    if (primarySuperAdmin) {
+      return primarySuperAdmin;
+    }
+    if (currentUser?.role === 'super_admin' || effectiveRole === 'super_admin') {
+      return {
+        name: currentUser.name || 'Super Administrator',
+        avatar: currentUser.avatar || currentUser.photoURL || '',
+        role: 'super_admin'
+      };
+    }
+    return {
+      name: update.authorName || 'Super Administrator',
+      avatar: '',
+      role: update.authorRole || 'super_admin'
+    };
   };
 
   const filteredUpdates = useMemo(() => {
@@ -534,7 +579,32 @@ export function WhatsNewPortal({
                 )}
 
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-4 border-t border-white/10 text-xs text-slate-400">
-                  <span>Published by <strong className="text-slate-200">{featuredRelease.authorName || 'StudentOS Team'}</strong></span>
+                  {(() => {
+                    const pub = resolvePublisher(featuredRelease);
+                    const initials = pub.name.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase() || 'SA';
+                    return (
+                      <div className="flex items-center gap-2.5">
+                        <div className="relative shrink-0">
+                          {pub.avatar ? (
+                            <img src={pub.avatar} alt={pub.name} className="w-7 h-7 rounded-full object-cover ring-2 ring-indigo-500/30" />
+                          ) : (
+                            <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-[10px] font-black text-white ring-2 ring-indigo-500/30">
+                              {initials}
+                            </div>
+                          )}
+                          <span className="absolute -bottom-0.5 -right-0.5 w-2 h-2 bg-emerald-500 rounded-full border border-slate-900" />
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-slate-400">Published by</span>
+                          <strong className="text-white font-semibold">{pub.name}</strong>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                            <ShieldCheck className="w-3 h-3 text-indigo-400" />
+                            <span>Super Admin</span>
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {featuredRelease.actionUrl && onNavigateTab && (
                     <button
@@ -658,7 +728,32 @@ export function WhatsNewPortal({
                   )}
 
                   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-3 border-t border-white/5 text-xs text-slate-400">
-                    <span>Published by <strong className="text-slate-300">{update.authorName || 'StudentOS Team'}</strong></span>
+                    {(() => {
+                      const pub = resolvePublisher(update);
+                      const initials = pub.name.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase() || 'SA';
+                      return (
+                        <div className="flex items-center gap-2">
+                          <div className="relative shrink-0">
+                            {pub.avatar ? (
+                              <img src={pub.avatar} alt={pub.name} className="w-6 h-6 rounded-full object-cover ring-1 ring-white/20" />
+                            ) : (
+                              <div className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-[9px] font-bold text-slate-300 ring-1 ring-white/10">
+                                {initials}
+                              </div>
+                            )}
+                            <span className="absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-slate-400">Published by</span>
+                            <strong className="text-slate-200 font-medium">{pub.name}</strong>
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                              <ShieldCheck className="w-2.5 h-2.5 text-indigo-400" />
+                              <span>Super Admin</span>
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {update.actionUrl && onNavigateTab && (
                       <button

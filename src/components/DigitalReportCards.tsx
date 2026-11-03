@@ -46,8 +46,46 @@ export default function DigitalReportCards({ currentUser, effectiveRole }: Digit
   const printableRef = useRef<HTMLDivElement>(null);
   const [exportingFormat, setExportingFormat] = useState<'pdf' | 'png' | null>(null);
 
-  const handleExportPdf = () => {
-    window.print();
+  const handleExportPdf = async () => {
+    if (!printableRef.current || !selectedReportCard) return;
+    setExportingFormat('pdf');
+    try {
+      const html2canvasModule = await import('html2canvas');
+      const html2canvasFn = (html2canvasModule as any).default || html2canvasModule;
+      const jsPdfModule = await import('jspdf');
+      const jsPDF = (jsPdfModule as any).default || (jsPdfModule as any).jsPDF || jsPdfModule;
+
+      const element = printableRef.current;
+      const canvas = await html2canvasFn(element, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#020617',
+        logging: false
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const imgHeight = (canvas.height * pageWidth) / canvas.width;
+      
+      const renderHeight = Math.min(imgHeight, pageHeight);
+      pdf.addImage(imgData, 'PNG', 0, 0, pageWidth, renderHeight);
+
+      const sanitizedName = (selectedReportCard.studentName || 'Student').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const sanitizedPeriod = (selectedReportCard.academicPeriod || 'Term').replace(/[^a-zA-Z0-9_-]/g, '_');
+      pdf.save(`Transcript_${sanitizedName}_${sanitizedPeriod}.pdf`);
+    } catch (err) {
+      console.warn('PDF direct rendering failed, falling back to window.print():', err);
+      window.print();
+    } finally {
+      setExportingFormat(null);
+    }
   };
 
   const handleExportPng = async () => {
@@ -602,16 +640,26 @@ export default function DigitalReportCards({ currentUser, effectiveRole }: Digit
                   </button>
                   <button
                     onClick={handleExportPdf}
-                    className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-all shadow-lg shadow-rose-600/20 flex items-center gap-1.5 cursor-pointer"
+                    disabled={Boolean(exportingFormat)}
+                    className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-all shadow-lg shadow-rose-600/20 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                   >
-                    <Printer className="w-3.5 h-3.5" />
-                    <span>Export Official PDF</span>
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>{exportingFormat === 'pdf' ? 'Generating PDF...' : 'Export Official PDF'}</span>
+                  </button>
+                  <button
+                    onClick={handlePrint}
+                    className="px-3.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                    title="Direct Browser Print (Clean isolated transcript)"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Print Transcript</span>
                   </button>
                 </div>
               </div>
 
               {/* Printable Official Certificate Document */}
               <div 
+                id="veylentra-printable-report-card"
                 ref={printableRef}
                 className="bg-slate-950 border border-white/15 rounded-2xl sm:rounded-3xl p-4 sm:p-6 md:p-8 shadow-2xl space-y-6 relative overflow-hidden print:bg-white print:text-black print:border-none print:p-0"
               >

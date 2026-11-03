@@ -1,5 +1,8 @@
 import { supabase } from './supabase';
-import { ChatMessage, ChatRoom, UserProfile } from '../types';
+import { 
+  ChatMessage, ChatRoom, UserProfile, 
+  ChatServer, ServerChannel, CustomRole, ServerMember, MessageReadReceiptDetail 
+} from '../types';
 
 let cachedProfiles: UserProfile[] = [];
 let lastFetchTime = 0;
@@ -1011,8 +1014,456 @@ export async function deleteChatRoom(roomId: string, userId?: string): Promise<v
 }
 
 // ==========================================
-// LOCAL STORAGE BACKUP IMPLEMENTATION
+// DISCORD-STYLE SERVERS, CHANNELS, ROLES & READ RECEIPTS
 // ==========================================
+
+const STORAGE_KEY_SERVERS = 's_os_chat_servers_v2';
+const STORAGE_KEY_RECEIPTS = 's_os_message_receipts_v2';
+const STORAGE_KEY_CUSTOM_ROLES = 's_os_custom_roles_v2';
+
+export const DEFAULT_SERVERS: ChatServer[] = [
+  {
+    id: 'server_campus_main',
+    name: 'Campus Central',
+    icon: '🏛️',
+    description: 'Official StudentOS institution community server for all faculties, student bodies, and extracurricular guilds.',
+    ownerId: 'super-admin-root',
+    bannerUrl: 'https://images.unsplash.com/photo-1541339907198-e08756dedf3f?auto=format&fit=crop&w=1200&q=80',
+    roles: [
+      {
+        id: 'role_head_prefect',
+        name: 'Head Prefect / Guildmaster',
+        color: '#f59e0b',
+        priority: 100,
+        isDefault: false,
+        permissions: {
+          canSendMessages: true,
+          canAttachFiles: true,
+          canManageMessages: true,
+          canManageChannels: true,
+          canManageRoles: true
+        }
+      },
+      {
+        id: 'role_faculty_mentor',
+        name: 'Faculty Mentor',
+        color: '#6366f1',
+        priority: 80,
+        isDefault: false,
+        permissions: {
+          canSendMessages: true,
+          canAttachFiles: true,
+          canManageMessages: true,
+          canManageChannels: true,
+          canManageRoles: false
+        }
+      },
+      {
+        id: 'role_student_scholar',
+        name: 'Student Scholar',
+        color: '#10b981',
+        priority: 20,
+        isDefault: true,
+        permissions: {
+          canSendMessages: true,
+          canAttachFiles: true,
+          canManageMessages: false,
+          canManageChannels: false,
+          canManageRoles: false
+        }
+      }
+    ],
+    channels: [
+      {
+        id: 'server_campus_main_announcements',
+        serverId: 'server_campus_main',
+        name: '📢-campus-announcements',
+        type: 'announcement',
+        category: 'Announcements',
+        topic: 'Official institutional notifications and faculty announcements.'
+      },
+      {
+        id: 'server_campus_main_general',
+        serverId: 'server_campus_main',
+        name: '💬-general-lounge',
+        type: 'text',
+        category: 'General',
+        topic: 'Campus-wide open discussions, social hub, and student catch-up.'
+      },
+      {
+        id: 'server_campus_main_doubts',
+        serverId: 'server_campus_main',
+        name: '💡-academics-and-doubts',
+        type: 'class',
+        category: 'Class & Doubts',
+        topic: 'Peer problem solving, math proofs, physics questions, and homework help.'
+      },
+      {
+        id: 'server_campus_main_study',
+        serverId: 'server_campus_main',
+        name: '🎧-silent-study-lounge',
+        type: 'text',
+        category: 'Study Lounge',
+        topic: 'Focus sessions, Pomodoro co-working, and quiet collaboration.'
+      }
+    ],
+    members: ['demo-super-admin-uid', 'demo_alice', 'demo_bob', 'demo_charlie', 'teacher_sharma'],
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'server_stem_society',
+    name: 'STEM Society & Robotics',
+    icon: '⚡',
+    description: 'Robotics, software engineering, math olympiads, and high-impact science research labs.',
+    ownerId: 'super-admin-root',
+    bannerUrl: 'https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80',
+    roles: [
+      {
+        id: 'role_lab_director',
+        name: 'Lab Director',
+        color: '#ec4899',
+        priority: 90,
+        permissions: {
+          canSendMessages: true,
+          canAttachFiles: true,
+          canManageMessages: true,
+          canManageChannels: true,
+          canManageRoles: true
+        }
+      },
+      {
+        id: 'role_stem_researcher',
+        name: 'Research Fellow',
+        color: '#06b6d4',
+        priority: 30,
+        isDefault: true,
+        permissions: {
+          canSendMessages: true,
+          canAttachFiles: true,
+          canManageMessages: false,
+          canManageChannels: false,
+          canManageRoles: false
+        }
+      }
+    ],
+    channels: [
+      {
+        id: 'server_stem_robotics',
+        serverId: 'server_stem_society',
+        name: '🤖-autonomous-robotics',
+        type: 'text',
+        category: 'General',
+        topic: 'Microcontrollers, CAD design, ROS, and competition hardware.'
+      },
+      {
+        id: 'server_stem_olympiad',
+        serverId: 'server_stem_society',
+        name: '📐-math-olympiad-prep',
+        type: 'class',
+        category: 'Class & Doubts',
+        topic: 'AMC, AIME, Putnam, and combinatorial geometry problems.'
+      },
+      {
+        id: 'server_stem_code',
+        serverId: 'server_stem_society',
+        name: '💻-software-and-ai',
+        type: 'text',
+        category: 'General',
+        topic: 'Full-stack development, LLM engineering, and algorithms.'
+      }
+    ],
+    members: ['demo-super-admin-uid', 'demo_alice', 'demo_charlie'],
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'server_academic_houses',
+    name: 'Academic House Champions',
+    icon: '🛡️',
+    description: 'Inter-house tournaments, Solara, Astra, Elara, Vega leagues, and spirit rallies.',
+    ownerId: 'super-admin-root',
+    bannerUrl: 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=1200&q=80',
+    roles: [
+      {
+        id: 'role_house_captain',
+        name: 'House Captain',
+        color: '#ef4444',
+        priority: 85,
+        permissions: {
+          canSendMessages: true,
+          canAttachFiles: true,
+          canManageMessages: true,
+          canManageChannels: true,
+          canManageRoles: false
+        }
+      }
+    ],
+    channels: [
+      {
+        id: 'server_house_standings',
+        serverId: 'server_academic_houses',
+        name: '🏆-leaderboard-updates',
+        type: 'announcement',
+        category: 'Announcements',
+        topic: 'Live house point tallies and competition results.'
+      },
+      {
+        id: 'server_house_solara',
+        serverId: 'server_academic_houses',
+        name: '☀️-house-solara',
+        type: 'text',
+        category: 'General',
+        topic: 'Solara House team strategy and study groups.'
+      },
+      {
+        id: 'server_house_astra',
+        serverId: 'server_academic_houses',
+        name: '⭐-house-astra',
+        type: 'text',
+        category: 'General',
+        topic: 'Astra House team discussions.'
+      }
+    ],
+    members: ['demo-super-admin-uid', 'demo_alice', 'demo_bob', 'demo_diana'],
+    createdAt: new Date().toISOString()
+  }
+];
+
+export async function getChatServers(): Promise<ChatServer[]> {
+  try {
+    const { data, error } = await supabase.from('chat_servers').select('*');
+    if (!error && Array.isArray(data) && data.length > 0) {
+      const parsed: ChatServer[] = data.map((row: any) => ({
+        id: row.id,
+        name: row.name,
+        icon: row.icon || '💬',
+        description: row.description || '',
+        ownerId: row.owner_id || '',
+        bannerUrl: row.banner_url,
+        channels: row.channels || [],
+        roles: row.roles || [],
+        members: row.members || [],
+        createdAt: row.created_at || new Date().toISOString()
+      }));
+      localStorage.setItem(STORAGE_KEY_SERVERS, JSON.stringify(parsed));
+      return parsed;
+    }
+  } catch (err) {
+    console.warn('[SUPABASE-CHAT] Falling back to cached servers:', err);
+  }
+
+  const cached = localStorage.getItem(STORAGE_KEY_SERVERS);
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch (_) {}
+  }
+
+  localStorage.setItem(STORAGE_KEY_SERVERS, JSON.stringify(DEFAULT_SERVERS));
+  return DEFAULT_SERVERS;
+}
+
+export async function saveChatServer(server: ChatServer): Promise<ChatServer> {
+  const payload = {
+    id: server.id,
+    name: server.name,
+    icon: server.icon,
+    description: server.description,
+    owner_id: server.ownerId,
+    banner_url: server.bannerUrl || null,
+    channels: server.channels || [],
+    roles: server.roles || [],
+    members: server.members || [],
+    updated_at: new Date().toISOString()
+  };
+
+  try {
+    const { error } = await supabase.from('chat_servers').upsert(payload);
+    if (error && error.code !== '42P01') {
+      console.warn('[SUPABASE-CHAT] Save server upsert error:', error);
+    }
+  } catch (err) {
+    console.warn('[SUPABASE-CHAT] Save server error:', err);
+  }
+
+  const servers = await getChatServers();
+  const existingIdx = servers.findIndex(s => s.id === server.id);
+  if (existingIdx >= 0) {
+    servers[existingIdx] = server;
+  } else {
+    servers.push(server);
+  }
+  localStorage.setItem(STORAGE_KEY_SERVERS, JSON.stringify(servers));
+
+  try {
+    supabase.channel('student-os-public').send({
+      type: 'broadcast',
+      event: 'server_updated',
+      payload: { serverId: server.id }
+    });
+  } catch (_) {}
+
+  return server;
+}
+
+export async function createChatServerChannel(serverId: string, channel: ServerChannel): Promise<ServerChannel> {
+  const servers = await getChatServers();
+  const targetServer = servers.find(s => s.id === serverId);
+  if (!targetServer) throw new Error('Server not found');
+
+  const channels = targetServer.channels || [];
+  if (!channels.some(c => c.id === channel.id)) {
+    channels.push(channel);
+  }
+  targetServer.channels = channels;
+  await saveChatServer(targetServer);
+
+  const channelRoom: ChatRoom = {
+    id: channel.id,
+    name: channel.name,
+    description: channel.topic || '',
+    type: 'channel',
+    icon: channel.type === 'announcement' ? '📢' : channel.type === 'class' ? '💡' : '💬',
+    creatorId: targetServer.ownerId,
+    serverId: targetServer.id,
+    members: targetServer.members || [],
+    moderators: [targetServer.ownerId]
+  };
+  await saveChatRoom(channelRoom);
+
+  return channel;
+}
+
+export async function deleteChatServerChannel(serverId: string, channelId: string): Promise<void> {
+  const servers = await getChatServers();
+  const targetServer = servers.find(s => s.id === serverId);
+  if (!targetServer) return;
+
+  targetServer.channels = (targetServer.channels || []).filter(c => c.id !== channelId);
+  await saveChatServer(targetServer);
+  await deleteChatRoom(channelId);
+}
+
+export async function saveCustomRole(serverIdOrGroupId: string, role: CustomRole): Promise<CustomRole> {
+  const servers = await getChatServers();
+  const targetServer = servers.find(s => s.id === serverIdOrGroupId);
+  if (targetServer) {
+    const roles = targetServer.roles || [];
+    const idx = roles.findIndex(r => r.id === role.id);
+    if (idx >= 0) roles[idx] = role;
+    else roles.push(role);
+    targetServer.roles = roles;
+    await saveChatServer(targetServer);
+    return role;
+  }
+
+  const groupRolesKey = `${STORAGE_KEY_CUSTOM_ROLES}_${serverIdOrGroupId}`;
+  try {
+    const current = JSON.parse(localStorage.getItem(groupRolesKey) || '[]');
+    const idx = current.findIndex((r: any) => r.id === role.id);
+    if (idx >= 0) current[idx] = role;
+    else current.push(role);
+    localStorage.setItem(groupRolesKey, JSON.stringify(current));
+  } catch (_) {}
+
+  return role;
+}
+
+export async function deleteCustomRole(serverIdOrGroupId: string, roleId: string): Promise<void> {
+  const servers = await getChatServers();
+  const targetServer = servers.find(s => s.id === serverIdOrGroupId);
+  if (targetServer) {
+    targetServer.roles = (targetServer.roles || []).filter(r => r.id !== roleId);
+    await saveChatServer(targetServer);
+    return;
+  }
+
+  const groupRolesKey = `${STORAGE_KEY_CUSTOM_ROLES}_${serverIdOrGroupId}`;
+  try {
+    const current = JSON.parse(localStorage.getItem(groupRolesKey) || '[]');
+    const updated = current.filter((r: any) => r.id !== roleId);
+    localStorage.setItem(groupRolesKey, JSON.stringify(updated));
+  } catch (_) {}
+}
+
+export async function markMessageAsRead(
+  messageId: string, 
+  user: { uid: string; name: string; avatar?: string; role?: string }
+): Promise<void> {
+  if (!messageId || !user?.uid) return;
+
+  const receipt: MessageReadReceiptDetail = {
+    userId: user.uid,
+    userName: user.name,
+    userAvatar: user.avatar,
+    role: user.role,
+    readAt: new Date().toISOString()
+  };
+
+  try {
+    const { error } = await supabase.from('chat_message_receipts').upsert({
+      message_id: messageId,
+      user_id: user.uid,
+      user_name: user.name,
+      user_avatar: user.avatar || null,
+      role: user.role || 'student',
+      read_at: receipt.readAt
+    }, { onConflict: 'message_id,user_id' });
+
+    if (error && error.code !== '42P01') {
+      console.warn('[SUPABASE-CHAT] Failed to upsert receipt:', error);
+    }
+  } catch (err) {
+    console.warn('[SUPABASE-CHAT] Receipt error:', err);
+  }
+
+  try {
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY_RECEIPTS) || '{}');
+    if (!stored[messageId]) stored[messageId] = [];
+    if (!stored[messageId].some((r: any) => r.userId === user.uid)) {
+      stored[messageId].push(receipt);
+      localStorage.setItem(STORAGE_KEY_RECEIPTS, JSON.stringify(stored));
+    }
+  } catch (_) {}
+}
+
+export async function getMessageReadReceipts(
+  messageId: string,
+  memberIds: string[] = []
+): Promise<{ readBy: MessageReadReceiptDetail[]; unreadBy: string[] }> {
+  let readBy: MessageReadReceiptDetail[] = [];
+
+  try {
+    const { data, error } = await supabase
+      .from('chat_message_receipts')
+      .select('*')
+      .eq('message_id', messageId);
+
+    if (!error && Array.isArray(data)) {
+      readBy = data.map((r: any) => ({
+        userId: r.user_id,
+        userName: r.user_name || 'Member',
+        userAvatar: r.user_avatar,
+        role: r.role,
+        readAt: r.read_at
+      }));
+    }
+  } catch (_) {}
+
+  if (readBy.length === 0) {
+    try {
+      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY_RECEIPTS) || '{}');
+      if (stored[messageId]) {
+        readBy = stored[messageId];
+      }
+    } catch (_) {}
+  }
+
+  const readUserIds = new Set(readBy.map(r => r.userId));
+  const unreadBy = memberIds.filter(id => !readUserIds.has(id));
+
+  return { readBy, unreadBy };
+}
 
 
 

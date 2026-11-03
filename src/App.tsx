@@ -119,6 +119,8 @@ import { isCardDue } from './lib/sm2Algorithm';
 import { getPublishedUpdates, getUserReadUpdateIds } from './lib/supabaseUpdates';
 import { soundService } from './lib/soundService';
 import { SoundSettingsModal } from './components/SoundSettingsModal';
+import { CollaborativeLectureNotes } from './components/CollaborativeLectureNotes';
+import { sendRealtimeEvent, subscribeRealtimeEvents } from './lib/wsHelper';
 import {
   NumberTicker,
   BorderBeam,
@@ -2765,6 +2767,35 @@ export default function App() {
 
     return () => clearTimeout(timer);
   }, [currentUser?.uid, currentUser?.email]);
+
+  // Active Collaborative Note Realtime Synchronization (for Cross-Account & Cross-Device edits)
+  useEffect(() => {
+    if (!selectedNoteId || activeTab !== 'notes') return;
+    const activeNote = vaultNotes.find(n => n.id === selectedNoteId);
+    if (!activeNote || !activeNote.collabCode) return;
+
+    const channelName = `lecture_collab_${activeNote.id}`;
+    const unsubscribe = subscribeRealtimeEvents(channelName, {
+      note_content_changed: (payload: any) => {
+        if (!payload || payload.senderUid === currentUser?.uid) return;
+        setVaultNotes(prev => prev.map(n => {
+          if (n.id === activeNote.id) {
+            return {
+              ...n,
+              content: typeof payload.content === 'string' ? payload.content : n.content,
+              title: payload.title || n.title,
+              subject: payload.subject || n.subject
+            };
+          }
+          return n;
+        }));
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [selectedNoteId, activeTab, currentUser?.uid]);
 
   // Homework Persistence Sync (Staggered)
   const isHomeworkLoaded = useRef<boolean>(false);
@@ -9880,6 +9911,32 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
+                      {/* View Switcher: Live Collaborative Canvas vs Notion Studio */}
+                      <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-white/10">
+                        <button
+                          onClick={() => setNotesViewMode('collaborative')}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                            notesViewMode === 'collaborative'
+                              ? 'bg-indigo-600 text-white shadow-md'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <Users2 className="w-3.5 h-3.5" />
+                          <span>Live Collab Canvas</span>
+                        </button>
+                        <button
+                          onClick={() => setNotesViewMode('vault')}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                            notesViewMode === 'vault'
+                              ? 'bg-indigo-600 text-white shadow-md'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          <span>Notion Studio</span>
+                        </button>
+                      </div>
+
                       <button
                         onClick={() => {
                           setCollabJoinError('');
@@ -9921,8 +9978,11 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                     </div>
                   </div>
 
-                  {/* 3-Column Layout: Left Explorer (3), Center Canvas (6 or 9), Right Outline (3) */}
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                  {notesViewMode === 'collaborative' ? (
+                    <CollaborativeLectureNotes currentUser={currentUser} />
+                  ) : (
+                    /* 3-Column Layout: Left Explorer (3), Center Canvas (6 or 9), Right Outline (3) */
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                     
                     {/* Left Column: Folders & Notes Explorer (File Manager) */}
                     <div className="lg:col-span-3 smart-glass p-4 rounded-3xl space-y-4 border border-white/5">
@@ -10208,11 +10268,23 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           else if (h3Match) parsedHeadings.push({ level: 3, text: h3Match[1], id: `h-${idx}` });
                         });
 
-                        // Autosave updater with state indicator
+                        // Autosave updater with state indicator and real-time collaboration broadcast
                         const updateActiveNote = async (updates: Partial<VaultNote>) => {
                           setAutoSaveState('saving');
                           const updated = { ...activeNote, ...updates };
                           setVaultNotes(prev => prev.map(n => n.id === activeNote.id ? updated : n));
+
+                          if (activeNote.collabCode) {
+                            sendRealtimeEvent(`lecture_collab_${activeNote.id}`, 'note_content_changed', {
+                              content: updated.content,
+                              title: updated.title,
+                              subject: updated.subject,
+                              senderUid: currentUser?.uid,
+                              senderName: currentUser?.name || 'Classmate',
+                              timestamp: Date.now()
+                            });
+                          }
+
                           try {
                             await saveVaultNoteToSupabase(updated);
                           } catch (_) {}
@@ -10797,6 +10869,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                     )}
 
                   </div>
+                  )}
 
                   {/* Modal 1: Collab 6-Digit Code Dialog (for creator / viewer) */}
                   <AnimatePresence>
