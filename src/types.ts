@@ -448,6 +448,7 @@ export interface ChatServer {
   icon: string;
   description: string;
   ownerId: string;
+  inviteCode?: string;
   bannerUrl?: string;
   channels?: ServerChannel[];
   roles?: CustomRole[];

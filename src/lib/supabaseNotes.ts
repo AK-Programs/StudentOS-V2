@@ -109,7 +109,7 @@ export async function getVaultNotes(userId: string): Promise<VaultNote[]> {
         .map(n => ({
           id: n.id,
           title: n.title,
-          content: n.content,
+          content: n.content || '',
           createdAt: n.created_at || new Date().toLocaleDateString(),
           subject: n.subject || '',
           icon: n.icon || '📝',
@@ -264,7 +264,7 @@ export async function getNoteByCollabCode(code: string): Promise<VaultNote | nul
       return {
         id: data.id,
         title: data.title,
-        content: data.content,
+        content: data.content || '',
         createdAt: data.created_at || new Date().toLocaleDateString(),
         subject: data.subject || '',
         icon: data.icon || '📝',

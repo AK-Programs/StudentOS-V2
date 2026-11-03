@@ -17,7 +17,7 @@ import {
   savePeerMessage, deletePeerMessage, saveChatRoom, joinChatRoom, leaveChatRoom, 
   deleteChatRoom, regenerateRoomCode, getPeerMessages, getAllUserProfiles, getOrCreateDirectMessageRoom,
   getChatServers, saveChatServer, createChatServerChannel, deleteChatServerChannel,
-  saveCustomRole, deleteCustomRole, markMessageAsRead, getMessageReadReceipts, DEFAULT_SERVERS
+  saveCustomRole, deleteCustomRole, markMessageAsRead, getMessageReadReceipts, DEFAULT_SERVERS, joinChatServer
 } from '../lib/supabaseChat';
 import { saveAppNotification } from '../lib/notifications';
 import { supabase } from '../lib/supabase';
@@ -157,6 +157,16 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
       });
     }
   }, [activeChatTargetId, chats.length, currentUser?.uid]);
+
+  const getStatusColor = (uid: string) => {
+    const presence = onlineUsersMap.get(uid);
+    if (!presence) return 'bg-slate-500';
+    const status = presence.status;
+    if (status === 'online') return 'bg-emerald-400';
+    if (status === 'idle') return 'bg-amber-400';
+    if (status === 'dnd') return 'bg-rose-500';
+    return 'bg-slate-500';
+  };
 
   const handleUpdatePresence = (status: 'online' | 'idle' | 'dnd' | 'offline') => {
     setMyPresenceStatus(status);
@@ -1365,19 +1375,40 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
     e.preventDefault();
     if (!joinRoomCode.trim() || !currentUser) return;
 
-    const res = await joinChatRoom(joinRoomCode.trim().toUpperCase(), currentUser.uid);
-    if (res.success && res.room) {
+    const code = joinRoomCode.trim().toUpperCase();
+
+    // Try joining a standard chat room first
+    const roomRes = await joinChatRoom(code, currentUser.uid);
+    if (roomRes.success && roomRes.room) {
       setChatRooms(prev => {
-        if (prev.some(r => r.id === res.room!.id)) return prev;
-        return [...prev, res.room!];
+        if (prev.some(r => r.id === roomRes.room!.id)) return prev;
+        return [...prev, roomRes.room!];
       });
-      setActiveChatTargetId(res.room.id);
+      setActiveChatTargetId(roomRes.room.id);
       setJoinRoomCode('');
       setIsCreatingRoom(false);
-      showNotification(res.alreadyJoined ? `Already joined ${res.room.name}` : `Joined room: ${res.room.name}`);
-    } else {
-      showNotification(res.message || 'Room code not found or invalid.');
+      showNotification(roomRes.alreadyJoined ? `Already joined ${roomRes.room.name}` : `Joined room: ${roomRes.room.name}`);
+      return;
     }
+
+    // If not a room, try joining a server
+    const serverRes = await joinChatServer(code, currentUser.uid);
+    if (serverRes.success && serverRes.server) {
+      setChatServers(prev => {
+        if (prev.some(s => s.id === serverRes.server!.id)) return prev;
+        return [...prev, serverRes.server!];
+      });
+      setActiveServerId(serverRes.server.id);
+      if (serverRes.server.channels && serverRes.server.channels.length > 0) {
+        setActiveChatTargetId(serverRes.server.channels[0].id);
+      }
+      setJoinRoomCode('');
+      setIsCreatingRoom(false);
+      showNotification(serverRes.message);
+      return;
+    }
+
+    showNotification(roomRes.message || serverRes.message || 'Invite code not found or invalid.');
   };
 
   // Create New Room / Channel
@@ -1666,7 +1697,7 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                                   {displayName.charAt(0).toUpperCase()}
                                 </div>
                               )}
-                              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 border border-slate-900 absolute bottom-0 right-0" />
+                              <span className={`w-2.5 h-2.5 rounded-full ${getStatusColor(otherUser?.uid || '')} border border-slate-900 absolute bottom-0 right-0`} />
                             </div>
 
                             <div className="flex-1 min-w-0">
@@ -1759,6 +1790,17 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                         </div>
                       </div>
                       <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => {
+                            const code = currentServer.inviteCode || currentServer.id.split('_').pop()?.toUpperCase() || '';
+                            navigator.clipboard.writeText(code);
+                            showNotification(`Server invite code copied: ${code}`);
+                          }}
+                          className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-emerald-400 hover:text-white border border-white/10 text-[10px] font-bold"
+                          title="Copy Server Invite Code"
+                        >
+                          <Link className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           onClick={() => {
                             setRolesTargetId(currentServer.id);
@@ -3636,7 +3678,11 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
       {/* MODAL 5: RICH COMMUNITY USER PROFILE CARD */}
       {communityProfileUser && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[9999] flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-slate-900 border border-white/10 rounded-3xl max-w-sm w-full overflow-hidden shadow-2xl relative">
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-slate-900 border border-white/10 rounded-3xl max-w-sm w-full overflow-hidden shadow-2xl relative"
+          >
             <button
               onClick={() => setCommunityProfileUser(null)}
               className="absolute top-3 right-3 text-white/80 hover:text-white p-1 rounded-full bg-black/40 backdrop-blur-md z-10"
@@ -3644,16 +3690,24 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
               <X className="w-4 h-4" />
             </button>
 
-            {/* Gradient Top Banner */}
-            <div className="h-24 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 relative p-4 flex justify-between items-start">
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-black/40 text-white backdrop-blur-md border border-white/10">
-                {communityProfileUser.role.toUpperCase()}
-              </span>
+            {/* Banner */}
+            <div className="h-32 w-full relative">
+              <img 
+                src={communityProfileUser.bannerUrl || 'https://images.unsplash.com/photo-1541339907198-e08756dedf3f?auto=format&fit=crop&w=1200&q=80'} 
+                alt="" 
+                className="h-full w-full object-cover"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-black/30" />
+              <div className="absolute bottom-3 left-4">
+                <span className="px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider bg-black/40 text-white backdrop-blur-md border border-white/10">
+                  {communityProfileUser.role.toUpperCase()}
+                </span>
+              </div>
             </div>
 
-            {/* Avatar & Details */}
-            <div className="p-5 pt-0 relative space-y-3">
-              <div className="flex justify-between items-end -mt-10 mb-2">
+            {/* Content Area */}
+            <div className="px-5 pb-6 space-y-4">
+              <div className="flex justify-between items-end -mt-10 relative">
                 <div className="relative">
                   {communityProfileUser.avatar || communityProfileUser.photoURL ? (
                     <img
@@ -3666,7 +3720,7 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                       {communityProfileUser.name.charAt(0)}
                     </div>
                   )}
-                  <span className="w-4 h-4 rounded-full border-2 border-slate-900 bg-emerald-400 absolute bottom-0 right-0 ring-2 ring-emerald-500/30" />
+                  <span className={`w-4 h-4 rounded-full border-2 border-slate-900 ${getStatusColor(communityProfileUser.uid || '')} absolute bottom-0 right-0 ring-2 ring-emerald-500/30`} />
                 </div>
 
                 {currentUser?.uid !== communityProfileUser.uid && (
@@ -3682,7 +3736,7 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                       setCommunityProfileUser(null);
                       showNotification(`Opened direct chat with ${communityProfileUser.name}`);
                     }}
-                    className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-lg shadow-emerald-600/30 flex items-center gap-1.5 cursor-pointer"
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-lg flex items-center gap-1.5 active:scale-95"
                   >
                     <MessageSquare className="w-3.5 h-3.5" />
                     <span>Message</span>
@@ -3694,32 +3748,73 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                 <div className="flex items-center gap-1.5">
                   <h4 className="text-base font-black text-white">{communityProfileUser.name}</h4>
                   {getVerificationStatus(communityProfileUser).isVerified && (
-                    <ShieldCheck className="w-4 h-4 text-indigo-400" />
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
                   )}
                 </div>
-                <p className="text-xs text-slate-400">{communityProfileUser.email || 'StudentOS Community Member'}</p>
+                <p className="text-xs text-slate-400 font-medium">@{communityProfileUser.email.split('@')[0]}</p>
               </div>
 
-              {/* Badges Box */}
-              <div className="grid grid-cols-2 gap-2 pt-1 text-xs">
-                <div className="p-2.5 rounded-xl bg-slate-950 border border-white/5 space-y-0.5">
-                  <span className="text-[9px] uppercase tracking-wider font-bold text-slate-500 block">Class / Grade</span>
-                  <span className="font-bold text-slate-200">{communityProfileUser.grade || 'Grade 10'} • {communityProfileUser.section || 'Solara'}</span>
-                </div>
-                <div className="p-2.5 rounded-xl bg-slate-950 border border-white/5 space-y-0.5">
-                  <span className="text-[9px] uppercase tracking-wider font-bold text-slate-500 block">Academic House</span>
-                  <span className="font-bold text-indigo-400">{communityProfileUser.house || 'Solara'}</span>
-                </div>
+              {/* Roles & Badges Row */}
+              <div className="flex flex-wrap gap-2">
+                {communityProfileUser.role === 'super_admin' && (
+                  <span className="px-2 py-0.5 rounded-lg bg-rose-500/20 text-rose-400 border border-rose-500/30 text-[9px] font-black uppercase tracking-widest flex items-center gap-1">
+                    <ShieldAlert size={10} /> Root Admin
+                  </span>
+                )}
+                {(communityProfileUser.badges || []).slice(0, 3).map((badge, bIdx) => (
+                  <span key={bIdx} className="px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[9px] font-black uppercase tracking-widest flex items-center gap-1">
+                    <Award size={10} /> {badge.replace(/_/g, ' ')}
+                  </span>
+                ))}
               </div>
 
-              {/* Bio snippet if available */}
-              {communityProfileUser.bio && (
-                <div className="p-2.5 rounded-xl bg-slate-950 border border-white/5 text-xs text-slate-300">
-                  <p className="italic">"{communityProfileUser.bio}"</p>
+              <div className="space-y-3">
+                {/* About Section */}
+                <div className="p-3.5 rounded-2xl bg-slate-950/50 border border-white/5 space-y-1.5">
+                  <h5 className="text-[10px] font-black uppercase text-slate-500 tracking-wider">About Member</h5>
+                  <div className="text-xs text-slate-300 leading-relaxed">
+                    {communityProfileUser.bio ? (
+                      <p className="italic">"{communityProfileUser.bio}"</p>
+                    ) : (
+                      <p className="opacity-50">No bio provided by user.</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-4 pt-1.5">
+                    <div>
+                      <p className="text-[10px] text-slate-500 uppercase font-bold">Class</p>
+                      <p className="text-xs text-slate-200 font-bold">{communityProfileUser.grade || 'G10'} • {communityProfileUser.section || 'S'}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-slate-500 uppercase font-bold">House</p>
+                      <p className="text-xs font-black text-indigo-400">{communityProfileUser.house || 'Ruby'}</p>
+                    </div>
+                  </div>
                 </div>
-              )}
+
+                {/* Mutual Servers Section */}
+                <div className="p-3.5 rounded-2xl bg-slate-950/50 border border-white/5 space-y-2">
+                  <h5 className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Mutual Servers</h5>
+                  <div className="flex -space-x-2">
+                    {chatServers
+                      .filter(s => s.members?.includes(communityProfileUser.uid || '') && s.members?.includes(currentUser?.uid || ''))
+                      .slice(0, 5)
+                      .map(s => (
+                        <div 
+                          key={s.id} 
+                          title={s.name}
+                          className="w-8 h-8 rounded-xl bg-slate-900 border-2 border-slate-950 flex items-center justify-center text-sm shadow-md hover:-translate-y-1 transition-transform cursor-help"
+                        >
+                          {s.icon}
+                        </div>
+                      ))}
+                    {chatServers.filter(s => s.members?.includes(communityProfileUser.uid || '') && s.members?.includes(currentUser?.uid || '')).length === 0 && (
+                      <p className="text-[10px] text-slate-600 font-medium italic">No mutual servers found.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
+          </motion.div>
         </div>
       )}
     </>

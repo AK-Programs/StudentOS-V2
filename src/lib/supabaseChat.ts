@@ -1238,6 +1238,7 @@ export async function getChatServers(): Promise<ChatServer[]> {
         icon: row.icon || '💬',
         description: row.description || '',
         ownerId: row.owner_id || '',
+        inviteCode: row.invite_code || row.id.split('_').pop()?.toUpperCase(),
         bannerUrl: row.banner_url,
         channels: row.channels || [],
         roles: row.roles || [],
@@ -1270,6 +1271,7 @@ export async function saveChatServer(server: ChatServer): Promise<ChatServer> {
     icon: server.icon,
     description: server.description,
     owner_id: server.ownerId,
+    invite_code: server.inviteCode || server.id.split('_').pop()?.toUpperCase(),
     banner_url: server.bannerUrl || null,
     channels: server.channels || [],
     roles: server.roles || [],
@@ -1475,6 +1477,41 @@ export async function getMessageReadReceipts(
 
 
 
+export async function joinChatServer(inviteCode: string, userId: string): Promise<{ success: boolean; message: string; server?: ChatServer }> {
+  if (!inviteCode || !userId) return { success: false, message: 'Missing info' };
+  const cleanCode = inviteCode.trim().toUpperCase();
 
+  try {
+    const { data: servers, error } = await supabase.from('chat_servers').select('*');
+    if (error || !servers) return { success: false, message: 'Server not found' };
+
+    const targetRow = servers.find(s => (s.invite_code && s.invite_code.toUpperCase() === cleanCode) || s.id.toUpperCase() === cleanCode);
+    if (!targetRow) return { success: false, message: 'Invalid server code' };
+
+    const target: ChatServer = {
+      id: targetRow.id,
+      name: targetRow.name,
+      icon: targetRow.icon || '💬',
+      description: targetRow.description || '',
+      ownerId: targetRow.owner_id || '',
+      inviteCode: targetRow.invite_code,
+      bannerUrl: targetRow.banner_url,
+      channels: targetRow.channels || [],
+      roles: targetRow.roles || [],
+      members: targetRow.members || [],
+      createdAt: targetRow.created_at
+    };
+
+    const members = target.members || [];
+    if (members.includes(userId)) return { success: true, message: 'Already a member', server: target };
+
+    const updatedMembers = [...members, userId];
+    await supabase.from('chat_servers').update({ members: updatedMembers }).eq('id', target.id);
+    
+    return { success: true, message: `Joined ${target.name}!`, server: { ...target, members: updatedMembers } };
+  } catch (e) {
+    return { success: false, message: 'Error joining server' };
+  }
+}
 
 
