@@ -963,7 +963,12 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
         if (payload) {
           const newMsg = payload as ChatMessage;
           if (newMsg.ownerUid !== currentUser?.uid) {
-            soundService.playMessageSound();
+            const isServerChannel = activeChatTargetId.startsWith('ch_') || (activeServerId && activeServerId !== 'home');
+            if (isServerChannel) {
+              soundService.playServerMessageSound();
+            } else {
+              soundService.playDirectMessageSound();
+            }
           }
           setChats(prev => {
             const idx = prev.findIndex(m => m.id === newMsg.id);

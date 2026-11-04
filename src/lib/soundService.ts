@@ -77,6 +77,28 @@ export const PIXABAY_SOUND_CATALOG: Record<string, PixabaySoundMeta> = {
       'Brain Battle results when player level advances'
     ]
   },
+  serverChat: {
+    id: 'film-special-effects-live-chat-353605',
+    name: 'Live Chat Special Effect',
+    category: 'chat',
+    sourcePage: 'https://pixabay.com/sound-effects/film-special-effects-live-chat-353605/',
+    fileUrl: '/sounds/live-chat-353605.wav',
+    fallbackFileUrl: '/sounds/server-chat.wav',
+    license: 'Pixabay Content License (Free for commercial/non-commercial use)',
+    description: 'Energetic dual-tone chime for server channel messages.',
+    recommendedUse: ['Server channel incoming messages', 'Community updates']
+  },
+  dmChat: {
+    id: 'technology-new-notification-037-485898',
+    name: 'New Notification 037',
+    category: 'chat',
+    sourcePage: 'https://pixabay.com/sound-effects/technology-new-notification-037-485898/',
+    fileUrl: '/sounds/new-notification-037-485898.wav',
+    fallbackFileUrl: '/sounds/dm-chat.wav',
+    license: 'Pixabay Content License (Free for commercial/non-commercial use)',
+    description: 'Polished crystal tone for Direct Messages and Group chats.',
+    recommendedUse: ['Direct messages', 'Group chat messages']
+  },
   messagePing: {
     id: 'message-ping-351298',
     name: 'Message Ping',
@@ -1087,13 +1109,26 @@ class SoundService {
     this.playLevelUp();
   }
 
-  /**
-   * 3. Message Ping
-   * Source: https://pixabay.com/sound-effects/film-special-effects-message-ping-351298/
-   * Use for: Incoming direct messages, active chat rooms, floating indicators.
-   */
-  public playMessagePing() {
-    this.playPixabayAsset('messagePing', 100, () => {
+  public playServerMessageSound() {
+    this.playPixabayAsset('serverChat', 80, () => {
+      const ctx = this.getContext(false);
+      if (!ctx) return;
+      try {
+        const now = ctx.currentTime;
+        this.scheduleTone(ctx, {
+          type: 'sine',
+          startFreq: 523.25,
+          endFreq: 783.99,
+          startTime: now,
+          duration: 0.2,
+          peakGain: 0.09
+        });
+      } catch (_) {}
+    });
+  }
+
+  public playDirectMessageSound() {
+    this.playPixabayAsset('dmChat', 80, () => {
       const ctx = this.getContext(false);
       if (!ctx) return;
       try {
@@ -1101,13 +1136,22 @@ class SoundService {
         this.scheduleTone(ctx, {
           type: 'sine',
           startFreq: 880,
-          endFreq: 1320,
+          endFreq: 1174.66,
           startTime: now,
-          duration: 0.22,
-          peakGain: 0.09
+          duration: 0.18,
+          peakGain: 0.1
         });
       } catch (_) {}
     });
+  }
+
+  /**
+   * 3. Message Ping
+   * Source: https://pixabay.com/sound-effects/film-special-effects-message-ping-351298/
+   * Use for: Incoming direct messages, active chat rooms, floating indicators.
+   */
+  public playMessagePing() {
+    this.playDirectMessageSound();
   }
   public playPixabayMessagePing() {
     this.playMessagePing();
