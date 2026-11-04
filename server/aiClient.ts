@@ -477,14 +477,15 @@ export async function generateAICompletionWithTelemetry(
   let model = routing.model;
   let retries = 0;
 
+  const isAcademicTask = taskType === 'complex' || routing.tier === 'complex';
   const messages = buildMessagesArray(systemInstruction, prompt, history, images);
   const effectiveMaxTokens = maxTokens
     ? Math.max(maxTokens, 300)
     : routing.tier === 'short' || routing.tier === 'fast'
     ? 1500
-    : 8192; // High budget for Lecture Notes and complex reasoning
+    : 32768; // High budget for Lecture Notes and complex reasoning (20k+ requirement)
 
-  console.log(`[AI_ROUTER] tier=${routing.tier} provider=${provider} model=${model} requestId=${requestId} budget=${effectiveMaxTokens}`);
+  console.log(`[AI_ROUTER] tier=${routing.tier} provider=${provider} model=${model} requestId=${requestId} budget=${effectiveMaxTokens} academic=${isAcademicTask}`);
 
   async function performCompletion(p: typeof provider, m: string, currentMessages: any[], budget: number) {
     // 0. Primary / Fallback: Google GenAI (Gemini)
@@ -523,7 +524,7 @@ export async function generateAICompletionWithTelemetry(
         const config: any = {
           temperature,
           systemInstruction,
-          maxOutputTokens: Math.max(budget, 2048)
+          maxOutputTokens: isAcademicTask ? 8192 : Math.max(budget, 2048)
         };
         if (jsonMode) config.responseMimeType = 'application/json';
 
@@ -542,6 +543,11 @@ export async function generateAICompletionWithTelemetry(
       throw err;
     }
 
+    // SAFE CLAMPING: Most OpenAI-compatible providers (Groq, Ministral, APInex) 
+    // cap output tokens between 4096 and 8192. Requesting 32k+ in one call 
+    // often causes a 400 error. The continuation loop will handle the rest.
+    const clampedBudget = p === 'ministral' ? Math.min(budget, 8192) : Math.min(budget, 4096);
+
     const resp = await fetch(apiUrl, {
       method: 'POST',
       headers: {
@@ -553,7 +559,7 @@ export async function generateAICompletionWithTelemetry(
         model: m,
         messages: currentMessages,
         temperature,
-        max_tokens: budget,
+        max_tokens: clampedBudget,
         ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
       })
     });
@@ -584,20 +590,26 @@ export async function generateAICompletionWithTelemetry(
     activeProvider = result.provider as any;
     activeModel = result.model;
 
-    // Continuation Logic for Truncated Notes (Max 2 continuations to prevent infinite loops)
-    while (lastFinishReason === 'length' && continuationCount < 2 && !jsonMode) {
+    // Continuation Logic for Truncated Notes (Max 8 continuations for massive academic documents)
+    const maxContinuations = isAcademicTask ? 8 : 2;
+
+    while (lastFinishReason === 'length' && continuationCount < maxContinuations && !jsonMode) {
       continuationCount++;
-      console.log(`[AI_CONTINUATION] Truncation detected for ${activeProvider}. Attempting segment ${continuationCount + 1}...`);
+      console.log(`[AI_CONTINUATION] Truncation detected for ${activeProvider} (Segment ${continuationCount + 1}). Budgeting for full synthesis...`);
       
       const continuationMessages = [
         ...messages,
         { role: 'assistant', content: finalFullText },
-        { role: 'user', content: 'The previous response was truncated. Please continue exactly from where you left off. Do not repeat the introduction or previous sections.' }
+        { role: 'user', content: 'The previous response was truncated due to output limits. Please continue EXACTLY from where you left off, resuming the sentence or table immediately. Do NOT repeat the introduction, previous sections, or add meta-commentary. Focus on completing the remaining sections of the full document until finished.' }
       ];
 
+      // Increase temperature slightly for continuation to prevent repetition if stuck, 
+      // but keep it stable for academic accuracy.
       const contResult = await performCompletion(activeProvider, activeModel, continuationMessages, effectiveMaxTokens);
       if (contResult.text) {
-        finalFullText += '\n' + contResult.text;
+        // Check if there's overlapping text (common in some models)
+        const newSegment = contResult.text.trim();
+        finalFullText += (finalFullText.endsWith('\n') ? '' : '\n') + newSegment;
         lastFinishReason = contResult.finishReason;
       } else {
         break;

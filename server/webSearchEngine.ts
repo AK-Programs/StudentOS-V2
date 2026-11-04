@@ -215,7 +215,7 @@ export function detectWebSearchIntent(
   // 1. Explicit search requests (HIGH PRIORITY)
   const explicitSearchTriggers = [
     /\b(search|look up|find information|find online|search online|find recent|can you search)\b/i,
-    /\b(latest (news|updates?|developments?)|current status of|breaking news)\b/i
+    /\b(latest (news|updates?|developments?)|current status of|breaking news|live score|market|election|weather)\b/i
   ];
   const isExplicitSearch = explicitSearchTriggers.some(rgx => rgx.test(lower));
 
@@ -223,38 +223,47 @@ export function detectWebSearchIntent(
   const greetingTriggers = [
     /\b(hey|hi|hello|hey byte|hi byte|hello byte|good morning|good afternoon|good evening|howdy|yo|hi there|hello there)\b/i,
     /\b(how are you|how's it going|what's up|sup|how are things|how you doing)\b/i,
-    /\b(thanks|thank you|thx|tysm|cheers|awesome|cool|great|okay|ok|nice|noted)\b/i,
+    /\b(thanks|thank you|thx|tysm|cheers|awesome|cool|great|okay|ok|nice|noted|noted with thanks|got it|understood)\b/i,
     /\b(bye|goodbye|see ya|later|gtg|night|goodnight)\b/i
   ];
   const isGreetingOrSmallTalk = greetingTriggers.some(rgx => rgx.test(lower));
 
-  // If it's a very short message (e.g. "hey", "what's up byte", "thanks")
-  // and it contains a greeting/small talk, definitely don't search.
-  if (isGreetingOrSmallTalk && words.length <= 4 && !isExplicitSearch) {
-    return {
-      shouldSearch: false,
-      cleanQuery: '',
-      reason: 'Short greeting or small talk detected'
-    };
+  // 3. School Topic Detection (High value keywords)
+  const schoolTopicKeywords = [
+    'physics', 'chemistry', 'biology', 'math', 'mathematics', 'calculus', 'algebra', 'geometry',
+    'history', 'geography', 'economics', 'civics', 'science', 'atom', 'molecule', 'force', 'energy',
+    'photosynthesis', 'evolution', 'revolution', 'war', 'constitution', 'grammar', 'literature',
+    'computer', 'coding', 'programming', 'python', 'javascript', 'java', 'c++', 'algorithm',
+    'definition', 'define', 'meaning of', 'explain', 'explanation', 'theorem', 'formula', 'derivation'
+  ];
+  const hasSchoolTopic = schoolTopicKeywords.some(k => lower.includes(k));
+
+  // RULE: Do not search on greetings or small talk
+  if (isGreetingOrSmallTalk && !isExplicitSearch) {
+    return { shouldSearch: false, cleanQuery: '', reason: 'Greeting or small talk detected' };
   }
 
-  // 3. Temporal Triggers (for non-greetings)
+  // RULE: If the message is under 4 words and has no school topic, skip search
+  if (words.length < 4 && !hasSchoolTopic && !isExplicitSearch) {
+    return { shouldSearch: false, cleanQuery: '', reason: 'Short non-educational message' };
+  }
+
+  // 4. Temporal/Fact Triggers
   const temporalTriggers = [
     /\b(today|yesterday|this week|this month|now|version|release|2025|2026)\b/i,
-    /\b(who is currently|what happened in|recent study|status of|live score|market|election|weather)\b/i
+    /\b(who is currently|what happened in|recent study|status of)\b/i
   ];
   const isTemporal = temporalTriggers.some(rgx => rgx.test(lower));
 
-  // 4. Research Triggers (Refined to be more specific)
+  // 5. Research Triggers
   const researchTriggers = [
     /\b(research|investigate|deep dive|comprehensive report|survey|overview of current)\b/i,
     /\b(latest developments in|current trends in|state of the art in)\b/i
   ];
   const isResearch = researchTriggers.some(rgx => rgx.test(lower));
 
-  // 5. Orion's specific research needs
-  if (persona === 'orion' && (isTemporal || isResearch || isExplicitSearch)) {
-    // Even for Orion, if it's purely a greeting, don't search
+  // persona specific needs
+  if (persona === 'orion' && (isTemporal || isResearch || isExplicitSearch || hasSchoolTopic)) {
     if (isGreetingOrSmallTalk && words.length <= 3) {
       return { shouldSearch: false, cleanQuery: '', reason: 'Orion greeting' };
     }
@@ -265,12 +274,12 @@ export function detectWebSearchIntent(
     };
   }
 
-  // 6. Final Decision for other personas
-  if (isExplicitSearch || (isTemporal && isResearch)) {
+  // 6. Final Decision: Search only for facts, topics, news, or videos
+  if (isExplicitSearch || (isTemporal && (isResearch || hasSchoolTopic)) || (hasSchoolTopic && (lower.includes('fact') || lower.includes('latest') || lower.includes('news') || lower.includes('video') || lower.includes('define') || lower.includes('meaning')))) {
     return {
       shouldSearch: true,
       cleanQuery: extractPrivacySafeSearchQuery(textOnly),
-      reason: isExplicitSearch ? 'Explicit web search request' : 'Fresh temporal research query'
+      reason: isExplicitSearch ? 'Explicit web search request' : 'Educational research query'
     };
   }
 

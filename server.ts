@@ -3913,7 +3913,8 @@ app.post('/api/ai/notes', async (req, res) => {
   let userPrompt = '';
 
   if (action === 'create_note' || action === 'generate_notes') {
-    systemInstruction = `You are an elite academic lecturer and curriculum author. Produce comprehensive, beautifully structured lecture notes.
+    systemInstruction = `You are an elite academic lecturer and curriculum author. Produce comprehensive, high-detail, and beautifully structured lecture notes. 
+CRITICAL: You must return the COMPLETE note from start to finish. Do not provide a partial draft, summary, or "to be continued" response. If the content is long, be exhaustive and detailed.
 STRUCTURE RULES:
 1. Include an Executive Overview and Context.
 2. Bold key concepts, terminology, and definitions.
@@ -3923,14 +3924,14 @@ STRUCTURE RULES:
 6. Provide Summary & Quick Revision Points.
 7. Include 3 Active Recall Study Questions with solutions.
 Format cleanly with Markdown headings (##, ###), bullet lists, and tables.`;
-    userPrompt = `Subject: ${subject}\nTopic: "${topic || targetTopic}"\n\nInstructions: ${instruction || 'Generate comprehensive academic lecture notes.'}`;
+    userPrompt = `Subject: ${subject}\nTopic: "${topic || targetTopic}"\n\nInstructions: ${instruction || 'Generate comprehensive and exhaustive academic lecture notes.'}`;
   } else if (action === 'edit_note' || action === 'custom') {
     systemInstruction = `You are a meticulous academic editor and subject matter expert.
 CRITICAL PRESERVATION RULES:
 1. STRICTLY PRESERVE all existing tables, mathematical formulas, equations, headings, and formatting in the text.
 2. Only make the edits requested by the user without discarding technical rigor or structured content.
-3. Return the full updated note directly in Markdown format without conversational meta-commentary.`;
-    userPrompt = `Original Note Content:\n"""\n${content || targetTopic}\n"""\n\nUser Instruction for Edit:\n"${instruction || 'Refine and improve clarity while keeping all technical details, tables, and formulas intact.'}"`;
+3. Return the FULL updated note directly in Markdown format from the very first character to the last. Do not truncate the end of the note.`;
+    userPrompt = `Original Note Content:\n"""\n${content || targetTopic}\n"""\n\nUser Instruction for Edit:\n"${instruction || 'Refine and improve clarity while keeping all technical details, tables, and formulas intact. Ensure the entire note is returned.'}"`;
   } else if (action === 'summarize') {
     systemInstruction = 'You are a meticulous scientific editor. Synthesize the provided text into a beautifully structured, highly readable bulleted cheat-sheet. Highlight key definitions in bold and preserve all equations and tables.';
     userPrompt = `Please summarize this note section: \n\n"${targetTopic}"`;
