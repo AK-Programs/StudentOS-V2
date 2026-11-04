@@ -2074,38 +2074,17 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          onClick={() => {
-                            setServerInviteSearchQuery('');
-                            setShowServerInviteModal(true);
-                          }}
-                          className="px-2 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white shadow-md text-[11px] font-bold flex items-center gap-1 transition-all active:scale-95"
-                          title="Invite & Add Members to Server"
-                        >
-                          <UserPlus className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline">Invite</span>
-                        </button>
-                        <button
-                          onClick={() => {
-                            setShowServerMembersModal(true);
-                          }}
-                          className="px-2 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-300 hover:text-white border border-white/10 text-[11px] font-bold flex items-center gap-1 transition-all active:scale-95"
-                          title="Server Members"
-                        >
-                          <Users className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline">Members</span>
-                        </button>
                         {(currentServer.ownerId === currentUser?.uid || currentUser?.role === 'admin' || currentUser?.role === 'super_admin') && (
                           <button
                             onClick={() => {
-                              setRolesTargetId(currentServer.id);
-                              setShowManageRolesModal(true);
+                              setServerSettingsTab('info');
+                              setShowServerSettingsModal(true);
                             }}
-                            className="px-2 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-white border border-white/10 text-[11px] font-bold flex items-center gap-1 transition-all active:scale-95"
-                            title="Manage Roles"
+                            className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-white/10 text-[11px] font-bold flex items-center gap-1.5 transition-all active:scale-95"
+                            title="Server Settings"
                           >
-                            <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
-                            <span className="hidden sm:inline">Roles</span>
+                            <Settings className="w-3.5 h-3.5 text-indigo-400" />
+                            <span>Settings</span>
                           </button>
                         )}
                         <button
@@ -4499,6 +4478,58 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                           <Copy className="w-4 h-4" />
                           <span>Copy Code</span>
                         </button>
+                      </div>
+                    </div>
+
+                    {/* Invite / Add Member Section */}
+                    <div className="p-4 rounded-2xl bg-slate-950 border border-white/10 space-y-3">
+                      <div className="flex justify-between items-center">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Invite or Add Member by Name</h4>
+                        <span className="text-[10px] text-slate-500">{filteredUsers.length} users</span>
+                      </div>
+                      <div className="relative">
+                        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                        <input
+                          type="text"
+                          value={serverInviteSearchQuery}
+                          onChange={(e) => setServerInviteSearchQuery(e.target.value)}
+                          placeholder="Search user by name, email or role to add..."
+                          className="w-full bg-slate-900 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <div className="max-h-40 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
+                        {filteredUsers.length === 0 ? (
+                          <p className="text-xs text-slate-500 text-center py-2">No matching users found.</p>
+                        ) : (
+                          filteredUsers.map(user => {
+                            const isAlready = (currentServer.members || []).includes(user.uid || '');
+                            return (
+                              <div key={user.uid || user.email} className="flex items-center justify-between p-2 rounded-xl bg-slate-900/60 border border-white/5">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-xs font-bold text-white shrink-0">
+                                    {user.name.charAt(0)}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-bold text-white truncate">{user.name}</p>
+                                    <p className="text-[9px] text-slate-400 truncate">{user.role.toUpperCase()} • {user.email}</p>
+                                  </div>
+                                </div>
+                                {isAlready ? (
+                                  <span className="px-2 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] font-bold shrink-0">
+                                    In Server
+                                  </span>
+                                ) : (
+                                  <button
+                                    onClick={() => handleAddUserToServer(currentServer, user)}
+                                    className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold shadow transition-all active:scale-95 shrink-0"
+                                  >
+                                    Add User
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
                       </div>
                     </div>
 
