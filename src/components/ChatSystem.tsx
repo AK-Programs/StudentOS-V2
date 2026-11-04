@@ -246,22 +246,50 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
 
     const formattedName = newChannelName.toLowerCase().trim().replace(/\s+/g, '-');
     const channelId = `ch_${currentServer.id}_${Date.now()}`;
+    
+    // Choose prefix based on type if not already prefixed
+    let finalName = formattedName;
+    const prefix = newChannelType === 'announcement' ? '📢' : newChannelType === 'class' ? '💡' : '💬';
+    if (!finalName.startsWith('📢') && !finalName.startsWith('💡') && !finalName.startsWith('💬')) {
+      finalName = `${prefix}-${finalName}`;
+    }
+
     const channel: ServerChannel = {
       id: channelId,
       serverId: currentServer.id,
-      name: `${newChannelType === 'announcement' ? '📢' : newChannelType === 'class' ? '💡' : '💬'}-${formattedName}`,
+      name: finalName,
       type: newChannelType,
-      category: newServerChannelCategory,
+      category: newServerChannelCategory || 'General',
       topic: `${newServerChannelCategory} channel in ${currentServer.name}`
     };
 
     await createChatServerChannel(currentServer.id, channel);
+    
+    // Refresh servers from DB
     const updatedServers = await getChatServers();
     setChatServers(updatedServers);
-    setActiveChatTargetId(channel.id);
-    setShowCreateChannelModal(false);
-    setNewChannelName('');
-    showNotification(`Created channel #${channel.name}!`);
+    
+    // Small delay to ensure state propagates before switching
+    setTimeout(() => {
+      setActiveChatTargetId(channel.id);
+      setShowCreateChannelModal(false);
+      setNewChannelName('');
+      showNotification(`Created channel #${channel.name}!`);
+    }, 50);
+  };
+
+  const handleDeleteChannel = async (serverId: string, channelId: string) => {
+    if (!confirm('Are you sure you want to delete this channel?')) return;
+    await deleteChatServerChannel(serverId, channelId);
+    const updated = await getChatServers();
+    setChatServers(updated);
+    const server = updated.find(s => s.id === serverId);
+    if (server && server.channels && server.channels.length > 0) {
+      setActiveChatTargetId(server.channels[0].id);
+    } else {
+      setActiveChatTargetId('group-all');
+    }
+    showNotification('Channel deleted.');
   };
 
   const handleSaveCustomRole = async () => {
@@ -412,7 +440,7 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
   // Server Channel Creation
   const [showCreateChannelModal, setShowCreateChannelModal] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
-  const [newServerChannelCategory, setNewServerChannelCategory] = useState<'General' | 'Announcements' | 'Class & Doubts' | 'Study Lounge'>('General');
+  const [newServerChannelCategory, setNewServerChannelCategory] = useState<string>('General');
   const [newChannelType, setNewChannelType] = useState<'text' | 'announcement' | 'class'>('text');
 
   // Custom Roles & Permissions Management
@@ -443,6 +471,9 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
 
   // Voice & Video Calls State
   const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
+  const [homeSidebarTab, setHomeSidebarTab] = useState<'all' | 'dms' | 'groups'>('all');
+  const [showMemberList, setShowMemberList] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'info' | 'members' | 'roles'>('info');
   const [callDuration, setCallDuration] = useState(0);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
 
@@ -1414,6 +1445,31 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
     showNotification('Pin status updated.');
   };
 
+  // Add / Remove Reaction
+  const handleToggleReaction = async (msgId: string, emoji: string) => {
+    if (!currentUser) return;
+    
+    setChats(prev => prev.map(msg => {
+      if (msg.id !== msgId) return msg;
+      
+      const currentReactions = { ...(msg.reactions || {}) };
+      const users = [...(currentReactions[emoji] || [])];
+      
+      if (users.includes(currentUser.uid)) {
+        // Remove reaction
+        currentReactions[emoji] = users.filter(u => u !== currentUser.uid);
+        if (currentReactions[emoji].length === 0) delete currentReactions[emoji];
+      } else {
+        // Add reaction
+        currentReactions[emoji] = [...users, currentUser.uid];
+      }
+      
+      const updated = { ...msg, reactions: currentReactions };
+      savePeerMessage(updated).catch(console.error);
+      return updated;
+    }));
+  };
+
   // Forward Message
   const handleForwardMessage = async (targetRoomId: string) => {
     if (!forwardingMsg || !currentUser) return;
@@ -1742,58 +1798,85 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
           {activeServerId === 'home' ? (
             <>
               {/* Header & New Actions */}
-              <div className="flex justify-between items-center shrink-0">
-                <h3 className="font-black text-xs uppercase tracking-wider text-white flex items-center gap-1.5">
-                  <Megaphone className="w-4 h-4 text-indigo-400" />
-                  Direct Messages
-                </h3>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => setShowNewDmModal(true)}
-                    title="Start Direct Message"
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] px-2.5 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md active:scale-95 flex items-center gap-1"
-                  >
-                    <UserPlus className="w-3 h-3" />
-                    <span>DM</span>
-                  </button>
-                  <button
-                    onClick={() => setIsCreatingRoom(true)}
-                    title="Create or Join Group"
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] px-2.5 py-1.5 rounded-xl font-bold uppercase transition-all shadow-md active:scale-95 flex items-center gap-1"
-                  >
-                    <Users className="w-3 h-3" />
-                    <span>Group</span>
-                  </button>
+              <div className="flex flex-col gap-3 shrink-0">
+                <div className="flex justify-between items-center px-1">
+                  <h3 className="font-black text-xs uppercase tracking-widest text-indigo-400 flex items-center gap-2">
+                    <MessageSquare className="w-4 h-4" />
+                    Home Hub
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setShowNewDmModal(true)}
+                      className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/10 text-white flex items-center justify-center transition-all border border-white/5 active:scale-95"
+                      title="New Direct Message"
+                    >
+                      <UserPlus className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setIsCreatingRoom(true)}
+                      className="w-8 h-8 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 flex items-center justify-center transition-all border border-indigo-500/20 active:scale-95"
+                      title="New Group Chat"
+                    >
+                      <Users className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Home Tab Selector (WhatsApp style) */}
+                <div className="flex bg-slate-950/50 p-1 rounded-2xl border border-white/5">
+                  {[
+                    { id: 'all', label: 'All', icon: Globe },
+                    { id: 'dms', label: 'DMs', icon: MessageSquare },
+                    { id: 'groups', label: 'Groups', icon: Users }
+                  ].map(tab => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setHomeSidebarTab(tab.id as any)}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-tighter transition-all ${homeSidebarTab === tab.id ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                      <tab.icon className="w-3 h-3" />
+                      <span>{tab.label}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Search Bar */}
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    value={chatSearchQuery}
+                    onChange={(e) => setChatSearchQuery(e.target.value)}
+                    placeholder="Search conversations..."
+                    className="w-full bg-slate-950/80 border border-white/10 rounded-2xl pl-9 pr-3 py-2 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 transition-all"
+                  />
                 </div>
               </div>
 
-              {/* Search Bar */}
-              <div className="relative shrink-0">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  type="text"
-                  value={chatSearchQuery}
-                  onChange={(e) => setChatSearchQuery(e.target.value)}
-                  placeholder="Search DMs and groups..."
-                  className="w-full bg-slate-950 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                />
-              </div>
-
-              {/* Direct Messages & Groups Lists */}
-              <div className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1 scrollbar-thin">
+              {/* Unified Conversations List */}
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-1 pr-1 scrollbar-thin">
                 {/* DIRECT MESSAGES SECTION */}
-                <div className="space-y-1">
-                  <div className="flex justify-between items-center px-1 py-1">
-                    <span className="text-[10px] font-black uppercase text-teal-400 tracking-wider flex items-center gap-1">
-                      <UserIcon className="w-3 h-3" />
-                      Direct Messages ({dmRooms.length})
-                    </span>
-                  </div>
+                {(homeSidebarTab === 'all' || homeSidebarTab === 'dms') && (
+                  <div className="space-y-1">
+                    {homeSidebarTab === 'all' && dmRooms.length > 0 && (
+                      <div className="flex items-center gap-2 px-2 py-1 opacity-50">
+                        <span className="w-full h-px bg-white/10" />
+                        <span className="text-[9px] font-black uppercase text-slate-500 whitespace-nowrap">Direct Messages</span>
+                        <span className="w-full h-px bg-white/10" />
+                      </div>
+                    )}
+                    
+                    {dmRooms.length === 0 && homeSidebarTab === 'dms' && (
+                      <div className="p-8 text-center space-y-3">
+                        <div className="w-12 h-12 rounded-full bg-indigo-600/10 border border-dashed border-indigo-500/20 flex items-center justify-center mx-auto">
+                          <MessageSquare className="w-6 h-6 text-indigo-400/40" />
+                        </div>
+                        <p className="text-[10px] text-slate-500 italic">No direct messages yet.</p>
+                        <button onClick={() => setShowNewDmModal(true)} className="text-[10px] text-indigo-400 font-bold hover:underline">Start a Chat</button>
+                      </div>
+                    )}
 
-                  {dmRooms.length === 0 ? (
-                    <p className="text-[10px] text-slate-500 italic px-2 py-1">No direct messages yet. Click + DM to chat!</p>
-                  ) : (
-                    dmRooms
+                    {dmRooms
                       .filter(r => {
                         if (!chatSearchQuery) return true;
                         const otherUid = (r.members || []).find(m => m !== currentUser?.uid);
@@ -1816,84 +1899,114 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                               setActiveChatTargetId(room.id);
                               setShowChatSidebarMobile(false);
                             }}
-                            className={`w-full text-left p-2.5 rounded-2xl border transition-all flex items-center gap-2.5 ${isActive ? 'bg-teal-600/20 border-teal-500/50 text-white shadow-lg' : 'bg-slate-950/40 border-white/5 hover:border-white/10 hover:bg-slate-950/70 text-slate-300'}`}
+                            className={`w-full group text-left p-2 rounded-2xl transition-all flex items-center gap-3 relative ${isActive ? 'bg-indigo-600/15 ring-1 ring-indigo-500/30 shadow-xl' : 'hover:bg-white/5'}`}
                           >
                             <div className="relative shrink-0">
                               {otherUser?.avatar || otherUser?.photoURL ? (
-                                <img src={otherUser.avatar || otherUser.photoURL} alt="" className="w-9 h-9 rounded-full object-cover border border-white/10" />
+                                <img src={otherUser.avatar || otherUser.photoURL} alt="" className="w-11 h-11 rounded-2xl object-cover border border-white/10 ring-1 ring-white/5 shadow-lg" />
                               ) : (
-                                <div className="w-9 h-9 rounded-full bg-teal-600/30 text-teal-300 font-black text-xs flex items-center justify-center border border-teal-500/30">
+                                <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-indigo-600/30 to-purple-600/30 text-indigo-300 font-black text-sm flex items-center justify-center border border-indigo-500/30">
                                   {displayName.charAt(0).toUpperCase()}
                                 </div>
                               )}
-                              <span className={`w-2.5 h-2.5 rounded-full ${getStatusColor(otherUser?.uid || '')} border border-slate-900 absolute bottom-0 right-0`} />
+                              <span className={`w-3 h-3 rounded-full ${getStatusColor(otherUser?.uid || '')} border-2 border-slate-900 absolute -bottom-0.5 -right-0.5 shadow-lg`} />
                             </div>
 
-                            <div className="flex-1 min-w-0">
+                            <div className="flex-1 min-w-0 pr-2">
                               <div className="flex justify-between items-center">
-                                <span className="text-xs font-bold truncate text-white">{displayName}</span>
+                                <span className={`text-[13px] font-black truncate transition-colors ${isActive ? 'text-white' : 'text-slate-200'}`}>{displayName}</span>
                                 {lastMsg && (
-                                  <span className="text-[9px] text-slate-500 shrink-0">
+                                  <span className="text-[9px] text-slate-500 font-medium bg-slate-950/50 px-1.5 py-0.5 rounded-lg border border-white/5">
                                     {new Date(lastMsg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                   </span>
                                 )}
                               </div>
-                              <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                                {lastMsg ? lastMsg.message : (otherUser ? `${otherUser.role.toUpperCase()} • ${otherUser.grade || 'Direct Message'}` : 'Start conversation')}
-                              </p>
+                              <div className="flex items-center justify-between mt-0.5 gap-2">
+                                <p className={`text-[11px] truncate flex-1 ${isActive ? 'text-indigo-200/70' : 'text-slate-500'}`}>
+                                  {lastMsg ? (
+                                    <span className="flex items-center gap-1">
+                                      {lastMsg.ownerUid === currentUser?.uid && <CheckCheck className="w-3 h-3 text-sky-500 shrink-0" />}
+                                      {lastMsg.message}
+                                    </span>
+                                  ) : (otherUser ? `${otherUser.role.toUpperCase()} • ${otherUser.grade || 'Campus'}` : 'Say hello!')}
+                                </p>
+                              </div>
                             </div>
+                            
+                            {isActive && <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-indigo-500 rounded-l-full shadow-[0_0_10px_rgba(99,102,241,0.5)]" />}
                           </button>
                         );
-                      })
-                  )}
-                </div>
+                      })}
+                  </div>
+                )}
 
                 {/* GROUP ROOMS SECTION */}
-                <div className="space-y-1 border-t border-white/10 pt-2.5">
-                  <div className="flex justify-between items-center px-1 py-1">
-                    <span className="text-[10px] font-black uppercase text-indigo-400 tracking-wider flex items-center gap-1">
-                      <Hash className="w-3 h-3" />
-                      Groups & Channels ({groupRooms.length})
-                    </span>
-                  </div>
+                {(homeSidebarTab === 'all' || homeSidebarTab === 'groups') && (
+                  <div className="space-y-1 mt-4">
+                    {homeSidebarTab === 'all' && groupRooms.length > 0 && (
+                      <div className="flex items-center gap-2 px-2 py-1 opacity-50">
+                        <span className="w-full h-px bg-white/10" />
+                        <span className="text-[9px] font-black uppercase text-slate-500 whitespace-nowrap">Channels & Groups</span>
+                        <span className="w-full h-px bg-white/10" />
+                      </div>
+                    )}
 
-                  {groupRooms
-                    .filter(room => {
-                      if (!chatSearchQuery) return true;
-                      return room.name.toLowerCase().includes(chatSearchQuery.toLowerCase()) || 
-                            room.type.toLowerCase().includes(chatSearchQuery.toLowerCase());
-                    })
-                    .map((room) => {
-                      const isActive = activeChatTargetId === room.id;
-                      let badgeStyle = "bg-indigo-500/10 text-indigo-400 border-indigo-500/20";
-                      if (room.type === "channel") badgeStyle = "bg-rose-500/10 text-rose-400 border-rose-500/20";
-                      const lastMsg = chats.filter(c => c.targetId === room.id || (!c.targetId && room.id === 'group-all')).pop();
+                    {groupRooms.length === 0 && homeSidebarTab === 'groups' && (
+                      <div className="p-8 text-center space-y-3">
+                        <div className="w-12 h-12 rounded-full bg-purple-600/10 border border-dashed border-purple-500/20 flex items-center justify-center mx-auto">
+                          <Users className="w-6 h-6 text-purple-400/40" />
+                        </div>
+                        <p className="text-[10px] text-slate-500 italic">No group chats found.</p>
+                        <button onClick={() => setIsCreatingRoom(true)} className="text-[10px] text-purple-400 font-bold hover:underline">Create a Group</button>
+                      </div>
+                    )}
 
-                      return (
-                        <button
-                          key={room.id}
-                          onClick={() => {
-                            setActiveChatTargetId(room.id);
-                            setShowChatSidebarMobile(false);
-                          }}
-                          className={`w-full text-left p-2.5 rounded-2xl border transition-all flex items-center gap-2.5 ${isActive ? 'bg-indigo-600/20 border-indigo-500/50 text-white shadow-lg' : 'bg-slate-950/40 border-white/5 hover:border-white/10 hover:bg-slate-950/70 text-slate-300'}`}
-                        >
-                          <span className="text-xl shrink-0 p-1.5 bg-slate-900 border border-white/10 rounded-xl">{room.icon}</span>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex justify-between items-center">
-                              <span className="text-xs font-bold truncate text-white">{room.name}</span>
-                              <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border ${badgeStyle}`}>
-                                {room.type}
-                              </span>
+                    {groupRooms
+                      .filter(room => {
+                        if (!chatSearchQuery) return true;
+                        return room.name.toLowerCase().includes(chatSearchQuery.toLowerCase()) || 
+                              room.type.toLowerCase().includes(chatSearchQuery.toLowerCase());
+                      })
+                      .map((room) => {
+                        const isActive = activeChatTargetId === room.id;
+                        let badgeStyle = "bg-indigo-500/10 text-indigo-400 border-indigo-500/20";
+                        if (room.type === "channel") badgeStyle = "bg-rose-500/10 text-rose-400 border-rose-500/20";
+                        const lastMsg = chats.filter(c => c.targetId === room.id || (!c.targetId && room.id === 'group-all')).pop();
+
+                        return (
+                          <button
+                            key={room.id}
+                            onClick={() => {
+                              setActiveChatTargetId(room.id);
+                              setShowChatSidebarMobile(false);
+                            }}
+                            className={`w-full group text-left p-2.5 rounded-2xl transition-all flex items-center gap-3 relative ${isActive ? 'bg-purple-600/15 ring-1 ring-purple-500/30 shadow-xl' : 'hover:bg-white/5'}`}
+                          >
+                            <div className="w-11 h-11 shrink-0 bg-slate-900 border border-white/10 rounded-2xl flex items-center justify-center text-xl shadow-lg ring-1 ring-white/5 group-hover:scale-105 transition-transform">
+                              {room.icon}
                             </div>
-                            <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                              {lastMsg ? `${lastMsg.name.split(' ')[0]}: ${lastMsg.message}` : room.description}
-                            </p>
-                          </div>
-                        </button>
-                      );
-                    })}
-                </div>
+                            <div className="flex-1 min-w-0 pr-2">
+                              <div className="flex justify-between items-center">
+                                <span className={`text-[13px] font-black truncate ${isActive ? 'text-white' : 'text-slate-200'}`}>{room.name}</span>
+                                <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border ${badgeStyle}`}>
+                                  {room.type}
+                                </span>
+                              </div>
+                              <p className={`text-[11px] truncate mt-0.5 ${isActive ? 'text-purple-200/70' : 'text-slate-500'}`}>
+                                {lastMsg ? (
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="font-bold text-slate-400">{lastMsg.name.split(' ')[0]}:</span>
+                                    <span>{lastMsg.message}</span>
+                                  </span>
+                                ) : room.description}
+                              </p>
+                            </div>
+                            {isActive && <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-purple-500 rounded-l-full shadow-[0_0_10px_rgba(168,85,247,0.5)]" />}
+                          </button>
+                        );
+                      })}
+                  </div>
+                )}
               </div>
             </>
           ) : (
@@ -1902,9 +2015,15 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
               const currentServer = chatServers.find(s => s.id === activeServerId);
               if (!currentServer) return null;
               const channels = currentServer.channels || [];
-              const categories: ('Announcements' | 'General' | 'Class & Doubts' | 'Study Lounge')[] = [
-                'Announcements', 'General', 'Class & Doubts', 'Study Lounge'
-              ];
+              
+              // Dynamically collect unique categories from channels
+              const uniqueCategories = Array.from(new Set(channels.map(c => c.category || 'General')));
+              // Ensure 'General' is always present and first if it exists
+              const sortedCategories = uniqueCategories.sort((a, b) => {
+                if (a === 'General') return -1;
+                if (b === 'General') return 1;
+                return a.localeCompare(b);
+              });
 
               return (
                 <>
@@ -1965,7 +2084,7 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
 
                   {/* Categorized Channels Stream */}
                   <div className="flex-1 min-h-0 overflow-y-auto space-y-3.5 pr-1 scrollbar-thin">
-                    {categories.map(cat => {
+                    {sortedCategories.map(cat => {
                       const catChannels = channels.filter(c => (c.category || 'General') === cat);
                       if (catChannels.length === 0 && cat !== 'General') return null;
 
@@ -2003,11 +2122,26 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                                       {ch.name.replace(/^📢-|^💡-|^💬-/, '')}
                                     </span>
                                   </div>
-                                  {ch.topic && (
-                                    <span className="text-[8px] text-slate-500 truncate max-w-[80px] hidden group-hover:inline">
-                                      {ch.topic}
-                                    </span>
-                                  )}
+                                  <div className="flex items-center gap-1">
+                                    {ch.topic && (
+                                      <span className="text-[8px] text-slate-500 truncate max-w-[80px] hidden group-hover:inline">
+                                        {ch.topic}
+                                      </span>
+                                    )}
+                                    {(currentServer.ownerId === currentUser?.uid || currentUser?.role === 'admin' || currentUser?.role === 'super_admin') && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleDeleteChannel(currentServer.id, ch.id);
+                                        }}
+                                        className="p-1 hover:bg-rose-500/20 text-slate-500 hover:text-rose-400 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                        title="Delete Channel"
+                                      >
+                                        <Trash2 className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                  </div>
                                 </button>
                               );
                             })}
@@ -2096,45 +2230,46 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Call Buttons for Direct Messages or Groups */}
+            {/* Call Buttons for Direct Messages */}
             {isDirectMessage && dmOtherUser && (
-              <>
+              <div className="flex items-center gap-1.5 bg-slate-950/50 p-1 rounded-2xl border border-white/5 mr-1">
                 <button
                   onClick={() => handleStartCall(dmOtherUser!, 'audio')}
                   title="Voice Call"
-                  className="p-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 rounded-xl border border-emerald-500/30 transition-all"
+                  className="p-2 hover:bg-emerald-600/20 text-emerald-400 rounded-xl transition-all active:scale-90"
                 >
                   <Phone className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => handleStartCall(dmOtherUser!, 'video')}
                   title="Video Call"
-                  className="p-2 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 rounded-xl border border-indigo-500/30 transition-all"
+                  className="p-2 hover:bg-indigo-600/20 text-indigo-400 rounded-xl transition-all active:scale-90"
                 >
                   <Video className="w-4 h-4" />
                 </button>
-              </>
+              </div>
             )}
 
-            {/* Search messages toggle */}
-            <div className="relative hidden sm:block">
-              <input
-                type="text"
-                value={messageSearchQuery}
-                onChange={e => setMessageSearchQuery(e.target.value)}
-                placeholder="Search messages..."
-                className="bg-slate-950 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 w-32 focus:w-44 transition-all"
-              />
-            </div>
+            {/* Member List Toggle (For Groups/Servers) */}
+            {!isDirectMessage && (
+              <button
+                onClick={() => setShowMemberList(!showMemberList)}
+                className={`p-2 rounded-xl border transition-all active:scale-90 flex items-center gap-1.5 ${showMemberList ? 'bg-indigo-600 text-white border-indigo-500 shadow-lg shadow-indigo-600/20' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-white/10'}`}
+                title="Toggle Member List"
+              >
+                <Users className="w-4 h-4" />
+                <span className="hidden xl:inline text-[10px] font-bold uppercase tracking-wider">Members</span>
+              </button>
+            )}
 
             {/* Group QR Modal Trigger */}
             {!isDirectMessage && (
               <button
                 onClick={() => setShowQrModal(true)}
-                title="Group QR Code & Code"
-                className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-white/10 transition-all"
+                title="Invite Member"
+                className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-white/10 transition-all active:scale-90"
               >
-                <QrCode className="w-4 h-4" />
+                <UserPlus className="w-4 h-4" />
               </button>
             )}
 
@@ -2147,8 +2282,8 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                   setEditRoomIcon(activeRoomInfo.icon || '💬');
                   setShowGroupSettings(true);
                 }}
-                title="Group Settings"
-                className="p-2 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 rounded-xl border border-indigo-500/30 transition-all flex items-center gap-1 text-xs font-bold"
+                className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-white/10 transition-all active:scale-90 flex items-center gap-1 text-[10px] font-bold uppercase"
+                title="Room Settings"
               >
                 <Settings className="w-4 h-4" />
                 <span className="hidden sm:inline">Settings</span>
@@ -2174,254 +2309,226 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
           </div>
         )}
 
-        {/* Chat Messages Log View */}
-        <div 
-          ref={chatScrollViewRef}
-          id="chat-scroll-view"
-          className="flex-1 min-h-0 overflow-y-auto space-y-3 my-3 pr-2 scrollbar-thin"
-        >
-          {roomMessages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-slate-500 text-xs space-y-2">
-              <Sparkles className="w-8 h-8 text-indigo-400/40 animate-bounce" />
-              <p className="font-medium">No messages yet in this room.</p>
-              <p className="text-[10px] text-slate-600">Be the first to say hello!</p>
-            </div>
-          ) : (
-            roomMessages.map((msg) => {
-              const isMine = msg.ownerUid === currentUser?.uid;
-              const senderUser = resolveUser(msg.ownerUid);
-              const displayName = senderUser ? senderUser.name : msg.name;
+        {/* Chat Main Area Container (Messages + Member List) */}
+        <div className="flex-1 flex min-h-0 overflow-hidden">
+          {/* Chat Messages Log View */}
+          <div 
+            ref={chatScrollViewRef}
+            id="chat-scroll-view"
+            className="flex-1 min-h-0 overflow-y-auto space-y-3 my-3 pr-2 scrollbar-thin"
+          >
+            {roomMessages.length === 0 ? (
+              <div className="h-full flex flex-col items-center justify-center text-slate-500 text-xs space-y-2">
+                <Sparkles className="w-8 h-8 text-indigo-400/40 animate-bounce" />
+                <p className="font-medium">No messages yet in this room.</p>
+                <p className="text-[10px] text-slate-600">Be the first to say hello!</p>
+              </div>
+            ) : (
+              roomMessages.map((msg) => {
+                const isMine = msg.ownerUid === currentUser?.uid;
+                const senderUser = resolveUser(msg.ownerUid);
+                const displayName = senderUser ? senderUser.name : msg.name;
 
-              return (
-                <div
-                  key={msg.id}
-                  onTouchStart={() => handleTouchStartMessage(msg)}
-                  onTouchEnd={handleTouchEndMessage}
-                  className={`flex items-start gap-2.5 ${isMine ? 'flex-row-reverse' : 'flex-row'}`}
-                >
-                  {/* Sender Avatar - Click to open Profile Card */}
-                  <button
-                    onClick={() => setSelectedProfileUser(senderUser)}
-                    title={`View profile of ${displayName}`}
-                    className="shrink-0 hover:scale-105 transition-transform"
+                return (
+                  <div
+                    key={msg.id}
+                    className={`flex items-start gap-2.5 ${isMine ? 'flex-row-reverse' : 'flex-row'}`}
                   >
-                    {senderUser?.avatar || senderUser?.photoURL ? (
-                      <img src={senderUser.avatar || senderUser.photoURL} alt="" className="w-8 h-8 rounded-full object-cover border border-white/10" />
-                    ) : (
-                      <div className="w-8 h-8 rounded-full bg-indigo-600/30 text-indigo-300 font-extrabold text-xs flex items-center justify-center border border-indigo-500/30">
-                        {displayName.charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                  </button>
-
-                  <div className={`max-w-[85%] sm:max-w-[75%] min-w-0 space-y-1 ${isMine ? 'items-end' : 'items-start'}`}>
-                    
-                    {/* Header info */}
-                    <div className={`flex items-center gap-1.5 text-[10px] ${isMine ? 'justify-end' : 'justify-start'}`}>
-                      <button
-                        onClick={() => setCommunityProfileUser(senderUser)}
-                        className="font-bold text-slate-300 hover:text-indigo-400 transition-colors inline-flex items-center gap-1 cursor-pointer"
-                        title="View Community Profile"
-                      >
-                        <span>{displayName}</span>
-                        {senderUser && getVerificationStatus(senderUser).isVerified && (
-                          <span title="StudentOS Verified" className="inline-flex items-center">
-                            <ShieldCheck className="w-3 h-3 text-indigo-400" />
-                          </span>
-                        )}
-                      </button>
-                      <span className="text-[9px] text-indigo-400 uppercase font-black bg-indigo-500/10 px-1.5 py-0.2 rounded border border-indigo-500/20">
-                        {senderUser?.role || msg.role}
-                      </span>
-                      {(() => {
-                        const currentServer = chatServers.find(s => s.id === activeServerId);
-                        const serverRoles = currentServer?.roles || [];
-                        const matchedRole = serverRoles.find(r => (senderUser?.role && r.name.toLowerCase().includes(senderUser.role.toLowerCase())) || r.id === (senderUser as any)?.customRoleId);
-                        if (matchedRole) {
-                          return (
-                            <span 
-                              style={{ borderColor: `${matchedRole.color}50`, color: matchedRole.color, backgroundColor: `${matchedRole.color}20` }}
-                              className="text-[9px] font-bold px-1.5 py-0.2 rounded border"
-                            >
-                              {matchedRole.name}
-                            </span>
-                          );
-                        }
-                        return null;
-                      })()}
-                      <div className="flex items-center gap-1">
-                        <span className="text-[9px] text-slate-500">
-                          {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                        {isMine && (
-                          <button 
-                            type="button"
-                            onClick={() => handleOpenReceiptsModal(msg)}
-                            className="text-[10px] hover:scale-110 transition-transform cursor-pointer flex items-center" 
-                            title="Click to view Read Receipts & Unread Recipients"
-                          >
-                            {msg.readBy && msg.readBy.length > 1 ? (
-                              <CheckCheck className="w-3.5 h-3.5 text-sky-400 inline" />
-                            ) : msg.deliveredTo && msg.deliveredTo.length > 0 ? (
-                              <CheckCheck className="w-3.5 h-3.5 text-slate-400 inline" />
-                            ) : (
-                              <Check className="w-3.5 h-3.5 text-slate-400 inline" />
-                            )}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Reply Context preview */}
-                    {msg.replyToText && (
-                      <div className="bg-slate-950/60 border-l-2 border-indigo-500 p-1.5 rounded-r-lg text-[10px] text-slate-400 italic">
-                        <span className="font-bold text-indigo-300">{msg.replyToSender}: </span>
-                        <span>{msg.replyToText}</span>
-                      </div>
-                    )}
-
-                    {/* Main Bubble */}
-                    <div
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setMobileSelectedMsg(msg);
-                        return false;
-                      }}
-                      onTouchStart={() => handleTouchStart(msg)}
-                      onTouchEnd={handleTouchEnd}
-                      onTouchMove={handleTouchEnd}
-                      className={`message-bubble p-3 rounded-2xl text-xs relative group ${isMine ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-slate-950 border border-white/10 text-slate-200 rounded-tl-none'}`}
+                    {/* Sender Avatar - Click to open Profile Card */}
+                    <button
+                      onClick={() => setSelectedProfileUser(senderUser)}
+                      title={`View profile of ${displayName}`}
+                      className="shrink-0 hover:scale-110 transition-transform active:scale-95"
                     >
-                      
-                      {/* Flagged warning badge */}
-                      {msg.flaggedReason && (
-                        <div className="text-[9px] bg-rose-500/20 border border-rose-500/30 text-rose-300 px-2 py-0.5 rounded-md mb-1 font-bold flex items-center gap-1">
-                          <AlertTriangle className="w-3 h-3" />
-                          <span>Safety Flag: {msg.flaggedReason}</span>
-                        </div>
-                      )}
-
-                      {/* Editing state vs Text */}
-                      {editingMsgId === msg.id ? (
-                        <div className="space-y-2">
-                          <textarea
-                            value={editText}
-                            onChange={e => setEditText(e.target.value)}
-                            className="w-full bg-slate-900 border border-white/20 rounded-xl p-2 text-xs text-white"
-                          />
-                          <div className="flex gap-2 justify-end">
-                            <button onClick={() => setEditingMsgId(null)} className="text-[10px] text-slate-400">Cancel</button>
-                            <button onClick={() => handleSaveEdit(msg.id)} className="text-[10px] bg-indigo-500 text-white px-2 py-1 rounded-lg font-bold">Save</button>
-                          </div>
-                        </div>
+                      {senderUser?.avatar || senderUser?.photoURL ? (
+                        <img src={senderUser.avatar || senderUser.photoURL} alt="" className="w-9 h-9 rounded-2xl object-cover border border-white/10 ring-1 ring-white/5 shadow-lg" />
                       ) : (
-                        <p className="whitespace-pre-wrap break-words leading-relaxed">{msg.message}</p>
+                        <div className="w-9 h-9 rounded-2xl bg-indigo-600/30 text-indigo-300 font-extrabold text-xs flex items-center justify-center border border-indigo-500/30 shadow-md">
+                          {displayName.charAt(0).toUpperCase()}
+                        </div>
                       )}
+                    </button>
 
-                      {/* Attachments rendering */}
-                      {msg.attachments && msg.attachments.length > 0 && (
-                        <div className="mt-2 space-y-1.5">
-                          {msg.attachments.map((att, i) => (
-                            <div key={i} className="rounded-xl overflow-hidden border border-white/10 bg-black/20 p-2 space-y-2">
-                              {att.type === 'image' && (
-                                <div className="relative group/img cursor-pointer" onClick={() => setActiveMediaPreview({ type: 'image', url: att.url, name: att.name || 'Image Attachment' })}>
-                                  <img src={att.url} alt={att.name} className="max-h-48 rounded-lg object-cover w-full hover:opacity-95 transition-opacity" />
-                                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center rounded-lg">
-                                    <span className="text-white text-[10px] font-bold bg-black/60 px-2 py-1 rounded-md">Tap to Preview</span>
-                                  </div>
-                                </div>
+                    <div className={`max-w-[85%] sm:max-w-[75%] min-w-0 space-y-1 ${isMine ? 'items-end' : 'items-start'}`}>
+                      
+                      {/* Header info */}
+                      <div className={`flex items-center gap-1.5 text-[10px] ${isMine ? 'justify-end' : 'justify-start'}`}>
+                        <button
+                          onClick={() => setCommunityProfileUser(senderUser)}
+                          className="font-black text-slate-200 hover:text-indigo-400 transition-colors inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <span>{displayName}</span>
+                          {senderUser && getVerificationStatus(senderUser).isVerified && (
+                            <ShieldCheck className="w-3 h-3 text-indigo-400" />
+                          )}
+                        </button>
+                        <span className="text-[8px] text-indigo-400 uppercase font-black bg-indigo-500/10 px-1.5 py-0.2 rounded border border-indigo-500/20 tracking-tighter">
+                          {senderUser?.role || msg.role}
+                        </span>
+                        <div className="flex items-center gap-1 ml-1">
+                          <span className="text-[9px] text-slate-500">
+                            {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                          {isMine && (
+                            <button onClick={() => handleOpenReceiptsModal(msg)} className="hover:scale-110 transition-transform">
+                              {msg.readBy && msg.readBy.length > 1 ? (
+                                <CheckCheck className="w-3.5 h-3.5 text-sky-400" />
+                              ) : msg.deliveredTo && msg.deliveredTo.length > 0 ? (
+                                <CheckCheck className="w-3.5 h-3.5 text-slate-400" />
+                              ) : (
+                                <Check className="w-3.5 h-3.5 text-slate-400" />
                               )}
-                              {att.type === 'video' && (
-                                <div className="space-y-1.5">
-                                  <video controls src={att.url} className="max-h-48 rounded-lg object-cover w-full bg-black" />
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-[10px] text-slate-300 font-mono truncate">{att.name}</span>
-                                    <button 
-                                      onClick={() => setActiveMediaPreview({ type: 'video', url: att.url, name: att.name || 'Video Attachment' })}
-                                      className="text-[10px] text-indigo-400 hover:underline font-bold"
-                                    >
-                                      Fullscreen
-                                    </button>
-                                  </div>
-                                </div>
-                              )}
-                              {att.type === 'audio' && (
-                                <audio controls src={att.url} className="w-full h-8" />
-                              )}
-                              {(att.type === 'pdf' || att.type === 'file') && (
-                                <div className="flex items-center justify-between gap-2">
-                                  <a href={att.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-indigo-300 hover:underline text-[11px] font-bold truncate">
-                                    <Paperclip className="w-3.5 h-3.5 shrink-0" />
-                                    <span className="truncate">{att.name}</span>
-                                  </a>
-                                  <a 
-                                    href={att.url} 
-                                    data-url={att.url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    download={att.name || 'download'} 
-                                    className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-[10px] font-bold shrink-0 flex items-center gap-1"
-                                  >
-                                    <span>Download</span>
-                                  </a>
-                                </div>
-                              )}
-                              {att.type !== 'pdf' && att.type !== 'file' && (
-                                <div className="flex justify-end pt-1">
-                                  <a 
-                                    href={att.url} 
-                                    data-url={att.url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    download={att.name || 'download'} 
-                                    className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-slate-200 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors"
-                                  >
-                                    <span>Download File</span>
-                                  </a>
-                                </div>
-                              )}
-                            </div>
-                          ))}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Reply Context preview */}
+                      {msg.replyToText && (
+                        <div className="bg-slate-950/60 border-l-2 border-indigo-500 p-2 rounded-r-xl text-[10px] text-slate-400 italic mb-0.5 shadow-sm max-w-xs truncate">
+                          <span className="font-bold text-indigo-300">@{msg.replyToSender}: </span>
+                          <span>{msg.replyToText}</span>
                         </div>
                       )}
 
-                      {/* Actions toolbar on Hover with Quick Reactions */}
-                      <div className={`absolute top-1 ${isMine ? '-left-44' : '-right-44'} hidden group-hover:flex items-center gap-1 bg-slate-900 border border-white/10 p-1.5 rounded-2xl shadow-2xl z-10`}>
-                        {['👍', '❤️', '😂', '😮', '🎉'].map(emoji => (
-                          <button key={emoji} onClick={() => handleAddReaction(msg.id, emoji)} className="hover:scale-125 transition-transform p-0.5 text-xs" title={`React with ${emoji}`}>
-                            {emoji}
-                          </button>
-                        ))}
-                        <button onClick={() => setReplyingTo(msg)} title="Reply" className="p-1 hover:text-indigo-400 text-slate-400"><Reply className="w-3 h-3" /></button>
-                        <button onClick={() => setForwardingMsg(msg)} title="Forward" className="p-1 hover:text-indigo-400 text-slate-400"><Forward className="w-3 h-3" /></button>
-                        <button onClick={() => handleTogglePin(msg.id)} title="Pin Message" className="p-1 hover:text-amber-400 text-slate-400"><Pin className="w-3 h-3" /></button>
-                        {isMine && <button onClick={() => { setEditingMsgId(msg.id); setEditText(msg.message); }} title="Edit" className="p-1 hover:text-indigo-400 text-slate-400"><Edit3 className="w-3 h-3" /></button>}
-                        {(isMine || isModerator) && <button onClick={() => handleDeleteMessage(msg.id, true)} title="Delete Everyone" className="p-1 hover:text-rose-400 text-slate-400"><Trash2 className="w-3 h-3" /></button>}
+                      {/* Main Bubble */}
+                      <div
+                        onContextMenu={(e) => { e.preventDefault(); setMobileSelectedMsg(msg); }}
+                        className={`message-bubble p-3 rounded-2xl text-[13px] relative group transition-all duration-200 ${isMine ? 'bg-indigo-600 text-white rounded-tr-none shadow-lg shadow-indigo-600/20' : 'bg-slate-950 border border-white/10 text-slate-200 rounded-tl-none shadow-md'}`}
+                      >
+                        {/* Message Actions (Desktop hover) */}
+                        <div className={`absolute -top-3 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 bg-slate-900 border border-white/10 rounded-xl p-1 z-10 shadow-2xl ${isMine ? 'right-0' : 'left-0'}`}>
+                          {['👍', '❤️', '🔥'].map(emoji => (
+                            <button key={emoji} onClick={() => handleToggleReaction(msg.id, emoji)} className="p-1 hover:bg-white/10 rounded-lg text-xs hover:scale-125 transition-transform">{emoji}</button>
+                          ))}
+                          <div className="w-px h-3 bg-white/10 mx-0.5" />
+                          <button onClick={() => setReplyingTo(msg)} className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white" title="Reply"><Reply className="w-3.5 h-3.5" /></button>
+                          {isMine && <button onClick={() => { setEditingMsgId(msg.id); setEditText(msg.message); }} className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white" title="Edit"><Edit3 className="w-3.5 h-3.5" /></button>}
+                        </div>
+                        
+                        {msg.flaggedReason && (
+                          <div className="text-[10px] bg-rose-500/20 border border-rose-500/30 text-rose-300 px-2 py-0.5 rounded-md mb-1 font-bold flex items-center gap-1 animate-pulse">
+                            <AlertTriangle className="w-3 h-3" />
+                            <span>Flagged: {msg.flaggedReason}</span>
+                          </div>
+                        )}
+
+                        {editingMsgId === msg.id ? (
+                          <div className="space-y-2">
+                            <textarea value={editText} onChange={e => setEditText(e.target.value)} className="w-full bg-slate-900 border border-white/20 rounded-xl p-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500" autoFocus />
+                            <div className="flex gap-2 justify-end">
+                              <button onClick={() => setEditingMsgId(null)} className="text-[11px] text-slate-400 font-bold px-2 py-1">Cancel</button>
+                              <button onClick={() => handleSaveEdit(msg.id)} className="text-[11px] bg-indigo-500 text-white px-3 py-1 rounded-lg font-bold shadow-lg">Save</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="whitespace-pre-wrap break-words leading-relaxed selection:bg-indigo-300 selection:text-indigo-900">{msg.message}</p>
+                        )}
+
+                        {/* Attachments rendering */}
+                        {msg.attachments && msg.attachments.length > 0 && (
+                          <div className="mt-2 space-y-2">
+                            {msg.attachments.map((att, i) => (
+                              <div key={i} className="rounded-xl overflow-hidden border border-white/10 bg-black/30 p-2 group/att">
+                                {att.type === 'image' && (
+                                  <img src={att.url} alt={att.name} onClick={() => setActiveMediaPreview({ type: 'image', url: att.url, name: att.name || 'Image' })} className="max-h-64 rounded-lg object-cover w-full cursor-pointer hover:opacity-90 transition-opacity" />
+                                )}
+                                {att.type === 'video' && (
+                                  <video controls src={att.url} className="max-h-64 rounded-lg object-cover w-full bg-black shadow-inner" />
+                                )}
+                                {att.type === 'audio' && (
+                                  <audio controls src={att.url} className="w-full h-8 mt-1" />
+                                )}
+                                {(att.type === 'pdf' || att.type === 'file') && (
+                                  <div className="flex items-center justify-between gap-3 p-1">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <div className="p-2 bg-indigo-600/20 rounded-lg text-indigo-400"><Paperclip className="w-4 h-4" /></div>
+                                      <span className="text-[11px] font-bold truncate text-slate-200">{att.name}</span>
+                                    </div>
+                                    <a href={att.url} download className="p-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors"><Download className="w-4 h-4" /></a>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Reactions display unified inside bubble */}
+                        {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                          <div className={`flex flex-wrap gap-1.5 mt-2.5 ${isMine ? 'justify-end' : 'justify-start'}`}>
+                            {Object.entries(msg.reactions).map(([emoji, uids]) => {
+                              const hasReacted = uids.includes(currentUser?.uid || '');
+                              return (
+                                <button
+                                  key={emoji}
+                                  onClick={() => handleToggleReaction(msg.id, emoji)}
+                                  className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10px] font-black transition-all ${hasReacted ? 'bg-indigo-500/20 border-indigo-500 text-white scale-110 shadow-md' : 'bg-slate-950/60 border-white/10 text-slate-400 hover:border-white/20'}`}
+                                >
+                                  <span>{emoji}</span>
+                                  <span>{uids.length}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     </div>
-
-                    {/* Reactions display */}
-                    {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {Object.entries(msg.reactions).map(([emoji, uids]) => (
-                          <button
-                            key={emoji}
-                            onClick={() => handleAddReaction(msg.id, emoji)}
-                            className="bg-slate-950/80 border border-white/10 text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1 text-slate-300 hover:border-indigo-500"
-                          >
-                            <span>{emoji}</span>
-                            <span className="font-bold text-[9px] text-indigo-400">{(uids as any).length}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-
                   </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* RIGHT SIDEBAR: Member List */}
+          <AnimatePresence>
+            {showMemberList && !isDirectMessage && (
+              <motion.div
+                initial={{ width: 0, opacity: 0 }}
+                animate={{ width: 260, opacity: 1 }}
+                exit={{ width: 0, opacity: 0 }}
+                className="hidden lg:flex flex-col border-l border-white/10 bg-slate-950/30 overflow-hidden"
+              >
+                <div className="p-4 border-b border-white/10 flex items-center justify-between">
+                  <h5 className="text-[10px] font-black uppercase tracking-widest text-slate-500">Room Members</h5>
+                  <span className="bg-slate-900 px-2 py-0.5 rounded-lg text-[10px] font-bold text-slate-400">{(activeRoomInfo.members || []).length}</span>
                 </div>
-              );
-            })
-          )}
+                <div className="flex-1 overflow-y-auto p-3 space-y-1 scrollbar-thin">
+                  {(activeRoomInfo.members || []).map(uid => {
+                    const user = resolveUser(uid);
+                    const isOwner = activeRoomInfo.creatorId === uid;
+                    const isMod = (activeRoomInfo.moderators || []).includes(uid);
+                    
+                    return (
+                      <button
+                        key={uid}
+                        onClick={() => setCommunityProfileUser(user)}
+                        className="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-all group"
+                      >
+                        <div className="relative">
+                          {user.avatar || user.photoURL ? (
+                            <img src={user.avatar || user.photoURL} alt="" className="w-8 h-8 rounded-xl object-cover ring-1 ring-white/10" />
+                          ) : (
+                            <div className="w-8 h-8 rounded-xl bg-slate-900 border border-white/10 flex items-center justify-center text-[10px] font-black text-slate-400">
+                              {user.name.charAt(0)}
+                            </div>
+                          )}
+                          <span className={`w-2.5 h-2.5 rounded-full ${getStatusColor(uid)} border-2 border-slate-950 absolute -bottom-0.5 -right-0.5`} />
+                        </div>
+                        <div className="flex-1 min-w-0 text-left">
+                          <div className="flex items-center gap-1">
+                            <p className="text-[11px] font-black text-slate-200 truncate group-hover:text-indigo-400 transition-colors">{user.name}</p>
+                            {isOwner && <span title="Server Owner"><ShieldCheck className="w-3 h-3 text-amber-500" /></span>}
+                            {isMod && !isOwner && <span title="Moderator"><Shield className="w-3 h-3 text-indigo-400" /></span>}
+                          </div>
+                          <p className="text-[9px] text-slate-500 uppercase font-bold tracking-tighter truncate">{user.role}</p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* Replying context banner */}
@@ -2734,181 +2841,227 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
               <X className="w-4 h-4" />
             </button>
 
-            {/* Modal Header */}
-            <div className="flex items-center gap-3 border-b border-white/10 pb-4">
-              <span className="text-3xl p-2 bg-slate-950 border border-white/10 rounded-2xl">{activeRoomInfo.icon}</span>
-              <div>
-                <h3 className="text-base font-black text-white flex items-center gap-2">
-                  {activeRoomInfo.name}
-                  {isModerator && <span className="text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-full font-bold">Admin/Mod</span>}
-                </h3>
-                <p className="text-xs text-slate-400">{activeRoomInfo.description || 'No description provided'}</p>
-              </div>
+            {/* Tab Selector */}
+            <div className="flex bg-slate-950/50 p-1 rounded-2xl border border-white/5 shrink-0">
+              {[
+                { id: 'info', label: 'Info', icon: Info },
+                { id: 'members', label: 'Members', icon: Users },
+                { id: 'roles', label: 'Roles', icon: Shield }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setSettingsTab(tab.id as any)}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-[11px] font-black uppercase tracking-widest transition-all ${settingsTab === tab.id ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+                >
+                  <tab.icon className="w-3.5 h-3.5" />
+                  <span>{tab.label}</span>
+                </button>
+              ))}
             </div>
 
-            {/* Editable Room Info (Moderators / Admins) */}
-            {isModerator && (
-              <form
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  const updated: ChatRoom = {
-                    ...activeRoomInfo,
-                    name: editRoomName.trim() || activeRoomInfo.name,
-                    description: editRoomDescription.trim(),
-                    icon: editRoomIcon.trim() || activeRoomInfo.icon
-                  };
-                  setChatRooms(prev => prev.map(r => r.id === updated.id ? updated : r));
-                  await saveChatRoom(updated);
-                  showNotification('Room details updated!');
-                }}
-                className="space-y-3 bg-slate-950/60 p-4 rounded-2xl border border-white/5"
-              >
-                <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-wider">Room Information</h4>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Room Icon & Name</label>
-                  <div className="flex gap-2 mt-1">
-                    <input
-                      type="text"
-                      value={editRoomIcon}
-                      onChange={e => setEditRoomIcon(e.target.value)}
-                      className="w-12 bg-slate-900 border border-white/10 rounded-xl px-2 py-2 text-center text-sm text-white"
-                    />
-                    <input
-                      type="text"
-                      value={editRoomName}
-                      onChange={e => setEditRoomName(e.target.value)}
-                      required
-                      className="flex-1 bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
-                    />
+            {/* TAB: INFO */}
+            {settingsTab === 'info' && (
+              <div className="space-y-5 animate-fadeIn">
+                {/* Editable Room Info (Moderators / Admins) */}
+                {isModerator && (
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      const updated: ChatRoom = {
+                        ...activeRoomInfo,
+                        name: editRoomName.trim() || activeRoomInfo.name,
+                        description: editRoomDescription.trim(),
+                        icon: editRoomIcon.trim() || activeRoomInfo.icon
+                      };
+                      if (activeRoomInfo.serverId) {
+                        const s = chatServers.find(srv => srv.id === activeRoomInfo.serverId);
+                        if (s) {
+                          const updatedS = { ...s, name: updated.name, description: updated.description, icon: updated.icon };
+                          await saveChatServer(updatedS);
+                        }
+                      } else {
+                        setChatRooms(prev => prev.map(r => r.id === updated.id ? updated : r));
+                        await saveChatRoom(updated);
+                      }
+                      showNotification('Room details updated!');
+                    }}
+                    className="space-y-3 bg-slate-950/40 p-4 rounded-2xl border border-white/5"
+                  >
+                    <h4 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Update Community Identity</h4>
+                    <div className="flex gap-3">
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black text-slate-500 uppercase ml-1">Icon</label>
+                        <input
+                          type="text"
+                          value={editRoomIcon}
+                          onChange={e => setEditRoomIcon(e.target.value)}
+                          className="w-14 bg-slate-900 border border-white/10 rounded-xl py-2.5 text-center text-xl text-white focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                      <div className="flex-1 space-y-1.5">
+                        <label className="text-[9px] font-black text-slate-500 uppercase ml-1">Display Name</label>
+                        <input
+                          type="text"
+                          value={editRoomName}
+                          onChange={e => setEditRoomName(e.target.value)}
+                          required
+                          className="w-full bg-slate-900 border border-white/10 rounded-xl px-4 py-2.5 text-sm font-bold text-white focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black text-slate-500 uppercase ml-1">Community Motto / Description</label>
+                      <textarea
+                        value={editRoomDescription}
+                        onChange={e => setEditRoomDescription(e.target.value)}
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl px-4 py-3 text-xs text-slate-300 h-24 focus:outline-none focus:border-indigo-500 resize-none"
+                      />
+                    </div>
+                    <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-3 rounded-xl text-xs uppercase tracking-widest shadow-lg shadow-indigo-600/20 active:scale-95 transition-all">Save Changes</button>
+                  </form>
+                )}
+
+                {/* Invite Code Section */}
+                <div className="bg-slate-950/40 p-4 rounded-2xl border border-white/5 space-y-2">
+                  <div className="flex justify-between items-center px-1">
+                    <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Share Invite Code</span>
+                    {isModerator && !activeRoomInfo.serverId && (
+                      <button
+                        onClick={async () => {
+                          const newCode = await regenerateRoomCode(activeRoomInfo);
+                          setChatRooms(prev => prev.map(r => r.id === activeRoomInfo.id ? { ...r, code: newCode } : r));
+                          showNotification(`Code refreshed: ${newCode}`);
+                        }}
+                        className="text-[9px] text-indigo-400 hover:text-indigo-300 font-black uppercase tracking-tighter"
+                      >
+                        Refresh Code
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex justify-between items-center bg-slate-900 border border-white/10 p-3 rounded-xl">
+                    <span className="font-mono text-emerald-400 font-black text-lg tracking-widest">{activeRoomInfo.code || 'GLOBAL'}</span>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(activeRoomInfo.code || 'GLOBAL');
+                        setCopiedLink(true);
+                        setTimeout(() => setCopiedLink(false), 2000);
+                        showNotification('Code copied to clipboard!');
+                      }}
+                      className="bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all border border-emerald-500/20"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      {copiedLink ? 'Copied' : 'Copy'}
+                    </button>
                   </div>
                 </div>
-
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase">Description</label>
-                  <textarea
-                    value={editRoomDescription}
-                    onChange={e => setEditRoomDescription(e.target.value)}
-                    className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white h-16 mt-1"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 rounded-xl text-xs uppercase"
-                >
-                  Save Room Details
-                </button>
-              </form>
+              </div>
             )}
 
-            {/* Invite Code Section */}
-            <div className="bg-slate-950/60 p-4 rounded-2xl border border-white/5 space-y-2">
-              <div className="flex justify-between items-center">
-                <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Invite Code</span>
-                {isModerator && (
-                  <button
-                    onClick={async () => {
-                      const newCode = await regenerateRoomCode(activeRoomInfo);
-                      setChatRooms(prev => prev.map(r => r.id === activeRoomInfo.id ? { ...r, code: newCode } : r));
-                      showNotification(`Invite code regenerated: ${newCode}`);
-                    }}
-                    className="text-[10px] text-indigo-400 hover:underline flex items-center gap-1 font-bold"
-                  >
-                    Regenerate Code
-                  </button>
-                )}
-              </div>
-              <div className="flex justify-between items-center bg-slate-900 p-3 rounded-xl border border-white/10">
-                <span className="font-mono text-emerald-400 font-black text-lg tracking-widest">{activeRoomInfo.code || 'GLOBAL'}</span>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(activeRoomInfo.code || 'GLOBAL');
-                    setCopiedLink(true);
-                    setTimeout(() => setCopiedLink(false), 2000);
-                  }}
-                  className="bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                  {copiedLink ? 'Copied!' : 'Copy Code'}
-                </button>
-              </div>
-            </div>
+            {/* TAB: MEMBERS */}
+            {settingsTab === 'members' && (
+              <div className="space-y-4 animate-fadeIn">
+                <div className="flex justify-between items-center px-1">
+                  <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Community Members ({(activeRoomInfo.members || []).length})</h4>
+                  <button onClick={() => setShowQrModal(true)} className="text-[9px] text-indigo-400 font-black uppercase flex items-center gap-1"><UserPlus className="w-3 h-3" /> Invite</button>
+                </div>
+                <div className="space-y-1.5 max-h-[400px] overflow-y-auto pr-1 scrollbar-thin">
+                  {(activeRoomInfo.members || []).map(memberUid => {
+                    const memberUser = resolveUser(memberUid);
+                    const isOwner = activeRoomInfo.creatorId === memberUid;
+                    const isMod = activeRoomInfo.moderators?.includes(memberUid) || isOwner;
+                    const isSelf = memberUid === currentUser?.uid;
 
-            {/* Members List Section */}
-            <div className="bg-slate-950/60 p-4 rounded-2xl border border-white/5 space-y-3">
-              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex justify-between items-center">
-                <span>Members ({(activeRoomInfo.members || []).length || 1})</span>
-              </h4>
-              <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-thin pr-1">
-                {(activeRoomInfo.members || []).map(memberUid => {
-                  const memberUser = resolveUser(memberUid);
-                  const memberName = memberUid === currentUser?.uid ? `${memberUser.name} (You)` : memberUser.name;
-                  const isOwner = activeRoomInfo.creatorId === memberUid;
-                  const isMod = activeRoomInfo.moderators?.includes(memberUid) || isOwner;
+                    return (
+                      <div key={memberUid} className="flex justify-between items-center p-3 bg-slate-950/40 rounded-2xl border border-white/5 group hover:bg-slate-950/60 transition-all">
+                        <button onClick={() => setCommunityProfileUser(memberUser)} className="flex items-center gap-3 min-w-0">
+                          <div className="relative">
+                            {memberUser.avatar || memberUser.photoURL ? (
+                              <img src={memberUser.avatar || memberUser.photoURL} alt="" className="w-10 h-10 rounded-xl object-cover ring-1 ring-white/10" />
+                            ) : (
+                              <div className="w-10 h-10 rounded-xl bg-slate-900 border border-white/10 flex items-center justify-center font-black text-xs text-slate-400">
+                                {memberUser.name.charAt(0)}
+                              </div>
+                            )}
+                            <span className={`w-2.5 h-2.5 rounded-full ${getStatusColor(memberUid)} border-2 border-slate-950 absolute -bottom-0.5 -right-0.5`} />
+                          </div>
+                          <div className="text-left min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <p className="text-sm font-black text-slate-200 truncate">{memberUser.name}{isSelf && ' (You)'}</p>
+                              {isOwner && <span title="Owner"><ShieldCheck className="w-3.5 h-3.5 text-amber-500" /></span>}
+                            </div>
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-tighter">{memberUser.role}</span>
+                              {isMod && !isOwner && <span className="text-[8px] bg-indigo-500/20 text-indigo-400 px-1 py-0.2 rounded border border-indigo-500/30 font-black uppercase">Moderator</span>}
+                            </div>
+                          </div>
+                        </button>
 
-                  return (
-                    <div key={memberUid} className="flex justify-between items-center p-2.5 bg-slate-900 rounded-xl border border-white/5 text-xs text-white">
-                      <button
-                        onClick={() => setSelectedProfileUser(memberUser)}
-                        className="flex items-center gap-2 hover:opacity-80 transition-opacity"
-                      >
-                        {memberUser.avatar || memberUser.photoURL ? (
-                          <img src={memberUser.avatar || memberUser.photoURL} alt="" className="w-6 h-6 rounded-full object-cover" />
-                        ) : (
-                          <span className="w-6 h-6 rounded-full bg-indigo-600/30 text-indigo-300 flex items-center justify-center font-bold text-[10px]">
-                            {memberName.charAt(0)}
-                          </span>
-                        )}
-                        <span className="font-semibold">{memberName}</span>
-                        {isOwner && <span className="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded font-bold">Owner</span>}
-                        {isMod && !isOwner && <span className="text-[9px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.5 rounded font-bold">Mod</span>}
-                      </button>
-
-                      {isModerator && memberUid !== currentUser?.uid && !isOwner && (
-                        <div className="flex gap-1.5">
-                          {!isMod && (
-                            <button
-                              onClick={async () => {
-                                const updated = {
-                                  ...activeRoomInfo,
-                                  moderators: [...(activeRoomInfo.moderators || []), memberUid]
-                                };
+                        {isModerator && !isOwner && !isSelf && (
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {!isMod && (
+                              <button onClick={() => {
+                                const updated = { ...activeRoomInfo, moderators: [...(activeRoomInfo.moderators || []), memberUid] };
                                 setChatRooms(prev => prev.map(r => r.id === updated.id ? updated : r));
-                                await saveChatRoom(updated);
-                                showNotification(`Promoted ${memberUser.name} to moderator.`);
-                              }}
-                              className="text-[10px] bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 px-2 py-1 rounded-lg font-bold"
-                            >
-                              Make Mod
-                            </button>
-                          )}
-                          <button
-                            onClick={async () => {
-                              const updated = {
-                                ...activeRoomInfo,
-                                members: (activeRoomInfo.members || []).filter(m => m !== memberUid),
-                                moderators: (activeRoomInfo.moderators || []).filter(m => m !== memberUid)
-                              };
+                                saveChatRoom(updated);
+                                showNotification(`Promoted ${memberUser.name}`);
+                              }} className="p-2 bg-indigo-600/20 text-indigo-400 rounded-lg hover:bg-indigo-600/40" title="Promote to Mod"><Shield className="w-4 h-4" /></button>
+                            )}
+                            <button onClick={() => {
+                              const updated = { ...activeRoomInfo, members: (activeRoomInfo.members || []).filter(m => m !== memberUid), moderators: (activeRoomInfo.moderators || []).filter(m => m !== memberUid) };
                               setChatRooms(prev => prev.map(r => r.id === updated.id ? updated : r));
-                              await saveChatRoom(updated);
-                              showNotification(`Removed ${memberUser.name} from room.`);
-                            }}
-                            className="text-[10px] bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 px-2 py-1 rounded-lg font-bold"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                              saveChatRoom(updated);
+                              showNotification(`Removed ${memberUser.name}`);
+                            }} className="p-2 bg-rose-600/20 text-rose-400 rounded-lg hover:bg-rose-600/40" title="Kick Member"><LogOut className="w-4 h-4" /></button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* TAB: ROLES */}
+            {settingsTab === 'roles' && (
+              <div className="space-y-5 animate-fadeIn">
+                <div className="flex justify-between items-center px-1">
+                  <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Custom Roles & Permissions</h4>
+                  {isModerator && (
+                    <button
+                      onClick={() => {
+                        setRolesTargetId(activeRoomInfo.id);
+                        setShowManageRolesModal(true);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black uppercase tracking-widest shadow-lg shadow-indigo-600/20 transition-all"
+                    >
+                      + Create Role
+                    </button>
+                  )}
+                </div>
+                
+                <div className="bg-slate-950/40 p-5 rounded-3xl border border-white/5 flex flex-col items-center text-center space-y-3 py-12">
+                  <Shield className="w-12 h-12 text-slate-700 animate-pulse" />
+                  <div>
+                    <p className="text-sm font-black text-slate-400">Custom Communities Roles</p>
+                    <p className="text-[10px] text-slate-600 mt-1 max-w-[240px]">Create distinct roles with specialized permissions to organize your community better.</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setRolesTargetId(activeRoomInfo.id);
+                      setShowManageRolesModal(true);
+                    }}
+                    className="text-[11px] text-indigo-400 font-bold hover:underline"
+                  >
+                    Configure Advanced Permissions
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Danger Zone Actions */}
-            <div className="border-t border-white/10 pt-4 space-y-2">
+            <div className="border-t border-white/10 pt-5 space-y-3">
               {activeRoomInfo.id !== 'group-all' && (
-                <div className="flex gap-3">
+                <div className="grid grid-cols-2 gap-3">
                   <button
                     onClick={async () => {
                       if (!currentUser) return;
@@ -2918,26 +3071,25 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                       setShowGroupSettings(false);
                       showNotification(`Left ${activeRoomInfo.name}`);
                     }}
-                    className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5"
+                    className="flex-1 bg-slate-950 hover:bg-slate-800 text-slate-400 font-black py-3 rounded-2xl text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 border border-white/5 transition-all"
                   >
-                    <LogOut className="w-3.5 h-3.5 text-rose-400" />
-                    Leave Room
+                    <LogOut className="w-3.5 h-3.5 text-rose-500" />
+                    <span>Leave Room</span>
                   </button>
-
-                  {(isModerator || activeRoomInfo.creatorId === currentUser?.uid) && (
+                  {isModerator && (
                     <button
                       onClick={async () => {
-                        if (!confirm(`Are you sure you want to delete room "${activeRoomInfo.name}"? This cannot be undone.`)) return;
-                        await deleteChatRoom(activeRoomInfo.id, currentUser?.uid);
+                        if (!window.confirm(`Are you sure you want to PERMANENTLY delete ${activeRoomInfo.name}? This action is irreversible.`)) return;
+                        await deleteChatRoom(activeRoomInfo.id);
                         setChatRooms(prev => prev.filter(r => r.id !== activeRoomInfo.id));
                         setActiveChatTargetId('group-all');
                         setShowGroupSettings(false);
-                        showNotification(`Deleted room ${activeRoomInfo.name}`);
+                        showNotification(`Deleted ${activeRoomInfo.name}`);
                       }}
-                      className="flex-1 bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/30 text-rose-400 font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5"
+                      className="flex-1 bg-rose-600/10 hover:bg-rose-600/20 text-rose-400 font-black py-3 rounded-2xl text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 border border-rose-500/20 transition-all"
                     >
-                      <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                      Delete Room
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete Hub</span>
                     </button>
                   )}
                 </div>
@@ -3827,10 +3979,15 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                 className="h-full w-full object-cover"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-black/30" />
-              <div className="absolute bottom-3 left-4">
-                <span className="px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider bg-black/40 text-white backdrop-blur-md border border-white/10">
+              <div className="absolute bottom-3 left-4 flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-widest bg-black/40 text-white backdrop-blur-md border border-white/10">
                   {communityProfileUser.role.toUpperCase()}
                 </span>
+                {communityProfileUser.streakDays && communityProfileUser.streakDays > 0 && (
+                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-widest bg-amber-500/20 text-amber-400 backdrop-blur-md border border-amber-500/30 flex items-center gap-1">
+                    <Flame className="w-3 h-3" /> {communityProfileUser.streakDays}
+                  </span>
+                )}
               </div>
             </div>
 
@@ -3838,49 +3995,65 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
             <div className="px-5 pb-6 space-y-4">
               <div className="flex justify-between items-end -mt-10 relative">
                 <div className="relative">
-                  {communityProfileUser.avatar || communityProfileUser.photoURL ? (
-                    <img
-                      src={communityProfileUser.avatar || communityProfileUser.photoURL}
-                      alt=""
-                      className="w-20 h-20 rounded-2xl object-cover ring-4 ring-slate-900 shadow-xl border border-white/10"
-                    />
-                  ) : (
-                    <div className="w-20 h-20 rounded-2xl bg-indigo-600 ring-4 ring-slate-900 flex items-center justify-center text-2xl font-black text-white shadow-xl">
-                      {communityProfileUser.name.charAt(0)}
-                    </div>
-                  )}
-                  <span className={`w-4 h-4 rounded-full border-2 border-slate-900 ${getStatusColor(communityProfileUser.uid || '')} absolute bottom-0 right-0 ring-2 ring-emerald-500/30`} />
+                  <div className={`p-1 rounded-2xl ${communityProfileUser.role === 'admin' || communityProfileUser.role === 'super_admin' ? 'bg-gradient-to-tr from-amber-400 via-yellow-500 to-amber-600 shadow-[0_0_15px_rgba(245,158,11,0.5)]' : 'bg-slate-800'}`}>
+                    {communityProfileUser.avatar || communityProfileUser.photoURL ? (
+                      <img
+                        src={communityProfileUser.avatar || communityProfileUser.photoURL}
+                        alt=""
+                        className="w-20 h-20 rounded-xl object-cover ring-4 ring-slate-900 shadow-xl border border-white/10"
+                      />
+                    ) : (
+                      <div className="w-20 h-20 rounded-xl bg-indigo-600 ring-4 ring-slate-900 flex items-center justify-center text-2xl font-black text-white shadow-xl">
+                        {communityProfileUser.name.charAt(0)}
+                      </div>
+                    )}
+                  </div>
+                  <span className={`w-5 h-5 rounded-full border-4 border-slate-900 ${getStatusColor(communityProfileUser.uid || '')} absolute -bottom-1 -right-1 shadow-lg`} />
                 </div>
 
-                {currentUser?.uid !== communityProfileUser.uid && (
-                  <button
-                    onClick={async () => {
-                      if (!currentUser) return;
-                      const room = await getOrCreateDirectMessageRoom(currentUser as any, communityProfileUser as any);
-                      if (!chatRooms.some(r => r.id === room.id)) {
-                        setChatRooms(prev => [room, ...prev]);
-                      }
-                      setActiveServerId('home');
-                      setActiveChatTargetId(room.id);
-                      setCommunityProfileUser(null);
-                      showNotification(`Opened direct chat with ${communityProfileUser.name}`);
-                    }}
-                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-lg flex items-center gap-1.5 active:scale-95"
-                  >
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    <span>Message</span>
-                  </button>
-                )}
+                <div className="flex flex-col gap-2 items-end">
+                  {currentUser?.uid !== communityProfileUser.uid && (
+                    <button
+                      onClick={async () => {
+                        if (!currentUser) return;
+                        const room = await getOrCreateDirectMessageRoom(currentUser as any, communityProfileUser as any);
+                        if (!chatRooms.some(r => r.id === room.id)) {
+                          setChatRooms(prev => [room, ...prev]);
+                        }
+                        setActiveServerId('home');
+                        setActiveChatTargetId(room.id);
+                        setCommunityProfileUser(null);
+                        showNotification(`Opened direct chat with ${communityProfileUser.name}`);
+                      }}
+                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black transition-all shadow-lg shadow-indigo-600/30 flex items-center gap-1.5 active:scale-95"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      <span>Message</span>
+                    </button>
+                  )}
+                  {isModerator && currentUser?.uid !== communityProfileUser.uid && (
+                    <button
+                      onClick={() => {
+                        setRolesTargetId(activeRoomInfo.id);
+                        setShowManageRolesModal(true);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-black uppercase tracking-widest border border-white/10 flex items-center gap-1.5 transition-all active:scale-95"
+                    >
+                      <Shield className="w-3 h-3" />
+                      <span>Manage Roles</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div>
                 <div className="flex items-center gap-1.5">
-                  <h4 className="text-base font-black text-white">{communityProfileUser.name}</h4>
+                  <h4 className="text-lg font-black text-white">{communityProfileUser.name}</h4>
                   {getVerificationStatus(communityProfileUser).isVerified && (
-                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    <ShieldCheck className="w-4 h-4 text-indigo-400" />
                   )}
                 </div>
-                <p className="text-xs text-slate-400 font-medium">@{communityProfileUser.email.split('@')[0]}</p>
+                <p className="text-xs text-slate-500 font-bold tracking-tight">@{communityProfileUser.email.split('@')[0]}</p>
               </div>
 
               {/* Roles & Badges Row */}
@@ -3890,8 +4063,13 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                     <ShieldAlert size={10} /> Root Admin
                   </span>
                 )}
-                {(communityProfileUser.badges || []).slice(0, 3).map((badge, bIdx) => (
-                  <span key={bIdx} className="px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[9px] font-black uppercase tracking-widest flex items-center gap-1">
+                {communityProfileUser.role === 'admin' && (
+                  <span className="px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[9px] font-black uppercase tracking-widest flex items-center gap-1">
+                    <ShieldCheck size={10} /> Campus Admin
+                  </span>
+                )}
+                {(communityProfileUser.badges || []).slice(0, 4).map((badge, bIdx) => (
+                  <span key={bIdx} className="px-2 py-0.5 rounded-lg bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 text-[9px] font-black uppercase tracking-widest flex items-center gap-1">
                     <Award size={10} /> {badge.replace(/_/g, ' ')}
                   </span>
                 ))}

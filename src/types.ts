@@ -427,7 +427,7 @@ export interface ServerChannel {
   serverId: string;
   name: string;
   type: 'text' | 'announcement' | 'class' | 'voice';
-  category?: 'General' | 'Announcements' | 'Class & Doubts' | 'Study Lounge';
+  category?: string;
   topic?: string;
   isPrivate?: boolean;
   allowedRoleIds?: string[];
