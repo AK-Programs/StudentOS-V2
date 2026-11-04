@@ -17,7 +17,8 @@ import {
   savePeerMessage, deletePeerMessage, saveChatRoom, joinChatRoom, leaveChatRoom, 
   deleteChatRoom, regenerateRoomCode, getPeerMessages, getAllUserProfiles, getOrCreateDirectMessageRoom,
   getChatServers, saveChatServer, createChatServerChannel, deleteChatServerChannel,
-  saveCustomRole, deleteCustomRole, markMessageAsRead, getMessageReadReceipts, DEFAULT_SERVERS, joinChatServer
+  saveCustomRole, deleteCustomRole, markMessageAsRead, getMessageReadReceipts, DEFAULT_SERVERS, joinChatServer,
+  deleteChatServer, transferServerOwnership, muteServerMember, removeServerMember
 } from '../lib/supabaseChat';
 import { saveAppNotification } from '../lib/notifications';
 import { supabase } from '../lib/supabase';
@@ -476,6 +477,10 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
   const [homeSidebarTab, setHomeSidebarTab] = useState<'all' | 'dms' | 'groups'>('all');
   const [showMemberList, setShowMemberList] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'info' | 'members' | 'roles'>('info');
+  const [showServerSettingsModal, setShowServerSettingsModal] = useState(false);
+  const [serverSettingsTab, setServerSettingsTab] = useState<'info' | 'members' | 'roles'>('info');
+  const [transferOwnerTargetUid, setTransferOwnerTargetUid] = useState('');
+  const [showDeleteServerConfirm, setShowDeleteServerConfirm] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
 
@@ -1306,6 +1311,18 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
   const handleSendChat = async () => {
     if ((!newChatText.trim() && attachedFiles.length === 0) || !currentUser) return;
 
+    const currentServer = chatServers.find(s => s.id === activeServerId);
+    if (currentServer) {
+      if (currentServer.mutedMembers?.includes(currentUser.uid)) {
+        showNotification('You are muted in this server and cannot send messages.');
+        return;
+      }
+      if (!currentServer.members?.includes(currentUser.uid) && currentServer.ownerId !== currentUser.uid) {
+        showNotification('You must join this server to send messages.');
+        return;
+      }
+    }
+
     // AI Moderation
     const mod = moderateChatMessage(newChatText, currentUser.role);
     if (mod.flagged && mod.category === 'fake_news') {
@@ -1399,6 +1416,8 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
     showNotification('Message updated');
   };
 
+
+
   // React to Message
   const handleAddReaction = async (msgId: string, emoji: string) => {
     if (!currentUser) return;
@@ -1425,6 +1444,16 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
     if (!currentUser) return;
 
     if (forEveryone) {
+      const currentServer = chatServers.find(s => s.id === activeServerId);
+      const isOwnerOrAdmin = currentServer && (currentServer.ownerId === currentUser?.uid || currentUser?.role === 'admin' || currentUser?.role === 'super_admin');
+      const targetMsg = chats.find(c => c.id === msgId);
+      const isMine = targetMsg?.ownerUid === currentUser?.uid;
+
+      if (!isMine && !isOwnerOrAdmin) {
+        showNotification('Only the server owner or message author can delete this message.');
+        return;
+      }
+
       setChats(prev => prev.filter(c => c.id !== msgId));
       await deletePeerMessage(msgId);
       showNotification('Message deleted for everyone.');
@@ -2282,10 +2311,16 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
               </button>
             )}
 
-            {/* Group QR Modal Trigger */}
+            {/* Group QR / Server Invite Trigger */}
             {!isDirectMessage && (
               <button
-                onClick={() => setShowQrModal(true)}
+                onClick={() => {
+                  if (activeServerId !== 'home') {
+                    setShowServerSettingsModal(true);
+                  } else {
+                    setShowQrModal(true);
+                  }
+                }}
                 title="Invite Member"
                 className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-white/10 transition-all active:scale-90"
               >
@@ -2293,21 +2328,39 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
               </button>
             )}
 
-            {/* Settings button */}
+            {/* Settings button (Room Settings or Server Settings for Owner/Admin) */}
             {!isDirectMessage && (
-              <button
-                onClick={() => {
-                  setEditRoomName(activeRoomInfo.name);
-                  setEditRoomDescription(activeRoomInfo.description || '');
-                  setEditRoomIcon(activeRoomInfo.icon || '💬');
-                  setShowGroupSettings(true);
-                }}
-                className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-white/10 transition-all active:scale-90 flex items-center gap-1 text-[10px] font-bold uppercase"
-                title="Room Settings"
-              >
-                <Settings className="w-4 h-4" />
-                <span className="hidden sm:inline">Settings</span>
-              </button>
+              activeServerId !== 'home' ? (
+                (() => {
+                  const currentServer = chatServers.find(s => s.id === activeServerId);
+                  const isOwnerOrAdmin = currentServer && (currentServer.ownerId === currentUser?.uid || currentUser?.role === 'admin' || currentUser?.role === 'super_admin');
+                  if (!isOwnerOrAdmin) return null;
+                  return (
+                    <button
+                      onClick={() => setShowServerSettingsModal(true)}
+                      className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-white/10 transition-all active:scale-90 flex items-center gap-1 text-[10px] font-bold uppercase"
+                      title="Server Settings"
+                    >
+                      <Settings className="w-4 h-4" />
+                      <span className="hidden sm:inline">Settings</span>
+                    </button>
+                  );
+                })()
+              ) : (
+                <button
+                  onClick={() => {
+                    setEditRoomName(activeRoomInfo.name);
+                    setEditRoomDescription(activeRoomInfo.description || '');
+                    setEditRoomIcon(activeRoomInfo.icon || '💬');
+                    setShowGroupSettings(true);
+                  }}
+                  className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-white/10 transition-all active:scale-90 flex items-center gap-1 text-[10px] font-bold uppercase"
+                  title="Room Settings"
+                >
+                  <Settings className="w-4 h-4" />
+                  <span className="hidden sm:inline">Settings</span>
+                </button>
+              )
             )}
           </div>
         </div>
@@ -2424,6 +2477,12 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                           <div className="w-px h-3 bg-white/10 mx-0.5" />
                           <button onClick={() => setReplyingTo(msg)} className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white" title="Reply"><Reply className="w-3.5 h-3.5" /></button>
                           {isMine && <button onClick={() => { setEditingMsgId(msg.id); setEditText(msg.message); }} className="p-1.5 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white" title="Edit"><Edit3 className="w-3.5 h-3.5" /></button>}
+                          {(isMine || (activeServerId !== 'home' && (() => {
+                            const cs = chatServers.find(s => s.id === activeServerId);
+                            return cs && (cs.ownerId === currentUser?.uid || currentUser?.role === 'admin' || currentUser?.role === 'super_admin');
+                          })())) && (
+                            <button onClick={() => handleDeleteMessage(msg.id, true)} className="p-1.5 hover:bg-rose-500/20 text-rose-400 rounded-lg transition-colors" title="Delete Message"><Trash2 className="w-3.5 h-3.5" /></button>
+                          )}
                         </div>
                         
                         {msg.flaggedReason && (
@@ -4368,128 +4427,446 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
         );
       })()}
 
-      {/* MODAL 8: SERVER MEMBERS & ROLE ASSIGNMENTS */}
-      {showServerMembersModal && (() => {
+      {/* MODAL 8: UNIFIED SERVER SETTINGS */}
+      {showServerSettingsModal && (() => {
         const currentServer = chatServers.find(s => s.id === activeServerId) || chatServers[0];
         if (!currentServer) return null;
         const serverOwner = currentServer.ownerId;
         const isOwner = currentUser?.uid === serverOwner || currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
+        const serverCode = currentServer.inviteCode || currentServer.id.split('_').pop()?.toUpperCase() || 'SERVER';
+        const filteredUsers = availableUsersList.filter(u => {
+          if (!serverInviteSearchQuery) return true;
+          const q = serverInviteSearchQuery.toLowerCase();
+          return u.name.toLowerCase().includes(q) || (u.email && u.email.toLowerCase().includes(q));
+        });
 
         return (
           <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[9999] flex items-center justify-center p-4 animate-fadeIn">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="bg-slate-900 border border-white/10 rounded-3xl max-w-lg w-full p-6 shadow-2xl relative space-y-4"
+              className="bg-slate-900 border border-white/10 rounded-3xl max-w-2xl w-full p-6 shadow-2xl relative space-y-5 max-h-[90vh] flex flex-col"
             >
               <button
-                onClick={() => setShowServerMembersModal(false)}
+                onClick={() => setShowServerSettingsModal(false)}
                 className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-full bg-white/5 hover:bg-white/10"
               >
                 <X className="w-5 h-5" />
               </button>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 shrink-0">
                 <span className="text-3xl p-2 bg-slate-950 border border-white/10 rounded-2xl">{currentServer.icon || '🏰'}</span>
                 <div>
-                  <h3 className="text-lg font-black text-white">{currentServer.name} — Members</h3>
-                  <p className="text-xs text-slate-400">{(currentServer.members || []).length} members in server</p>
+                  <h3 className="text-lg font-black text-white">{currentServer.name} — Settings</h3>
+                  <p className="text-xs text-slate-400">Manage server info, members, and custom roles</p>
                 </div>
               </div>
 
-              <div className="space-y-2 max-h-72 overflow-y-auto pr-1 scrollbar-thin">
-                {(currentServer.members || []).map(memberUid => {
-                  const memberUser = resolveUser(memberUid);
-                  const isMemberOwner = memberUid === serverOwner;
-                  const assignedRoleId = currentServer.memberRoles?.[memberUid];
-                  const assignedRole = (currentServer.roles || []).find(r => r.id === assignedRoleId);
-
-                  return (
-                    <div key={memberUid} className="flex items-center justify-between p-3 rounded-2xl bg-slate-950/60 border border-white/5 gap-2">
-                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                        {memberUser.avatar || memberUser.photoURL ? (
-                          <img src={memberUser.avatar || memberUser.photoURL} alt="" className="w-8 h-8 rounded-full object-cover border border-white/10 shrink-0" />
-                        ) : (
-                          <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold text-white shrink-0">
-                            {memberUser.name.charAt(0)}
-                          </div>
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <p className="text-xs font-bold text-white truncate">{memberUser.name}</p>
-                            {isMemberOwner && (
-                              <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[8px] font-black uppercase">
-                                Owner
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            {assignedRole ? (
-                              <span 
-                                style={{ backgroundColor: `${assignedRole.color}20`, color: assignedRole.color, borderColor: `${assignedRole.color}40` }}
-                                className="px-2 py-0.5 rounded-full text-[9px] font-bold border flex items-center gap-1"
-                              >
-                                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: assignedRole.color }} />
-                                {assignedRole.name}
-                              </span>
-                            ) : (
-                              <span className="text-[10px] text-slate-400 capitalize">{memberUser.role}</span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        {isOwner && (
-                          <select
-                            value={assignedRoleId || ''}
-                            onChange={async (e) => {
-                              const newRoleId = e.target.value;
-                              const updatedRoles = { ...(currentServer.memberRoles || {}) };
-                              if (newRoleId) {
-                                updatedRoles[memberUid] = newRoleId;
-                              } else {
-                                delete updatedRoles[memberUid];
-                              }
-                              const updatedServer = { ...currentServer, memberRoles: updatedRoles };
-                              await saveChatServer(updatedServer);
-                              setChatServers(prev => prev.map(s => s.id === currentServer.id ? updatedServer : s));
-                              showNotification(`Role updated for ${memberUser.name}`);
-                            }}
-                            className="bg-slate-900 border border-white/10 text-white text-[10px] rounded-xl px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
-                          >
-                            <option value="">(Default Role)</option>
-                            {(currentServer.roles || []).map(r => (
-                              <option key={r.id} value={r.id}>{r.name}</option>
-                            ))}
-                          </select>
-                        )}
-
-                        {isOwner && !isMemberOwner && (
-                          <button
-                            onClick={async () => {
-                              if (!confirm(`Remove ${memberUser.name} from server?`)) return;
-                              const updatedMembers = (currentServer.members || []).filter(m => m !== memberUid);
-                              const updatedServer = { ...currentServer, members: updatedMembers };
-                              await saveChatServer(updatedServer);
-                              setChatServers(prev => prev.map(s => s.id === currentServer.id ? updatedServer : s));
-                              showNotification(`Removed ${memberUser.name} from server.`);
-                            }}
-                            className="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-xl border border-rose-500/20 text-xs transition-colors"
-                            title="Remove Member"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+              {/* Tabs Navigation */}
+              <div className="flex gap-2 border-b border-white/10 pb-3 shrink-0">
+                {[
+                  { id: 'info', label: 'Info & Invite' },
+                  { id: 'members', label: `Members (${(currentServer.members || []).length})` },
+                  { id: 'roles', label: `Roles (${(currentServer.roles || []).length})` }
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setServerSettingsTab(tab.id as any)}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${serverSettingsTab === tab.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
               </div>
 
-              <div className="flex justify-end pt-2 border-t border-white/10">
+              <div className="flex-1 overflow-y-auto space-y-4 pr-1 scrollbar-thin">
+                {/* TAB 1: INFO & INVITE & OWNER ACTIONS */}
+                {serverSettingsTab === 'info' && (
+                  <div className="space-y-4">
+                    <div className="p-4 rounded-2xl bg-slate-950 border border-white/10 space-y-2">
+                      <span className="text-[10px] font-black uppercase text-emerald-400 tracking-wider">Server Invite Code</span>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 bg-slate-900 border border-white/10 rounded-xl px-4 py-2.5 font-mono text-sm font-bold text-white tracking-widest select-all">
+                          {serverCode}
+                        </div>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(serverCode);
+                            showNotification(`Copied invite code: ${serverCode}`);
+                          }}
+                          className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-md flex items-center gap-1.5 active:scale-95 shrink-0"
+                        >
+                          <Copy className="w-4 h-4" />
+                          <span>Copy Code</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-2xl bg-slate-950 border border-white/10 space-y-3">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Server Details</h4>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase">Server Name</label>
+                        <input
+                          type="text"
+                          defaultValue={currentServer.name}
+                          onBlur={async (e) => {
+                            const val = e.target.value.trim();
+                            if (!val || val === currentServer.name) return;
+                            const updated = { ...currentServer, name: val };
+                            await saveChatServer(updated);
+                            setChatServers(prev => prev.map(s => s.id === currentServer.id ? updated : s));
+                            showNotification('Server name updated.');
+                          }}
+                          className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase">Description</label>
+                        <textarea
+                          defaultValue={currentServer.description}
+                          onBlur={async (e) => {
+                            const val = e.target.value.trim();
+                            if (val === currentServer.description) return;
+                            const updated = { ...currentServer, description: val };
+                            await saveChatServer(updated);
+                            setChatServers(prev => prev.map(s => s.id === currentServer.id ? updated : s));
+                            showNotification('Server description updated.');
+                          }}
+                          className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white resize-none h-16"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Owner Danger / Admin Zone */}
+                    {isOwner && (
+                      <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 space-y-4">
+                        <h4 className="text-xs font-black uppercase tracking-wider text-rose-400">Owner Management & Danger Zone</h4>
+                        
+                        {/* Transfer Ownership */}
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-bold text-rose-300 uppercase">Transfer Server Ownership</label>
+                          <div className="flex gap-2">
+                            <select
+                              value={transferOwnerTargetUid}
+                              onChange={(e) => setTransferOwnerTargetUid(e.target.value)}
+                              className="flex-1 bg-slate-900 border border-rose-500/30 text-white text-xs rounded-xl px-3 py-2"
+                            >
+                              <option value="">Select new owner...</option>
+                              {(currentServer.members || []).filter(uid => uid !== serverOwner).map(uid => {
+                                const u = resolveUser(uid);
+                                return <option key={uid} value={uid}>{u.name} ({u.email})</option>;
+                              })}
+                            </select>
+                            <button
+                              disabled={!transferOwnerTargetUid}
+                              onClick={async () => {
+                                if (!transferOwnerTargetUid) return;
+                                const newOwner = resolveUser(transferOwnerTargetUid);
+                                if (!confirm(`Transfer ownership of ${currentServer.name} to ${newOwner.name}?`)) return;
+                                try {
+                                  const updated = await transferServerOwnership(currentServer.id, transferOwnerTargetUid);
+                                  setChatServers(prev => prev.map(s => s.id === currentServer.id ? updated : s));
+                                  showNotification(`Ownership transferred to ${newOwner.name}`);
+                                  setTransferOwnerTargetUid('');
+                                } catch (err: any) {
+                                  showNotification(err.message || 'Failed to transfer ownership');
+                                }
+                              }}
+                              className="px-4 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-all shadow-md shrink-0"
+                            >
+                              Transfer
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Delete Server */}
+                        <div className="pt-2 border-t border-rose-500/20 flex items-center justify-between">
+                          <div>
+                            <p className="text-xs font-bold text-white">Delete Server</p>
+                            <p className="text-[10px] text-slate-400">Permanently delete this server and its channels for all members.</p>
+                          </div>
+                          <button
+                            onClick={async () => {
+                              if (!confirm(`Are you absolutely sure you want to delete ${currentServer.name}? This cannot be undone.`)) return;
+                              try {
+                                await deleteChatServer(currentServer.id);
+                                setChatServers(prev => prev.filter(s => s.id !== currentServer.id));
+                                setActiveServerId('home');
+                                setShowServerSettingsModal(false);
+                                showNotification(`Server "${currentServer.name}" deleted.`);
+                              } catch (err: any) {
+                                showNotification(err.message || 'Failed to delete server');
+                              }
+                            }}
+                            className="px-4 py-2 bg-rose-700 hover:bg-rose-600 text-white text-xs font-black rounded-xl shadow-lg transition-all"
+                          >
+                            Delete Server
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* TAB 2: MEMBERS */}
+                {serverSettingsTab === 'members' && (
+                  <div className="space-y-4">
+                    {isOwner && (
+                      <div className="p-3 rounded-2xl bg-slate-950 border border-white/10 space-y-2">
+                        <span className="text-[10px] font-bold uppercase text-slate-400">Add Member to Server</span>
+                        <div className="relative">
+                          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                          <input
+                            type="text"
+                            value={serverInviteSearchQuery}
+                            onChange={(e) => setServerInviteSearchQuery(e.target.value)}
+                            placeholder="Search user name or email..."
+                            className="w-full bg-slate-900 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500"
+                          />
+                        </div>
+                        <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                          {filteredUsers.map(user => {
+                            const isAlready = (currentServer.members || []).includes(user.uid || '');
+                            if (isAlready) return null;
+                            return (
+                              <div key={user.uid} className="flex items-center justify-between p-2 rounded-xl bg-slate-900/60 border border-white/5">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-xs font-bold text-white shrink-0">
+                                    {user.name.charAt(0)}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-bold text-white truncate">{user.name}</p>
+                                    <p className="text-[9px] text-slate-400 truncate">{user.email}</p>
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={async () => {
+                                    const updatedMembers = Array.from(new Set([...(currentServer.members || []), user.uid]));
+                                    const updatedServer = { ...currentServer, members: updatedMembers };
+                                    await saveChatServer(updatedServer);
+                                    setChatServers(prev => prev.map(s => s.id === currentServer.id ? updatedServer : s));
+                                    showNotification(`Added ${user.name} to server`);
+                                  }}
+                                  className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold rounded-lg shadow"
+                                >
+                                  Add
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      {(currentServer.members || []).map(memberUid => {
+                        const memberUser = resolveUser(memberUid);
+                        const isMemberOwner = memberUid === serverOwner;
+                        const isMuted = (currentServer.mutedMembers || []).includes(memberUid);
+                        const assignedRoleId = currentServer.memberRoles?.[memberUid];
+                        const assignedRole = (currentServer.roles || []).find(r => r.id === assignedRoleId);
+
+                        return (
+                          <div key={memberUid} className="flex items-center justify-between p-3 rounded-2xl bg-slate-950/60 border border-white/5 gap-2">
+                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                              {memberUser.avatar || memberUser.photoURL ? (
+                                <img src={memberUser.avatar || memberUser.photoURL} alt="" className="w-8 h-8 rounded-full object-cover border border-white/10 shrink-0" />
+                              ) : (
+                                <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold text-white shrink-0">
+                                  {memberUser.name.charAt(0)}
+                                </div>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5">
+                                  <p className="text-xs font-bold text-white truncate">{memberUser.name}</p>
+                                  {isMemberOwner && (
+                                    <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[8px] font-black uppercase">
+                                      Owner
+                                    </span>
+                                  )}
+                                  {isMuted && (
+                                    <span className="px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-400 border border-rose-500/30 text-[8px] font-black uppercase">
+                                      Muted
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                  {assignedRole ? (
+                                    <span 
+                                      style={{ backgroundColor: `${assignedRole.color}20`, color: assignedRole.color, borderColor: `${assignedRole.color}40` }}
+                                      className="px-2 py-0.5 rounded-full text-[9px] font-bold border flex items-center gap-1"
+                                    >
+                                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: assignedRole.color }} />
+                                      {assignedRole.name}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-slate-400 capitalize">{memberUser.role}</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              {isOwner && !isMemberOwner && (
+                                <>
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        const updated = await muteServerMember(currentServer.id, memberUid, !isMuted);
+                                        setChatServers(prev => prev.map(s => s.id === currentServer.id ? updated : s));
+                                        showNotification(isMuted ? `Unmuted ${memberUser.name}` : `Muted ${memberUser.name}`);
+                                      } catch (err: any) {
+                                        showNotification(err.message || 'Failed to update mute');
+                                      }
+                                    }}
+                                    className={`px-2.5 py-1 rounded-xl text-[10px] font-bold border transition-colors ${isMuted ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' : 'bg-slate-800 text-slate-300 border-white/10'}`}
+                                  >
+                                    {isMuted ? 'Unmute' : 'Mute'}
+                                  </button>
+                                  <button
+                                    onClick={async () => {
+                                      if (!confirm(`Remove ${memberUser.name} from server?`)) return;
+                                      try {
+                                        const updated = await removeServerMember(currentServer.id, memberUid);
+                                        setChatServers(prev => prev.map(s => s.id === currentServer.id ? updated : s));
+                                        showNotification(`Removed ${memberUser.name} from server.`);
+                                      } catch (err: any) {
+                                        showNotification(err.message || 'Failed to remove member');
+                                      }
+                                    }}
+                                    className="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-xl border border-rose-500/20 text-xs transition-colors"
+                                    title="Remove Member"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 3: ROLES */}
+                {serverSettingsTab === 'roles' && (
+                  <div className="space-y-4">
+                    {/* Create Role Form (Owner / Admin Only) */}
+                    {isOwner && (
+                      <div className="p-4 rounded-2xl bg-slate-950 border border-white/10 space-y-3">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">Create New Custom Role</h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <input
+                            type="text"
+                            value={newRoleName}
+                            onChange={(e) => setNewRoleName(e.target.value)}
+                            placeholder="Role Name (e.g. Moderator)"
+                            className="bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
+                          />
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="color"
+                              value={newRoleColor}
+                              onChange={(e) => setNewRoleColor(e.target.value)}
+                              className="w-8 h-8 rounded-lg bg-slate-900 border border-white/10 cursor-pointer"
+                            />
+                            <span className="text-xs text-slate-400 font-mono">{newRoleColor}</span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            if (!newRoleName.trim()) return;
+                            const roleId = `role-${Date.now()}`;
+                            const newRole: CustomRole = {
+                              id: roleId,
+                              serverId: currentServer.id,
+                              name: newRoleName.trim(),
+                              color: newRoleColor,
+                              priority: 50,
+                              permissions: { canSendMessages: true, canAttachFiles: true, canManageMessages: true, canManageChannels: false, canManageRoles: false }
+                            };
+                            const updatedRoles = [...(currentServer.roles || []), newRole];
+                            const updatedServer = { ...currentServer, roles: updatedRoles };
+                            await saveChatServer(updatedServer);
+                            setChatServers(prev => prev.map(s => s.id === currentServer.id ? updatedServer : s));
+                            setNewRoleName('');
+                            showNotification(`Created role "${newRole.name}"`);
+                          }}
+                          className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-md transition-all"
+                        >
+                          Create Role
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Roles & Member Role Assignment List */}
+                    <div className="space-y-3">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Assigned Roles</h4>
+                      {(currentServer.members || []).map(memberUid => {
+                        const memberUser = resolveUser(memberUid);
+                        const isMemberOwner = memberUid === serverOwner;
+                        const assignedRoleId = currentServer.memberRoles?.[memberUid];
+                        const assignedRole = (currentServer.roles || []).find(r => r.id === assignedRoleId);
+
+                        return (
+                          <div key={memberUid} className="flex items-center justify-between p-3 rounded-2xl bg-slate-950/60 border border-white/5 gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-xs font-bold text-white shrink-0">
+                                {memberUser.name.charAt(0)}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-white truncate">{memberUser.name}</p>
+                                {assignedRole ? (
+                                  <span style={{ color: assignedRole.color }} className="text-[10px] font-bold">
+                                    {assignedRole.name}
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-slate-500">No Role</span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Only server owner / admin can change role dropdown. Normal members see view-only label. */}
+                            {isOwner ? (
+                              <select
+                                value={assignedRoleId || ''}
+                                onChange={async (e) => {
+                                  const newRoleId = e.target.value;
+                                  const updatedRoles = { ...(currentServer.memberRoles || {}) };
+                                  if (newRoleId) {
+                                    updatedRoles[memberUid] = newRoleId;
+                                  } else {
+                                    delete updatedRoles[memberUid];
+                                  }
+                                  const updatedServer = { ...currentServer, memberRoles: updatedRoles };
+                                  await saveChatServer(updatedServer);
+                                  setChatServers(prev => prev.map(s => s.id === currentServer.id ? updatedServer : s));
+                                  showNotification(`Role updated for ${memberUser.name}`);
+                                }}
+                                className="bg-slate-900 border border-white/10 text-white text-xs rounded-xl px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                              >
+                                <option value="">(No Custom Role)</option>
+                                {(currentServer.roles || []).map(r => (
+                                  <option key={r.id} value={r.id}>{r.name}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span className="text-xs text-slate-400 font-medium px-2 py-1 bg-slate-900 rounded-xl">
+                                {assignedRole ? assignedRole.name : 'View Only'}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end pt-3 border-t border-white/10 shrink-0">
                 <button
-                  onClick={() => setShowServerMembersModal(false)}
+                  onClick={() => setShowServerSettingsModal(false)}
                   className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-all"
                 >
                   Done

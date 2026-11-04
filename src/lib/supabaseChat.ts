@@ -1235,20 +1235,26 @@ export async function getChatServers(): Promise<ChatServer[]> {
   try {
     const { data, error } = await supabase.from('chat_servers').select('*');
     if (!error && Array.isArray(data) && data.length > 0) {
-      const parsed: ChatServer[] = data.map((row: any) => ({
-        id: row.id,
-        name: row.name,
-        icon: row.icon || '💬',
-        description: row.description || '',
-        ownerId: row.owner_id || '',
-        inviteCode: row.invite_code || row.id.split('_').pop()?.toUpperCase(),
-        bannerUrl: row.banner_url,
-        channels: row.channels || [],
-        roles: row.roles || [],
-        members: row.members || [],
-        memberRoles: row.member_roles || {},
-        createdAt: row.created_at || new Date().toISOString()
-      }));
+      const parsed: ChatServer[] = data.map((row: any) => {
+        const ownerId = row.owner_id || '';
+        const rawMembers = row.members || [];
+        const members = Array.from(new Set([ownerId, ...rawMembers]));
+        return {
+          id: row.id,
+          name: row.name,
+          icon: row.icon || '💬',
+          description: row.description || '',
+          ownerId,
+          inviteCode: row.invite_code || row.id.split('_').pop()?.toUpperCase(),
+          bannerUrl: row.banner_url,
+          channels: row.channels || [],
+          roles: row.roles || [],
+          members,
+          mutedMembers: row.muted_members || [],
+          memberRoles: row.member_roles || {},
+          createdAt: row.created_at || new Date().toISOString()
+        };
+      });
       localStorage.setItem(STORAGE_KEY_SERVERS, JSON.stringify(parsed));
       return parsed;
     }
@@ -1260,15 +1266,25 @@ export async function getChatServers(): Promise<ChatServer[]> {
   if (cached) {
     try {
       const parsed = JSON.parse(cached);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.map((s: ChatServer) => ({
+          ...s,
+          members: Array.from(new Set([s.ownerId, ...(s.members || [])]))
+        }));
+      }
     } catch (_) {}
   }
 
-  localStorage.setItem(STORAGE_KEY_SERVERS, JSON.stringify(DEFAULT_SERVERS));
-  return DEFAULT_SERVERS;
+  const defaultWithMembers = DEFAULT_SERVERS.map(s => ({
+    ...s,
+    members: Array.from(new Set([s.ownerId, ...(s.members || [])]))
+  }));
+  localStorage.setItem(STORAGE_KEY_SERVERS, JSON.stringify(defaultWithMembers));
+  return defaultWithMembers;
 }
 
 export async function saveChatServer(server: ChatServer): Promise<ChatServer> {
+  const allMembers = Array.from(new Set([server.ownerId, ...(server.members || [])]));
   const payload = {
     id: server.id,
     name: server.name,
@@ -1279,26 +1295,25 @@ export async function saveChatServer(server: ChatServer): Promise<ChatServer> {
     banner_url: server.bannerUrl || null,
     channels: server.channels || [],
     roles: server.roles || [],
-    members: server.members || [],
+    members: allMembers,
+    muted_members: server.mutedMembers || [],
     member_roles: server.memberRoles || {},
     updated_at: new Date().toISOString()
   };
 
-  try {
-    const { error } = await supabase.from('chat_servers').upsert(payload);
-    if (error && error.code !== '42P01') {
-      console.warn('[SUPABASE-CHAT] Save server upsert error:', error);
-    }
-  } catch (err) {
-    console.warn('[SUPABASE-CHAT] Save server error:', err);
+  const { error } = await supabase.from('chat_servers').upsert(payload);
+  if (error && error.code !== '42P01') {
+    console.error('[SUPABASE-CHAT] Save server upsert error:', error);
+    throw new Error(error.message || 'Failed to save server');
   }
 
   const servers = await getChatServers();
+  const updatedServer = { ...server, members: allMembers };
   const existingIdx = servers.findIndex(s => s.id === server.id);
   if (existingIdx >= 0) {
-    servers[existingIdx] = server;
+    servers[existingIdx] = updatedServer;
   } else {
-    servers.push(server);
+    servers.push(updatedServer);
   }
   localStorage.setItem(STORAGE_KEY_SERVERS, JSON.stringify(servers));
 
@@ -1310,7 +1325,7 @@ export async function saveChatServer(server: ChatServer): Promise<ChatServer> {
     });
   } catch (_) {}
 
-  return server;
+  return updatedServer;
 }
 
 export async function createChatServerChannel(serverId: string, channel: ServerChannel): Promise<ServerChannel> {
@@ -1487,7 +1502,7 @@ export async function joinChatServer(inviteCode: string, userId: string): Promis
       return { success: false, message: 'Invite code not found.' };
     }
 
-    const members = target.members || [];
+    const members = Array.from(new Set([target.ownerId, ...(target.members || [])]));
     if (members.includes(userId)) {
       return { success: true, message: `Already a member of ${target.name}!`, server: target };
     }
@@ -1497,9 +1512,74 @@ export async function joinChatServer(inviteCode: string, userId: string): Promis
     await saveChatServer(updatedServer);
 
     return { success: true, message: `Joined server "${target.name}"!`, server: updatedServer };
-  } catch (e) {
-    return { success: false, message: 'Invite code not found.' };
+  } catch (e: any) {
+    return { success: false, message: e?.message || 'Invite code not found.' };
   }
+}
+
+export async function deleteChatServer(serverId: string): Promise<void> {
+  const { error } = await supabase.from('chat_servers').delete().eq('id', serverId);
+  if (error && error.code !== '42P01') {
+    throw new Error(error.message || 'Failed to delete server');
+  }
+  const servers = await getChatServers();
+  const filtered = servers.filter(s => s.id !== serverId);
+  localStorage.setItem(STORAGE_KEY_SERVERS, JSON.stringify(filtered));
+
+  try {
+    supabase.channel('student-os-public').send({
+      type: 'broadcast',
+      event: 'server_deleted',
+      payload: { serverId }
+    });
+  } catch (_) {}
+}
+
+export async function transferServerOwnership(serverId: string, newOwnerId: string): Promise<ChatServer> {
+  const servers = await getChatServers();
+  const server = servers.find(s => s.id === serverId);
+  if (!server) throw new Error('Server not found');
+
+  const members = Array.from(new Set([newOwnerId, server.ownerId, ...(server.members || [])]));
+  const updated: ChatServer = {
+    ...server,
+    ownerId: newOwnerId,
+    members
+  };
+  return await saveChatServer(updated);
+}
+
+export async function muteServerMember(serverId: string, userId: string, mute: boolean): Promise<ChatServer> {
+  const servers = await getChatServers();
+  const server = servers.find(s => s.id === serverId);
+  if (!server) throw new Error('Server not found');
+
+  const muted = new Set(server.mutedMembers || []);
+  if (mute) muted.add(userId);
+  else muted.delete(userId);
+
+  const updated: ChatServer = {
+    ...server,
+    mutedMembers: Array.from(muted)
+  };
+  return await saveChatServer(updated);
+}
+
+export async function removeServerMember(serverId: string, userId: string): Promise<ChatServer> {
+  const servers = await getChatServers();
+  const server = servers.find(s => s.id === serverId);
+  if (!server) throw new Error('Server not found');
+
+  if (userId === server.ownerId) {
+    throw new Error('Cannot remove the server owner.');
+  }
+
+  const members = (server.members || []).filter(id => id !== userId);
+  const updated: ChatServer = {
+    ...server,
+    members
+  };
+  return await saveChatServer(updated);
 }
 
 
