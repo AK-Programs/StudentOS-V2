@@ -179,6 +179,9 @@ function classifyDomainAuthority(urlStr: string): {
 /**
  * Determines whether a prompt requires fresh external web search.
  */
+/**
+ * Determines whether a prompt requires fresh external web search.
+ */
 export function detectWebSearchIntent(
   prompt: string,
   persona = 'study_buddy',
@@ -206,30 +209,75 @@ export function detectWebSearchIntent(
     };
   }
 
+  const lower = textOnly.toLowerCase();
+  const words = lower.split(/\s+/).filter(Boolean);
+
+  // 1. Explicit search requests (HIGH PRIORITY)
+  const explicitSearchTriggers = [
+    /\b(search|look up|find information|find online|search online|find recent|can you search)\b/i,
+    /\b(latest (news|updates?|developments?)|current status of|breaking news)\b/i
+  ];
+  const isExplicitSearch = explicitSearchTriggers.some(rgx => rgx.test(lower));
+
+  // 2. Greetings and Small Talk (NEVER SEARCH)
+  const greetingTriggers = [
+    /\b(hey|hi|hello|hey byte|hi byte|hello byte|good morning|good afternoon|good evening|howdy|yo|hi there|hello there)\b/i,
+    /\b(how are you|how's it going|what's up|sup|how are things|how you doing)\b/i,
+    /\b(thanks|thank you|thx|tysm|cheers|awesome|cool|great|okay|ok|nice|noted)\b/i,
+    /\b(bye|goodbye|see ya|later|gtg|night|goodnight)\b/i
+  ];
+  const isGreetingOrSmallTalk = greetingTriggers.some(rgx => rgx.test(lower));
+
+  // If it's a very short message (e.g. "hey", "what's up byte", "thanks")
+  // and it contains a greeting/small talk, definitely don't search.
+  if (isGreetingOrSmallTalk && words.length <= 4 && !isExplicitSearch) {
+    return {
+      shouldSearch: false,
+      cleanQuery: '',
+      reason: 'Short greeting or small talk detected'
+    };
+  }
+
+  // 3. Temporal Triggers (for non-greetings)
   const temporalTriggers = [
-    /\b(latest|current|recent|today|yesterday|this week|this month|now|news|update|developments?|version|release|2025|2026)\b/i,
-    /\b(who is currently|what happened in|recent study|breaking|status of|live score|market|election|weather)\b/i
+    /\b(today|yesterday|this week|this month|now|version|release|2025|2026)\b/i,
+    /\b(who is currently|what happened in|recent study|status of|live score|market|election|weather)\b/i
   ];
+  const isTemporal = temporalTriggers.some(rgx => rgx.test(lower));
 
+  // 4. Research Triggers (Refined to be more specific)
   const researchTriggers = [
-    /\b(research|investigate|compare|deep dive|comprehensive report|survey|overview of current|newton|laws|physics|class 8|science)\b/i
+    /\b(research|investigate|deep dive|comprehensive report|survey|overview of current)\b/i,
+    /\b(latest developments in|current trends in|state of the art in)\b/i
   ];
+  const isResearch = researchTriggers.some(rgx => rgx.test(lower));
 
-  const isTemporal = temporalTriggers.some(rgx => rgx.test(textOnly));
-  const isResearch = researchTriggers.some(rgx => rgx.test(textOnly));
-
-  if (isTemporal || isResearch || persona === 'orion') {
+  // 5. Orion's specific research needs
+  if (persona === 'orion' && (isTemporal || isResearch || isExplicitSearch)) {
+    // Even for Orion, if it's purely a greeting, don't search
+    if (isGreetingOrSmallTalk && words.length <= 3) {
+      return { shouldSearch: false, cleanQuery: '', reason: 'Orion greeting' };
+    }
     return {
       shouldSearch: true,
       cleanQuery: extractPrivacySafeSearchQuery(textOnly),
-      reason: persona === 'orion' ? 'Orion external research' : 'Fresh temporal web query'
+      reason: 'Orion external research'
+    };
+  }
+
+  // 6. Final Decision for other personas
+  if (isExplicitSearch || (isTemporal && isResearch)) {
+    return {
+      shouldSearch: true,
+      cleanQuery: extractPrivacySafeSearchQuery(textOnly),
+      reason: isExplicitSearch ? 'Explicit web search request' : 'Fresh temporal research query'
     };
   }
 
   return {
     shouldSearch: false,
     cleanQuery: extractPrivacySafeSearchQuery(textOnly),
-    reason: 'Internal curriculum Q&A'
+    reason: 'Internal curriculum Q&A or conversation'
   };
 }
 

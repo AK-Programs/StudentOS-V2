@@ -26,6 +26,7 @@ interface ActiveFlyoutItem {
   id: string;
   notification: AppNotification;
   timerId: NodeJS.Timeout;
+  duration: number;
 }
 
 export const NotificationFlyout: React.FC<NotificationFlyoutProps> = ({
@@ -34,6 +35,7 @@ export const NotificationFlyout: React.FC<NotificationFlyoutProps> = ({
   onMarkAsRead
 }) => {
   const [activeFlyouts, setActiveFlyouts] = useState<ActiveFlyoutItem[]>([]);
+  const [pendingQueue, setPendingQueue] = useState<AppNotification[]>([]);
   const shownIdsRef = useRef<Set<string>>(new Set());
 
   // Initialize shown IDs from sessionStorage to prevent spamming after page refresh
@@ -51,7 +53,7 @@ export const NotificationFlyout: React.FC<NotificationFlyoutProps> = ({
 
   const saveShownIds = () => {
     try {
-      const arr = Array.from(shownIdsRef.current).slice(-200);
+      const arr = Array.from(shownIdsRef.current).slice(-500);
       sessionStorage.setItem('veylentra_shown_flyouts', JSON.stringify(arr));
     } catch (_) {}
   };
@@ -64,7 +66,22 @@ export const NotificationFlyout: React.FC<NotificationFlyoutProps> = ({
     });
   };
 
-  // Inspect incoming unread notifications
+  // 0. Remove read notifications from queues immediately
+  useEffect(() => {
+    if (!Array.isArray(notifications)) return;
+    
+    const readIds = new Set(notifications.filter(n => n.isRead).map(n => n.id));
+    if (readIds.size === 0) return;
+
+    setPendingQueue(prev => prev.filter(n => !readIds.has(n.id)));
+    setActiveFlyouts(prev => {
+      const toRemove = prev.filter(item => readIds.has(item.id));
+      toRemove.forEach(item => clearTimeout(item.timerId));
+      return prev.filter(item => !readIds.has(item.id));
+    });
+  }, [notifications]);
+
+  // 1. Process incoming notifications into the pending queue
   useEffect(() => {
     if (!Array.isArray(notifications) || notifications.length === 0) return;
 
@@ -75,12 +92,49 @@ export const NotificationFlyout: React.FC<NotificationFlyoutProps> = ({
 
     if (unreadUnshown.length === 0) return;
 
-    // Process top 2 newest unshown notifications to avoid overwhelming the screen
-    const newItems = unreadUnshown.slice(0, 2);
+    // Prioritize: Announcement/Exam > Chat/Mention > Homework > Others
+    const priorityMap: Record<string, number> = {
+      'announcement': 10,
+      'exam': 9,
+      'notice': 8,
+      'chat': 7,
+      'mention': 7,
+      'homework': 6,
+      'assignment': 6,
+      'marks': 5,
+      'attendance': 4,
+      'feedback': 4,
+      'ai_task': 3,
+      'reminder': 2
+    };
 
-    newItems.forEach((n) => {
-      shownIdsRef.current.add(n.id);
+    const sortedNew = [...unreadUnshown].sort((a, b) => {
+      const pA = priorityMap[a.type] || 0;
+      const pB = priorityMap[b.type] || 0;
+      if (pA !== pB) return pB - pA;
+      // If same priority, newest first
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
 
+    setPendingQueue((prev) => {
+      const existingIds = new Set(prev.map(p => p.id));
+      const uniqueNew = sortedNew.filter(n => !existingIds.has(n.id));
+      return [...prev, ...uniqueNew];
+    });
+
+    // Mark as shown so we don't re-queue them
+    unreadUnshown.forEach(n => shownIdsRef.current.add(n.id));
+    saveShownIds();
+  }, [notifications]);
+
+  // 2. Move items from pending queue to active flyouts
+  useEffect(() => {
+    if (pendingQueue.length === 0 || activeFlyouts.length >= 3) return;
+
+    const nextBatch = pendingQueue.slice(0, 3 - activeFlyouts.length);
+    const remainingQueue = pendingQueue.slice(nextBatch.length);
+
+    nextBatch.forEach((n) => {
       // Select appropriate verified sound effect
       const lowerTitle = (n.title || '').toLowerCase();
       const lowerMsg = (n.message || '').toLowerCase();
@@ -93,22 +147,23 @@ export const NotificationFlyout: React.FC<NotificationFlyoutProps> = ({
         soundService.playNewNotification();
       }
 
-      // Auto dismiss after 5.5s
+      // Dynamic duration based on priority/type
+      let duration = 5500;
+      if (n.type === 'announcement' || n.type === 'exam' || n.type === 'notice') duration = 8500;
+      else if (n.type === 'chat' || n.type === 'mention') duration = 6500;
+      else if (['attendance', 'marks', 'feedback'].includes(n.type)) duration = 4500;
+
       const timerId = setTimeout(() => {
         dismissFlyout(n.id);
-      }, 5500);
+      }, duration);
 
-      setActiveFlyouts((prev) => {
-        // Keep max 3 notifications visible at any time
-        const trimmed = prev.length >= 3 ? prev.slice(1) : prev;
-        return [...trimmed, { id: n.id, notification: n, timerId }];
-      });
+      setActiveFlyouts((prev) => [...prev, { id: n.id, notification: n, timerId, duration }]);
     });
 
-    saveShownIds();
-  }, [notifications]);
+    setPendingQueue(remainingQueue);
+  }, [pendingQueue, activeFlyouts]);
 
-  if (activeFlyouts.length === 0) return null;
+  if (activeFlyouts.length === 0 && pendingQueue.length === 0) return null;
 
   const getCategoryMeta = (n: AppNotification) => {
     switch (n.type) {
@@ -161,7 +216,7 @@ export const NotificationFlyout: React.FC<NotificationFlyoutProps> = ({
       aria-live="polite"
     >
       <AnimatePresence mode="popLayout">
-        {activeFlyouts.map(({ id, notification: n }) => {
+        {activeFlyouts.map(({ id, notification: n, duration }) => {
           const meta = getCategoryMeta(n);
 
           return (
@@ -234,7 +289,7 @@ export const NotificationFlyout: React.FC<NotificationFlyoutProps> = ({
               <motion.div
                 initial={{ width: '100%' }}
                 animate={{ width: '0%' }}
-                transition={{ duration: 5.5, ease: 'linear' }}
+                transition={{ duration: duration / 1000, ease: 'linear' }}
                 className="h-0.5 bg-indigo-500/60"
               />
             </motion.div>

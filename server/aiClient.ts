@@ -481,215 +481,159 @@ export async function generateAICompletionWithTelemetry(
   const effectiveMaxTokens = maxTokens
     ? Math.max(maxTokens, 300)
     : routing.tier === 'short' || routing.tier === 'fast'
-    ? 1200
-    : 4096;
+    ? 1500
+    : 8192; // High budget for Lecture Notes and complex reasoning
 
-  console.log(`[AI_ROUTER] tier=${routing.tier} provider=${provider} model=${model} requestId=${requestId}`);
+  console.log(`[AI_ROUTER] tier=${routing.tier} provider=${provider} model=${model} requestId=${requestId} budget=${effectiveMaxTokens}`);
 
-  // 0. Primary / Fallback: Google GenAI (Gemini)
-  const gemini = getGeminiClient();
-  const hasGroqKey = Boolean(getGroqApiKey());
-  const hasMinistralKey = Boolean(getMinistralApiKey());
-  const hasApinexKey = Boolean(getApinexApiKey());
-  const providerKeyAvailable = 
-    (provider === 'groq' && hasGroqKey) ||
-    (provider === 'ministral' && hasMinistralKey) ||
-    (provider === 'apinex' && hasApinexKey);
+  async function performCompletion(p: typeof provider, m: string, currentMessages: any[], budget: number) {
+    // 0. Primary / Fallback: Google GenAI (Gemini)
+    const gemini = getGeminiClient();
+    const hasGroqKey = Boolean(getGroqApiKey());
+    const hasMinistralKey = Boolean(getMinistralApiKey());
+    const hasApinexKey = Boolean(getApinexApiKey());
+    const providerKeyAvailable = 
+      (p === 'groq' && hasGroqKey) ||
+      (p === 'ministral' && hasMinistralKey) ||
+      (p === 'apinex' && hasApinexKey);
 
-  if (gemini && (!providerKeyAvailable || modelOverride?.toLowerCase().includes('gemini') || (images && images.length > 0))) {
-    try {
-      const imageParts = (images || []).map(img => ({
-        inlineData: {
-          mimeType: img.mimeType || 'image/jpeg',
-          data: (img.data || '').replace(/^data:[^;]+;base64,/, '')
-        }
-      }));
+    if (gemini && (!providerKeyAvailable || modelOverride?.toLowerCase().includes('gemini') || (images && images.length > 0))) {
+      try {
+        const imageParts = (images || []).map(img => ({
+          inlineData: {
+            mimeType: img.mimeType || 'image/jpeg',
+            data: (img.data || '').replace(/^data:[^;]+;base64,/, '')
+          }
+        }));
 
-      const contents = [
-        ...history.slice(-8).map(h => ({
-          role: h.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: String(h.content || '') }]
-        })),
-        {
-          role: 'user',
-          parts: [
-            ...imageParts,
-            { text: prompt }
-          ]
-        }
-      ];
+        const contents = [
+          ...history.slice(-8).map(h => ({
+            role: h.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: String(h.content || '') }]
+          })),
+          {
+            role: 'user',
+            parts: [
+              ...imageParts,
+              { text: prompt }
+            ]
+          }
+        ];
 
-      const config: any = {
-        temperature,
-        systemInstruction,
-        maxOutputTokens: Math.max(effectiveMaxTokens, 1200)
-      };
-      if (jsonMode) {
-        config.responseMimeType = 'application/json';
+        const config: any = {
+          temperature,
+          systemInstruction,
+          maxOutputTokens: Math.max(budget, 2048)
+        };
+        if (jsonMode) config.responseMimeType = 'application/json';
+
+        const geminiRes = await gemini.models.generateContent({ model: 'gemini-2.5-flash', contents, config });
+        return { text: geminiRes.text || '', finishReason: 'stop', provider: 'gemini', model: 'gemini-2.5-flash' };
+      } catch (gErr: any) {
+        console.warn('[Gemini AI Engine] Call error:', gErr?.message || gErr);
+        if (!providerKeyAvailable) throw gErr;
       }
-
-      const geminiRes = await gemini.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents,
-        config
-      });
-
-      const text = geminiRes.text || '';
-      return {
-        text,
-        telemetry: {
-          requestId,
-          providerUsed: 'gemini',
-          modelUsed: 'gemini-2.5-flash',
-          complexityTier: routing.tier,
-          requestStart,
-          firstTokenLatencyMs: Date.now() - requestStart,
-          totalGenerationTimeMs: Date.now() - requestStart,
-          retries: 0,
-          fallbackTriggered: !providerKeyAvailable,
-          streamed: false
-        }
-      };
-    } catch (gErr: any) {
-      console.warn('[Gemini AI Engine] Call error:', gErr?.message || gErr);
-      if (!providerKeyAvailable) throw gErr;
     }
-  }
 
-  // 2. Groq (short chat / model rotation across llama-3.1-8b-instant, openai/gpt-oss-120b, qwen/qwen3.8-27b)
-  if (provider === 'groq') {
-    const { apiUrl, apiKey } = getProviderEndpointAndKey('groq');
+    const { apiUrl, apiKey } = getProviderEndpointAndKey(p);
     if (!apiKey) {
-      const err: any = new Error('GROQ_API_KEY environment variable is not configured on the server.');
+      const err: any = new Error('API key not configured.');
       err.status = 500;
-      err.providerUsed = 'groq';
-      err.modelUsed = model;
       throw err;
     }
 
-    const candidateModels = [model, ...groqModels.filter((m) => m !== model)];
-    let lastStatus = 500;
-    let lastErrorText = 'Groq request failed';
+    const resp = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        model: m,
+        messages: currentMessages,
+        temperature,
+        max_tokens: budget,
+        ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
+      })
+    });
 
-    for (let i = 0; i < candidateModels.length; i++) {
-      const candidateModel = candidateModels[i];
-      model = candidateModel;
-      if (i > 0) retries++;
+    if (!resp.ok) {
+      const errBody = await resp.text().catch(() => '');
+      const err: any = new Error(`${p} HTTP ${resp.status}: ${errBody || resp.statusText}`);
+      err.status = resp.status;
+      throw err;
+    }
 
-      const resp = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          model: candidateModel,
-          messages,
-          temperature,
-          max_tokens: effectiveMaxTokens,
-          ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
-        })
-      });
+    const data = await resp.json();
+    const text = extractTextFromChoice(data?.choices?.[0], data);
+    const finishReason = data?.choices?.[0]?.finish_reason || 'stop';
+    return { text, finishReason, provider: p, model: m };
+  }
 
-      if (!resp.ok) {
-        const errBody = await resp.text().catch(() => '');
-        lastStatus = resp.status;
-        lastErrorText = errBody || resp.statusText || 'Groq request failed';
-        if (resp.status === 401 || resp.status === 403) break;
-        continue;
-      }
+  let finalFullText = '';
+  let activeProvider = provider;
+  let activeModel = model;
+  let lastFinishReason = 'stop';
+  let continuationCount = 0;
 
-      const data = await resp.json();
-      const extracted = extractTextFromChoice(data?.choices?.[0], data);
-      if (extracted) {
-        const telemetry: AIPerformanceTelemetry = {
-          requestId,
-          providerUsed: 'groq',
-          modelUsed: candidateModel,
-          complexityTier: 'short',
-          requestStart,
-          firstTokenLatencyMs: Date.now() - requestStart,
-          totalGenerationTimeMs: Date.now() - requestStart,
-          retries,
-          fallbackTriggered: false,
-          streamed: false
-        };
-        return { text: extracted.trim(), telemetry };
+  try {
+    const result = await performCompletion(activeProvider, activeModel, messages, effectiveMaxTokens);
+    finalFullText = result.text;
+    lastFinishReason = result.finishReason;
+    activeProvider = result.provider as any;
+    activeModel = result.model;
+
+    // Continuation Logic for Truncated Notes (Max 2 continuations to prevent infinite loops)
+    while (lastFinishReason === 'length' && continuationCount < 2 && !jsonMode) {
+      continuationCount++;
+      console.log(`[AI_CONTINUATION] Truncation detected for ${activeProvider}. Attempting segment ${continuationCount + 1}...`);
+      
+      const continuationMessages = [
+        ...messages,
+        { role: 'assistant', content: finalFullText },
+        { role: 'user', content: 'The previous response was truncated. Please continue exactly from where you left off. Do not repeat the introduction or previous sections.' }
+      ];
+
+      const contResult = await performCompletion(activeProvider, activeModel, continuationMessages, effectiveMaxTokens);
+      if (contResult.text) {
+        finalFullText += '\n' + contResult.text;
+        lastFinishReason = contResult.finishReason;
       } else {
-        lastStatus = 502;
-        lastErrorText = `Groq HTTP 200 returned empty content for ${candidateModel}`;
+        break;
       }
     }
 
-    const err: any = new Error(`Groq HTTP ${lastStatus}: ${lastErrorText}`);
-    err.status = lastStatus;
-    err.providerUsed = 'groq';
-    err.modelUsed = model;
-    throw err;
+    if (!finalFullText) {
+      const err: any = new Error(`${activeProvider} returned empty content.`);
+      err.status = 502;
+      err.providerUsed = activeProvider;
+      err.modelUsed = activeModel;
+      throw err;
+    }
+
+    const telemetry: AIPerformanceTelemetry = {
+      requestId,
+      providerUsed: activeProvider as any,
+      modelUsed: activeModel,
+      complexityTier: routing.tier,
+      requestStart,
+      firstTokenLatencyMs: Date.now() - requestStart,
+      totalGenerationTimeMs: Date.now() - requestStart,
+      retries,
+      fallbackTriggered: activeProvider !== provider,
+      streamed: false
+    };
+
+    if (continuationCount > 0) {
+      console.log(`[AI_COMPLETE] Successfully assembled ${continuationCount + 1} segments. Final length: ${finalFullText.length} chars.`);
+    }
+
+    return { text: finalFullText.trim(), telemetry };
+  } catch (outerErr: any) {
+    console.error(`[AI_ERROR] RequestId=${requestId}:`, outerErr.message);
+    throw outerErr;
   }
-
-  // 3. Ministral (general chat) and 4. APInex (fast chat / normal Buddy chat)
-  const { apiUrl, apiKey } = getProviderEndpointAndKey(provider);
-  if (!apiKey) {
-    const keyName = provider === 'ministral' ? 'MINISTRAL_API_KEY' : 'APINEX_API_KEY';
-    const err: any = new Error(`${keyName} environment variable is not configured on the server.`);
-    err.status = 500;
-    err.providerUsed = provider;
-    err.modelUsed = model;
-    throw err;
-  }
-
-  const resp = await fetch(apiUrl, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json'
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature,
-      max_tokens: effectiveMaxTokens,
-      ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
-    })
-  });
-
-  if (!resp.ok) {
-    const errBody = await resp.text().catch(() => '');
-    const err: any = new Error(`${provider} HTTP ${resp.status}: ${errBody || resp.statusText || 'Request failed'}`);
-    err.status = resp.status;
-    err.providerUsed = provider;
-    err.modelUsed = model;
-    throw err;
-  }
-
-  const data = await resp.json();
-  const text = extractTextFromChoice(data?.choices?.[0], data);
-  if (!text) {
-    const finishReason = data?.choices?.[0]?.finish_reason || data?.finish_reason || 'unknown';
-    const err: any = new Error(`${provider} HTTP 200 returned empty content (finish_reason=${finishReason})`);
-    err.status = 502;
-    err.providerUsed = provider;
-    err.modelUsed = model;
-    throw err;
-  }
-
-  const telemetry: AIPerformanceTelemetry = {
-    requestId,
-    providerUsed: provider,
-    modelUsed: model,
-    complexityTier: routing.tier,
-    requestStart,
-    firstTokenLatencyMs: Date.now() - requestStart,
-    totalGenerationTimeMs: Date.now() - requestStart,
-    retries,
-    fallbackTriggered: false,
-    streamed: false
-  };
-
-  return { text: text.trim(), telemetry };
 }
 
 export async function generateAICompletion(
