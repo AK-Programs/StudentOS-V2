@@ -1504,15 +1504,58 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
     showNotification(`Created ${newRoomType}: ${newRoom.name} (Code: ${code})`);
   };
 
+  // Resolve Server Channel if an active server channel is selected or if activeServerId is not home
+  let activeServerChannel: ServerChannel | null = null;
+  let activeParentServer: ChatServer | null = null;
+
+  if (activeServerId !== 'home') {
+    activeParentServer = chatServers.find(s => s.id === activeServerId) || null;
+    if (activeParentServer && activeParentServer.channels) {
+      activeServerChannel = activeParentServer.channels.find(c => c.id === activeChatTargetId) || activeParentServer.channels[0] || null;
+    }
+  }
+
+  if (!activeServerChannel && activeChatTargetId) {
+    for (const s of chatServers) {
+      const ch = s.channels?.find(c => c.id === activeChatTargetId);
+      if (ch) {
+        activeServerChannel = ch;
+        activeParentServer = s;
+        break;
+      }
+    }
+  }
+
   // Active Room Resolution
-  const activeRoomInfo = chatRooms.find(r => r.id === activeChatTargetId) || {
-    id: 'group-all',
-    name: 'General Lounge',
-    type: 'group' as const,
-    icon: '🌍',
-    description: 'School-wide lounge for students and teachers',
-    code: 'GLOBAL'
-  };
+  let activeRoomInfo: ChatRoom;
+  if (activeServerChannel && activeParentServer) {
+    let cleanChannelName = activeServerChannel.name;
+    if (!cleanChannelName.startsWith('#') && !cleanChannelName.startsWith('📢') && !cleanChannelName.startsWith('💡') && !cleanChannelName.startsWith('💬')) {
+      cleanChannelName = `#${cleanChannelName}`;
+    }
+
+    activeRoomInfo = {
+      id: activeServerChannel.id,
+      name: cleanChannelName,
+      type: activeServerChannel.type === 'announcement' ? 'channel' : 'group',
+      icon: activeServerChannel.type === 'announcement' ? '📢' : activeServerChannel.type === 'class' ? '💡' : '#',
+      description: activeServerChannel.topic || `${activeParentServer.name} • ${activeServerChannel.category || 'General'} Channel`,
+      code: activeParentServer.inviteCode || activeParentServer.id.split('_').pop()?.toUpperCase() || '',
+      serverId: activeParentServer.id,
+      creatorId: activeParentServer.ownerId,
+      members: activeParentServer.members || [],
+      moderators: [activeParentServer.ownerId]
+    };
+  } else {
+    activeRoomInfo = chatRooms.find(r => r.id === activeChatTargetId) || {
+      id: 'group-all',
+      name: 'General Lounge',
+      type: 'group' as const,
+      icon: '🌍',
+      description: 'School-wide lounge for students and teachers',
+      code: 'GLOBAL'
+    };
+  }
 
   // Compute DM target profile if active room is a Direct Message
   const isDirectMessage = activeRoomInfo.type === 'friend' || activeRoomInfo.id.startsWith('dm_');
@@ -1547,9 +1590,16 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
 
   const pinnedMessages = roomMessages.filter(m => m.isPinned);
 
-  // Categorize Chat Rooms into Direct Messages and Group Rooms
+  // Categorize Chat Rooms into Direct Messages and Group Rooms (strictly excluding server channels)
   const dmRooms = chatRooms.filter(r => r.type === 'friend' || r.id.startsWith('dm_'));
-  const groupRooms = chatRooms.filter(r => r.type !== 'friend' && !r.id.startsWith('dm_'));
+  const groupRooms = chatRooms.filter(r => 
+    r.type !== 'friend' && 
+    !r.id.startsWith('dm_') && 
+    !r.serverId && 
+    !r.id.startsWith('ch_') && 
+    !r.id.startsWith('server_') &&
+    r.type !== 'channel'
+  );
 
   // Available Users list for starting new DMs
   const availableUsersList = allProfiles.length > 0 ? allProfiles : students;

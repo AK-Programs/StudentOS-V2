@@ -1028,6 +1028,7 @@ export const DEFAULT_SERVERS: ChatServer[] = [
     icon: '🏛️',
     description: 'Official StudentOS institution community server for all faculties, student bodies, and extracurricular guilds.',
     ownerId: 'super-admin-root',
+    inviteCode: 'CAMPUS',
     bannerUrl: 'https://images.unsplash.com/photo-1541339907198-e08756dedf3f?auto=format&fit=crop&w=1200&q=80',
     roles: [
       {
@@ -1116,6 +1117,7 @@ export const DEFAULT_SERVERS: ChatServer[] = [
     icon: '⚡',
     description: 'Robotics, software engineering, math olympiads, and high-impact science research labs.',
     ownerId: 'super-admin-root',
+    inviteCode: 'ROBOTICS',
     bannerUrl: 'https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=1200&q=80',
     roles: [
       {
@@ -1181,6 +1183,7 @@ export const DEFAULT_SERVERS: ChatServer[] = [
     icon: '🛡️',
     description: 'Inter-house tournaments, Solara, Astra, Elara, Vega leagues, and spirit rallies.',
     ownerId: 'super-admin-root',
+    inviteCode: 'HOUSES',
     bannerUrl: 'https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=1200&q=80',
     roles: [
       {
@@ -1320,18 +1323,8 @@ export async function createChatServerChannel(serverId: string, channel: ServerC
   targetServer.channels = channels;
   await saveChatServer(targetServer);
 
-  const channelRoom: ChatRoom = {
-    id: channel.id,
-    name: channel.name,
-    description: channel.topic || '',
-    type: 'channel',
-    icon: channel.type === 'announcement' ? '📢' : channel.type === 'class' ? '💡' : '💬',
-    creatorId: targetServer.ownerId,
-    serverId: targetServer.id,
-    members: targetServer.members || [],
-    moderators: [targetServer.ownerId]
-  };
-  await saveChatRoom(channelRoom);
+  // Server channels are stored inside targetServer.channels in chat_servers only.
+  // They are NOT saved to chat_rooms to prevent them from showing up under Home / DMs.
 
   return channel;
 }
@@ -1343,7 +1336,6 @@ export async function deleteChatServerChannel(serverId: string, channelId: strin
 
   targetServer.channels = (targetServer.channels || []).filter(c => c.id !== channelId);
   await saveChatServer(targetServer);
-  await deleteChatRoom(channelId);
 }
 
 export async function saveCustomRole(serverIdOrGroupId: string, role: CustomRole): Promise<CustomRole> {
@@ -1478,39 +1470,33 @@ export async function getMessageReadReceipts(
 
 
 export async function joinChatServer(inviteCode: string, userId: string): Promise<{ success: boolean; message: string; server?: ChatServer }> {
-  if (!inviteCode || !userId) return { success: false, message: 'Missing info' };
+  if (!inviteCode || !userId) return { success: false, message: 'Invite code not found.' };
   const cleanCode = inviteCode.trim().toUpperCase();
 
   try {
-    const { data: servers, error } = await supabase.from('chat_servers').select('*');
-    if (error || !servers) return { success: false, message: 'Server not found' };
+    const servers = await getChatServers();
+    const target = servers.find(s => 
+      (s.inviteCode && s.inviteCode.toUpperCase() === cleanCode) ||
+      (s.id && s.id.toUpperCase() === cleanCode) ||
+      (s.id && s.id.split('_').pop()?.toUpperCase() === cleanCode)
+    );
 
-    const targetRow = servers.find(s => (s.invite_code && s.invite_code.toUpperCase() === cleanCode) || s.id.toUpperCase() === cleanCode);
-    if (!targetRow) return { success: false, message: 'Invalid server code' };
-
-    const target: ChatServer = {
-      id: targetRow.id,
-      name: targetRow.name,
-      icon: targetRow.icon || '💬',
-      description: targetRow.description || '',
-      ownerId: targetRow.owner_id || '',
-      inviteCode: targetRow.invite_code,
-      bannerUrl: targetRow.banner_url,
-      channels: targetRow.channels || [],
-      roles: targetRow.roles || [],
-      members: targetRow.members || [],
-      createdAt: targetRow.created_at
-    };
+    if (!target) {
+      return { success: false, message: 'Invite code not found.' };
+    }
 
     const members = target.members || [];
-    if (members.includes(userId)) return { success: true, message: 'Already a member', server: target };
+    if (members.includes(userId)) {
+      return { success: true, message: `Already a member of ${target.name}!`, server: target };
+    }
 
     const updatedMembers = [...members, userId];
-    await supabase.from('chat_servers').update({ members: updatedMembers }).eq('id', target.id);
-    
-    return { success: true, message: `Joined ${target.name}!`, server: { ...target, members: updatedMembers } };
+    const updatedServer = { ...target, members: updatedMembers };
+    await saveChatServer(updatedServer);
+
+    return { success: true, message: `Joined server "${target.name}"!`, server: updatedServer };
   } catch (e) {
-    return { success: false, message: 'Error joining server' };
+    return { success: false, message: 'Invite code not found.' };
   }
 }
 
