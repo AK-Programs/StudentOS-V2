@@ -1246,6 +1246,7 @@ export async function getChatServers(): Promise<ChatServer[]> {
         channels: row.channels || [],
         roles: row.roles || [],
         members: row.members || [],
+        memberRoles: row.member_roles || {},
         createdAt: row.created_at || new Date().toISOString()
       }));
       localStorage.setItem(STORAGE_KEY_SERVERS, JSON.stringify(parsed));
@@ -1279,6 +1280,7 @@ export async function saveChatServer(server: ChatServer): Promise<ChatServer> {
     channels: server.channels || [],
     roles: server.roles || [],
     members: server.members || [],
+    member_roles: server.memberRoles || {},
     updated_at: new Date().toISOString()
   };
 

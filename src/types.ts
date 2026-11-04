@@ -453,6 +453,7 @@ export interface ChatServer {
   channels?: ServerChannel[];
   roles?: CustomRole[];
   members?: string[];
+  memberRoles?: Record<string, string>;
   createdAt: string;
 }
 

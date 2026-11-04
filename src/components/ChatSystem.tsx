@@ -250,7 +250,7 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
     // Choose prefix based on type if not already prefixed
     let finalName = formattedName;
     const prefix = newChannelType === 'announcement' ? '📢' : newChannelType === 'class' ? '💡' : '💬';
-    if (!finalName.startsWith('📢') && !finalName.startsWith('💡') && !finalName.startsWith('💬')) {
+    if (!finalName.startsWith('📢') && !finalName.startsWith('💡') && !finalName.startsWith('💬') && !finalName.startsWith('#')) {
       finalName = `${prefix}-${finalName}`;
     }
 
@@ -260,22 +260,23 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
       name: finalName,
       type: newChannelType,
       category: newServerChannelCategory || 'General',
-      topic: `${newServerChannelCategory} channel in ${currentServer.name}`
+      topic: `${newServerChannelCategory || 'General'} channel in ${currentServer.name}`
     };
 
-    await createChatServerChannel(currentServer.id, channel);
-    
-    // Refresh servers from DB
-    const updatedServers = await getChatServers();
-    setChatServers(updatedServers);
-    
-    // Small delay to ensure state propagates before switching
-    setTimeout(() => {
+    // Update state immediately
+    const updatedChannels = [...(currentServer.channels || []), channel];
+    const updatedServer = { ...currentServer, channels: updatedChannels };
+    setChatServers(prev => prev.map(s => s.id === currentServer.id ? updatedServer : s));
+
+    try {
+      await createChatServerChannel(currentServer.id, channel);
       setActiveChatTargetId(channel.id);
       setShowCreateChannelModal(false);
       setNewChannelName('');
-      showNotification(`Created channel #${channel.name}!`);
-    }, 50);
+      showNotification(`Created channel ${channel.name}!`);
+    } catch (err: any) {
+      showNotification(`Error saving channel: ${err?.message || err}`);
+    }
   };
 
   const handleDeleteChannel = async (serverId: string, channelId: string) => {
@@ -382,6 +383,7 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
   // Server Invite & Member Add State
   const [showServerInviteModal, setShowServerInviteModal] = useState(false);
   const [serverInviteSearchQuery, setServerInviteSearchQuery] = useState('');
+  const [showServerMembersModal, setShowServerMembersModal] = useState(false);
 
   // Join Server Handler
   const handleJoinServerByCode = async (codeToJoin?: string) => {
@@ -2037,31 +2039,44 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
                           <p className="text-[9px] text-indigo-300 truncate">{channels.length} channels</p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 shrink-0">
                         <button
                           onClick={() => {
                             setServerInviteSearchQuery('');
                             setShowServerInviteModal(true);
                           }}
-                          className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white shadow-md text-xs font-bold flex items-center gap-1 transition-all active:scale-95"
+                          className="px-2 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white shadow-md text-[11px] font-bold flex items-center gap-1 transition-all active:scale-95"
                           title="Invite & Add Members to Server"
                         >
                           <UserPlus className="w-3.5 h-3.5" />
-                          <span>Invite</span>
+                          <span className="hidden sm:inline">Invite</span>
                         </button>
                         <button
                           onClick={() => {
-                            setRolesTargetId(currentServer.id);
-                            setShowManageRolesModal(true);
+                            setShowServerMembersModal(true);
                           }}
-                          className="p-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-indigo-300 hover:text-white border border-white/10 text-xs font-bold"
-                          title="Manage Custom Roles"
+                          className="px-2 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-300 hover:text-white border border-white/10 text-[11px] font-bold flex items-center gap-1 transition-all active:scale-95"
+                          title="Server Members"
                         >
-                          <ShieldCheck className="w-4 h-4" />
+                          <Users className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">Members</span>
                         </button>
+                        {(currentServer.ownerId === currentUser?.uid || currentUser?.role === 'admin' || currentUser?.role === 'super_admin') && (
+                          <button
+                            onClick={() => {
+                              setRolesTargetId(currentServer.id);
+                              setShowManageRolesModal(true);
+                            }}
+                            className="px-2 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-white border border-white/10 text-[11px] font-bold flex items-center gap-1 transition-all active:scale-95"
+                            title="Manage Roles"
+                          >
+                            <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                            <span className="hidden sm:inline">Roles</span>
+                          </button>
+                        )}
                         <button
                           onClick={() => setShowCreateChannelModal(true)}
-                          className="p-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white shadow-md text-xs font-bold flex items-center gap-1"
+                          className="p-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white shadow-md text-xs font-bold flex items-center justify-center"
                           title="Create Channel"
                         >
                           <Plus className="w-4 h-4" />
@@ -4338,6 +4353,138 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
               <div className="flex justify-end pt-2 border-t border-white/10">
                 <button
                   onClick={() => setShowServerInviteModal(false)}
+                  className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-all"
+                >
+                  Done
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        );
+      })()}
+
+      {/* MODAL 8: SERVER MEMBERS & ROLE ASSIGNMENTS */}
+      {showServerMembersModal && (() => {
+        const currentServer = chatServers.find(s => s.id === activeServerId) || chatServers[0];
+        if (!currentServer) return null;
+        const serverOwner = currentServer.ownerId;
+        const isOwner = currentUser?.uid === serverOwner || currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
+
+        return (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[9999] flex items-center justify-center p-4 animate-fadeIn">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="bg-slate-900 border border-white/10 rounded-3xl max-w-lg w-full p-6 shadow-2xl relative space-y-4"
+            >
+              <button
+                onClick={() => setShowServerMembersModal(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-full bg-white/5 hover:bg-white/10"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="flex items-center gap-3">
+                <span className="text-3xl p-2 bg-slate-950 border border-white/10 rounded-2xl">{currentServer.icon || '🏰'}</span>
+                <div>
+                  <h3 className="text-lg font-black text-white">{currentServer.name} — Members</h3>
+                  <p className="text-xs text-slate-400">{(currentServer.members || []).length} members in server</p>
+                </div>
+              </div>
+
+              <div className="space-y-2 max-h-72 overflow-y-auto pr-1 scrollbar-thin">
+                {(currentServer.members || []).map(memberUid => {
+                  const memberUser = resolveUser(memberUid);
+                  const isMemberOwner = memberUid === serverOwner;
+                  const assignedRoleId = currentServer.memberRoles?.[memberUid];
+                  const assignedRole = (currentServer.roles || []).find(r => r.id === assignedRoleId);
+
+                  return (
+                    <div key={memberUid} className="flex items-center justify-between p-3 rounded-2xl bg-slate-950/60 border border-white/5 gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        {memberUser.avatar || memberUser.photoURL ? (
+                          <img src={memberUser.avatar || memberUser.photoURL} alt="" className="w-8 h-8 rounded-full object-cover border border-white/10 shrink-0" />
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-xs font-bold text-white shrink-0">
+                            {memberUser.name.charAt(0)}
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-xs font-bold text-white truncate">{memberUser.name}</p>
+                            {isMemberOwner && (
+                              <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[8px] font-black uppercase">
+                                Owner
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            {assignedRole ? (
+                              <span 
+                                style={{ backgroundColor: `${assignedRole.color}20`, color: assignedRole.color, borderColor: `${assignedRole.color}40` }}
+                                className="px-2 py-0.5 rounded-full text-[9px] font-bold border flex items-center gap-1"
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: assignedRole.color }} />
+                                {assignedRole.name}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 capitalize">{memberUser.role}</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {isOwner && (
+                          <select
+                            value={assignedRoleId || ''}
+                            onChange={async (e) => {
+                              const newRoleId = e.target.value;
+                              const updatedRoles = { ...(currentServer.memberRoles || {}) };
+                              if (newRoleId) {
+                                updatedRoles[memberUid] = newRoleId;
+                              } else {
+                                delete updatedRoles[memberUid];
+                              }
+                              const updatedServer = { ...currentServer, memberRoles: updatedRoles };
+                              await saveChatServer(updatedServer);
+                              setChatServers(prev => prev.map(s => s.id === currentServer.id ? updatedServer : s));
+                              showNotification(`Role updated for ${memberUser.name}`);
+                            }}
+                            className="bg-slate-900 border border-white/10 text-white text-[10px] rounded-xl px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                          >
+                            <option value="">(Default Role)</option>
+                            {(currentServer.roles || []).map(r => (
+                              <option key={r.id} value={r.id}>{r.name}</option>
+                            ))}
+                          </select>
+                        )}
+
+                        {isOwner && !isMemberOwner && (
+                          <button
+                            onClick={async () => {
+                              if (!confirm(`Remove ${memberUser.name} from server?`)) return;
+                              const updatedMembers = (currentServer.members || []).filter(m => m !== memberUid);
+                              const updatedServer = { ...currentServer, members: updatedMembers };
+                              await saveChatServer(updatedServer);
+                              setChatServers(prev => prev.map(s => s.id === currentServer.id ? updatedServer : s));
+                              showNotification(`Removed ${memberUser.name} from server.`);
+                            }}
+                            className="p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-xl border border-rose-500/20 text-xs transition-colors"
+                            title="Remove Member"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex justify-end pt-2 border-t border-white/10">
+                <button
+                  onClick={() => setShowServerMembersModal(false)}
                   className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition-all"
                 >
                   Done
