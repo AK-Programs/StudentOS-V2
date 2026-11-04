@@ -9,22 +9,19 @@
  * - Short chat, taskType "short", or modelOverride containing groq, llama, qwen, or gpt-oss
  *   -> Groq (POST https://api.groq.com/openai/v1/chat/completions with GROQ_API_KEY)
  *   -> Rotates models: llama-3.1-8b-instant, openai/gpt-oss-120b, qwen/qwen3.8-27b
- * - General chat, taskType "general", or modelOverride containing ministral or mistral
+ * - General chat, complex tasks, revision guides, lecture notes, or modelOverride containing ministral or mistral
  *   -> Ministral (POST https://api.mistral.ai/v1/chat/completions with MINISTRAL_API_KEY, model: ministral-8b-2410)
- * - Long context, revision guides, essays, multi-chapter explanations, analysis, and taskType "complex"
- *   -> Nara Router ONLY (POST https://router.bynara.id/v1/chat/completions with NARA_ROUTER_API_KEY, model: NARA_ROUTER_MODEL default combo/free, max_tokens >= 12288)
  * - Fast chat and normal Buddy chat
- *   -> APInex (POST https://api.apinex.bond/v1/chat/completions with APINEX_API_KEY, model: free/gpt-6-luna)
- * - Never silently replaces the chosen provider with another provider on failure; always returns the real HTTP status and error.
+ *   -> APInex (POST https://api.apinex.bond/v1/chat/completions with APINEX_API_KEY, model: free/gpt-6-luna, tools: free/glm-5.3-flash)
+ * - Approved AI Providers strictly: APInex, Ministral, Groq.
  */
 
-export type AIProviderName = 'apinex' | 'groq' | 'ministral' | 'nara_router';
+export type AIProviderName = 'apinex' | 'groq' | 'ministral';
 export type TaskComplexityTier = 'short' | 'fast' | 'general' | 'complex' | 'tool';
 
 const APINEX_CHAT_COMPLETIONS_URL = 'https://api.apinex.bond/v1/chat/completions';
 const GROQ_CHAT_COMPLETIONS_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MINISTRAL_CHAT_COMPLETIONS_URL = 'https://api.mistral.ai/v1/chat/completions';
-const NARA_CHAT_COMPLETIONS_URL = 'https://router.bynara.id/v1/chat/completions';
 
 const GROQ_MODELS = [
   'llama-3.1-8b-instant',
@@ -82,31 +79,6 @@ function getMinistralApiKey(): string {
   return rawKey.trim().replace(/^["']|["']$/g, '');
 }
 
-function getNaraRouterApiKey(): string {
-  const rawKey =
-    process.env.NARA_ROUTER_API_KEY ||
-    process.env.VITE_NARA_ROUTER_API_KEY ||
-    '';
-  return rawKey.trim().replace(/^["']|["']$/g, '');
-}
-
-function getNaraRouterModel(modelOverride?: string): string {
-  const configuredModel = (process.env.NARA_ROUTER_MODEL || '').trim().replace(/^["']|["']$/g, '');
-  if (modelOverride && typeof modelOverride === 'string') {
-    const cleanOverride = modelOverride.trim();
-    const lowerOverride = cleanOverride.toLowerCase();
-    if (lowerOverride === 'combo/free' || lowerOverride === 'nemotron-3-ultra-free') {
-      return cleanOverride;
-    }
-    if (lowerOverride.includes('nemotron')) {
-      return configuredModel === 'nemotron-3-ultra-free' ? configuredModel : 'nemotron-3-ultra-free';
-    }
-    if (lowerOverride.includes('nara') || lowerOverride.includes('combo')) {
-      return configuredModel || 'combo/free';
-    }
-  }
-  return configuredModel || 'combo/free';
-}
 
 function isApinexFreeModel(modelName?: string): boolean {
   if (!modelName || typeof modelName !== 'string') return false;
@@ -159,15 +131,6 @@ function isLongOrComplexPrompt(
   const taskType = (options?.taskType || '').trim().toLowerCase();
   const mode = (options?.mode || '').trim().toLowerCase();
   const override = (options?.modelOverride || '').trim().toLowerCase();
-
-  if (
-    override.includes('nara') ||
-    override.includes('combo') ||
-    override.includes('nemotron') ||
-    override.includes('ultra')
-  ) {
-    return true;
-  }
 
   // If caller explicitly requested groq, ministral, fast, short, or general, do not override with long check
   if (
@@ -241,19 +204,6 @@ export function classifyTaskComplexity(
 
   // 1. Explicit modelOverride checks
   if (
-    override.includes('nara') ||
-    override.includes('combo') ||
-    override.includes('nemotron') ||
-    override.includes('ultra')
-  ) {
-    return {
-      provider: 'nara_router',
-      model: getNaraRouterModel(options?.modelOverride),
-      tier: 'complex'
-    };
-  }
-
-  if (
     override.includes('groq') ||
     override.includes('llama') ||
     override.includes('qwen') ||
@@ -291,8 +241,8 @@ export function classifyTaskComplexity(
   if (taskType === 'complex') {
     if (!isShortPrompt(clean)) {
       return {
-        provider: 'nara_router',
-        model: getNaraRouterModel(options?.modelOverride),
+        provider: 'ministral',
+        model: 'ministral-8b-2410',
         tier: 'complex'
       };
     }
@@ -331,11 +281,11 @@ export function classifyTaskComplexity(
     };
   }
 
-  // 3. Long context, revision guides, essays, multi-chapter explanations, analysis -> Nara Router ONLY
+  // 3. Long context, revision guides, essays, multi-chapter explanations, analysis -> Ministral (or Groq/APInex)
   if (isLongOrComplexPrompt(clean, options)) {
     return {
-      provider: 'nara_router',
-      model: getNaraRouterModel(options?.modelOverride),
+      provider: 'ministral',
+      model: 'ministral-8b-2410',
       tier: 'complex'
     };
   }
@@ -510,423 +460,9 @@ function buildChatMessages(
   return messages;
 }
 
-/**
- * Self-contained Nara Router call for long and complex prompts.
- * - Calls POST https://router.bynara.id/v1/chat/completions
- * - Authorization: Bearer NARA_ROUTER_API_KEY
- * - Model: NARA_ROUTER_MODEL, default combo/free
- * - max_tokens >= 12288 (12k+)
- * - Retries once with max_tokens 16000 if HTTP 200 has empty text and finish_reason === 'length'
- * - Never falls back to APInex; surfaces real Nara HTTP status and error.
- */
-async function callNaraCompletion(
-  prompt: string,
-  systemPrompt?: string,
-  history: any[] = [],
-  options?: {
-    modelOverride?: string;
-    jsonMode?: boolean;
-    maxTokens?: number;
-    requestId?: string;
-  }
-): Promise<{
-  text: string;
-  providerUsed: 'nara_router';
-  modelUsed: string;
-  tier: 'complex';
-  totalMs: number;
-  retries: number;
-}> {
-  const apiKey = getNaraRouterApiKey();
-  const effectiveModel = getNaraRouterModel(options?.modelOverride);
 
-  if (!apiKey) {
-    const err: any = new Error('NARA_ROUTER_API_KEY environment variable is not configured on the server.');
-    err.status = 500;
-    err.providerUsed = 'nara_router';
-    err.modelUsed = effectiveModel;
-    throw err;
-  }
 
-  const start = Date.now();
-  const messages = buildChatMessages(systemPrompt, history, prompt);
-  const initialMaxTokens = Math.max(options?.maxTokens || 0, 16384);
 
-  async function executeNaraRequest(maxTokensToUse: number): Promise<{
-    httpStatus: number;
-    ok: boolean;
-    data?: any;
-    rawErrorText?: string;
-  }> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 55000);
-
-    try {
-      const resp = await fetch(NARA_CHAT_COMPLETIONS_URL, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          model: effectiveModel,
-          messages,
-          temperature: 0.6,
-          max_tokens: maxTokensToUse,
-          ...(options?.jsonMode ? { response_format: { type: 'json_object' } } : {})
-        }),
-        signal: controller.signal
-      });
-
-      clearTimeout(timeout);
-
-      if (!resp.ok) {
-        const rawErrorText = await resp.text().catch(() => '');
-        return {
-          httpStatus: resp.status,
-          ok: false,
-          rawErrorText
-        };
-      }
-
-      const data = await resp.json();
-      return {
-        httpStatus: resp.status,
-        ok: true,
-        data
-      };
-    } catch (fetchErr: any) {
-      clearTimeout(timeout);
-      const err: any = new Error(fetchErr?.message || 'Nara Router network request failed');
-      err.status = 502;
-      err.providerUsed = 'nara_router';
-      err.modelUsed = effectiveModel;
-      throw err;
-    }
-  }
-
-  let retries = 0;
-  let attempt = await executeNaraRequest(initialMaxTokens);
-
-  if (!attempt.ok) {
-    const err: any = new Error(
-      `Nara Router HTTP ${attempt.httpStatus}: ${attempt.rawErrorText || 'Request failed'}`
-    );
-    err.status = attempt.httpStatus;
-    err.naraStatus = attempt.httpStatus;
-    err.naraError = attempt.rawErrorText || 'Request failed';
-    err.providerUsed = 'nara_router';
-    err.modelUsed = effectiveModel;
-    throw err;
-  }
-
-  let choice = attempt.data?.choices?.[0];
-  let text = extractTextFromChoiceMessage(choice, attempt.data);
-  let finishReason = String(choice?.finish_reason || attempt.data?.finish_reason || '').toLowerCase();
-
-  // If Nara returns HTTP 200 with empty content and finish_reason length, retry once with higher max_tokens (16000)
-  if (!text && finishReason === 'length') {
-    retries = 1;
-    attempt = await executeNaraRequest(Math.max(initialMaxTokens, 16000));
-
-    if (!attempt.ok) {
-      const err: any = new Error(
-        `Nara Router HTTP ${attempt.httpStatus}: ${attempt.rawErrorText || 'Request failed on retry'}`
-      );
-      err.status = attempt.httpStatus;
-      err.naraStatus = attempt.httpStatus;
-      err.naraError = attempt.rawErrorText || 'Request failed on retry';
-      err.providerUsed = 'nara_router';
-      err.modelUsed = effectiveModel;
-      throw err;
-    }
-
-    choice = attempt.data?.choices?.[0];
-    text = extractTextFromChoiceMessage(choice, attempt.data);
-    finishReason = String(choice?.finish_reason || attempt.data?.finish_reason || '').toLowerCase();
-  }
-
-  if (!text) {
-    const rawDump = JSON.stringify(choice || attempt.data || {}).slice(0, 300);
-    const err: any = new Error(
-      `Nara Router HTTP 200 returned empty content (finish_reason=${finishReason || 'unknown'}). Response: ${rawDump}`
-    );
-    err.status = 502;
-    err.naraStatus = 200;
-    err.providerUsed = 'nara_router';
-    err.modelUsed = effectiveModel;
-    throw err;
-  }
-
-  return {
-    text: text.trim(),
-    providerUsed: 'nara_router',
-    modelUsed: effectiveModel,
-    tier: 'complex',
-    totalMs: Date.now() - start,
-    retries
-  };
-}
-
-/**
- * Self-contained Nara Router SSE streaming handler for long and complex prompts.
- * Never falls back to APInex.
- */
-async function streamNaraCompletion(
-  prompt: string,
-  systemPrompt: string | undefined,
-  history: any[],
-  options: {
-    modelOverride?: string;
-    requestId?: string;
-    maxTokens?: number;
-  },
-  res: any
-) {
-  const apiKey = getNaraRouterApiKey();
-  const effectiveModel = getNaraRouterModel(options.modelOverride);
-  const requestId = options.requestId || 'req_' + Math.random().toString(36).substring(2, 10);
-
-  if (!apiKey) {
-    return sendJson(res, 500, {
-      success: false,
-      status: 500,
-      error: 'NARA_ROUTER_API_KEY environment variable is not configured on the server.',
-      providerUsed: 'nara_router',
-      modelUsed: effectiveModel,
-      requestId
-    });
-  }
-
-  res.statusCode = 200;
-  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
-  if (typeof res.flushHeaders === 'function') {
-    res.flushHeaders();
-  }
-
-  const start = Date.now();
-  const messages = buildChatMessages(systemPrompt, history, prompt);
-  const initialMaxTokens = Math.max(options.maxTokens || 0, 12288);
-
-  async function runStreamAttempt(maxTokensToUse: number): Promise<{
-    ok: boolean;
-    status: number;
-    errorText?: string;
-    fullText: string;
-    firstTokenLatencyMs: number | null;
-    finishReason: string;
-  }> {
-    const resp = await fetch(NARA_CHAT_COMPLETIONS_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream, application/json'
-      },
-      body: JSON.stringify({
-        model: effectiveModel,
-        messages,
-        temperature: 0.6,
-        max_tokens: maxTokensToUse,
-        stream: true
-      })
-    });
-
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => '');
-      return {
-        ok: false,
-        status: resp.status,
-        errorText: errText || resp.statusText || 'Nara Router stream failed',
-        fullText: '',
-        firstTokenLatencyMs: null,
-        finishReason: ''
-      };
-    }
-
-    if (!resp.body) {
-      return {
-        ok: false,
-        status: 502,
-        errorText: 'Nara Router stream response body is empty',
-        fullText: '',
-        firstTokenLatencyMs: null,
-        finishReason: ''
-      };
-    }
-
-    const contentType = (resp.headers.get('content-type') || '').toLowerCase();
-    if (contentType.includes('application/json') && !contentType.includes('text/event-stream')) {
-      const data = await resp.json();
-      const choice = data?.choices?.[0];
-      const text = extractTextFromChoiceMessage(choice, data);
-      const finishReason = String(choice?.finish_reason || data?.finish_reason || '').toLowerCase();
-      if (text) {
-        const latency = Date.now() - start;
-        res.write(`data: ${JSON.stringify({ type: 'token', token: text, firstTokenLatencyMs: latency })}\n\n`);
-        return {
-          ok: true,
-          status: 200,
-          fullText: text,
-          firstTokenLatencyMs: latency,
-          finishReason
-        };
-      }
-      return {
-        ok: true,
-        status: 200,
-        fullText: '',
-        firstTokenLatencyMs: null,
-        finishReason
-      };
-    }
-
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let buffer = '';
-    let fullText = '';
-    let firstTokenLatencyMs: number | null = null;
-    let lastChoice: any = null;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line || !line.startsWith('data:')) continue;
-        const payload = line.slice(5).trim();
-        if (payload === '[DONE]') continue;
-
-        try {
-          const parsed = JSON.parse(payload);
-          const choice = parsed.choices?.[0];
-          if (choice) lastChoice = choice;
-
-          const token = extractStreamingToken(choice);
-          if (token.length > 0) {
-            if (firstTokenLatencyMs === null) firstTokenLatencyMs = Date.now() - start;
-            fullText += token;
-            res.write(`data: ${JSON.stringify({ type: 'token', token, firstTokenLatencyMs })}\n\n`);
-          }
-        } catch {}
-      }
-    }
-
-    const finishReason = String(lastChoice?.finish_reason || '').toLowerCase();
-    return {
-      ok: true,
-      status: 200,
-      fullText,
-      firstTokenLatencyMs,
-      finishReason
-    };
-  }
-
-  try {
-    res.write(
-      `data: ${JSON.stringify({
-        type: 'meta',
-        requestId,
-        model: effectiveModel,
-        provider: 'nara_router',
-        tier: 'complex'
-      })}\n\n`
-    );
-
-    let attempt = await runStreamAttempt(initialMaxTokens);
-
-    if (!attempt.ok) {
-      res.write(
-        `data: ${JSON.stringify({
-          type: 'error',
-          status: attempt.status,
-          error: `Nara Router HTTP ${attempt.status}: ${attempt.errorText}`,
-          providerUsed: 'nara_router',
-          modelUsed: effectiveModel,
-          requestId
-        })}\n\n`
-      );
-      res.end();
-      return;
-    }
-
-    if (attempt.fullText.trim().length === 0 && attempt.finishReason === 'length') {
-      attempt = await runStreamAttempt(Math.max(initialMaxTokens, 16000));
-      if (!attempt.ok) {
-        res.write(
-          `data: ${JSON.stringify({
-            type: 'error',
-            status: attempt.status,
-            error: `Nara Router HTTP ${attempt.status}: ${attempt.errorText}`,
-            providerUsed: 'nara_router',
-            modelUsed: effectiveModel,
-            requestId
-          })}\n\n`
-        );
-        res.end();
-        return;
-      }
-    }
-
-    const finishedReply = attempt.fullText.trim();
-    if (finishedReply.length > 0) {
-      res.write(
-        `data: ${JSON.stringify({
-          type: 'done',
-          text: finishedReply,
-          requestId,
-          providerUsed: 'nara_router',
-          modelUsed: effectiveModel,
-          telemetry: {
-            requestId,
-            providerUsed: 'nara_router',
-            modelUsed: effectiveModel,
-            complexityTier: 'complex',
-            firstTokenLatencyMs: attempt.firstTokenLatencyMs ?? (Date.now() - start),
-            totalGenerationTimeMs: Date.now() - start,
-            streamed: true
-          }
-        })}\n\n`
-      );
-      res.end();
-      return;
-    } else {
-      res.write(
-        `data: ${JSON.stringify({
-          type: 'error',
-          status: 502,
-          error: `Nara Router stream finished with empty content (finish_reason=${attempt.finishReason || 'unknown'})`,
-          providerUsed: 'nara_router',
-          modelUsed: effectiveModel,
-          requestId
-        })}\n\n`
-      );
-      res.end();
-      return;
-    }
-  } catch (err: any) {
-    res.write(
-      `data: ${JSON.stringify({
-        type: 'error',
-        status: err?.status || 500,
-        error: err?.message || 'Nara Router stream request failed',
-        providerUsed: 'nara_router',
-        modelUsed: effectiveModel,
-        requestId
-      })}\n\n`
-    );
-    res.end();
-  }
-}
 
 /**
  * Self-contained Groq completion handler.
@@ -1162,7 +698,7 @@ async function callMinistralCompletion(
 
 /**
  * Unified non-streaming completion router for api/index.ts.
- * Dispatches strictly to the classified provider (Nara Router, Groq, Ministral, or APInex)
+ * Dispatches strictly to the classified provider (Groq, Ministral, or APInex)
  * and never silently replaces a failed provider with APInex.
  */
 async function callRoutedCompletion(
@@ -1190,14 +726,26 @@ async function callRoutedCompletion(
 }> {
   const { provider, model: classifiedModel, tier } = classifyTaskComplexity(prompt, options);
 
-  // 1. Long / complex -> Nara Router ONLY
-  if (provider === 'nara_router' || tier === 'complex') {
-    return await callNaraCompletion(prompt, systemPrompt, history, {
-      modelOverride: options?.modelOverride,
-      jsonMode: options?.jsonMode,
-      maxTokens: options?.maxTokens,
-      requestId: options?.requestId
-    });
+  // 1. General / Complex -> Ministral (with fallback to Groq)
+  if (provider === 'ministral' || tier === 'complex') {
+    try {
+      return await callMinistralCompletion(prompt, systemPrompt, history, {
+        jsonMode: options?.jsonMode,
+        maxTokens: options?.maxTokens,
+        requestId: options?.requestId
+      });
+    } catch (minErr: any) {
+      if (getGroqApiKey()) {
+        return await callGroqCompletion(prompt, systemPrompt, history, {
+          initialModel: 'llama-3.1-8b-instant',
+          modelOverride: options?.modelOverride,
+          jsonMode: options?.jsonMode,
+          maxTokens: options?.maxTokens,
+          requestId: options?.requestId
+        });
+      }
+      throw minErr;
+    }
   }
 
   // 2. Short / Groq -> Groq ONLY
@@ -1205,15 +753,6 @@ async function callRoutedCompletion(
     return await callGroqCompletion(prompt, systemPrompt, history, {
       initialModel: classifiedModel,
       modelOverride: options?.modelOverride,
-      jsonMode: options?.jsonMode,
-      maxTokens: options?.maxTokens,
-      requestId: options?.requestId
-    });
-  }
-
-  // 3. General / Ministral -> Ministral ONLY
-  if (provider === 'ministral') {
-    return await callMinistralCompletion(prompt, systemPrompt, history, {
       jsonMode: options?.jsonMode,
       maxTokens: options?.maxTokens,
       requestId: options?.requestId
@@ -1310,9 +849,9 @@ async function callRoutedCompletion(
 }
 
 /**
- * Unified SSE streaming router for Groq, Ministral, APInex, and Nara Router.
+ * Unified SSE streaming router for Groq, Ministral, and APInex.
  * Keeps raw streamed token text (including spaces) and trims only the finished reply.
- * Never silently replaces Groq, Ministral, or Nara Router with APInex on failure.
+ * Never silently replaces Groq or Ministral with APInex on failure.
  */
 async function streamRoutedCompletion(
   prompt: string,
@@ -1331,20 +870,6 @@ async function streamRoutedCompletion(
 ) {
   const { provider, model: classifiedModel, tier } = classifyTaskComplexity(prompt, options);
 
-  // 1. Long and complex requests -> Nara Router SSE stream
-  if (provider === 'nara_router' || tier === 'complex') {
-    return await streamNaraCompletion(
-      prompt,
-      systemPrompt,
-      history,
-      {
-        modelOverride: options.modelOverride,
-        requestId: options.requestId,
-        maxTokens: options.maxTokens
-      },
-      res
-    );
-  }
 
   const requestId = options.requestId || 'req_' + Math.random().toString(36).substring(2, 10);
 
@@ -2048,7 +1573,6 @@ export default async function handler(req: any, res: any) {
       status: 'ok',
       time: new Date().toISOString(),
       provider: 'multi-provider',
-      naraModel: getNaraRouterModel(),
       groqModels: GROQ_MODELS,
       ministralModel: 'ministral-8b-2410',
       apinexModel: 'free/gpt-6-luna',
@@ -2640,7 +2164,7 @@ ${combinedContext}
       return;
     }
 
-    // Non-streaming completion across Nara Router, Groq, Ministral, and APInex
+    // Non-streaming completion across Groq, Ministral, and APInex
     try {
       const result = await callRoutedCompletion(
         prompt,
@@ -2679,7 +2203,7 @@ ${combinedContext}
       const statusCode = typeof err?.status === 'number' && err.status >= 400 ? err.status : 500;
       const errProvider = err?.providerUsed || 'apinex';
       const errModel = err?.modelUsed || 'free/gpt-6-luna';
-      const errTier = err?.tier || (errProvider === 'nara_router' ? 'complex' : errProvider === 'groq' ? 'short' : errProvider === 'ministral' ? 'general' : 'fast');
+      const errTier = err?.tier || (errProvider === 'ministral' ? 'general' : errProvider === 'groq' ? 'short' : 'fast');
 
       return sendJson(res, statusCode, {
         success: false,
@@ -2699,24 +2223,40 @@ ${combinedContext}
     }
   }
 
-  // 4. AI Notes generator endpoint
+  // 4. AI Notes generator & editor endpoint
   if (pathname === '/api/ai/notes' || pathname === '/api/ai/notes/') {
     const body = await parseJsonBody(req);
     const { topic = '', subject = 'Academic', content = '', action = 'generate_notes', instruction = '' } = body;
     const targetTopic = content || topic || 'General Study';
-    const prompt =
-      action === 'summarize'
-        ? `Summarize the following study notes into a clear, bulleted cheat-sheet:\n\n${targetTopic}`
-        : action === 'quiz'
-          ? `Create a 3-question active recall quiz with answer key from:\n\n${targetTopic}`
-          : `Generate comprehensive, structured study notes for "${targetTopic}" (${subject}). Include Key Definitions, Core Formulas/Principles, and Quick Review Points. ${instruction}`;
+
+    let systemInstruction = 'You are an expert academic lecturer and note synthesizer powered by StudentOS AI.';
+    let prompt = '';
+
+    if (action === 'create_note' || action === 'generate_notes') {
+      systemInstruction = 'You are an elite academic lecturer, author, and curriculum designer. Produce comprehensive, highly structured lecture notes. Include: 1) Executive Overview, 2) Key Concepts & Definitions (in bold), 3) Core Formulas/Theorems/Principles with clean math notation or LaTeX ($...$), 4) Markdown Tables for comparisons, taxonomy, or properties, 5) Worked Examples / Practical Applications, 6) Summary & Quick Revision Points, 7) 3 Active Recall Study Questions. Format using rich Markdown with headings (##, ###), bullet lists, and tables.';
+      prompt = `Topic: "${topic || targetTopic}"\nSubject: ${subject}\n\nAdditional Instructions: ${instruction || 'Provide a complete, master-level academic lecture note.'}`;
+    } else if (action === 'edit_note' || action === 'custom') {
+      systemInstruction = `You are a meticulous academic editor and subject matter expert.
+CRITICAL PRESERVATION RULES:
+1. STRICTLY PRESERVE all valid existing tables, formulas, equations, headings, and key definitions in the text.
+2. Apply the requested changes seamlessly without discarding technical accuracy or structured data.
+3. Return the full updated note directly in Markdown format without conversational pleasantries.`;
+      prompt = `Original Note Content:\n"""\n${content}\n"""\n\nUser Instruction for Edit:\n"${instruction || 'Refine and improve clarity while keeping all technical details, tables, and formulas intact.'}"`;
+    } else if (action === 'summarize') {
+      prompt = `Summarize the following study notes into a clear, bulleted cheat-sheet with key definitions in bold:\n\n${targetTopic}`;
+    } else if (action === 'quiz') {
+      prompt = `Create a 3-question active recall quiz with answer key from:\n\n${targetTopic}`;
+    } else {
+      prompt = `Execute the following academic task on this note content: "${instruction || action}". Strictly preserve all formulas, tables, and technical terms:\n\n${targetTopic}`;
+    }
 
     try {
-      const result = await callNaraCompletion(
+      const result = await callRoutedCompletion(
         prompt,
-        'You are an expert academic note synthesizer powered by StudentOS AI.',
+        systemInstruction,
         [],
         {
+          taskType: 'complex',
           requestId
         }
       );
@@ -2725,27 +2265,26 @@ ${combinedContext}
         success: true,
         text: result.text.trim(),
         requestId,
-        providerUsed: 'nara_router',
+        providerUsed: result.providerUsed,
         modelUsed: result.modelUsed,
         telemetry: {
           requestId,
-          providerUsed: 'nara_router',
+          providerUsed: result.providerUsed,
           modelUsed: result.modelUsed,
           complexityTier: result.tier,
           totalGenerationTimeMs: result.totalMs,
-          retries: result.retries,
+          retries: result.retries || 0,
           streamed: false
         }
       });
     } catch (err: any) {
       const statusCode = typeof err?.status === 'number' && err.status >= 400 ? err.status : 500;
-      const naraModel = err?.modelUsed || getNaraRouterModel();
       return sendJson(res, statusCode, {
         success: false,
         status: statusCode,
-        error: err.message || 'Nara Router notes generation failed.',
-        providerUsed: 'nara_router',
-        modelUsed: naraModel,
+        error: err.message || 'Notes AI generation failed.',
+        providerUsed: err?.providerUsed || 'ministral',
+        modelUsed: err?.modelUsed || 'ministral-8b-2410',
         requestId
       });
     }

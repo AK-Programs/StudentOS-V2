@@ -108,6 +108,8 @@ import {
 } from './lib/securityService';
 import { MajorReleaseBanner } from './components/MajorReleaseBanner';
 import { StudyCenterFlashcards } from './components/StudyCenterFlashcards';
+import { LectureNotesAiModal } from './components/LectureNotesAiModal';
+import { NotificationFlyout } from './components/NotificationFlyout';
 import { ParentalPortal } from './components/ParentalPortal';
 import { BrainBattleArena } from './components/BrainBattleArena';
 import { SyllabusStudyPlanner } from './components/SyllabusStudyPlanner';
@@ -1020,6 +1022,9 @@ export default function App() {
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [noteEditMode, setNoteEditMode] = useState<boolean>(true);
   const [noteFont, setNoteFont] = useState<'sans' | 'serif' | 'mono'>('sans');
+  const [notesAiModalOpen, setNotesAiModalOpen] = useState<boolean>(false);
+  const [notesAiModalMode, setNotesAiModalMode] = useState<'create' | 'edit'>('create');
+  const [notesAiSelectedText, setNotesAiSelectedText] = useState<string>('');
 
   const [homeworkList, setHomeworkList] = useState<Homework[]>([]);
 
@@ -4262,6 +4267,61 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
       showNotification('Study canvas instantiated!');
     } catch (err: any) {
       console.error('Error creating note:', err);
+    }
+  };
+
+  const handleSaveAiNewNote = async (title: string, subject: string, content: string) => {
+    if (!currentUser) return;
+    const uid = currentUser.uid;
+    const defaultCover = [
+      'bg-gradient-to-r from-violet-600 to-indigo-900',
+      'bg-gradient-to-r from-emerald-600 to-teal-900',
+      'bg-gradient-to-r from-rose-600 to-amber-900',
+      'bg-gradient-to-r from-cyan-600 to-blue-900',
+      'bg-gradient-to-r from-slate-700 to-slate-900'
+    ][Math.floor(Math.random() * 5)];
+    const defaultIcon = ['📝', '💡', '💻', '🧠', '🔬', '🧪', '📐', '🎨', '🚀'][Math.floor(Math.random() * 9)];
+    const newId = generateUniqueId();
+    const newNote: VaultNote = {
+      id: newId,
+      title: title || 'AI Lecture Note',
+      subject: subject || 'Syllabus General',
+      content,
+      createdAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      icon: defaultIcon,
+      coverBg: defaultCover,
+      userId: uid,
+      folder_id: activeVaultFolderId || null
+    };
+    try {
+      const updated = [newNote, ...vaultNotes];
+      setVaultNotes(updated);
+      setSelectedNoteId(newId);
+      setNoteEditMode(true);
+      await saveVaultNoteToSupabase(newNote, uid);
+      awardStudentXP(currentUser, 'create_note', { uniqueItemId: newId });
+      showNotification(`✨ Lecture Note "${newNote.title}" saved to Vault!`);
+    } catch (err: any) {
+      console.error('Error saving AI note:', err);
+      showNotification(`✨ Note saved to local workspace.`);
+    }
+  };
+
+  const handleApplyAiEdit = async (newContent: string) => {
+    const activeNote = vaultNotes.find(n => n.id === selectedNoteId);
+    if (!activeNote || !currentUser) return;
+    const updatedNote: VaultNote = {
+      ...activeNote,
+      content: newContent
+    };
+    const updatedNotes = vaultNotes.map(n => n.id === activeNote.id ? updatedNote : n);
+    setVaultNotes(updatedNotes);
+    try {
+      await saveVaultNoteToSupabase(updatedNote, currentUser.uid);
+      showNotification(`✨ Note "${activeNote.title}" updated with AI changes.`);
+    } catch (err: any) {
+      console.error('Error updating note:', err);
+      showNotification('Note updated in local workspace.');
     }
   };
 
@@ -9948,6 +10008,19 @@ CRITICAL WEB GROUNDING DIRECTIVE:
 
                       <button
                         onClick={() => {
+                          setNotesAiModalMode('create');
+                          setNotesAiSelectedText('');
+                          setNotesAiModalOpen(true);
+                        }}
+                        className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer shadow-md"
+                        title="Create comprehensive lecture notes with AI"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
+                        <span>Create with AI</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
                           setStudyHubSubTab('flashcards');
                           handleTabSelect('study_hub');
                         }}
@@ -9980,13 +10053,26 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                             </h3>
                             <p className="text-[10px] text-slate-400">Folders & notes vault</p>
                           </div>
-                          <button 
-                            onClick={handleCreateNewNote}
-                            className="p-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition-all font-bold text-xs uppercase shadow flex items-center gap-1 active:scale-95 cursor-pointer"
-                            title="New blank note"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => {
+                                setNotesAiModalMode('create');
+                                setNotesAiSelectedText('');
+                                setNotesAiModalOpen(true);
+                              }}
+                              className="p-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white transition-all font-bold text-xs shadow flex items-center gap-1 active:scale-95 cursor-pointer"
+                              title="Create note with AI"
+                            >
+                              <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
+                            </button>
+                            <button 
+                              onClick={handleCreateNewNote}
+                              className="p-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition-all font-bold text-xs uppercase shadow flex items-center gap-1 active:scale-95 cursor-pointer"
+                              title="New blank note"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
 
                         {/* Notes Search bar */}
@@ -10501,6 +10587,25 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                     >
                                       <Sparkles className="w-3 h-3 text-indigo-400" />
                                       <span>Slash / Commands</span>
+                                    </button>
+
+                                    {/* Edit with AI trigger */}
+                                    <button
+                                      onClick={() => {
+                                        const textarea = document.getElementById('notion-editor-textarea') as HTMLTextAreaElement;
+                                        let selected = '';
+                                        if (textarea && textarea.selectionStart !== textarea.selectionEnd) {
+                                          selected = textarea.value.substring(textarea.selectionStart, textarea.selectionEnd);
+                                        }
+                                        setNotesAiModalMode('edit');
+                                        setNotesAiSelectedText(selected);
+                                        setNotesAiModalOpen(true);
+                                      }}
+                                      className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-purple-600/25 to-indigo-600/25 hover:from-purple-600/35 hover:to-indigo-600/35 text-purple-200 border border-purple-500/35 text-[11px] font-bold flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 shadow-sm"
+                                      title="Edit or transform this note with AI"
+                                    >
+                                      <Sparkles className="w-3 h-3 text-yellow-300" />
+                                      <span>Edit with AI</span>
                                     </button>
                                   </div>
 
@@ -14369,7 +14474,6 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                             <option value="apinex" className="bg-slate-900 text-white">⚡ APInex</option>
                             <option value="ministral" className="bg-slate-900 text-white">🌊 Ministral</option>
                             <option value="groq" className="bg-slate-900 text-white">🚀 Groq</option>
-                            <option value="nara_router" className="bg-slate-900 text-white">🎯 Nara</option>
                           </select>
                         </div>
                       )}
@@ -15959,6 +16063,32 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
           </div>
         ))}
       </div>
+
+      {/* Real-time Notification Flyout Animations emerging from Bell Button */}
+      <NotificationFlyout
+        notifications={notifications}
+        onNavigateTab={(tab) => handleTabSelect(tab)}
+        onMarkAsRead={(id) => handleMarkAsRead(id)}
+      />
+
+      {/* AI Lecture Notes Synthesizer and Transformer Modal */}
+      {(() => {
+        const activeNote = vaultNotes.find(n => n.id === selectedNoteId);
+        return (
+          <LectureNotesAiModal
+            isOpen={notesAiModalOpen}
+            mode={notesAiModalMode}
+            initialSubject={activeNote?.subject || 'Computer Science'}
+            noteTitle={activeNote?.title || 'Lecture Note'}
+            currentContent={activeNote?.content || ''}
+            selectedText={notesAiSelectedText}
+            onClose={() => setNotesAiModalOpen(false)}
+            onSaveNewNote={handleSaveAiNewNote}
+            onApplyEdit={handleApplyAiEdit}
+            renderMarkdown={renderMarkdown}
+          />
+        );
+      })()}
 
     </div>
   );

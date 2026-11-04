@@ -6,13 +6,11 @@
  * - Short chat, taskType "short", or modelOverride containing groq, llama, qwen, or gpt-oss:
  *   -> Groq (https://api.groq.com/openai/v1/chat/completions with GROQ_API_KEY)
  *   -> Rotates models: llama-3.1-8b-instant, openai/gpt-oss-120b, qwen/qwen3.8-27b
- * - General chat, taskType "general", or modelOverride containing ministral or mistral:
+ * - General chat, complex tasks, revision guides, lecture notes, or modelOverride containing ministral or mistral:
  *   -> Ministral (https://api.mistral.ai/v1/chat/completions with MINISTRAL_API_KEY, model: ministral-8b-2410)
- * - Long context, taskType "complex", or revision guide / essay / long answer / multi-chapter explanation:
- *   -> Nara Router ONLY (https://router.bynara.id/v1/chat/completions with NARA_ROUTER_API_KEY, model: NARA_ROUTER_MODEL default combo/free, max_tokens >= 12288)
  * - Fast chat and normal Buddy chat:
- *   -> APInex (https://api.apinex.bond/v1/chat/completions with APINEX_API_KEY, model: free/gpt-6-luna)
- * - Never silently replaces Groq, Ministral, or Nara Router with APInex on failure; surfaces real status and error.
+ *   -> APInex (https://api.apinex.bond/v1/chat/completions with APINEX_API_KEY, model: free/gpt-6-luna, tools: free/glm-5.3-flash)
+ * - Approved AI Providers strictly: APInex, Ministral, Groq.
  */
 
 import dotenv from 'dotenv';
@@ -34,7 +32,7 @@ export interface ModelRoutingContext {
 
 export interface AIPerformanceTelemetry {
   requestId: string;
-  providerUsed: 'apinex' | 'groq' | 'ministral' | 'nara_router' | 'gemini';
+  providerUsed: 'apinex' | 'groq' | 'ministral' | 'gemini';
   modelUsed: string;
   complexityTier: TaskComplexityTier;
   requestStart: number;
@@ -100,35 +98,6 @@ export function getGroqApiKey(): string {
   return (process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY || '').trim().replace(/^["']|["']$/g, '');
 }
 
-export function getNaraRouterApiKey(): string {
-  return (process.env.NARA_ROUTER_API_KEY || process.env.VITE_NARA_ROUTER_API_KEY || '')
-    .trim()
-    .replace(/^["']|["']$/g, '');
-}
-
-export function getNaraRouterBaseUrl(): string {
-  const raw = (process.env.NARA_ROUTER_BASE_URL || 'https://router.bynara.id/v1').trim().replace(/\/+$/, '');
-  return raw.replace(/\/chat\/completions$/i, '').replace(/\/combo\/free$/i, '').replace(/\/nemotron-3-ultra-free$/i, '');
-}
-
-export function getNaraRouterModel(modelOverride?: string): string {
-  const configuredModel = (process.env.NARA_ROUTER_MODEL || '').trim().replace(/^["']|["']$/g, '');
-  if (modelOverride && typeof modelOverride === 'string') {
-    const cleanOverride = modelOverride.trim();
-    const lowerOverride = cleanOverride.toLowerCase();
-    if (lowerOverride === 'combo/free' || lowerOverride === 'nemotron-3-ultra-free') {
-      return cleanOverride;
-    }
-    if (lowerOverride.includes('nemotron')) {
-      return configuredModel === 'nemotron-3-ultra-free' ? configuredModel : 'nemotron-3-ultra-free';
-    }
-    if (lowerOverride.includes('nara') || lowerOverride.includes('combo')) {
-      return configuredModel || 'combo/free';
-    }
-  }
-  return configuredModel || 'combo/free';
-}
-
 // Groq Model Rotation Manager (single key rotating: llama-3.1-8b-instant, openai/gpt-oss-120b, qwen/qwen3.8-27b)
 export const groqModels = ['llama-3.1-8b-instant', 'openai/gpt-oss-120b', 'qwen/qwen3.8-27b'];
 let groqModelIndex = 0;
@@ -176,15 +145,6 @@ export function isLongOrComplexPrompt(
   const taskType = (ctx?.taskType || '').toLowerCase();
   const mode = (ctx?.mode || '').toLowerCase();
   const override = (ctx?.modelOverride || '').trim().toLowerCase();
-
-  if (
-    override.includes('nara') ||
-    override.includes('combo') ||
-    override.includes('nemotron') ||
-    override.includes('ultra')
-  ) {
-    return true;
-  }
 
   if (
     override.includes('groq') ||
@@ -236,7 +196,7 @@ export function isLongOrComplexPrompt(
 export function classifyTaskComplexity(
   prompt: string,
   ctx?: ModelRoutingContext
-): { provider: 'apinex' | 'groq' | 'ministral' | 'nara_router'; model: string; tier: TaskComplexityTier } {
+): { provider: 'apinex' | 'groq' | 'ministral'; model: string; tier: TaskComplexityTier } {
   const cleanPrompt = (prompt || '').trim();
   const lower = cleanPrompt.toLowerCase();
   const taskType = (ctx?.taskType || '').toLowerCase();
@@ -245,14 +205,6 @@ export function classifyTaskComplexity(
   const endpoint = (ctx?.endpointName || '').toLowerCase();
 
   // 1. Explicit model overrides
-  if (
-    override.includes('nara') ||
-    override.includes('nemotron') ||
-    override.includes('ultra') ||
-    override.includes('combo')
-  ) {
-    return { provider: 'nara_router', model: getNaraRouterModel(ctx?.modelOverride), tier: 'complex' };
-  }
   if (
     override.includes('groq') ||
     override.includes('llama') ||
@@ -275,7 +227,7 @@ export function classifyTaskComplexity(
   // 2. Explicit taskType overrides
   if (taskType === 'complex') {
     if (!isShortPrompt(cleanPrompt)) {
-      return { provider: 'nara_router', model: getNaraRouterModel(ctx?.modelOverride), tier: 'complex' };
+      return { provider: 'ministral', model: 'ministral-8b-2410', tier: 'complex' };
     }
   }
   if (taskType === 'short') {
@@ -291,11 +243,11 @@ export function classifyTaskComplexity(
     return { provider: 'apinex', model: 'free/glm-5.3-flash', tier: 'tool' };
   }
 
-  // 3. Long context, revision guides, essays, multi-chapter explanations, analysis -> Nara Router ONLY
+  // 3. Long context, revision guides, essays, multi-chapter explanations, analysis -> Ministral (or Groq/APInex)
   if (isLongOrComplexPrompt(cleanPrompt, ctx)) {
     return {
-      provider: 'nara_router',
-      model: getNaraRouterModel(ctx?.modelOverride),
+      provider: 'ministral',
+      model: 'ministral-8b-2410',
       tier: 'complex'
     };
   }
@@ -453,16 +405,10 @@ function buildMessagesArray(
   return messages;
 }
 
-function getProviderEndpointAndKey(provider: 'apinex' | 'groq' | 'ministral' | 'nara_router'): {
+function getProviderEndpointAndKey(provider: 'apinex' | 'groq' | 'ministral'): {
   apiUrl: string;
   apiKey: string;
 } {
-  if (provider === 'apinex') {
-    return {
-      apiUrl: 'https://api.apinex.bond/v1/chat/completions',
-      apiKey: getApinexApiKey()
-    };
-  }
   if (provider === 'ministral') {
     return {
       apiUrl: 'https://api.mistral.ai/v1/chat/completions',
@@ -476,8 +422,8 @@ function getProviderEndpointAndKey(provider: 'apinex' | 'groq' | 'ministral' | '
     };
   }
   return {
-    apiUrl: `${getNaraRouterBaseUrl()}/chat/completions`,
-    apiKey: getNaraRouterApiKey()
+    apiUrl: 'https://api.apinex.bond/v1/chat/completions',
+    apiKey: getApinexApiKey()
   };
 }
 
@@ -532,25 +478,20 @@ export async function generateAICompletionWithTelemetry(
   let retries = 0;
 
   const messages = buildMessagesArray(systemInstruction, prompt, history, images);
-  const isNaraOrComplex = routing.tier === 'complex' || provider === 'nara_router';
-  const effectiveMaxTokens = isNaraOrComplex
-    ? Math.max(maxTokens || 0, 16384)
-    : maxTokens
+  const effectiveMaxTokens = maxTokens
     ? Math.max(maxTokens, 300)
     : routing.tier === 'short' || routing.tier === 'fast'
     ? 1200
-    : 2048;
+    : 4096;
 
   console.log(`[AI_ROUTER] tier=${routing.tier} provider=${provider} model=${model} requestId=${requestId}`);
 
   // 0. Primary / Fallback: Google GenAI (Gemini)
   const gemini = getGeminiClient();
-  const hasNaraKey = Boolean(getNaraRouterApiKey());
   const hasGroqKey = Boolean(getGroqApiKey());
   const hasMinistralKey = Boolean(getMinistralApiKey());
   const hasApinexKey = Boolean(getApinexApiKey());
   const providerKeyAvailable = 
-    (provider === 'nara_router' && hasNaraKey) ||
     (provider === 'groq' && hasGroqKey) ||
     (provider === 'ministral' && hasMinistralKey) ||
     (provider === 'apinex' && hasApinexKey);
@@ -613,84 +554,6 @@ export async function generateAICompletionWithTelemetry(
       console.warn('[Gemini AI Engine] Call error:', gErr?.message || gErr);
       if (!providerKeyAvailable) throw gErr;
     }
-  }
-
-  // 1. Nara Router (long context / complex)
-  if (isNaraOrComplex) {
-    const naraModel = getNaraRouterModel(modelOverride);
-    const { apiUrl, apiKey } = getProviderEndpointAndKey('nara_router');
-    if (!apiKey) {
-      const err: any = new Error('NARA_ROUTER_API_KEY environment variable is not configured on the server.');
-      err.status = 500;
-      err.providerUsed = 'nara_router';
-      err.modelUsed = naraModel;
-      throw err;
-    }
-
-    async function doNaraRequest(tokensToUse: number) {
-      const resp = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          model: naraModel,
-          messages,
-          temperature,
-          max_tokens: tokensToUse,
-          ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
-        })
-      });
-
-      if (!resp.ok) {
-        const errBody = await resp.text().catch(() => '');
-        const err: any = new Error(`Nara Router HTTP ${resp.status}: ${errBody || resp.statusText || 'Request failed'}`);
-        err.status = resp.status;
-        err.providerUsed = 'nara_router';
-        err.modelUsed = naraModel;
-        throw err;
-      }
-
-      const data = await resp.json();
-      const choice = data?.choices?.[0];
-      const extracted = extractTextFromChoice(choice, data);
-      const finishReason = String(choice?.finish_reason || data?.finish_reason || '').toLowerCase();
-      return { extracted, finishReason, choice, data };
-    }
-
-    let res1 = await doNaraRequest(effectiveMaxTokens);
-    if (!res1.extracted && res1.finishReason === 'length') {
-      retries++;
-      res1 = await doNaraRequest(Math.max(effectiveMaxTokens, 16000));
-    }
-
-    if (!res1.extracted) {
-      const rawDump = JSON.stringify(res1.choice || res1.data || {}).slice(0, 300);
-      const err: any = new Error(
-        `Nara Router HTTP 200 returned empty content (finish_reason=${res1.finishReason || 'unknown'}). Response: ${rawDump}`
-      );
-      err.status = 502;
-      err.providerUsed = 'nara_router';
-      err.modelUsed = naraModel;
-      throw err;
-    }
-
-    const telemetry: AIPerformanceTelemetry = {
-      requestId,
-      providerUsed: 'nara_router',
-      modelUsed: naraModel,
-      complexityTier: 'complex',
-      requestStart,
-      firstTokenLatencyMs: Date.now() - requestStart,
-      totalGenerationTimeMs: Date.now() - requestStart,
-      retries,
-      fallbackTriggered: false,
-      streamed: false
-    };
-
-    return { text: res1.extracted.trim(), telemetry };
   }
 
   // 2. Groq (short chat / model rotation across llama-3.1-8b-instant, openai/gpt-oss-120b, qwen/qwen3.8-27b)
@@ -880,14 +743,11 @@ export async function streamAICompletion(
   let retries = 0;
 
   const messages = buildMessagesArray(systemInstruction, prompt, history, images);
-  const isNaraOrComplexStream = routing.tier === 'complex' || activeProvider === 'nara_router';
-  const effectiveMaxTokens = isNaraOrComplexStream
-    ? Math.max(maxTokens || 0, 12288)
-    : maxTokens
+  const effectiveMaxTokens = maxTokens
     ? Math.max(maxTokens, 300)
     : routing.tier === 'short' || routing.tier === 'fast'
     ? 1200
-    : 2048;
+    : 4096;
 
   console.log(
     `[AI_STREAM_ROUTER] tier=${routing.tier} provider=${activeProvider} model=${activeModel} requestId=${requestId}`
@@ -895,12 +755,10 @@ export async function streamAICompletion(
 
   // 0. Primary / Fallback: Google GenAI (Gemini) Streaming
   const gemini = getGeminiClient();
-  const hasNaraKey = Boolean(getNaraRouterApiKey());
   const hasGroqKey = Boolean(getGroqApiKey());
   const hasMinistralKey = Boolean(getMinistralApiKey());
   const hasApinexKey = Boolean(getApinexApiKey());
   const providerKeyAvailable = 
-    (activeProvider === 'nara_router' && hasNaraKey) ||
     (activeProvider === 'groq' && hasGroqKey) ||
     (activeProvider === 'ministral' && hasMinistralKey) ||
     (activeProvider === 'apinex' && hasApinexKey);
@@ -975,7 +833,7 @@ export async function streamAICompletion(
   }
 
   async function tryStreamOnce(
-    p: 'apinex' | 'groq' | 'ministral' | 'nara_router',
+    p: 'apinex' | 'groq' | 'ministral',
     m: string,
     customMaxTokens?: number
   ): Promise<{ fullText: string; firstTokenLatencyMs: number | null; finishReason?: string }> {
@@ -983,9 +841,7 @@ export async function streamAICompletion(
 
     if (!apiKey) {
       const keyName =
-        p === 'nara_router'
-          ? 'NARA_ROUTER_API_KEY'
-          : p === 'groq'
+        p === 'groq'
           ? 'GROQ_API_KEY'
           : p === 'ministral'
           ? 'MINISTRAL_API_KEY'
@@ -1089,22 +945,29 @@ export async function streamAICompletion(
   }
 
   let streamResult: { fullText: string; firstTokenLatencyMs: number | null; finishReason?: string } | null = null;
+  let finalProvider: 'apinex' | 'groq' | 'ministral' = activeProvider;
 
-  if (isNaraOrComplexStream) {
-    activeModel = getNaraRouterModel(modelOverride);
-    streamResult = await tryStreamOnce('nara_router', activeModel);
-    if (!streamResult.fullText.trim() && streamResult.finishReason === 'length') {
-      retries++;
-      streamResult = await tryStreamOnce('nara_router', activeModel, Math.max(effectiveMaxTokens, 16000));
-    }
-    if (!streamResult.fullText.trim()) {
-      const err: any = new Error(
-        `Nara Router HTTP 200 returned empty stream content (finish_reason=${streamResult.finishReason || 'unknown'}).`
-      );
-      err.status = 502;
-      err.providerUsed = 'nara_router';
-      err.modelUsed = activeModel;
-      throw err;
+  if (activeProvider === 'ministral' || routing.tier === 'complex') {
+    finalProvider = 'ministral';
+    activeModel = 'ministral-8b-2410';
+    try {
+      streamResult = await tryStreamOnce('ministral', activeModel);
+    } catch (mErr: any) {
+      console.warn('[AI_STREAM_ROUTER] Ministral stream notice:', mErr?.message || mErr, '- attempting fallback to Groq/APInex');
+      // Controlled fallback to Groq or APInex
+      const groqKey = getGroqApiKey();
+      if (groqKey) {
+        try {
+          finalProvider = 'groq';
+          activeModel = getNextGroqModel();
+          streamResult = await tryStreamOnce('groq', activeModel);
+        } catch (_) {}
+      }
+      if (!streamResult || !streamResult.fullText.trim()) {
+        finalProvider = 'apinex';
+        activeModel = 'free/gpt-6-luna';
+        streamResult = await tryStreamOnce('apinex', activeModel);
+      }
     }
   } else if (activeProvider === 'groq') {
     const candidateModels = [activeModel, ...groqModels.filter((m) => m !== activeModel)];
@@ -1123,12 +986,19 @@ export async function streamAICompletion(
       }
     }
     if (!streamResult || !streamResult.fullText.trim()) {
-      if (lastErr) throw lastErr;
-      const err: any = new Error(`Groq HTTP 200 returned empty stream content for ${activeModel}.`);
-      err.status = 502;
-      err.providerUsed = 'groq';
-      err.modelUsed = activeModel;
-      throw err;
+      // Controlled fallback to APInex
+      try {
+        finalProvider = 'apinex';
+        activeModel = 'free/gpt-6-luna';
+        streamResult = await tryStreamOnce('apinex', activeModel);
+      } catch {
+        if (lastErr) throw lastErr;
+        const err: any = new Error(`Groq HTTP 200 returned empty stream content for ${activeModel}.`);
+        err.status = 502;
+        err.providerUsed = 'groq';
+        err.modelUsed = activeModel;
+        throw err;
+      }
     }
   } else {
     streamResult = await tryStreamOnce(activeProvider, activeModel);
@@ -1145,14 +1015,14 @@ export async function streamAICompletion(
 
   const telemetry: AIPerformanceTelemetry = {
     requestId,
-    providerUsed: isNaraOrComplexStream ? 'nara_router' : activeProvider,
+    providerUsed: finalProvider,
     modelUsed: activeModel,
     complexityTier: routing.tier,
     requestStart,
     firstTokenLatencyMs: streamResult.firstTokenLatencyMs ?? (Date.now() - requestStart),
     totalGenerationTimeMs: Date.now() - requestStart,
     retries,
-    fallbackTriggered: false,
+    fallbackTriggered: finalProvider !== activeProvider,
     streamed: true
   };
 

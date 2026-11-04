@@ -3902,50 +3902,67 @@ app.get('/api/3d-model-requests', (req, res) => {
 });
 
 app.post('/api/ai/notes', async (req, res) => {
-  const { content, action, instruction } = req.body;
+  const { content = '', topic = '', action = 'generate_notes', instruction = '', subject = 'Academic' } = req.body || {};
+  const targetTopic = content || topic || 'General Study';
 
-  if (!content) {
-    return res.status(400).json({ error: 'Content is required' });
+  if (!targetTopic && !instruction) {
+    return res.status(400).json({ error: 'Topic or content is required' });
   }
 
-  let systemInstruction = 'You are a supportive, high-achieving academic writing companion.';
+  let systemInstruction = 'You are an elite academic lecturer, author, and curriculum designer powered by StudentOS AI.';
   let userPrompt = '';
 
-  if (action === 'summarize') {
-    systemInstruction = 'You are a meticulous scientific editor. Synthesize the provided text into a beautifully structured, highly readable bulleted cheat-sheet. Highlight key definitions in bold.';
-    userPrompt = `Please summarize this note section: \n\n"${content}"`;
+  if (action === 'create_note' || action === 'generate_notes') {
+    systemInstruction = `You are an elite academic lecturer and curriculum author. Produce comprehensive, beautifully structured lecture notes.
+STRUCTURE RULES:
+1. Include an Executive Overview and Context.
+2. Bold key concepts, terminology, and definitions.
+3. Express core formulas and principles using clean mathematical notation or LaTeX ($...$).
+4. Include structured Markdown comparison tables for categories, properties, or trade-offs.
+5. Provide worked practical examples or concrete real-world applications.
+6. Provide Summary & Quick Revision Points.
+7. Include 3 Active Recall Study Questions with solutions.
+Format cleanly with Markdown headings (##, ###), bullet lists, and tables.`;
+    userPrompt = `Subject: ${subject}\nTopic: "${topic || targetTopic}"\n\nInstructions: ${instruction || 'Generate comprehensive academic lecture notes.'}`;
+  } else if (action === 'edit_note' || action === 'custom') {
+    systemInstruction = `You are a meticulous academic editor and subject matter expert.
+CRITICAL PRESERVATION RULES:
+1. STRICTLY PRESERVE all existing tables, mathematical formulas, equations, headings, and formatting in the text.
+2. Only make the edits requested by the user without discarding technical rigor or structured content.
+3. Return the full updated note directly in Markdown format without conversational meta-commentary.`;
+    userPrompt = `Original Note Content:\n"""\n${content || targetTopic}\n"""\n\nUser Instruction for Edit:\n"${instruction || 'Refine and improve clarity while keeping all technical details, tables, and formulas intact.'}"`;
+  } else if (action === 'summarize') {
+    systemInstruction = 'You are a meticulous scientific editor. Synthesize the provided text into a beautifully structured, highly readable bulleted cheat-sheet. Highlight key definitions in bold and preserve all equations and tables.';
+    userPrompt = `Please summarize this note section: \n\n"${targetTopic}"`;
   } else if (action === 'expand') {
-    systemInstruction = 'You are a supportive professor. Deeply expand of the concepts inside the text, write concrete examples, analogies, and detailed clarifications to help the student master the concept.';
-    userPrompt = `Please expand and explain this text block: \n\n"${content}"`;
+    systemInstruction = 'You are a supportive professor. Deeply expand on the concepts inside the text, write concrete examples, analogies, and detailed clarifications to help the student master the concept while preserving all existing tables and formulas.';
+    userPrompt = `Please expand and explain this text block: \n\n"${targetTopic}"`;
   } else if (action === 'improve') {
-    systemInstruction = 'You are an elite academic copywriter. Proofread, fix grammar mistakes, and rewrite the provided block to make it flow beautifully while retaining all of its hard factual and technical data.';
-    userPrompt = `Please proofread and rewrite this text block cleanly: \n\n"${content}"`;
+    systemInstruction = 'You are an elite academic copywriter. Proofread, fix grammar mistakes, and rewrite the provided block to make it flow beautifully while retaining all of its hard factual and technical data, formulas, and tables.';
+    userPrompt = `Please proofread and rewrite this text block cleanly: \n\n"${targetTopic}"`;
   } else if (action === 'quiz') {
     systemInstruction = 'You are an evaluation expert. Design a high-yield Active Recall quiz comprising 3 challenging multiple-choice or short answer conceptual questions based strictly on the text provided. ALWAYS include an answer key at the bottom.';
-    userPrompt = `Generate a quiz about this text content: \n\n"${content}"`;
+    userPrompt = `Generate a quiz about this text content: \n\n"${targetTopic}"`;
   } else if (action === 'action_items') {
     systemInstruction = 'You are a productivity organizer. Scan the provided content, extract any clear actionable items, homework commitments, objectives, or tasks, and format them as a clean Markdown checkbox checklist (e.g. - [ ] Task).';
-    userPrompt = `Extract action checklist notes from this text block: \n\n"${content}"`;
-  } else if (action === 'generate_notes') {
-    systemInstruction = 'You are an elite AI Teacher generating beautifully structured, highly detailed, exam-focused lecture notes. Produce comprehensive academic content with concepts, definitions, formulas, a summary, important questions, and revision points. Never provide a single line response.';
-    userPrompt = `Topic: "${content}"\nGenerate the complete lecture notes.`;
-  } else if (action === 'custom') {
-    systemInstruction = instruction || 'You are an academic drafting robot.';
-    userPrompt = content;
+    userPrompt = `Extract action checklist notes from this text block: \n\n"${targetTopic}"`;
   } else {
-    // Custom prompt instruction
-    systemInstruction = 'You are an academic drafting robot. Execute the user instruction meticulously on the provided text, formatting the returned response inside clean Markdown blocks.';
-    userPrompt = `Text to transform:\n"${content}"\n\nInstruction to execute on this text:\n"${instruction || 'Summarize'}"`;
+    systemInstruction = 'You are an academic drafting companion. Execute the user instruction meticulously on the provided text, strictly preserving all tables, equations, and technical formatting.';
+    userPrompt = `Text to transform:\n"${targetTopic}"\n\nInstruction:\n"${instruction || 'Summarize'}"`;
   }
 
   try {
-    const text = await generateAICompletion(systemInstruction, userPrompt);
+    const text = await generateAICompletion({
+      systemInstruction,
+      prompt: userPrompt,
+      taskType: 'complex'
+    });
     return res.json({ success: true, text });
   } catch (apiErr: any) {
     console.error('[AI Server] Notes transform error:', apiErr?.message || apiErr);
     return res.status(502).json({
       success: false,
-      error: 'AI is temporarily unavailable. Please try again.',
+      error: apiErr?.message || 'AI is temporarily unavailable. Please try again.',
       details: apiErr.message || String(apiErr)
     });
   }
