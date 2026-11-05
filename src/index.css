@@ -103,6 +103,14 @@ body {
   background: rgba(99, 102, 241, 0.5);
 }
 
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 /* ==========================================
    STUDENTOS THEMES ENGINE (5 Complete Themes)
    ========================================== */

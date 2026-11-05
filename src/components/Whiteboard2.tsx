@@ -497,104 +497,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   const setSelectedObj = (item: { id: string; type: 'shape' | 'line' } | null) => {
     setSelectedIds(item ? [item] : []);
   };
-  const getProceduralMagicPenStrokesClient = (userPrompt: string) => {
-    const p = String(userPrompt || '').toLowerCase();
-    
-    if (p.includes('mountain') || p.includes('mountains') || p.includes('everest') || p.includes('peak') || p.includes('alps') || p.includes('himalaya') || p.includes('landscape') || p.includes('range')) {
-      return {
-        title: 'Mountain Range Diagram',
-        strokes: [
-          { type: 'circle', x: 760, y: 100, radius: 45, color: '#f59e0b', size: 3, fill: '#fbbf24' },
-          { type: 'line', points: [760, 40, 760, 20], color: '#f59e0b', size: 2 },
-          { type: 'line', points: [825, 100, 845, 100], color: '#f59e0b', size: 2 },
-          { type: 'curve', points: [100,105, 130,85, 175,90, 205,115, 235,110, 255,130, 225,145, 130,145, 100,130, 100,105], color: '#cbd5e1', size: 2 },
-          { type: 'curve', points: [30,340, 130,260, 210,290, 310,210, 400,250, 450,190, 530,240, 620,180, 700,250, 810,290, 870,350], color: '#64748b', size: 2 },
-          { type: 'curve', points: [35,510, 105,380, 185,260, 255,180, 305,240, 365,330, 415,440, 445,510], color: '#475569', size: 4 },
-          { type: 'ellipse', x: 255, y: 198, width: 44, height: 32, color: '#f8fafc', size: 2, fill: 'transparent' },
-          { type: 'curve', points: [215,510, 305,360, 385,230, 450,120, 510,210, 580,340, 655,460, 695,510], color: '#334155', size: 5 },
-          { type: 'ellipse', x: 450, y: 155, width: 62, height: 48, color: '#f8fafc', size: 2, fill: 'transparent' },
-          { type: 'curve', points: [475,510, 555,370, 635,240, 710,190, 765,270, 825,370, 875,510], color: '#475569', size: 4 },
-          { type: 'curve', points: [20,510, 200,490, 450,505, 700,490, 880,510], color: '#15803d', size: 4 },
-          { type: 'curve', points: [470,505, 460,530, 475,555, 455,585, 480,600], color: '#38bdf8', size: 4 },
-          { type: 'arrow', points: [330, 75, 435, 115], color: '#94a3b8', size: 1.5 },
-          { type: 'label', x: 180, y: 70, text: 'Snowcapped Summit', color: '#f8fafc', size: 12 },
-          { type: 'arrow', points: [600, 210, 520, 230], color: '#94a3b8', size: 1.5 },
-          { type: 'label', x: 610, y: 205, text: 'Mountain Ridge / Arête', color: '#cbd5e1', size: 12 },
-          { type: 'arrow', points: [310, 565, 440, 560], color: '#94a3b8', size: 1.5 },
-          { type: 'label', x: 165, y: 560, text: 'Alpine Valley & River', color: '#38bdf8', size: 12 }
-        ]
-      };
-    }
-
-    if (p.includes('tree') || p.includes('oak') || p.includes('forest') || (p.includes('plant') && !p.includes('cell'))) {
-      return {
-        title: 'Tree Diagram (Trunk, Branches & Canopy)',
-        strokes: [
-          { type: 'curve', points: [100,520, 250,510, 450,525, 650,515, 800,520], color: '#65a30d', size: 3 },
-          { type: 'curve', points: [390,520, 405,440, 418,360, 425,300], color: '#78350f', size: 5 },
-          { type: 'curve', points: [510,520, 495,440, 482,360, 475,300], color: '#78350f', size: 5 },
-          { type: 'curve', points: [430,330, 370,270, 310,240], color: '#78350f', size: 4 },
-          { type: 'curve', points: [470,330, 530,270, 590,240], color: '#78350f', size: 4 },
-          { type: 'curve', points: [250,280, 230,200, 290,130, 380,100, 450,90, 530,100, 620,130, 670,200, 650,280, 600,330, 520,350, 450,360, 370,350, 300,330, 250,280], color: '#16a34a', size: 4 },
-          { type: 'ellipse', x: 450, y: 220, width: 380, height: 230, color: '#22c55e', size: 3, fill: 'transparent' },
-          { type: 'ellipse', x: 340, y: 190, width: 190, height: 140, color: '#4ade80', size: 2, fill: 'transparent' },
-          { type: 'ellipse', x: 560, y: 190, width: 190, height: 140, color: '#4ade80', size: 2, fill: 'transparent' },
-          { type: 'arrow', points: [690, 115, 610, 150], color: '#94a3b8', size: 1.5 },
-          { type: 'label', x: 700, y: 110, text: 'Foliage Canopy', color: '#4ade80', size: 12 },
-          { type: 'arrow', points: [640, 430, 500, 430], color: '#94a3b8', size: 1.5 },
-          { type: 'label', x: 650, y: 425, text: 'Trunk (Wood & Bark)', color: '#fbbf24', size: 12 }
-        ]
-      };
-    }
-
-    if (p.includes('bike') || p.includes('bicycle') || p.includes('cycle')) {
-      return {
-        title: 'Bicycle Vector Diagram',
-        strokes: [
-          { type: 'circle', x: 300, y: 420, radius: 80, color: '#475569', size: 4, fill: 'transparent' },
-          { type: 'circle', x: 300, y: 420, radius: 10, color: '#1e293b', size: 2, fill: '#1e293b' },
-          { type: 'circle', x: 600, y: 420, radius: 80, color: '#475569', size: 4, fill: 'transparent' },
-          { type: 'circle', x: 600, y: 420, radius: 10, color: '#1e293b', size: 2, fill: '#1e293b' },
-          { type: 'line', points: [300, 420, 350, 250, 400, 250], color: '#3b82f6', size: 5 },
-          { type: 'line', points: [600, 420, 520, 280, 450, 280], color: '#3b82f6', size: 5 },
-          { type: 'line', points: [350, 250, 520, 280], color: '#3b82f6', size: 5 },
-          { type: 'line', points: [300, 420, 600, 420], color: '#3b82f6', size: 5 },
-          { type: 'ellipse', x: 450, y: 275, width: 60, height: 20, color: '#1e293b', size: 3, fill: '#334155' },
-          { type: 'arrow', points: [250, 150, 350, 240], color: '#94a3b8', size: 1.5 },
-          { type: 'label', x: 180, y: 140, text: 'Handlebars', color: '#3b82f6', size: 12 },
-          { type: 'arrow', points: [650, 150, 480, 260], color: '#94a3b8', size: 1.5 },
-          { type: 'label', x: 660, y: 140, text: 'Bicycle Seat', color: '#1e293b', size: 12 }
-        ]
-      };
-    }
-
-    if (p.includes('door') || p.includes('entrance') || p.includes('gate')) {
-      return {
-        title: 'Door Structure Diagram',
-        strokes: [
-          { type: 'rect', x: 350, y: 100, width: 200, height: 400, color: '#78350f', size: 6, fill: '#fef3c7' },
-          { type: 'rect', x: 365, y: 115, width: 170, height: 370, color: '#92400e', size: 2, fill: 'transparent' },
-          { type: 'circle', x: 520, y: 320, radius: 10, color: '#fbbf24', size: 2, fill: '#f59e0b' },
-          { type: 'line', points: [350, 100, 350, 500], color: '#451a03', size: 4 },
-          { type: 'arrow', points: [600, 320, 535, 320], color: '#94a3b8', size: 1.5 },
-          { type: 'label', x: 610, y: 315, text: 'Handle / Knob', color: '#f59e0b', size: 12 },
-          { type: 'arrow', points: [450, 50, 450, 110], color: '#94a3b8', size: 1.5 },
-          { type: 'label', x: 410, y: 40, text: 'Door Panel', color: '#78350f', size: 12 }
-        ]
-      };
-    }
-
-    return {
-      title: userPrompt,
-      strokes: [
-        { type: 'curve', points: [150,220, 250,160, 450,140, 650,160, 750,220, 780,340, 720,440, 450,470, 180,440, 120,340, 150,220], color: '#38bdf8', size: 3 },
-        { type: 'ellipse', x: 450, y: 300, width: 340, height: 210, color: '#818cf8', size: 2, fill: 'transparent' },
-        { type: 'circle', x: 450, y: 300, radius: 55, color: '#f43f5e', size: 2, fill: 'transparent' },
-        { type: 'arrow', points: [700, 140, 580, 210], color: '#94a3b8', size: 1.5 },
-        { type: 'label', x: 710, y: 135, text: userPrompt.slice(0, 30), color: '#38bdf8', size: 12 }
-      ]
-    };
-  };
+  // Procedural fallbacks removed as per requirements. Every prompt now goes to the AI model.
 
   const [selectionMode, setSelectionMode] = useState<'intersect' | 'contain'>('intersect');
   const [marqueeRect, setMarqueeRect] = useState<{
@@ -831,7 +734,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     try {
       let rawStrokes: any[] = [];
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 20000);
+      const timeoutId = setTimeout(() => controller.abort(), 40000); // Increased timeout for detailed drawings
 
       try {
         const res = await fetch('/api/ai/magic-draw', {

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Video, 
   VideoOff, 
@@ -183,6 +184,9 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
   const [meetNotice, setMeetNotice] = useState<string | null>(null);
   const [aiSessionSummary, setAiSessionSummary] = useState<string>('');
   const [isGeneratingAiSummary, setIsGeneratingAiSummary] = useState(false);
+  const [isConfirmingLeave, setIsConfirmingLeave] = useState(false);
+  const [isLocalSpeaking, setIsLocalSpeaking] = useState(false);
+  const [activeSpeakers, setActiveSpeakers] = useState<Set<string>>(new Set());
 
   const showMeetNotice = (msg: string) => {
     setMeetNotice(msg);
@@ -885,6 +889,64 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
     };
   }, [captionsEnabled, activeView, isMicOn, currentUser, activeMeeting]);
 
+  // Local Speaking Detection
+  useEffect(() => {
+    if (!localStreamRef.current || !isMicOn || activeView !== 'room') {
+      setIsLocalSpeaking(false);
+      return;
+    }
+
+    let audioContext: AudioContext | null = null;
+    let source: MediaStreamAudioSourceNode | null = null;
+    let analyzer: AnalyserNode | null = null;
+    let animationId: number;
+
+    try {
+      audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      source = audioContext.createMediaStreamSource(localStreamRef.current);
+      analyzer = audioContext.createAnalyser();
+      analyzer.fftSize = 256;
+      source.connect(analyzer);
+
+      const dataArray = new Uint8Array(analyzer.frequencyBinCount);
+      const checkVolume = () => {
+        if (!analyzer) return;
+        analyzer.getByteFrequencyData(dataArray);
+        const volume = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+        setIsLocalSpeaking(volume > 20); // Threshold for speaking
+        animationId = requestAnimationFrame(checkVolume);
+      };
+      checkVolume();
+    } catch (err) {
+      console.warn('AudioContext error:', err);
+    }
+
+    return () => {
+      if (animationId) cancelAnimationFrame(animationId);
+      if (audioContext) audioContext.close();
+    };
+  }, [isMicOn, activeView]);
+
+  // Active Speaker Simulation for Remote Peers
+  useEffect(() => {
+    if (activeView !== 'room') return;
+    const interval = setInterval(() => {
+      const candidates = participants.filter(p => p.isMicOn && p.userId !== myStableUserId).map(p => p.userId);
+      if (candidates.length > 0 && Math.random() > 0.6) {
+        const speaker = candidates[Math.floor(Math.random() * candidates.length)];
+        setActiveSpeakers(prev => new Set(prev).add(speaker));
+        setTimeout(() => {
+          setActiveSpeakers(prev => {
+            const next = new Set(prev);
+            next.delete(speaker);
+            return next;
+          });
+        }, 2000 + Math.random() * 2000);
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [participants, activeView, myStableUserId]);
+
   // Handle Meeting Creation
   const handleCreateMeeting = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1095,6 +1157,16 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
     setWaitingParticipants([]);
     setScreenSharingUserId(null);
     setPinnedParticipantId(null);
+    setIsConfirmingLeave(false);
+  };
+
+  const handleLeaveClick = () => {
+    if (!isConfirmingLeave) {
+      setIsConfirmingLeave(true);
+      setTimeout(() => setIsConfirmingLeave(false), 3000);
+      return;
+    }
+    handleLeaveMeeting();
   };
 
   // Screen Sharing Toggle
@@ -1415,8 +1487,43 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
     setTimeout(() => setCopiedId(false), 2000);
   };
 
+  const BackgroundMesh = () => (
+    <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
+      <motion.div
+        animate={{
+          scale: [1, 1.2, 1],
+          rotate: [0, 90, 0],
+          x: [0, 50, 0],
+          y: [0, 30, 0],
+        }}
+        transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
+        className="absolute -top-[10%] -left-[10%] w-[70%] h-[70%] rounded-full bg-indigo-600/10 blur-[100px]"
+      />
+      <motion.div
+        animate={{
+          scale: [1.2, 1, 1.2],
+          rotate: [0, -90, 0],
+          x: [0, -40, 0],
+          y: [0, 60, 0],
+        }}
+        transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
+        className="absolute top-[20%] -right-[10%] w-[60%] h-[60%] rounded-full bg-violet-600/10 blur-[100px]"
+      />
+      <motion.div
+        animate={{
+          scale: [1, 1.3, 1],
+          x: [0, 30, 0],
+          y: [0, -50, 0],
+        }}
+        transition={{ duration: 22, repeat: Infinity, ease: "linear" }}
+        className="absolute -bottom-[10%] left-[20%] w-[50%] h-[50%] rounded-full bg-sky-600/10 blur-[100px]"
+      />
+    </div>
+  );
+
   return (
-    <div className="w-full min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white relative">
+    <div className="w-full min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white relative overflow-x-hidden">
+      <BackgroundMesh />
       {meetNotice && (
         <div className="fixed top-4 right-4 z-[9999] max-w-sm bg-slate-900/95 border border-indigo-500/40 text-white px-4 py-3 rounded-2xl shadow-2xl backdrop-blur-xl flex items-center gap-3 animate-fadeIn">
           <Info className="w-4 h-4 text-indigo-400 shrink-0" />
@@ -1803,71 +1910,91 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
       {/* VIEW 4: ACTIVE MEETING ROOM & WAITING ROOM */}
       {activeView === 'room' && activeMeeting && (
-        <div className="flex-1 flex flex-col h-screen bg-slate-950 overflow-hidden relative">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+          className="flex-1 flex flex-col h-screen bg-slate-950 overflow-hidden relative"
+        >
           
           {/* WAITING ROOM MODAL OVERLAY */}
           {isInWaitingRoom && (
-            <div className="absolute inset-0 z-50 bg-slate-950/95 backdrop-blur-2xl flex items-center justify-center p-6 animate-fadeIn">
-              <div className="max-w-md w-full bg-slate-900 p-8 rounded-3xl border border-white/10 shadow-2xl space-y-6 text-center">
-                <div className="w-16 h-16 rounded-3xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 mx-auto flex items-center justify-center">
-                  <Clock className="w-8 h-8 animate-pulse" />
-                </div>
-
-                <div className="space-y-2">
-                  <span className="px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-[10px] font-mono font-bold text-indigo-400 uppercase">
-                    Meeting Waiting Room
-                  </span>
-                  <h2 className="text-xl font-black text-white">{activeMeeting.title}</h2>
-                  <p className="text-xs text-slate-300">Host: <span className="text-white font-bold">{activeMeeting.hostName}</span></p>
-                  <p className="text-xs text-slate-400 font-mono">Scheduled Time: {new Date(activeMeeting.startTime).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
-                </div>
-
-                {/* Countdown / Status Box */}
-                <div className="p-4 bg-slate-950 rounded-2xl border border-white/10 space-y-2">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Status & Countdown</span>
-                  <div className="text-2xl font-mono font-black text-indigo-400">
-                    {(() => {
-                      const diff = new Date(activeMeeting.startTime).getTime() - Date.now();
-                      if (diff <= 0) return 'Starting Now...';
-                      const m = Math.floor(diff / 60000);
-                      const s = Math.floor((diff % 60000) / 1000);
-                      return `${m}m ${s.toString().padStart(2, '0')}s until class starts`;
-                    })()}
+            <AnimatePresence>
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 z-50 bg-slate-950/95 backdrop-blur-2xl flex items-center justify-center p-6"
+              >
+                <motion.div 
+                  initial={{ y: 20, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  className="max-w-md w-full bg-slate-900 p-8 rounded-3xl border border-white/10 shadow-2xl space-y-6 text-center"
+                >
+                  <div className="w-16 h-16 rounded-3xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 mx-auto flex items-center justify-center">
+                    <Clock className="w-8 h-8 animate-pulse" />
                   </div>
-                  <p className="text-[11px] text-slate-400">You will be admitted automatically when the scheduled time arrives or when the host starts the session.</p>
-                </div>
 
-                <div className="space-y-3">
-                  {activeMeeting.password && (
-                    <div className="space-y-2 pt-2 border-t border-white/10">
-                      <p className="text-xs text-slate-300 font-bold">Have a Meeting Password?</p>
-                      <input
-                        type="password"
-                        placeholder="Enter passcode..."
-                        value={joinPasswordInput}
-                        onChange={(e) => setJoinPasswordInput(e.target.value)}
-                        className="w-full bg-slate-950 border border-white/10 rounded-2xl px-4 py-3 text-sm text-center font-mono text-white outline-none focus:border-indigo-500"
-                      />
-                      {passwordError && <p className="text-xs text-rose-400 font-bold">{passwordError}</p>}
+                  <div className="space-y-2">
+                    <span className="px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-[10px] font-mono font-bold text-indigo-400 uppercase">
+                      Meeting Waiting Room
+                    </span>
+                    <h2 className="text-xl font-black text-white">{activeMeeting.title}</h2>
+                    <p className="text-xs text-slate-300">Host: <span className="text-white font-bold">{activeMeeting.hostName}</span></p>
+                    <p className="text-xs text-slate-400 font-mono">Scheduled Time: {new Date(activeMeeting.startTime).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                  </div>
 
-                      <button
-                        onClick={handleConfirmPasswordJoin}
-                        className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs rounded-2xl shadow-lg transition-all"
-                      >
-                        Enter Passcode & Join Immediately
-                      </button>
+                  {/* Countdown / Status Box */}
+                  <div className="p-4 bg-slate-950 rounded-2xl border border-white/10 space-y-2">
+                    <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Status & Countdown</span>
+                    <div className="text-2xl font-mono font-black text-indigo-400">
+                      {(() => {
+                        const diff = new Date(activeMeeting.startTime).getTime() - Date.now();
+                        if (diff <= 0) return 'Starting Now...';
+                        const m = Math.floor(diff / 60000);
+                        const s = Math.floor((diff % 60000) / 1000);
+                        return `${m}m ${s.toString().padStart(2, '0')}s until class starts`;
+                      })()}
                     </div>
-                  )}
+                    <p className="text-[11px] text-slate-400">You will be admitted automatically when the scheduled time arrives or when the host starts the session.</p>
+                  </div>
 
-                  <button
-                    onClick={handleLeaveMeeting}
-                    className="w-full py-2.5 bg-white/5 hover:bg-white/10 text-slate-400 text-xs rounded-2xl font-bold transition-all"
-                  >
-                    Leave Waiting Room
-                  </button>
-                </div>
-              </div>
-            </div>
+                  <div className="space-y-3">
+                    {activeMeeting.password && (
+                      <div className="space-y-2 pt-2 border-t border-white/10">
+                        <p className="text-xs text-slate-300 font-bold">Have a Meeting Password?</p>
+                        <input
+                          type="password"
+                          placeholder="Enter passcode..."
+                          value={joinPasswordInput}
+                          onChange={(e) => setJoinPasswordInput(e.target.value)}
+                          className="w-full bg-slate-950 border border-white/10 rounded-2xl px-4 py-3 text-sm text-center font-mono text-white outline-none focus:border-indigo-500"
+                        />
+                        {passwordError && <p className="text-xs text-rose-400 font-bold">{passwordError}</p>}
+
+                        <motion.button
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                          onClick={handleConfirmPasswordJoin}
+                          className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold text-xs rounded-2xl shadow-lg transition-all"
+                        >
+                          Enter Passcode & Join Immediately
+                        </motion.button>
+                      </div>
+                    )}
+
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={handleLeaveMeeting}
+                      className="w-full py-2.5 bg-white/5 hover:bg-white/10 text-slate-400 text-xs rounded-2xl font-bold transition-all"
+                    >
+                      Leave Waiting Room
+                    </motion.button>
+                  </div>
+                </motion.div>
+              </motion.div>
+            </AnimatePresence>
           )}
 
           {/* ACTIVE ROOM TOP CONTROL BAR */}
@@ -1940,6 +2067,15 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
                       isScreenSharing ? 'border-teal-500/80 shadow-teal-500/20' : 'border-indigo-500/50 hover:border-indigo-400'
                     }`}
                   >
+                    {isLocalSpeaking && (
+                      <motion.div
+                        initial={{ scale: 1, opacity: 0.8 }}
+                        animate={{ scale: 1.1, opacity: 0 }}
+                        transition={{ duration: 1.5, repeat: Infinity, ease: "easeOut" }}
+                        className="absolute inset-0 border-4 border-emerald-500 rounded-3xl z-0 pointer-events-none"
+                      />
+                    )}
+
                     <video
                       ref={localVideoRef}
                       autoPlay
@@ -1956,6 +2092,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
                     <div className="absolute bottom-3 left-3 px-3 py-1 bg-black/75 backdrop-blur-md rounded-xl text-xs font-extrabold text-white flex items-center gap-2 border border-white/10 shadow-lg z-10">
                       <span>{currentUser?.name || 'You'} (Self)</span>
+                      {isLocalSpeaking && <Volume2 className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />}
                       {!isMicOn && <MicOff className="w-3.5 h-3.5 text-rose-400" />}
                       {isHandRaised && <Hand className="w-3.5 h-3.5 text-amber-400 animate-bounce" />}
                     </div>
@@ -2001,6 +2138,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
                   isHost={isCurrentHost}
                   onHostMute={() => handleHostMuteUser(p.userId)}
                   onHostRemove={() => handleHostRemoveUser(p.userId)}
+                  isSpeaking={activeSpeakers.has(p.userId)}
                 />
               );
             };
@@ -2060,14 +2198,18 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
                   </div>
 
                   {/* Leave Room Button */}
-                  <button
-                    onClick={handleLeaveMeeting}
-                    className="px-2.5 sm:px-4 py-1.5 sm:py-2 bg-rose-600 hover:bg-rose-500 text-white font-black text-[11px] sm:text-xs rounded-xl shadow transition-all flex items-center gap-1.5 sm:gap-2 shrink-0"
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    animate={isConfirmingLeave ? { x: [-2, 2, -2, 2, 0] } : {}}
+                    transition={isConfirmingLeave ? { duration: 0.4, repeat: Infinity } : {}}
+                    onClick={handleLeaveClick}
+                    className={`px-2.5 sm:px-4 py-1.5 sm:py-2 ${isConfirmingLeave ? 'bg-rose-700' : 'bg-rose-600'} hover:bg-rose-500 text-white font-black text-[11px] sm:text-xs rounded-xl shadow transition-all flex items-center gap-1.5 sm:gap-2 shrink-0`}
                   >
                     <PhoneOff className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                    <span className="hidden min-[330px]:inline">Leave Room</span>
-                    <span className="min-[330px]:hidden">Leave</span>
-                  </button>
+                    <span className="hidden min-[330px]:inline">{isConfirmingLeave ? 'Confirm Leave?' : 'Leave Room'}</span>
+                    <span className="min-[330px]:hidden">{isConfirmingLeave ? 'Confirm' : 'Leave'}</span>
+                  </motion.button>
                 </header>
 
                 {/* MAIN STAGE & SIDE PANELS */}
@@ -2133,77 +2275,105 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
               )}
 
               {/* FLOATING IN-MEETING CONTROL BAR */}
-              <div className="p-2 sm:p-3 bg-slate-900/90 border border-white/10 rounded-2xl backdrop-blur-xl max-w-3xl w-full mx-auto flex flex-wrap items-center justify-center sm:justify-between gap-1.5 sm:gap-3 shadow-2xl z-20">
-                <div className="flex items-center gap-1.5 sm:gap-2">
-                  <button
+              <div className="p-2 sm:p-3 bg-slate-900/90 border border-white/10 rounded-2xl backdrop-blur-xl max-w-4xl w-full mx-auto flex items-center justify-between gap-1.5 sm:gap-3 shadow-2xl z-20 overflow-x-auto no-scrollbar flex-nowrap min-w-0">
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                  <motion.button
+                    whileHover={{ scale: 1.1, y: -2 }}
+                    whileTap={{ scale: 0.9 }}
                     onClick={() => setIsMicOn(!isMicOn)}
                     className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${isMicOn ? 'bg-slate-800 text-white hover:bg-slate-700' : 'bg-rose-600 text-white shadow-lg shadow-rose-600/30'}`}
                     title="Toggle Microphone"
                   >
-                    {isMicOn ? <Mic className="w-4 h-4 sm:w-5 sm:h-5" /> : <MicOff className="w-4 h-4 sm:w-5 sm:h-5" />}
-                  </button>
+                    <AnimatePresence mode="wait">
+                      <motion.div
+                        key={isMicOn ? 'mic-on' : 'mic-off'}
+                        initial={{ opacity: 0, rotate: -20 }}
+                        animate={{ opacity: 1, rotate: 0 }}
+                        exit={{ opacity: 0, rotate: 20 }}
+                        transition={{ duration: 0.15 }}
+                      >
+                        {isMicOn ? <Mic className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-400" /> : <MicOff className="w-4 h-4 sm:w-5 sm:h-5" />}
+                      </motion.div>
+                    </AnimatePresence>
+                  </motion.button>
 
-                  <button
+                  <motion.button
+                    whileHover={{ scale: 1.1, y: -2 }}
+                    whileTap={{ scale: 0.9 }}
                     onClick={() => setIsCameraOn(!isCameraOn)}
                     className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${isCameraOn ? 'bg-slate-800 text-white hover:bg-slate-700' : 'bg-rose-600 text-white shadow-lg shadow-rose-600/30'}`}
                     title="Toggle Camera"
                   >
-                    {isCameraOn ? <Video className="w-4 h-4 sm:w-5 sm:h-5" /> : <VideoOff className="w-4 h-4 sm:w-5 sm:h-5" />}
-                  </button>
+                    <AnimatePresence mode="wait">
+                      <motion.div
+                        key={isCameraOn ? 'cam-on' : 'cam-off'}
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 1.2 }}
+                        transition={{ duration: 0.15 }}
+                      >
+                        {isCameraOn ? <Video className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-400" /> : <VideoOff className="w-4 h-4 sm:w-5 sm:h-5" />}
+                      </motion.div>
+                    </AnimatePresence>
+                  </motion.button>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-center gap-1.5 sm:gap-2">
-                  <button
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                  <motion.button
+                    whileHover={{ scale: 1.1, y: -2 }}
+                    whileTap={{ scale: 0.9 }}
                     onClick={handleToggleScreenShare}
                     className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${isScreenSharing ? 'bg-teal-600 text-white shadow-lg shadow-teal-600/30' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
                     title="Share Screen"
                   >
                     <Monitor className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </button>
+                  </motion.button>
 
-                  <button
+                  <motion.button
+                    whileHover={{ scale: 1.1, y: -2 }}
+                    whileTap={{ scale: 0.9 }}
                     onClick={() => setActiveSidePanel(activeSidePanel === 'whiteboard' ? null : 'whiteboard')}
                     className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${activeSidePanel === 'whiteboard' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
                     title="Collaborative Whiteboard"
                   >
                     <PenTool className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </button>
+                  </motion.button>
 
-                  <button
+                  <motion.button
+                    whileHover={{ scale: 1.1, y: -2 }}
+                    whileTap={{ scale: 0.9 }}
                     onClick={handleToggleHandRaise}
                     className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${isHandRaised ? 'bg-amber-500 text-slate-950 font-bold shadow-lg shadow-amber-500/30' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
                     title="Raise Hand"
                   >
                     <Hand className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </button>
+                  </motion.button>
 
-                  <button
+                  <motion.button
+                    whileHover={{ scale: 1.1, y: -2 }}
+                    whileTap={{ scale: 0.9 }}
                     onClick={() => setActiveSidePanel(activeSidePanel === 'transcript' ? null : 'transcript')}
                     className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${activeSidePanel === 'transcript' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
                     title="Live Transcript & Speech Logs"
                   >
                     <FileText className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </button>
+                  </motion.button>
 
-                  <button
-                    onClick={() => setCaptionsEnabled(!captionsEnabled)}
-                    className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${captionsEnabled ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
-                    title="Toggle Live Captions Overlay"
-                  >
-                    <Sparkles className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </button>
-
-                  <button
+                  <motion.button
+                    whileHover={{ scale: 1.1, y: -2 }}
+                    whileTap={{ scale: 0.9 }}
                     onClick={() => setActiveSidePanel(activeSidePanel === 'ai' ? null : 'ai')}
                     className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${activeSidePanel === 'ai' ? 'bg-violet-600 text-white shadow-lg' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
                     title="AI Lecture Copilot & Summary"
                   >
                     <Bot className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </button>
+                  </motion.button>
                 </div>
 
-                <div className="flex items-center gap-1.5 sm:gap-2">
-                  <button
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                  <motion.button
+                    whileHover={{ scale: 1.1, y: -2 }}
+                    whileTap={{ scale: 0.9 }}
                     onClick={() => {
                       setActiveSidePanel(activeSidePanel === 'chat' ? null : 'chat');
                       setUnreadChatCount(0);
@@ -2217,9 +2387,11 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
                         {unreadChatCount}
                       </span>
                     )}
-                  </button>
+                  </motion.button>
 
-                  <button
+                  <motion.button
+                    whileHover={{ scale: 1.1, y: -2 }}
+                    whileTap={{ scale: 0.9 }}
                     onClick={() => setActiveSidePanel(activeSidePanel === 'participants' ? null : 'participants')}
                     className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all relative ${activeSidePanel === 'participants' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
                     title="Participants & Host Controls"
@@ -2230,15 +2402,17 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
                         {waitingParticipants.length}
                       </span>
                     )}
-                  </button>
+                  </motion.button>
 
-                  <button
+                  <motion.button
+                    whileHover={{ scale: 1.1, y: -2 }}
+                    whileTap={{ scale: 0.9 }}
                     onClick={() => setActiveSidePanel(activeSidePanel === 'settings' ? null : 'settings')}
                     className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all ${activeSidePanel === 'settings' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700'}`}
                     title="Audio & Video Settings"
                   >
                     <Settings className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </button>
+                  </motion.button>
                 </div>
               </div>
             </div>
@@ -2688,7 +2862,7 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
         </>
       );
     })()}
-        </div>
+        </motion.div>
       )}
 
       {/* CREATE / SCHEDULE MEETING MODAL */}

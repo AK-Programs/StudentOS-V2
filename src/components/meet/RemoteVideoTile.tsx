@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { MicOff, Hand, User, Pin, Maximize2, Volume2, ShieldAlert, Trash2, Sparkles } from 'lucide-react';
+import { motion } from 'motion/react';
 import { MeetingParticipant } from '../../types';
 
 interface RemoteVideoTileProps {
@@ -63,6 +64,14 @@ export const RemoteVideoTile: React.FC<RemoteVideoTileProps> = ({
         isScreenSharing ? 'border-teal-500/80 shadow-teal-500/20' : 'border-white/10 hover:border-indigo-500/50'
       }`}
     >
+      {isSpeaking && (
+        <motion.div
+          initial={{ scale: 1, opacity: 0.8 }}
+          animate={{ scale: 1.1, opacity: 0 }}
+          transition={{ duration: 1.5, repeat: Infinity, ease: "easeOut" }}
+          className="absolute inset-0 border-4 border-emerald-500 rounded-2xl sm:rounded-3xl z-0 pointer-events-none"
+        />
+      )}
       <video
         ref={videoRef}
         autoPlay
