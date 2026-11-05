@@ -113,6 +113,8 @@ import { NotificationFlyout } from './components/NotificationFlyout';
 import { ParentalPortal } from './components/ParentalPortal';
 import { BrainBattleArena } from './components/BrainBattleArena';
 import { SyllabusStudyPlanner } from './components/SyllabusStudyPlanner';
+import { StudyHubDashboard } from './components/StudyHubDashboard';
+import { StudyHubTaskManager } from './components/StudyHubTaskManager';
 import { OfficialTimetableViewer } from './components/OfficialTimetableViewer';
 import { ReminderService } from './lib/reminderService';
 import { ProfessionalTabDropdown } from './components/ProfessionalTabDropdown';
@@ -557,7 +559,8 @@ export default function App() {
 
   const [whatsNewUnreadCount, setWhatsNewUnreadCount] = useState<number>(0);
   const [dueCardsCount, setDueCardsCount] = useState<number>(0);
-  const [studyHubSubTab, setStudyHubSubTab] = useState<'tasks' | 'planner' | 'flashcards'>('flashcards');
+  const [studyHubSubTab, setStudyHubSubTab] = useState<'dashboard' | 'tasks' | 'planner' | 'flashcards'>('dashboard');
+  const [selectedFlashcardDeckId, setSelectedFlashcardDeckId] = useState<string | null>(null);
 
   useEffect(() => {
     if (activeTab === 'tasks') setStudyHubSubTab('tasks');
@@ -569,6 +572,11 @@ export default function App() {
       presenceService.updateCurrentTab(activeTab);
       if (currentUser) {
         logTabOpen(activeTab, currentUser);
+        if (activeTab === 'study_hub' && studyHubSubTab === 'dashboard') {
+          // Refresh due cards count
+          const cards = getStoredCards();
+          setDueCardsCount(cards.filter(c => isCardDue(c)).length);
+        }
       }
     } catch (_) {}
   }, [activeTab, currentUser]);
@@ -597,6 +605,9 @@ export default function App() {
       } else if (path === '/flashcards' || path === '/study-center' || path === '/study_center' || path === '/study-hub' || path === '/study_hub') {
         setActiveTab('study_hub');
         setStudyHubSubTab('flashcards');
+      } else if (path === '/study-dashboard') {
+        setActiveTab('study_hub');
+        setStudyHubSubTab('dashboard');
       }
     };
     window.addEventListener('popstate', handlePopState);
@@ -990,6 +1001,9 @@ export default function App() {
       showNotification('🔒 This tab is hidden in Presentation Mode for classroom safety.');
       return;
     }
+    if (!['study_hub', 'tasks', 'planner', 'flashcards'].includes(tab)) {
+      setSelectedFlashcardDeckId(null);
+    }
     setActiveTab(tab);
     localStorage.setItem('s_os_active_tab', tab);
     if (tab === 'whats_new') {
@@ -1356,7 +1370,7 @@ export default function App() {
   const [isPinModalOpen, setIsPinModalOpen] = useState<boolean>(false);
 
   // Input States for New Entries
-  const [newTaskTitle, setNewTaskTitle] = useState<string>('');
+  // Removed redundant task states
   const [newNoteTitle, setNewNoteTitle] = useState<string>('');
   const [newNoteContent, setNewNoteContent] = useState<string>('');
   const [newNoteSubject, setNewNoteSubject] = useState<string>('Physics');
@@ -4050,58 +4064,7 @@ ${resultText}
     }
   };
 
-  // Tasks manager operations
-  const handleAddTask = async () => {
-    if (!newTaskTitle.trim() || !currentUser?.uid) return;
-    soundService.playSuccess();
-    const item: Task = {
-      id: generateUniqueId(),
-      title: newTaskTitle.trim(),
-      completed: false,
-      dueDate: 'Tomorrow',
-      subject: currentUser?.specialtySubject || 'General',
-      userId: currentUser.uid,
-      createdAt: new Date().toISOString(),
-      sort_order: tasks.length
-    };
-    
-    const updated = [...tasks, item];
-    setTasks(updated);
-    setNewTaskTitle('');
-    await savePersonalTask(item, currentUser.uid);
-    showNotification('Task added to your personal list.');
-  };
-
-  const toggleTask = async (id: string) => {
-    if (!currentUser?.uid) return;
-    const task = tasks.find(t => t.id === id);
-    if (!task) return;
-
-    if (!task.completed) {
-      soundService.playTaskComplete();
-    } else {
-      soundService.playClick();
-    }
-
-    const updatedTask = { ...task, completed: !task.completed };
-    const updated = tasks.map(t => t.id === id ? updatedTask : t);
-    setTasks(updated);
-    await savePersonalTask(updatedTask, currentUser.uid);
-  };
-
-  const deleteTask = async (id: string) => {
-    if (!currentUser?.uid) return;
-    const updated = tasks.filter(t => t.id !== id);
-    setTasks(updated);
-    await deletePersonalTask(id);
-    showNotification('Task removed.');
-  };
-
-  const handleReorderTasks = async (newOrder: Task[]) => {
-    if (!currentUser?.uid) return;
-    setTasks(newOrder);
-    await saveTaskOrderToSupabase(newOrder, currentUser.uid);
-  };
+  // Task handlers moved to StudyHubTaskManager
 
   // Vault Notes notes state
   const handleSaveNote = async () => {
@@ -8276,6 +8239,22 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                       <button
                                         type="button"
                                         onClick={() => {
+                                          setSelectedFlashcardDeckId(null);
+                                          setStudyHubSubTab('dashboard');
+                                          handleTabSelect('study_hub');
+                                        }}
+                                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors cursor-pointer ${
+                                          ['study_hub', 'dashboard'].includes(activeTab) && studyHubSubTab === 'dashboard'
+                                            ? 'bg-indigo-500/20 text-indigo-200 font-semibold'
+                                            : 'text-slate-400 hover:text-white hover:bg-white/5'
+                                        }`}
+                                      >
+                                        <span>Study Dashboard</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedFlashcardDeckId(null);
                                           setStudyHubSubTab('flashcards');
                                           handleTabSelect('study_hub');
                                         }}
@@ -9873,26 +9852,32 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                       <ProfessionalTabDropdown
                         options={[
                           {
+                            id: 'dashboard',
+                            label: 'Study Dashboard',
+                            icon: '🎯',
+                            description: 'Overview of your learning progress'
+                          },
+                          {
                             id: 'flashcards',
-                            label: 'Study Center & Flashcards (SM-2)',
+                            label: 'Study Center & Flashcards',
                             icon: '🗂️',
                             badge: dueCardsCount > 0 ? `${dueCardsCount} due` : undefined,
                             badgeColor: 'bg-rose-500/20 text-rose-300 border border-rose-500/30',
-                            description: 'Spaced repetition decks and active recall practice'
+                            description: 'Spaced repetition decks and active recall'
                           },
                           {
                             id: 'tasks',
                             label: 'Task Manager',
                             icon: '📋',
                             badge: tasks.filter(t => !t.completed).length > 0 ? tasks.filter(t => !t.completed).length : undefined,
-                            description: 'Track assignments, syllabus progress, and goals'
+                            description: 'Track assignments and study goals'
                           },
                           {
                             id: 'planner',
                             label: 'Study Schedule Planner',
                             icon: '📅',
                             badge: schedules.length > 0 ? schedules.length : undefined,
-                            description: 'Daily revision timetable and exam prep blocks'
+                            description: 'Daily revision timetable and exam prep'
                           }
                         ]}
                         selectedId={studyHubSubTab}
@@ -9907,10 +9892,29 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                     <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-black/40 rounded-xl border border-white/5 text-[11px] text-slate-400 font-mono">
                       <span>⚡ Mode:</span>
                       <span className="text-indigo-400 font-bold capitalize">
-                        {studyHubSubTab === 'flashcards' ? 'Study Center (Cards)' : studyHubSubTab === 'tasks' ? 'Task Manager' : 'Study Planner'}
+                        {studyHubSubTab === 'dashboard' ? 'Overview' : studyHubSubTab === 'flashcards' ? 'Study Center' : studyHubSubTab === 'tasks' ? 'Task Manager' : 'Study Planner'}
                       </span>
                     </div>
                   </div>
+
+                  {/* Sub-tab 0: Dashboard */}
+                  {studyHubSubTab === 'dashboard' && (
+                    <StudyHubDashboard 
+                      currentUser={currentUser}
+                      dueCardsCount={dueCardsCount}
+                      tasks={tasks}
+                      onNavigateTab={(tab, sub, contextId) => {
+                        if (tab === 'study_hub' && sub) {
+                          if (sub === 'flashcards' && contextId) {
+                            setSelectedFlashcardDeckId(contextId);
+                          }
+                          setStudyHubSubTab(sub as any);
+                        } else {
+                          handleTabSelect(tab as any);
+                        }
+                      }}
+                    />
+                  )}
 
                   {/* Sub-tab 1: Flashcards & Spaced Repetition Study Center */}
                   {studyHubSubTab === 'flashcards' && (
@@ -9919,72 +9923,25 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                       currentUser={currentUser} 
                       showNotification={showNotification}
                       onNavigateTab={handleTabSelect}
+                      initialDeckId={selectedFlashcardDeckId}
                     />
                   )}
 
                   {/* Sub-tab 2: Task Manager View */}
                   {studyHubSubTab === 'tasks' && (
-                    <div className="smart-glass p-4 sm:p-6 md:p-8 rounded-3xl space-y-6 max-w-3xl mx-auto animate-fadeIn">
-                      <div className="space-y-2">
-                        <h3 className="text-2xl font-black font-display text-white">Target Tasks & Focus Objectives</h3>
-                        <p className="text-xs text-slate-400">Record syllabus preparation sequences, project homework, and term tests timelines.</p>
-                      </div>
-
-                      <div className="flex flex-col sm:flex-row gap-2.5">
-                        <input 
-                          type="text"
-                          value={newTaskTitle}
-                          onChange={e => setNewTaskTitle(e.target.value)}
-                          placeholder="e.g., Study AVL Tree balancing heights and double rotations..."
-                          className="flex-1 px-4 py-3 text-sm rounded-xl bg-slate-900 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
-                        <button 
-                          onClick={handleAddTask}
-                          className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-6 py-3 rounded-xl text-xs uppercase tracking-wide transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5"
-                        >
-                          <Plus className="w-4 h-4" /> Add Task
-                        </button>
-                      </div>
-
-                      <Reorder.Group 
-                        axis="y" 
-                        values={tasks} 
-                        onReorder={handleReorderTasks}
-                        className="space-y-2.5 pt-4 border-t border-white/5"
-                      >
-                        {tasks.map(t => (
-                          <Reorder.Item 
-                            key={t.id} 
-                            value={t}
-                            className="p-4 rounded-xl bg-white/5 border border-white/5 hover:border-white/10 transition-colors flex items-center justify-between cursor-grab active:cursor-grabbing"
-                          >
-                            <div className="flex items-center gap-3 pointer-events-none">
-                              <button 
-                                onClick={(e) => { e.stopPropagation(); toggleTask(t.id); }}
-                                className={`h-5 w-5 rounded flex items-center justify-center border transition-all pointer-events-auto ${t.completed ? 'bg-emerald-600 border-emerald-500 text-white' : 'border-white/20 hover:border-white'}`}
-                              >
-                                {t.completed && <Check className="w-3 h-3 stroke-[3]" />}
-                              </button>
-                              <span className={`text-sm ${t.completed ? 'line-through text-slate-500' : 'text-slate-200'}`}>
-                                {t.title}
-                              </span>
-                            </div>
-                            <button 
-                              onClick={(e) => { e.stopPropagation(); deleteTask(t.id); }}
-                              className="text-red-400 hover:bg-red-500/10 p-1.5 rounded-lg transition-colors pointer-events-auto"
-                            >
-                              <Trash className="w-4 h-4" />
-                            </button>
-                          </Reorder.Item>
-                        ))}
-
-                        {tasks.length === 0 && (
-                          <div className="text-center py-8 text-slate-500">
-                            No active task milestones recorded yet. Create one!
-                          </div>
-                        )}
-                      </Reorder.Group>
-                    </div>
+                    <StudyHubTaskManager 
+                      currentUser={currentUser}
+                      showNotification={showNotification}
+                      tasks={tasks}
+                      onTasksChange={setTasks}
+                      onNavigateTab={(tab, sub) => {
+                        if (tab === 'study_hub' && sub) {
+                          setStudyHubSubTab(sub as any);
+                        } else {
+                          handleTabSelect(tab as any);
+                        }
+                      }}
+                    />
                   )}
 
                   {/* Sub-tab 3: Syllabus Planner & Study Sessions View */}
@@ -9994,7 +9951,13 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                         currentUser={currentUser}
                         effectiveRole={effectiveRole}
                         showNotification={showNotification}
-                        onNavigateToTab={handleTabSelect}
+                        onNavigateToTab={(tab, sub) => {
+                          if (tab === 'study_hub' && sub) {
+                            setStudyHubSubTab(sub as any);
+                          } else {
+                            handleTabSelect(tab as any);
+                          }
+                        }}
                         legacySchedules={schedules}
                       />
                     </div>

@@ -195,6 +195,8 @@ export interface StudySessionItem {
   completedAt?: string;
   outcomeNotes?: string;
   xpAwarded?: boolean;
+  taskId?: string;
+  deckId?: string;
 }
 
 // ==========================================

@@ -47,6 +47,9 @@ import {
   ExamPreparationPlan,
   ChapterLearningStatus
 } from '../types/syllabusTimetable';
+import { Task, FlashcardDeck } from '../types';
+import { getPersonalTasks } from '../lib/supabaseTasks';
+import { fetchSupabaseDecks } from '../lib/flashcardStorage';
 import { SyllabusTimetableService } from '../lib/syllabusTimetableService';
 import { OfficialTimetableViewer } from './OfficialTimetableViewer';
 import { soundService } from '../lib/soundService';
@@ -59,7 +62,7 @@ interface SyllabusStudyPlannerProps {
   currentUser: UserProfile;
   effectiveRole: UserRole;
   showNotification?: (msg: string) => void;
-  onNavigateToTab?: (tab: string) => void;
+  onNavigateToTab?: (tab: string, subTab?: string) => void;
   legacySchedules?: Array<{ id: string; subject: string; time: string; day: string }>;
 }
 
@@ -128,6 +131,10 @@ export const SyllabusStudyPlanner: React.FC<SyllabusStudyPlannerProps> = ({
   const [newSessTime, setNewSessTime] = useState<string>('17:00');
   const [newSessDuration, setNewSessDuration] = useState<number>(45);
   const [newSessNotes, setNewSessNotes] = useState<string>('');
+  const [personalTasks, setPersonalTasks] = useState<Task[]>([]);
+  const [availableDecks, setAvailableDecks] = useState<FlashcardDeck[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState<string>('');
+  const [selectedDeckId, setSelectedDeckId] = useState<string>('');
 
   // Initial Load & Safe Data Migration
   useEffect(() => {
@@ -135,17 +142,21 @@ export const SyllabusStudyPlanner: React.FC<SyllabusStudyPlannerProps> = ({
     async function loadData() {
       setLoading(true);
       try {
-        const [sylList, prog, sess, exams] = await Promise.all([
+        const [sylList, prog, sess, exams, pTasks, sDecks] = await Promise.all([
           SyllabusTimetableService.getOfficialSyllabuses(schoolId, grade),
           SyllabusTimetableService.getStudentProgress(userId),
           SyllabusTimetableService.getStudySessions(userId, legacySchedules),
-          SyllabusTimetableService.getOfficialExams(schoolId)
+          SyllabusTimetableService.getOfficialExams(schoolId),
+          getPersonalTasks(userId),
+          fetchSupabaseDecks(userId)
         ]);
         if (isMounted) {
           setSyllabuses(sylList);
           setStudentProgress(prog);
           setStudySessions(sess);
           setUpcomingExams(exams);
+          setPersonalTasks(pTasks);
+          setAvailableDecks(sDecks);
         }
       } catch (err) {
         console.warn('[Planner] Initial load warning:', err);
@@ -458,7 +469,9 @@ export const SyllabusStudyPlanner: React.FC<SyllabusStudyPlannerProps> = ({
       status: 'pending',
       notes: newSessNotes.trim() || 'Personal study target',
       reminderEnabled: true,
-      isAiGenerated: false
+      isAiGenerated: false,
+      taskId: selectedTaskId || undefined,
+      deckId: selectedDeckId || undefined
     };
 
     const updated = [newSess, ...studySessions];
@@ -466,6 +479,8 @@ export const SyllabusStudyPlanner: React.FC<SyllabusStudyPlannerProps> = ({
     setStudySessions(updated);
     setShowAddSessionModal(false);
     setNewSessNotes('');
+    setSelectedTaskId('');
+    setSelectedDeckId('');
     soundService.playButtonClick();
     if (showNotification) showNotification('✓ Study session scheduled!');
   };
@@ -841,6 +856,26 @@ export const SyllabusStudyPlanner: React.FC<SyllabusStudyPlannerProps> = ({
                       {sess.chapterTitle || `${sess.subject} Study Session`}
                     </h4>
                     <p className="text-xs text-slate-400">{sess.notes}</p>
+                    {(sess.taskId || sess.deckId) && (
+                      <div className="flex items-center gap-2 mt-2">
+                        {sess.taskId && (
+                          <button
+                            onClick={() => onNavigateToTab?.('study_hub', 'tasks')}
+                            className="px-2 py-1 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 text-[10px] font-bold border border-indigo-500/20 transition-colors"
+                          >
+                            View Linked Task
+                          </button>
+                        )}
+                        {sess.deckId && (
+                          <button
+                            onClick={() => onNavigateToTab?.('study_hub', 'flashcards')}
+                            className="px-2 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-[10px] font-bold border border-emerald-500/20 transition-colors"
+                          >
+                            Start Linked Review
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-3">
@@ -1174,10 +1209,59 @@ export const SyllabusStudyPlanner: React.FC<SyllabusStudyPlannerProps> = ({
                     onChange={e => setNewSessSubject(e.target.value)}
                     className="w-full text-xs px-3 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-white font-bold"
                   >
+                    <option>General / Personal</option>
                     <option>Mathematics</option>
                     <option>Physics</option>
                     <option>Chemistry</option>
+                    <option>Biology</option>
                     <option>Computer Science</option>
+                    <option>English</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-slate-400">Session Type</label>
+                  <select
+                    value={newSessType}
+                    onChange={e => setNewSessType(e.target.value as any)}
+                    className="w-full text-xs px-3 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-white font-bold"
+                  >
+                    <option value="learn_chapter">Learn Chapter</option>
+                    <option value="revise_chapter">Revision</option>
+                    <option value="review_flashcards">Flashcard Review</option>
+                    <option value="practice_questions">Practice Test</option>
+                    <option value="exam_prep">Exam Preparation</option>
+                    <option value="catch_up">Catch Up Session</option>
+                  </select>
+                </div>
+
+                {newSessType === 'review_flashcards' && (
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-slate-400">Link Flashcard Deck</label>
+                    <select
+                      value={selectedDeckId}
+                      onChange={e => setSelectedDeckId(e.target.value)}
+                      className="w-full text-xs px-3 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-white"
+                    >
+                      <option value="">(No specific deck)</option>
+                      {availableDecks.map(d => (
+                        <option key={d.id} value={d.id}>{d.icon} {d.title}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase font-bold text-slate-400">Link to Goal/Task</label>
+                  <select
+                    value={selectedTaskId}
+                    onChange={e => setSelectedTaskId(e.target.value)}
+                    className="w-full text-xs px-3 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-white"
+                  >
+                    <option value="">(No specific task)</option>
+                    {personalTasks.filter(t => !t.completed).map(t => (
+                      <option key={t.id} value={t.id}>{t.title}</option>
+                    ))}
                   </select>
                 </div>
 

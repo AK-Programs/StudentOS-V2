@@ -36,6 +36,7 @@ interface StudyCenterProps {
   currentUser?: UserProfile | null;
   showNotification?: (msg: string) => void;
   onNavigateTab?: (tab: string) => void;
+  initialDeckId?: string | null;
 }
 
 type ViewMode = 'decks' | 'study' | 'manage_deck';
@@ -43,7 +44,8 @@ type ViewMode = 'decks' | 'study' | 'manage_deck';
 export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
   currentUser,
   showNotification = (msg: string) => console.log(msg),
-  onNavigateTab
+  onNavigateTab,
+  initialDeckId
 }) => {
   const userId = useMemo(
     () => getCanonicalUserId(currentUser?.uid || currentUser?.email),
@@ -391,6 +393,20 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
     setSessionRatings([]);
     setViewMode('study');
   };
+
+  // Handle deep linking to specific decks or review sessions
+  useEffect(() => {
+    if (initialDeckId && decks.length > 0 && !isLoadingData) {
+      if (initialDeckId === 'all-due') {
+        startAllDueStudySession();
+      } else {
+        const deckExists = decks.some(d => d.id === initialDeckId);
+        if (deckExists) {
+          startStudySession(initialDeckId);
+        }
+      }
+    }
+  }, [initialDeckId, decks.length, isLoadingData]);
 
   // Shuffle cards in the current study session while preserving exact card IDs and Q/A pairings
   const handleShuffleStudySession = () => {
