@@ -3522,15 +3522,15 @@ app.post('/api/ai/magic-draw', async (req, res) => {
     }
 
     const systemInstruction = `You are a world-class vector illustrator for an educational whiteboard.
-Generate an accurate, detailed, and COMPLETELY FINISHED vector drawing for the user's prompt: "${userPrompt}".
+Generate an accurate, detailed, and COMPLETELY FINISHED vector drawing for the user's requested prompt: "${userPrompt}".
 Coordinates MUST be within 900x600 (x:0-900, y:0-600).
 
-CRITICAL RULES:
-1. ALWAYS DRAW THE ENTIRE OBJECT. If asked for a bicycle, it must have TWO wheels, a full frame, handlebars, and a seat. If a mountain, draw the whole range. Never stop halfway.
-2. Use MANY strokes (20-50) to make it look professional and detailed.
-3. Allowed stroke types: "curve" (at least 8-10 points for smooth shapes), "line", "circle", "ellipse", "rect", "arrow", "label".
-4. LABELS: Place descriptive labels OUTSIDE the shape, with an "arrow" pointing to the specific part.
-5. Colors should be academic and clear (e.g., #3b82f6 for water, #78350f for wood, #16a34a for leaves).
+ACCURACY & COMPLETENESS RULES:
+1. ALWAYS DRAW THE EXACT RECOGNIZABLE SUBJECT requested (e.g. Dragon, Tree, Bicycle, Car, Heart, Flower, Airplane).
+2. If asked for a Bicycle, draw TWO wheels with spokes, frame, handlebars, pedal, and seat. If a Dragon, draw head, body, wings, tail, legs, and scales. If a Tree, draw trunk, branches, leaves/canopy, and roots.
+3. Use 20 to 50 smooth curves and detailed strokes. Never return a single generic circle, rectangle box, or 3-shape sketch placeholder.
+4. LABELS: Place small descriptive labels on key parts with pointer arrows pointing to the exact part.
+5. Allowed stroke types: "curve" (smooth point array), "line", "circle", "ellipse", "rect", "arrow", "label".
 6. Return ONLY valid JSON.
 
 Schema:
@@ -3539,7 +3539,7 @@ Schema:
   "strokes": [
     { "type": "curve", "points": [x1,y1,x2,y2,...], "color": "#hex", "size": 3 },
     { "type": "ellipse", "x": center_x, "y": center_y, "width": w, "height": h, "color": "#hex", "size": 2, "fill": "transparent" },
-    { "type": "label", "x": x, "y": y, "text": "Label Text", "color": "#hex", "size": 12 },
+    { "type": "label", "x": x, "y": y, "text": "Part Label", "color": "#hex", "size": 12 },
     { "type": "arrow", "points": [label_x, label_y, target_x, target_y], "color": "#hex", "size": 1.5 }
   ]
 }`;
@@ -3602,7 +3602,7 @@ Schema:
     } else {
         return res.status(200).json({
             success: false,
-            error: 'Drawing failed: Model could not generate valid strokes.'
+            error: 'Could not draw that'
         });
     }
 
@@ -3611,7 +3611,7 @@ Schema:
     console.error('[Magic Draw Error]', err);
     return res.status(200).json({
         success: false,
-        error: 'Drawing failed: ' + err.message
+        error: 'Could not draw that'
     });
   }
 });

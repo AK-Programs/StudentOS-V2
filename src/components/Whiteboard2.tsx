@@ -667,6 +667,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
   const [aiToolType, setAiToolType] = useState<'auto' | 'svg' | '3d' | 'mermaid' | 'diagram' | 'mindmap' | 'assistant'>('auto');
 
   // Verified Asset Library ("AI Board") & File Manager States
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [aiAssetDialogOpen, setAiAssetDialogOpen] = useState(false);
   const [assetDialogInitialQuery, setAssetDialogInitialQuery] = useState('');
   const [assetDialogInitialCategory, setAssetDialogInitialCategory] = useState('All');
@@ -845,21 +846,25 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           if (data?.success && Array.isArray(data.strokes) && data.strokes.length >= 1) {
             rawStrokes = data.strokes;
           } else {
-            setMagicPenModal({ ...magicPenModal, error: 'Drawing failed', loading: false });
+            setIsMagicPenDrawing(null);
+            setMagicPenModal({ open: true, prompt: promptText, error: data?.error || 'Could not draw that', loading: false });
             return;
           }
         } else {
-            setMagicPenModal({ ...magicPenModal, error: 'Drawing failed', loading: false });
-            return;
+          setIsMagicPenDrawing(null);
+          setMagicPenModal({ open: true, prompt: promptText, error: 'Could not draw that', loading: false });
+          return;
         }
       } catch (fErr) {
         console.warn('[Magic Pen Client Fetch] Timed out or failed:', fErr);
-        setMagicPenModal({ ...magicPenModal, error: 'Drawing failed', loading: false });
+        setIsMagicPenDrawing(null);
+        setMagicPenModal({ open: true, prompt: promptText, error: 'Could not draw that', loading: false });
         return;
       }
 
       if (!rawStrokes || rawStrokes.length < 1) {
-        setMagicPenModal({ ...magicPenModal, error: 'Drawing failed', loading: false });
+        setIsMagicPenDrawing(null);
+        setMagicPenModal({ open: true, prompt: promptText, error: 'Could not draw that', loading: false });
         return;
       }
 
@@ -3375,294 +3380,280 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
           </div>
         </div>
         
-        {/* Dynamic Tool Selector */}
-        <div className="flex flex-wrap items-center gap-1 sm:gap-1.5 bg-slate-950 border border-white/10 p-1 sm:p-1.5 rounded-2xl shadow-inner max-w-full">
-          <button 
-            onClick={() => { setTool('select'); setShapesMenuOpen(false); }} 
-            className={`p-1.5 sm:p-2 rounded-xl transition-all flex items-center gap-1 ${tool === 'select' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-            title="Select & Marquee Box Select (Drag on empty canvas)"
-          >
-            <MousePointer2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-            <span className="hidden lg:inline text-[10px] font-black uppercase">Select</span>
-          </button>
-
-          {tool === 'select' && (
-            <button
-              onClick={() => setSelectionMode(prev => prev === 'intersect' ? 'contain' : 'intersect')}
-              className="px-2 py-1 rounded-lg bg-slate-900 border border-indigo-500/30 text-[9px] font-mono font-bold text-indigo-300 hover:bg-indigo-500/20 transition-all"
-              title="Toggle Marquee Selection Mode: Intersect (touch) vs Contain (fully inside)"
-            >
-              Box: {selectionMode === 'intersect' ? 'Touch' : 'Inside'}
-            </button>
-          )}
-
-          <button 
-            onClick={() => { setTool('pan'); setShapesMenuOpen(false); }} 
-            className={`p-1.5 sm:p-2 rounded-xl transition-all ${tool === 'pan' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-            title="Pan / Move Canvas Viewport"
-          >
-            <Hand className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          </button>
+        {/* Grouped Whiteboard Toolbar */}
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 bg-slate-950 border border-white/10 p-1.5 sm:p-2 rounded-2xl shadow-2xl max-w-full z-30">
           
-          <button 
-            onClick={() => { setTool('pen'); setShapesMenuOpen(false); }} 
-            className={`p-1.5 sm:p-2 rounded-xl transition-all ${tool === 'pen' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-            title="Academic Ink Pen"
-          >
-            <Pen className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          </button>
-
-          <button 
-            onClick={() => {
-              setMagicPenModal({ open: true, prompt: '', loading: false, error: null });
-              setShapesMenuOpen(false);
-            }}
-            className="p-1.5 sm:p-2 rounded-xl transition-all bg-purple-600/20 border border-purple-500/40 text-purple-300 hover:bg-purple-600 hover:text-white flex items-center gap-1.5 px-2"
-            title="Magic Pen (AI Vector Drawing)"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
-            <span className="text-xs font-bold hidden md:inline">Magic Pen</span>
-          </button>
-
-          <button 
-            onClick={() => { setTool('formula_pen'); setShapesMenuOpen(false); }} 
-            className={`p-1.5 sm:p-2 rounded-xl transition-all flex items-center gap-1.5 px-2 ${tool === 'formula_pen' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-            title="Formula Pen — Handwrite equations or answers and convert into aligned text"
-          >
-            <Sigma className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
-            <span className="text-xs font-bold hidden md:inline">Formula Pen</span>
-          </button>
-          
-          <button 
-            onClick={() => { setTool('pencil'); setShapesMenuOpen(false); }} 
-            className={`p-1.5 sm:p-2 rounded-xl transition-all ${tool === 'pencil' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-            title="Fine Graphite Pencil"
-          >
-            <span className="text-xs font-extrabold font-mono">✏️</span>
-          </button>
-          
-          <button 
-            onClick={() => { setTool('marker'); setShapesMenuOpen(false); }} 
-            className={`p-1.5 sm:p-2 rounded-xl transition-all ${tool === 'marker' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-            title="Bold Dry-Erase Marker"
-          >
-            <span className="text-xs font-extrabold font-mono">🖍️</span>
-          </button>
-          
-          <button 
-            onClick={() => { setTool('highlighter'); setShapesMenuOpen(false); }} 
-            className={`p-1.5 sm:p-2 rounded-xl transition-all ${tool === 'highlighter' ? 'bg-amber-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-            title="Translucent Text Highlighter"
-          >
-            <PenTool className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          </button>
-
-          <button 
-            onClick={() => { setTool('shape'); setShapeType('text'); setShapesMenuOpen(false); }} 
-            className={`p-1.5 sm:p-2 rounded-xl transition-all ${tool === 'shape' && shapeType === 'text' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-            title="Click Canvas to Add Text"
-          >
-            <Type className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          </button>
-          
-          {/* Shapes Dropdown Selector Menu */}
-          <div className="relative">
+          {/* GROUP 1: DRAW (Pens, Eraser, Shapes, Text) */}
+          <div className="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-white/5">
+            <span className="text-[9px] font-black uppercase tracking-wider text-indigo-400 px-1.5 hidden xl:inline">Draw</span>
             <button 
-              onClick={() => { setShapesMenuOpen(!shapesMenuOpen); setTool('shape'); }} 
-              className={`p-1.5 sm:p-2 sm:px-3 rounded-xl transition-all flex items-center gap-1 border border-transparent ${tool === 'shape' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-              title="Interactive Shapes Menu"
+              onClick={() => { setTool('pen'); setShapesMenuOpen(false); setMoreMenuOpen(false); }} 
+              className={`p-1.5 sm:p-2 rounded-lg transition-all ${tool === 'pen' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+              title="Academic Ink Pen"
             >
-              <Square className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              <span className="text-[10px] font-black uppercase tracking-wider hidden md:inline">{shapeType}</span>
-              <ChevronDown className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+              <Pen className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </button>
-            
-            {shapesMenuOpen && (
-              <div className="fixed sm:absolute top-24 sm:top-full left-2 sm:left-0 mt-0 sm:mt-2 bg-slate-900 border border-white/10 rounded-2xl shadow-2xl p-2.5 flex flex-col gap-1 w-44 max-w-[calc(100vw-1rem)] z-50 animate-fadeIn max-h-64 overflow-y-auto">
-                 <div className="px-2.5 py-1 text-[9px] font-black text-slate-500 uppercase tracking-widest border-b border-white/5 mb-1">Vector Geometries</div>
-                 <button onClick={() => { setTool('shape'); setShapeType('line'); setShapesMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${shapeType === 'line' ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Minus className="w-3.5 h-3.5" /> Simple Line</button>
-                 <button onClick={() => { setTool('shape'); setShapeType('arrow'); setShapesMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${shapeType === 'arrow' ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>↗ Directed Arrow</button>
-                 <button onClick={() => { setTool('shape'); setShapeType('rect'); setShapesMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${shapeType === 'rect' ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Square className="w-3.5 h-3.5" /> Rectangle</button>
-                 <button onClick={() => { setTool('shape'); setShapeType('square'); setShapesMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${shapeType === 'square' ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Square className="w-3.5 h-3.5 text-indigo-400" /> Square Node</button>
-                 <button onClick={() => { setTool('shape'); setShapeType('circle'); setShapesMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${shapeType === 'circle' ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><CircleIcon className="w-3.5 h-3.5" /> Circular Node</button>
-                 <button onClick={() => { setTool('shape'); setShapeType('triangle'); setShapesMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${shapeType === 'triangle' ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Triangle className="w-3.5 h-3.5" /> Equilateral Triangle</button>
-                 <button onClick={() => { setTool('shape'); setShapeType('polygon'); setShapesMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${shapeType === 'polygon' ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><span className="text-xs font-extrabold font-mono">⬡</span> Hexagonal Hex</button>
-                 <button onClick={() => { setTool('shape'); setShapeType('geometry'); setShapesMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${shapeType === 'geometry' ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><span className="text-xs font-extrabold font-mono">📐</span> Graph Axis Grid</button>
-                <div className="px-2.5 py-1 text-[9px] font-black text-slate-500 uppercase tracking-widest border-b border-white/5 mb-1 mt-1">Geometry Tools</div>
-                 <button onClick={() => { setTool('shape'); setShapeType('ruler'); setShapesMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${shapeType === 'ruler' ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><span className="text-xs font-extrabold font-mono">📏</span> Ruler</button>
-                 <button onClick={() => { setTool('shape'); setShapeType('protractor'); setShapesMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${shapeType === 'protractor' ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><span className="text-xs font-extrabold font-mono">🪶</span> Protractor</button>
-                 <button onClick={() => { setTool('shape'); setShapeType('compass'); setShapesMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${shapeType === 'compass' ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><span className="text-xs font-extrabold font-mono">🧭</span> Compass</button>
-                 <button onClick={() => { setTool('shape'); setShapeType('setsquare'); setShapesMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${shapeType === 'setsquare' ? 'bg-indigo-500/20 text-indigo-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Triangle className="w-3.5 h-3.5" /> Set Square</button>
+            <button 
+              onClick={() => { setTool('pencil'); setShapesMenuOpen(false); setMoreMenuOpen(false); }} 
+              className={`p-1.5 sm:p-2 rounded-lg transition-all ${tool === 'pencil' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+              title="Graphite Pencil"
+            >
+              <span className="text-xs font-bold font-mono">✏️</span>
+            </button>
+            <button 
+              onClick={() => { setTool('marker'); setShapesMenuOpen(false); setMoreMenuOpen(false); }} 
+              className={`p-1.5 sm:p-2 rounded-lg transition-all ${tool === 'marker' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+              title="Dry-Erase Marker"
+            >
+              <span className="text-xs font-bold font-mono">🖍️</span>
+            </button>
+            <button 
+              onClick={() => { setTool('highlighter'); setShapesMenuOpen(false); setMoreMenuOpen(false); }} 
+              className={`p-1.5 sm:p-2 rounded-lg transition-all ${tool === 'highlighter' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+              title="Text Highlighter"
+            >
+              <PenTool className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </button>
+
+            {/* Eraser Dropdown */}
+            <div className="relative">
+              <button 
+                onClick={() => { setEraserMenuOpen(!eraserMenuOpen); if(!eraserMenuOpen) setTool('eraser'); setShapesMenuOpen(false); setMoreMenuOpen(false); }} 
+                className={`p-1.5 sm:p-2 rounded-lg transition-all flex items-center gap-1 ${tool === 'eraser' || tool === 'object_eraser' ? 'bg-red-600 text-white shadow-md shadow-red-600/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+                title="Eraser (Stroke / Object)"
+              >
+                <Eraser className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {eraserMenuOpen && (
+                <div className="absolute top-full left-0 mt-2 bg-slate-900 border border-white/10 rounded-xl shadow-2xl p-2 flex flex-col gap-1 w-36 z-50 animate-fadeIn">
+                  <button onClick={() => { setTool('eraser'); setEraserMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${tool === 'eraser' ? 'bg-red-500/20 text-red-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>Stroke Eraser</button>
+                  <button onClick={() => { setTool('object_eraser'); setEraserMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${tool === 'object_eraser' ? 'bg-red-500/20 text-red-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>Object Eraser</button>
+                </div>
+              )}
+            </div>
+
+            {/* Shapes Dropdown */}
+            <div className="relative">
+              <button 
+                onClick={() => { setShapesMenuOpen(!shapesMenuOpen); setTool('shape'); setMoreMenuOpen(false); }} 
+                className={`p-1.5 sm:p-2 rounded-lg transition-all flex items-center gap-1 border border-transparent ${tool === 'shape' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+                title="Vector Geometries & Shapes"
+              >
+                <Square className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <span className="text-[10px] font-black uppercase hidden lg:inline">{shapeType}</span>
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {shapesMenuOpen && (
+                <div className="absolute top-full left-0 mt-2 bg-slate-900 border border-white/10 rounded-2xl shadow-2xl p-2.5 flex flex-col gap-1 w-44 z-50 animate-fadeIn max-h-64 overflow-y-auto">
+                  <div className="px-2 py-1 text-[9px] font-black text-slate-500 uppercase tracking-widest border-b border-white/5 mb-1">Geometries</div>
+                  <button onClick={() => { setTool('shape'); setShapeType('line'); setShapesMenuOpen(false); }} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-800 hover:text-white"><Minus className="w-3.5 h-3.5" /> Simple Line</button>
+                  <button onClick={() => { setTool('shape'); setShapeType('arrow'); setShapesMenuOpen(false); }} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-800 hover:text-white">↗ Arrow</button>
+                  <button onClick={() => { setTool('shape'); setShapeType('rect'); setShapesMenuOpen(false); }} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-800 hover:text-white"><Square className="w-3.5 h-3.5" /> Rectangle</button>
+                  <button onClick={() => { setTool('shape'); setShapeType('circle'); setShapesMenuOpen(false); }} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-800 hover:text-white"><CircleIcon className="w-3.5 h-3.5" /> Circle</button>
+                  <button onClick={() => { setTool('shape'); setShapeType('triangle'); setShapesMenuOpen(false); }} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-800 hover:text-white"><Triangle className="w-3.5 h-3.5" /> Triangle</button>
+                  <div className="px-2 py-1 text-[9px] font-black text-slate-500 uppercase tracking-widest border-b border-white/5 my-1">Math Tools</div>
+                  <button onClick={() => { setTool('shape'); setShapeType('ruler'); setShapesMenuOpen(false); }} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-800 hover:text-white">📏 Ruler</button>
+                  <button onClick={() => { setTool('shape'); setShapeType('protractor'); setShapesMenuOpen(false); }} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-800 hover:text-white">🪶 Protractor</button>
+                  <button onClick={() => { setTool('shape'); setShapeType('compass'); setShapesMenuOpen(false); }} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-800 hover:text-white">🧭 Compass</button>
+                </div>
+              )}
+            </div>
+
+            <button 
+              onClick={() => { setTool('shape'); setShapeType('text'); setShapesMenuOpen(false); setMoreMenuOpen(false); }} 
+              className={`p-1.5 sm:p-2 rounded-lg transition-all ${tool === 'shape' && shapeType === 'text' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+              title="Add Text"
+            >
+              <Type className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </button>
+          </div>
+
+          <div className="h-5 w-px bg-white/10" />
+
+          {/* GROUP 2: AI TOOLS */}
+          <div className="flex items-center gap-1 bg-purple-950/40 p-1 rounded-xl border border-purple-500/20">
+            <span className="text-[9px] font-black uppercase tracking-wider text-purple-300 px-1.5 hidden xl:inline">AI</span>
+            <button 
+              onClick={() => {
+                setMagicPenModal({ open: true, prompt: '', loading: false, error: null });
+                setShapesMenuOpen(false);
+                setMoreMenuOpen(false);
+              }}
+              className="p-1.5 sm:p-2 rounded-lg transition-all bg-purple-600/30 hover:bg-purple-600 text-purple-200 hover:text-white flex items-center gap-1 px-2.5 font-bold text-xs cursor-pointer"
+              title="Magic Pen — AI Vector Drawing"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+              <span>Magic Pen</span>
+            </button>
+
+            <button 
+              onClick={() => { setTool('formula_pen'); setShapesMenuOpen(false); setMoreMenuOpen(false); }} 
+              className={`p-1.5 sm:p-2 rounded-lg transition-all flex items-center gap-1 px-2 font-bold text-xs ${tool === 'formula_pen' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800'}`}
+              title="Formula Pen — Handwritten equation recognition"
+            >
+              <Sigma className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Formula Pen</span>
+            </button>
+
+            <button 
+              onClick={() => {
+                setAssetDialogInitialQuery('');
+                setAssetDialogInitialCategory('All');
+                setAiAssetDialogOpen(true);
+                setMoreMenuOpen(false);
+              }}
+              className="p-1.5 sm:p-2 rounded-lg transition-all bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white flex items-center gap-1 px-2.5 font-bold text-xs cursor-pointer"
+              title="AI Board — Verified 3D Models & SVG Assets"
+            >
+              <Box className="w-3.5 h-3.5 text-cyan-300" />
+              <span>AI Assets 3D/SVG</span>
+            </button>
+          </div>
+
+          <div className="h-5 w-px bg-white/10" />
+
+          {/* GROUP 3: VIEW & NAVIGATION */}
+          <div className="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-white/5">
+            <span className="text-[9px] font-black uppercase tracking-wider text-cyan-400 px-1.5 hidden xl:inline">View</span>
+            <button 
+              onClick={() => { setTool('select'); setShapesMenuOpen(false); setMoreMenuOpen(false); }} 
+              className={`p-1.5 sm:p-2 rounded-lg transition-all flex items-center gap-1 ${tool === 'select' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+              title="Select / Marquee Box"
+            >
+              <MousePointer2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </button>
+            {tool === 'select' && (
+              <button
+                onClick={() => setSelectionMode(prev => prev === 'intersect' ? 'contain' : 'intersect')}
+                className="px-1.5 py-0.5 rounded bg-slate-800 text-[9px] font-mono font-bold text-indigo-300 hover:bg-indigo-500/20"
+                title="Selection box behavior"
+              >
+                {selectionMode === 'intersect' ? 'Touch' : 'Inside'}
+              </button>
+            )}
+            <button 
+              onClick={() => { setTool('pan'); setShapesMenuOpen(false); setMoreMenuOpen(false); }} 
+              className={`p-1.5 sm:p-2 rounded-lg transition-all ${tool === 'pan' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+              title="Pan / Move Canvas"
+            >
+              <Hand className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </button>
+            <button 
+              onClick={() => setStageScale(prev => Math.min(4, prev * 1.15))}
+              className="p-1.5 sm:p-2 rounded-lg text-slate-300 hover:bg-slate-800 cursor-pointer"
+              title="Zoom In"
+            >
+              <ZoomIn className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </button>
+            <button 
+              onClick={() => setStageScale(prev => Math.max(0.4, prev / 1.15))}
+              className="p-1.5 sm:p-2 rounded-lg text-slate-300 hover:bg-slate-800 cursor-pointer"
+              title="Zoom Out"
+            >
+              <ZoomOut className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </button>
+          </div>
+
+          <div className="h-5 w-px bg-white/10" />
+
+          {/* GROUP 4: MORE BUTTON */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setMoreMenuOpen(!moreMenuOpen)}
+              className="p-1.5 sm:p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-bold text-xs flex items-center gap-1.5 px-3 cursor-pointer shadow-md"
+              title="More Options & Actions"
+            >
+              <Sliders className="w-3.5 h-3.5 text-amber-400" />
+              <span>More</span>
+              <ChevronDown className="w-3 h-3 text-slate-400" />
+            </button>
+
+            {moreMenuOpen && (
+              <div className="absolute top-full right-0 mt-2 bg-slate-900 border border-white/10 rounded-2xl shadow-2xl p-3 flex flex-col gap-1.5 w-56 z-50 animate-fadeIn text-xs">
+                <div className="px-2 py-1 text-[9px] font-black text-slate-500 uppercase tracking-widest border-b border-white/5">Extra Tools & Actions</div>
+                <button 
+                  onClick={() => { pushHistory(); handleInsertStickyNote('#fef08a'); setMoreMenuOpen(false); }}
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-bold text-left cursor-pointer"
+                >
+                  <StickyNote className="w-4 h-4" /> Insert Sticky Note
+                </button>
+                <button 
+                  onClick={() => { fileInputRef.current?.click(); setMoreMenuOpen(false); }}
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl text-slate-300 hover:bg-slate-800 font-bold text-left cursor-pointer"
+                >
+                  <ImageIcon className="w-4 h-4 text-indigo-400" /> Upload Image
+                </button>
+                <button 
+                  onClick={() => { setSaveDocModalOpen(true); setMoreMenuOpen(false); }}
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl text-emerald-300 hover:bg-emerald-500/20 font-bold text-left cursor-pointer"
+                >
+                  <Save className="w-4 h-4" /> Save to Cloud
+                </button>
+                <button 
+                  onClick={() => { setCloudBrowserOpen(true); setMoreMenuOpen(false); }}
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl text-sky-300 hover:bg-sky-500/20 font-bold text-left cursor-pointer"
+                >
+                  <FolderOpen className="w-4 h-4" /> Open Cloud File
+                </button>
+                <button 
+                  onClick={() => { handleExportWhiteboardPackage(); setMoreMenuOpen(false); }}
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl text-slate-300 hover:bg-slate-800 font-bold text-left cursor-pointer"
+                >
+                  <Download className="w-4 h-4 text-indigo-400" /> Export File (.studentos-whiteboard)
+                </button>
+                <button 
+                  onClick={() => { handleExportPNG(); setMoreMenuOpen(false); }}
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl text-emerald-400 hover:bg-emerald-500/20 font-bold text-left cursor-pointer"
+                >
+                  <Download className="w-4 h-4" /> Export as PNG
+                </button>
+                <button 
+                  onClick={() => { handleExportAllPDF(); setMoreMenuOpen(false); }}
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl text-indigo-300 hover:bg-indigo-500/20 font-bold text-left cursor-pointer"
+                >
+                  <FileText className="w-4 h-4" /> Export as PDF
+                </button>
+                <button 
+                  onClick={() => { setIsPresentationMode(prev => !prev); setMoreMenuOpen(false); }}
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl text-slate-300 hover:bg-slate-800 font-bold text-left cursor-pointer"
+                >
+                  <Maximize2 className="w-4 h-4" /> Toggle Presentation Mode
+                </button>
+                <button 
+                  onClick={() => { setConfirmClearOpen(true); setMoreMenuOpen(false); }}
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl text-rose-400 hover:bg-rose-500/20 font-bold text-left cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4" /> Clear Canvas
+                </button>
               </div>
             )}
           </div>
-          
-          <div className="relative">
-            <button 
-              onClick={() => { setEraserMenuOpen(!eraserMenuOpen); if(!eraserMenuOpen) setTool('eraser'); setShapesMenuOpen(false); }} 
-              className={`p-1.5 sm:p-2 rounded-xl transition-all flex items-center gap-1 ${tool === 'eraser' || tool === 'object_eraser' ? 'bg-red-600 text-white shadow-lg shadow-red-600/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
-              title="Erase Lines & Shapes"
+
+          <div className="h-5 w-px bg-white/10" />
+
+          {/* Undo / Redo */}
+          <div className="flex items-center gap-0.5">
+            <button
+              onClick={handleUndo}
+              disabled={undoStack.length === 0}
+              className="p-1.5 sm:p-2 rounded-lg text-slate-300 hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer"
+              title="Undo"
             >
-              <Eraser className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              <ChevronDown className="w-3 h-3" />
+              <Undo2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </button>
-            
-            {eraserMenuOpen && (
-              <div className="fixed sm:absolute top-24 sm:top-full left-2 sm:left-0 mt-0 sm:mt-2 bg-slate-900 border border-white/10 rounded-2xl shadow-2xl p-2.5 flex flex-col gap-1 w-40 max-w-[calc(100vw-1rem)] z-50 animate-fadeIn max-h-64 overflow-y-auto">
-                  <button onClick={() => { setTool('eraser'); setEraserMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${tool === 'eraser' ? 'bg-red-500/20 text-red-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>Stroke Eraser</button>
-                  <button onClick={() => { setTool('object_eraser'); setEraserMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${tool === 'object_eraser' ? 'bg-red-500/20 text-red-300' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>Object Eraser</button>
-               </div>
-             )}
-           </div>
-
-           <div className="h-4 w-px bg-white/10 mx-0.5" />
-
-           <button
-             onClick={handleUndo}
-             disabled={undoStack.length === 0}
-             className="p-1.5 sm:p-2 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-all"
-             title="Undo (Ctrl+Z)"
-           >
-             <Undo2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-           </button>
-           <button
-             onClick={handleRedo}
-             disabled={redoStack.length === 0}
-             className="p-1.5 sm:p-2 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-all"
-             title="Redo (Ctrl+Y)"
-           >
-             <Redo2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-           </button>
-         </div>
-
-         {/* Global Action Handlers */}
-         <div className="flex flex-wrap items-center gap-1 sm:gap-2">
-           
-           <button 
-             onClick={() => {
-               setAssetDialogInitialQuery('');
-               setAssetDialogInitialCategory('All');
-               setAiAssetDialogOpen(true);
-             }}
-             className="p-1.5 sm:p-2 border rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer bg-gradient-to-r from-indigo-600/30 to-violet-600/30 hover:from-indigo-600/50 hover:to-violet-600/50 text-indigo-200 border-indigo-500/40 shadow-sm"
-             title="AI Board — Verified Educational 3D & SVG Asset Library"
-           >
-             <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-             <span className="hidden sm:inline">AI Board</span>
-           </button>
-
-           
-
-           {/* Document File Operations (Save & Load) */}
-           <button 
-             onClick={() => setSaveDocModalOpen(true)}
-             className="p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-emerald-500/30 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer"
-             title="Save Complete Whiteboard to StudentOS Cloud"
-           >
-             <Save className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
-             <span className="hidden lg:inline text-[10px] uppercase font-black">Save</span>
-           </button>
-
-           <button
-             onClick={() => setCloudBrowserOpen(true)}
-             className="p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-sky-500/30 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer"
-             title="Open Saved StudentOS Whiteboard Files"
-           >
-             <FolderOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-sky-400" />
-             <span className="hidden lg:inline text-[10px] uppercase font-black">Open</span>
-           </button>
-
-           <button 
-             onClick={handleExportWhiteboardPackage}
-             className="p-1.5 sm:p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer"
-             title="Export Whiteboard Document File to Device (.studentos-whiteboard)"
-           >
-             <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-400" />
-             <span className="hidden xl:inline text-[10px] uppercase font-black">Export File</span>
-           </button>
-           {/* Sticky Notes & Media Tools */}
-           <button 
-             onClick={() => { pushHistory(); handleInsertStickyNote('#fef08a'); }}
-             className="p-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/20 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold"
-             title="Insert Sticky Note"
-           >
-             <StickyNote className="w-4 h-4" />
-             <span className="hidden lg:inline text-[10px] uppercase font-black">Sticky</span>
-           </button>
-
-           <button 
-             onClick={() => fileInputRef.current?.click()}
-             className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold"
-             title="Upload Image File"
-           >
-             <ImageIcon className="w-4 h-4 text-indigo-400" />
-             <span className="hidden lg:inline text-[10px] uppercase font-black">Image</span>
-           </button>
-           <input 
-             type="file" 
-             ref={fileInputRef} 
-             onChange={handleImageUpload} 
-             accept="image/*" 
-             className="hidden" 
-           />
-
-           <button
-             onClick={() => setIsPresentationMode(prev => !prev)}
-             className={`p-2 rounded-xl border transition-all text-xs font-bold flex items-center gap-1 ${isPresentationMode ? 'bg-indigo-600 text-white border-indigo-400' : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-white/10'}`}
-             title={isPresentationMode ? 'Exit Presentation View' : 'Presentation Mode (Hide Secondary HUD)'}
-           >
-             <Maximize2 className="w-4 h-4" />
-           </button>
-
-           <div className="h-5 w-px bg-white/10 mx-0.5" />
-
-           {/* Export PNG / PDF */}
-           <button 
-             onClick={handleExportPNG}
-             className="p-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-xl transition-all flex items-center gap-1 text-xs font-bold cursor-pointer"
-             title="Export Current Slide as PNG Image"
-           >
-             <Download className="w-4 h-4" />
-             <span className="hidden xl:inline text-[10px] uppercase font-black">PNG</span>
-           </button>
-
-           <button 
-             onClick={handleExportAllPDF}
-             className="p-2 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/20 rounded-xl transition-all flex items-center gap-1 text-xs font-bold cursor-pointer"
-             title="Export All Slides as PDF Document"
-           >
-             <FileText className="w-4 h-4" />
-             <span className="hidden xl:inline text-[10px] uppercase font-black">PDF</span>
-           </button>
-
-
-           {confirmClearOpen ? (
-             <div className="flex items-center gap-1 bg-rose-950/90 border border-rose-500/40 px-2 py-1 rounded-xl">
-               <span className="text-[10px] font-bold text-rose-200">Clear slide?</span>
-               <button
-                 onClick={handleClearCanvas}
-                 className="px-2 py-0.5 bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-black rounded-lg"
-               >
-                 Yes
-               </button>
-               <button
-                 onClick={() => setConfirmClearOpen(false)}
-                 className="px-1.5 py-0.5 bg-slate-800 text-slate-300 text-[10px] font-bold rounded-lg"
-               >
-                 No
-               </button>
-             </div>
-           ) : (
-             <button 
-               onClick={() => setConfirmClearOpen(true)}
-               className="p-2 bg-slate-800 hover:bg-red-950 hover:text-red-300 text-slate-400 hover:border-red-500/35 rounded-xl transition-all border border-white/5"
-               title="Clear Slide Elements"
-             >
-               <Trash2 className="w-4 h-4" />
-             </button>
-           )}
-         </div>
-       </div>
+            <button
+              onClick={handleRedo}
+              disabled={redoStack.length === 0}
+              className="p-1.5 sm:p-2 rounded-lg text-slate-300 hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none transition-all cursor-pointer"
+              title="Redo"
+            >
+              <Redo2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
 
        {/* 2. SECONDARY CONTROLS HUD (ZOOM + SLIDES + ACTIVE OBJECT CONFIG) */}
        {!isPresentationMode && (

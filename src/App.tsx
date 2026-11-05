@@ -8653,7 +8653,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                               </button>
                             )}
 
-                            {((effectiveRole as string) === 'parent' || isSuperAdmin || effectiveRole === 'admin') && matchesFilter('Parental Portal', 'parent guardian monitoring reports') && (
+                            {(effectiveRole as string) === 'parent' && matchesFilter('Parental Portal', 'parent guardian monitoring reports') && (
                               <button
                                 type="button"
                                 onClick={() => handleTabSelect('parent_portal')}
@@ -9223,7 +9223,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                     }} 
                   />
 
-                  {/* Welcome Hero & Context Card */}
+                  {/* Welcome Hero & Context Header */}
                   <motion.div
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -9241,114 +9241,114 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                     }`}
                   >
                     <BorderBeam size={220} duration={14} colorFrom="#6366f1" colorTo="#ec4899" />
-                    {(getSavedTheme() === 'halloween' || currentUser.raw_data?.theme === 'halloween') && (
-                      <motion.div 
-                        initial={{ opacity: 0, scale: 0.8 }}
-                        animate={{ opacity: 0.85, scale: 1 }}
-                        className="absolute top-2 right-4 text-5xl sm:text-7xl pointer-events-none select-none halloween-flicker-item z-10"
-                      >
-                        🎃 🕸️
-                      </motion.div>
-                    )}
                     <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-6">
-                      <div className="space-y-1.5">
-                        <div className="flex items-center gap-2 text-xs text-indigo-400 font-semibold">
-                          <span>Academic Workspace</span>
-                          <span aria-hidden="true">·</span>
-                          <span className="text-slate-300 capitalize">{effectiveRole?.replace('_', ' ')}</span>
-                          {effectiveRole === 'student' && currentUser.grade && (
-                            <>
-                              <span aria-hidden="true">·</span>
-                              <span className="text-slate-300">{currentUser.grade} ({currentUser.section})</span>
-                            </>
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
+                          <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 uppercase tracking-wider font-bold">
+                            {(currentUser as any).schoolName || 'Veylentra International Academy'}
+                          </span>
+                          <span className="px-2.5 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 capitalize font-bold">
+                            Role: {effectiveRole?.replace('_', ' ')}
+                          </span>
+                          {(effectiveRole === 'student' || currentUser.grade) && (
+                            <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 font-bold">
+                              Class: {currentUser.grade || 'Grade 10'} {currentUser.section ? `(${currentUser.section})` : ''}
+                            </span>
                           )}
                         </div>
                         <h1 className="text-xl sm:text-3xl font-black font-display text-white tracking-tight">
                           <SplitTextReveal text={`Welcome back, ${currentUser.name}`} />
                         </h1>
-                        <p className="text-slate-300 max-w-xl text-xs sm:text-sm leading-relaxed">
-                          {effectiveRole === 'student'
-                            ? `Representing ${currentUser.house} House in Section ${currentUser.section}. Stay on top of your daily schedule, assignments, and flashcard reviews.`
-                            : `Logged in as ${currentUser.specialtySubject || 'Faculty'} educator. Manage live smartboards, review submissions, and track class progress.`}
-                        </p>
                       </div>
 
-                      {/* Study Streak Summary */}
-                      <div className="flex items-center gap-3.5 bg-slate-950/70 px-4 py-3 rounded-2xl border border-white/10 shrink-0">
-                        <Flame className="w-7 h-7 text-orange-400 shrink-0" />
-                        <div>
-                          <p className="text-base sm:text-lg font-black font-mono tabular-nums text-white">
-                            <NumberTicker value={currentUser.streakDays || 5} suffix=" Days" />
-                          </p>
-                          <p className="text-[11px] text-slate-400">Active learning streak</p>
+                      {/* Streak Card — Tapping opens Brain Battle */}
+                      <button
+                        type="button"
+                        onClick={() => handleTabSelect('brain_battle')}
+                        className="flex items-center gap-3.5 bg-gradient-to-r from-amber-950/60 to-orange-950/60 hover:from-amber-900/80 hover:to-orange-900/80 px-4 py-3 rounded-2xl border border-amber-500/40 shrink-0 cursor-pointer transition-all shadow-lg hover:scale-105 active:scale-95 group"
+                        title="View Brain Battle Arena"
+                      >
+                        <div className="relative flex items-center justify-center">
+                          <Flame className="w-8 h-8 text-orange-400 group-hover:scale-110 transition-transform animate-pulse" />
+                          <span className="absolute inset-0 rounded-full bg-orange-500/20 animate-ping" />
                         </div>
-                      </div>
+                        <div className="text-left">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-base sm:text-lg font-black font-mono tabular-nums text-white">
+                              <NumberTicker value={currentUser.streakDays || 5} suffix=" Days" />
+                            </span>
+                            <span className="text-[10px] bg-amber-500/20 text-amber-300 font-bold px-1.5 py-0.5 rounded">Streak</span>
+                          </div>
+                          <p className="text-[11px] text-amber-200/80 font-medium">Tap to open Brain Battle Arena ⚔️</p>
+                        </div>
+                      </button>
                     </div>
                   </motion.div>
 
-                  {/* Dashboard Quick Navigation Section */}
+                  {/* Essential Action Cards Section (Role-based) */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                        Quick Actions & Destinations
+                        Essential Actions
                       </h2>
                     </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3.5">
                       {effectiveRole === 'student' && (
                         <>
                           <button
-                            onClick={() => handleTabSelect('meet')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
+                            type="button"
+                            onClick={() => handleTabSelect('attendance_manager')}
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
                           >
-                            <span className="text-xl">📹</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Live Meet</span>
+                            <span className="text-2xl group-hover:scale-110 transition-transform">📋</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">Attendance</span>
+                              <span className="text-[10px] text-slate-400 block truncate">Check roll & stats</span>
+                            </div>
                           </button>
                           <button
-                            onClick={() => handleTabSelect('notes')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
-                          >
-                            <span className="text-xl">📝</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Lecture Notes</span>
-                          </button>
-                          <button
+                            type="button"
                             onClick={() => handleTabSelect('homework')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
                           >
-                            <span className="text-xl">📓</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Homework Hub</span>
+                            <span className="text-2xl group-hover:scale-110 transition-transform">📓</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">Homework</span>
+                              <span className="text-[10px] text-slate-400 block truncate">Tasks & due dates</span>
+                            </div>
                           </button>
                           <button
-                            onClick={() => handleTabSelect('brain_battle')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
+                            type="button"
+                            onClick={() => handleTabSelect('notes')}
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
                           >
-                            <span className="text-xl">⚔️</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Brain Battle</span>
+                            <span className="text-2xl group-hover:scale-110 transition-transform">📝</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">Notes</span>
+                              <span className="text-[10px] text-slate-400 block truncate">AI lecture notes</span>
+                            </div>
                           </button>
                           <button
-                            onClick={() => handleTabSelect('study_hub')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left relative cursor-pointer active:scale-95 transition-transform"
+                            type="button"
+                            onClick={() => handleTabSelect('materials')}
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
                           >
-                            <span className="text-xl">🎯</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Study Hub</span>
-                            {dueCardsCount > 0 && (
-                              <span className="absolute top-2.5 right-2.5 text-[10px] font-mono font-bold text-rose-400">
-                                {dueCardsCount} due
-                              </span>
-                            )}
+                            <span className="text-2xl group-hover:scale-110 transition-transform">📚</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">Materials</span>
+                              <span className="text-[10px] text-slate-400 block truncate">Class resources</span>
+                            </div>
                           </button>
                           <button
-                            onClick={() => handleTabSelect('pomodoro')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
+                            type="button"
+                            onClick={() => handleTabSelect('ai_teacher')}
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
                           >
-                            <span className="text-xl">⏱️</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Focus Timer</span>
-                          </button>
-                          <button
-                            onClick={() => handleTabSelect('life')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
-                          >
-                            <span className="text-xl">🚀</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Veylentra Life</span>
+                            <span className="text-2xl group-hover:scale-110 transition-transform">🤖</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">Byte</span>
+                              <span className="text-[10px] text-slate-400 block truncate">AI learning assistant</span>
+                            </div>
                           </button>
                         </>
                       )}
@@ -9356,133 +9356,168 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                       {effectiveRole === 'teacher' && (
                         <>
                           <button
-                            onClick={() => handleTabSelect('faculty')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
-                          >
-                            <span className="text-xl">👨‍🏫</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Faculty Center</span>
-                          </button>
-                          <button
-                            onClick={() => handleTabSelect('panel_mode')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
-                          >
-                            <span className="text-xl">🖥️</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Smartboard</span>
-                          </button>
-                          <button
+                            type="button"
                             onClick={() => handleTabSelect('attendance_manager')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
                           >
-                            <span className="text-xl">📋</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Attendance Roll</span>
+                            <span className="text-2xl group-hover:scale-110 transition-transform">📋</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">Attendance</span>
+                              <span className="text-[10px] text-slate-400 block truncate">Mark daily roll</span>
+                            </div>
                           </button>
                           <button
+                            type="button"
                             onClick={() => handleTabSelect('homework')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
                           >
-                            <span className="text-xl">📓</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Homework</span>
+                            <span className="text-2xl group-hover:scale-110 transition-transform">📓</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">Homework</span>
+                              <span className="text-[10px] text-slate-400 block truncate">Assign & review</span>
+                            </div>
                           </button>
                           <button
-                            onClick={() => handleTabSelect('assignments')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
+                            type="button"
+                            onClick={() => handleTabSelect('notes')}
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
                           >
-                            <span className="text-xl">📚</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Assignments</span>
+                            <span className="text-2xl group-hover:scale-110 transition-transform">📝</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">Notes</span>
+                              <span className="text-[10px] text-slate-400 block truncate">Class lecture notes</span>
+                            </div>
                           </button>
                           <button
-                            onClick={() => handleTabSelect('funzone')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
+                            type="button"
+                            onClick={() => handleTabSelect('materials')}
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
                           >
-                            <span className="text-xl">🎡</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Teacher Fun Zone</span>
+                            <span className="text-2xl group-hover:scale-110 transition-transform">📚</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">Materials</span>
+                              <span className="text-[10px] text-slate-400 block truncate">Share resources</span>
+                            </div>
                           </button>
                           <button
-                            onClick={() => handleTabSelect('life')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer active:scale-95 transition-transform"
+                            type="button"
+                            onClick={() => handleTabSelect('faculty')}
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
                           >
-                            <span className="text-xl">🚀</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Veylentra Life</span>
-                          </button>
-                        </>
-                      )}
-
-                      {effectiveRole === 'coordinator' && (
-                        <>
-                          <button
-                            onClick={() => handleTabSelect('attendance_manager')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
-                          >
-                            <span className="text-xl">📋</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Attendance Ledger</span>
-                          </button>
-                          <button
-                            onClick={() => handleTabSelect('blogs')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
-                          >
-                            <span className="text-xl">💎</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">School Blogs</span>
-                          </button>
-                          <button
-                            onClick={() => handleTabSelect('planner')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
-                          >
-                            <span className="text-xl">📅</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Study Planner</span>
-                          </button>
-                          <button
-                            onClick={() => handleTabSelect('life')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
-                          >
-                            <span className="text-xl">🚀</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Veylentra Life</span>
-                          </button>
-                          <button
-                            onClick={() => handleTabSelect('profile')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
-                          >
-                            <span className="text-xl">👤</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">My Profile</span>
+                            <span className="text-2xl group-hover:scale-110 transition-transform">👨‍🏫</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">Class</span>
+                              <span className="text-[10px] text-slate-400 block truncate">Students & gradebook</span>
+                            </div>
                           </button>
                         </>
                       )}
 
-                      {(effectiveRole === 'admin' || effectiveRole === 'super_admin') && (
+                      {effectiveRole === 'parent' && (
                         <>
                           <button
-                            onClick={() => handleTabSelect('admin')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            type="button"
+                            onClick={() => handleTabSelect('parent_portal')}
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
                           >
-                            <span className="text-xl">⚙️</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Control Center</span>
+                            <span className="text-2xl group-hover:scale-110 transition-transform">👨‍👩‍👧</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">My Children</span>
+                              <span className="text-[10px] text-slate-400 block truncate">Student profiles</span>
+                            </div>
                           </button>
                           <button
+                            type="button"
+                            onClick={() => handleTabSelect('parent_portal')}
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                          >
+                            <span className="text-2xl group-hover:scale-110 transition-transform">📋</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">Attendance</span>
+                              <span className="text-[10px] text-slate-400 block truncate">Daily log</span>
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleTabSelect('parent_portal')}
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                          >
+                            <span className="text-2xl group-hover:scale-110 transition-transform">📓</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">Homework</span>
+                              <span className="text-[10px] text-slate-400 block truncate">Track assignments</span>
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleTabSelect('whats_new')}
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                          >
+                            <span className="text-2xl group-hover:scale-110 transition-transform">📣</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">Notices</span>
+                              <span className="text-[10px] text-slate-400 block truncate">School announcements</span>
+                            </div>
+                          </button>
+                        </>
+                      )}
+
+                      {['coordinator', 'admin', 'super_admin'].includes(effectiveRole) && (
+                        <>
+                          <button
+                            type="button"
                             onClick={() => handleTabSelect('attendance_manager')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
                           >
-                            <span className="text-xl">📋</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Attendance Roll</span>
+                            <span className="text-2xl group-hover:scale-110 transition-transform">📋</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">Attendance</span>
+                              <span className="text-[10px] text-slate-400 block truncate">School attendance</span>
+                            </div>
                           </button>
                           <button
-                            onClick={() => handleTabSelect('blogs')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            type="button"
+                            onClick={() => handleTabSelect('homework')}
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
                           >
-                            <span className="text-xl">💎</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Blogs Portal</span>
+                            <span className="text-2xl group-hover:scale-110 transition-transform">📓</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">Homework</span>
+                              <span className="text-[10px] text-slate-400 block truncate">Overview & submissions</span>
+                            </div>
                           </button>
                           <button
-                            onClick={() => handleTabSelect('life')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            type="button"
+                            onClick={() => handleTabSelect('notes')}
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
                           >
-                            <span className="text-xl">🚀</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">Veylentra Life</span>
+                            <span className="text-2xl group-hover:scale-110 transition-transform">📝</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">Notes</span>
+                              <span className="text-[10px] text-slate-400 block truncate">Lecture notes</span>
+                            </div>
                           </button>
                           <button
-                            onClick={() => handleTabSelect('profile')}
-                            className="bento-card p-3.5 rounded-2xl flex flex-col items-start justify-between gap-2 text-left cursor-pointer"
+                            type="button"
+                            onClick={() => handleTabSelect('materials')}
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
                           >
-                            <span className="text-xl">👤</span>
-                            <span className="text-xs font-bold text-white whitespace-nowrap">My Profile</span>
+                            <span className="text-2xl group-hover:scale-110 transition-transform">📚</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">Materials</span>
+                              <span className="text-[10px] text-slate-400 block truncate">Resource manager</span>
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleTabSelect(effectiveRole === 'coordinator' ? 'whats_new' : 'admin')}
+                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                          >
+                            <span className="text-2xl group-hover:scale-110 transition-transform">⚙️</span>
+                            <div className="min-w-0">
+                              <span className="text-xs font-black text-white block truncate">{effectiveRole === 'coordinator' ? 'Notices' : 'Control Center'}</span>
+                              <span className="text-[10px] text-slate-400 block truncate">School management</span>
+                            </div>
                           </button>
                         </>
                       )}

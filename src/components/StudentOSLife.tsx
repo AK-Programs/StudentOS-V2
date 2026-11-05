@@ -192,6 +192,42 @@ const INITIAL_POLLS: SchoolPoll[] = [
   }
 ];
 
+const ProgressRing: React.FC<{ progress: number; size?: number; strokeWidth?: number; color?: string }> = ({
+  progress,
+  size = 40,
+  strokeWidth = 4,
+  color = '#6366f1'
+}) => {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (Math.min(100, Math.max(0, progress)) / 100) * circumference;
+
+  return (
+    <svg width={size} height={size} className="transform -rotate-90">
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        stroke="rgba(255, 255, 255, 0.1)"
+        strokeWidth={strokeWidth}
+        fill="transparent"
+      />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        strokeLinecap="round"
+        fill="transparent"
+        className="transition-all duration-500 ease-out"
+      />
+    </svg>
+  );
+};
+
 export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
   currentUser,
   onNavigateToTab,
@@ -591,7 +627,34 @@ export const StudentOSLife: React.FC<StudentOSLifeProps> = ({
   ];
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans relative overflow-hidden">
+      {/* Drifting Soft Gradient Mesh Background */}
+      <motion.div
+        animate={{
+          scale: [1, 1.08, 1],
+          opacity: [0.15, 0.25, 0.15],
+          rotate: [0, 6, 0]
+        }}
+        transition={{
+          duration: 22,
+          repeat: Infinity,
+          ease: "easeInOut"
+        }}
+        className="absolute -top-40 -left-40 w-[650px] h-[650px] bg-gradient-to-br from-indigo-600/20 to-purple-600/20 rounded-full blur-[130px] pointer-events-none z-0"
+      />
+      <motion.div
+        animate={{
+          scale: [1.05, 1, 1.05],
+          opacity: [0.1, 0.2, 0.1],
+          rotate: [0, -8, 0]
+        }}
+        transition={{
+          duration: 28,
+          repeat: Infinity,
+          ease: "easeInOut"
+        }}
+        className="absolute top-1/2 -right-40 w-[600px] h-[600px] bg-gradient-to-tl from-cyan-600/20 to-indigo-600/20 rounded-full blur-[120px] pointer-events-none z-0"
+      />
       {/* Header Banner */}
       <div className="bg-gradient-to-r from-indigo-900 via-purple-900 to-slate-900 border-b border-indigo-500/20 px-4 sm:px-6 py-6 sm:py-8 relative overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,rgba(99,102,241,0.15),transparent_70%)] pointer-events-none" />
