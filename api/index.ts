@@ -502,7 +502,9 @@ async function callGroqCompletion(
 
   const start = Date.now();
   const messages = buildChatMessages(systemPrompt, history, prompt);
-  const effectiveMaxTokens = options.maxTokens ? Math.max(options.maxTokens, 300) : 1200;
+  const effectiveMaxTokens = options.maxTokens
+    ? Math.min(Math.max(options.maxTokens, 300), 8192)
+    : 1200;
 
   // Candidate Groq models starting with primaryModel, followed by the remaining rotation models
   const candidateModels = [
@@ -620,7 +622,9 @@ async function callMinistralCompletion(
 
   const start = Date.now();
   const messages = buildChatMessages(systemPrompt, history, prompt);
-  const effectiveMaxTokens = options?.maxTokens ? Math.max(options.maxTokens, 300) : 2048;
+  const effectiveMaxTokens = options?.maxTokens
+    ? Math.min(Math.max(options.maxTokens, 300), 8192)
+    : 2048;
   const timeoutMs = options?.timeoutMs || 25000;
 
   const controller = new AbortController();
@@ -775,7 +779,7 @@ async function callRoutedCompletion(
   const messages = buildChatMessages(systemPrompt, history, prompt, options?.images);
 
   const effectiveMaxTokens = options?.maxTokens
-    ? Math.max(options.maxTokens, 300)
+    ? Math.min(Math.max(options.maxTokens, 300), 8192)
     : (tier === 'fast' ? 1200 : 2048);
 
   const controller = new AbortController();
@@ -2233,14 +2237,15 @@ ${combinedContext}
     let prompt = '';
 
     if (action === 'create_note' || action === 'generate_notes') {
-      systemInstruction = 'You are an elite academic lecturer, author, and curriculum designer. Produce comprehensive, highly structured lecture notes. Include: 1) Executive Overview, 2) Key Concepts & Definitions (in bold), 3) Core Formulas/Theorems/Principles with clean math notation or LaTeX ($...$), 4) Markdown Tables for comparisons, taxonomy, or properties, 5) Worked Examples / Practical Applications, 6) Summary & Quick Revision Points, 7) 3 Active Recall Study Questions. Format using rich Markdown with headings (##, ###), bullet lists, and tables.';
+      systemInstruction = 'You are an elite academic lecturer, author, and curriculum designer. Produce comprehensive, highly structured lecture notes. Include: 1) Executive Overview, 2) Key Concepts & Definitions (in bold), 3) Core Formulas/Theorems/Principles with clean math notation or LaTeX ($...$), 4) Markdown Tables for comparisons, taxonomy, or properties, 5) Worked Examples / Practical Applications, 6) Summary & Quick Revision Points, 7) 3 Active Recall Study Questions. Format using rich Markdown with headings (##, ###), bullet lists, and tables. Return the complete note. Do not stop early. Do not summarize unless asked. Keep all headings, tables, formulas, and the ending sections.';
       prompt = `Topic: "${topic || targetTopic}"\nSubject: ${subject}\n\nAdditional Instructions: ${instruction || 'Provide a complete, master-level academic lecture note.'}`;
     } else if (action === 'edit_note' || action === 'custom') {
       systemInstruction = `You are a meticulous academic editor and subject matter expert.
 CRITICAL PRESERVATION RULES:
 1. STRICTLY PRESERVE all valid existing tables, formulas, equations, headings, and key definitions in the text.
 2. Apply the requested changes seamlessly without discarding technical accuracy or structured data.
-3. Return the full updated note directly in Markdown format without conversational pleasantries.`;
+3. Return the full updated note directly in Markdown format without conversational pleasantries.
+Return the complete note. Do not stop early. Do not summarize unless asked. Keep all headings, tables, formulas, and the ending sections.`;
       prompt = `Original Note Content:\n"""\n${content}\n"""\n\nUser Instruction for Edit:\n"${instruction || 'Refine and improve clarity while keeping all technical details, tables, and formulas intact.'}"`;
     } else if (action === 'summarize') {
       prompt = `Summarize the following study notes into a clear, bulleted cheat-sheet with key definitions in bold:\n\n${targetTopic}`;
@@ -2257,13 +2262,55 @@ CRITICAL PRESERVATION RULES:
         [],
         {
           taskType: 'complex',
-          requestId
+          requestId,
+          maxTokens: 15000
         }
       );
 
+      let textResult = result.text.trim();
+
+      // If the returned text is clearly cut off, call the model once more with the existing text and the instruction "Continue from the last line and finish the full note." Append that continuation. Do not drop the first part.
+      const isCutOff = (() => {
+        if (!textResult || textResult.length < 80) return false;
+        const codeBlockCount = (textResult.match(/```/g) || []).length;
+        if (codeBlockCount % 2 !== 0) return true;
+        const mathBlockCount = (textResult.match(/\$\$/g) || []).length;
+        if (mathBlockCount % 2 !== 0) return true;
+        const lines = textResult.split('\n');
+        const lastLine = lines[lines.length - 1].trim();
+        if (lastLine.startsWith('|') && !lastLine.endsWith('|')) return true;
+        const lastChar = textResult.slice(-1);
+        const validTerminals = ['.', '!', '?', '"', "'", '`', '*', ')', '}', ']', '>', '\n'];
+        if (!validTerminals.includes(lastChar)) {
+          if (/[,;:\-\w\\]$/.test(textResult)) return true;
+        }
+        return false;
+      })();
+
+      if (isCutOff) {
+        try {
+          const continuationPrompt = `Original note content and instructions:\n"""\n${prompt}\n"""\n\nExisting text generated so far:\n"""\n${textResult}\n"""\n\nContinue from the last line and finish the full note.`;
+          const contResult = await callRoutedCompletion(
+            continuationPrompt,
+            `${systemInstruction} Continue from the last line and finish the full note. Do not repeat the existing text. Return only the continuation until the full note is complete.`,
+            [],
+            {
+              taskType: 'complex',
+              requestId: `${requestId}_cont`,
+              maxTokens: 15000
+            }
+          );
+          if (contResult && contResult.text && contResult.text.trim()) {
+            textResult = textResult + '\n' + contResult.text.trim();
+          }
+        } catch (contErr) {
+          console.warn('[AI Notes] Continuation call error:', contErr);
+        }
+      }
+
       return sendJson(res, 200, {
         success: true,
-        text: result.text.trim(),
+        text: textResult,
         requestId,
         providerUsed: result.providerUsed,
         modelUsed: result.modelUsed,

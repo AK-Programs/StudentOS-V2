@@ -6368,8 +6368,11 @@ ${roleLabel}: ${userQuery}
       let streamedWebUsed = false;
       let webSearchContext = '';
 
-      // Fix 3: Web Search Grounding - Call /api/ai/search first when search is requested
-      const isWebSearchRequested = (aiWebSearchMode as string) !== 'off';
+      // Fix: Only trigger web search when genuinely requested and not a greeting/small talk
+      const q = (userQuery || '').trim().toLowerCase();
+      const isGreeting = /^(hey|hi|hello|hii|heyy|yo|sup|thanks|thank you|ok|okay|bye|good morning|good night|how are you|what's up|whats up)[!.?\s]*$/.test(q);
+      const asksForSearch = /\b(search|look up|find|current|latest|news|today|video|videos|who is|what is|when did|where is)\b/i.test(userQuery);
+      const isWebSearchRequested = !isGreeting && asksForSearch && (aiWebSearchMode as string) !== 'off';
       if (isWebSearchRequested) {
         setAiStatusMessage('🔍 Searching verified web & academic sources...');
         try {
@@ -6418,7 +6421,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
           userId: userIdKey,
           userRole: userRoleKey,
           modelOverride: aiModelOverride || undefined,
-          webSearchMode: aiWebSearchMode,
+          webSearchMode: isWebSearchRequested ? aiWebSearchMode : 'off',
           images: imagePayload.length > 0 ? imagePayload : undefined
         },
         {

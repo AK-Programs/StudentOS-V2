@@ -3913,8 +3913,7 @@ app.post('/api/ai/notes', async (req, res) => {
   let userPrompt = '';
 
   if (action === 'create_note' || action === 'generate_notes') {
-    systemInstruction = `You are an elite academic lecturer and curriculum author. Produce comprehensive, high-detail, and beautifully structured lecture notes. 
-CRITICAL: You must return the COMPLETE note from start to finish. Do not provide a partial draft, summary, or "to be continued" response. If the content is long, be exhaustive and detailed.
+    systemInstruction = `You are an elite academic lecturer and curriculum author. Produce comprehensive, high-detail, and beautifully structured lecture notes.
 STRUCTURE RULES:
 1. Include an Executive Overview and Context.
 2. Bold key concepts, terminology, and definitions.
@@ -3923,14 +3922,16 @@ STRUCTURE RULES:
 5. Provide worked practical examples or concrete real-world applications.
 6. Provide Summary & Quick Revision Points.
 7. Include 3 Active Recall Study Questions with solutions.
-Format cleanly with Markdown headings (##, ###), bullet lists, and tables.`;
+Format cleanly with Markdown headings (##, ###), bullet lists, and tables.
+Return the complete note. Do not stop early. Do not summarize unless asked. Keep all headings, tables, formulas, and the ending sections.`;
     userPrompt = `Subject: ${subject}\nTopic: "${topic || targetTopic}"\n\nInstructions: ${instruction || 'Generate comprehensive and exhaustive academic lecture notes.'}`;
   } else if (action === 'edit_note' || action === 'custom') {
     systemInstruction = `You are a meticulous academic editor and subject matter expert.
 CRITICAL PRESERVATION RULES:
 1. STRICTLY PRESERVE all existing tables, mathematical formulas, equations, headings, and formatting in the text.
 2. Only make the edits requested by the user without discarding technical rigor or structured content.
-3. Return the FULL updated note directly in Markdown format from the very first character to the last. Do not truncate the end of the note.`;
+3. Return the FULL updated note directly in Markdown format from the very first character to the last. Do not truncate the end of the note.
+Return the complete note. Do not stop early. Do not summarize unless asked. Keep all headings, tables, formulas, and the ending sections.`;
     userPrompt = `Original Note Content:\n"""\n${content || targetTopic}\n"""\n\nUser Instruction for Edit:\n"${instruction || 'Refine and improve clarity while keeping all technical details, tables, and formulas intact. Ensure the entire note is returned.'}"`;
   } else if (action === 'summarize') {
     systemInstruction = 'You are a meticulous scientific editor. Synthesize the provided text into a beautifully structured, highly readable bulleted cheat-sheet. Highlight key definitions in bold and preserve all equations and tables.';
@@ -3953,12 +3954,51 @@ CRITICAL PRESERVATION RULES:
   }
 
   try {
-    const text = await generateAICompletion({
+    let text = await generateAICompletion({
       systemInstruction,
       prompt: userPrompt,
-      taskType: 'complex'
+      taskType: 'complex',
+      maxTokens: 15000
     });
-    return res.json({ success: true, text });
+
+    let textResult = (text || '').trim();
+
+    // If the returned text is clearly cut off, call the model once more with the existing text and the instruction "Continue from the last line and finish the full note." Append that continuation. Do not drop the first part.
+    const isCutOff = (() => {
+      if (!textResult || textResult.length < 80) return false;
+      const codeBlockCount = (textResult.match(/```/g) || []).length;
+      if (codeBlockCount % 2 !== 0) return true;
+      const mathBlockCount = (textResult.match(/\$\$/g) || []).length;
+      if (mathBlockCount % 2 !== 0) return true;
+      const lines = textResult.split('\n');
+      const lastLine = lines[lines.length - 1].trim();
+      if (lastLine.startsWith('|') && !lastLine.endsWith('|')) return true;
+      const lastChar = textResult.slice(-1);
+      const validTerminals = ['.', '!', '?', '"', "'", '`', '*', ')', '}', ']', '>', '\n'];
+      if (!validTerminals.includes(lastChar)) {
+        if (/[,;:\-\w\\]$/.test(textResult)) return true;
+      }
+      return false;
+    })();
+
+    if (isCutOff) {
+      try {
+        const continuationPrompt = `Original note request:\n"""\n${userPrompt}\n"""\n\nExisting text generated so far:\n"""\n${textResult}\n"""\n\nContinue from the last line and finish the full note.`;
+        const continuationText = await generateAICompletion({
+          systemInstruction: `${systemInstruction}\nContinue from the last line and finish the full note. Do not repeat existing text. Return only the continuation until the full note is complete.`,
+          prompt: continuationPrompt,
+          taskType: 'complex',
+          maxTokens: 15000
+        });
+        if (continuationText && continuationText.trim()) {
+          textResult = textResult + '\n' + continuationText.trim();
+        }
+      } catch (contErr) {
+        console.warn('[AI Notes Server] Continuation call error:', contErr);
+      }
+    }
+
+    return res.json({ success: true, text: textResult });
   } catch (apiErr: any) {
     console.error('[AI Server] Notes transform error:', apiErr?.message || apiErr);
     return res.status(502).json({
