@@ -26,7 +26,7 @@ export interface PromotionalBanner {
 export const PROMOTIONAL_BANNERS: PromotionalBanner[] = [
   {
     id: 'studentos-2-launch',
-    title: 'StudentOS 2.0 — The New Student Experience',
+    title: 'Veylentra — The New Student Experience',
     subtitle: 'Major Platform Upgrade',
     description: 'Unified gradebook, real-time interactive classrooms, and multi-platform native PWA/APK sync are now live.',
     ctaText: 'Explore Features',
@@ -44,7 +44,7 @@ export const PROMOTIONAL_BANNERS: PromotionalBanner[] = [
   },
   {
     id: 'themes-studio-launch',
-    title: 'Explore the New StudentOS Themes',
+    title: 'Explore the New Veylentra Themes',
     subtitle: 'System-Wide Personalization',
     description: 'Switch between Midnight Void (AMOLED), Abyssal Ocean, Nordic Aurora, and Editorial Light directly in Settings.',
     ctaText: 'Open Theme Studio',
@@ -62,7 +62,7 @@ export const PROMOTIONAL_BANNERS: PromotionalBanner[] = [
   },
   {
     id: 'ai-buddy-smarter-meet',
-    title: 'Meet the Smarter StudentOS AI Buddy',
+    title: 'Meet the Smarter Veylentra AI Buddy',
     subtitle: 'Socratic Tutor & Study Engine',
     description: 'Instant step-by-step math solver, academic voice assistant, and automated homework breakdown powered by NVIDIA AI.',
     ctaText: 'Launch AI Buddy',

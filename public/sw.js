@@ -37,7 +37,7 @@ self.addEventListener('push', (event) => {
   console.log('[SW FCM] Push event received by Service Worker');
 
   let payloadData = {
-    title: '📢 StudentOS Notice',
+    title: '📢 Veylentra Notice',
     body: 'You have a new school broadcast.',
     linkTab: 'notice_viewer',
     notifId: '',
@@ -100,7 +100,7 @@ self.addEventListener('push', (event) => {
         : `/?tab=${encodeURIComponent(payloadData.linkTab || 'notice_viewer')}${payloadData.notifId ? `&notifId=${encodeURIComponent(payloadData.notifId)}` : ''}`);
 
   const notificationOptions = {
-    body: payloadData.body || (isCallNotification ? '📞 Incoming StudentOS Call... Tap to answer.' : 'Tap to view in StudentOS.'),
+    body: payloadData.body || (isCallNotification ? '📞 Incoming Veylentra Call... Tap to answer.' : 'Tap to view in Veylentra.'),
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
     tag: deterministicTag,

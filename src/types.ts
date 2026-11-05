@@ -211,16 +211,33 @@ export interface HouseStats {
   color: string;
 }
 
-export interface Task {
+export interface SubTask {
   id: string;
   title: string;
   completed: boolean;
+}
+
+export interface Task {
+  id: string;
+  title: string;
+  description?: string;
+  completed: boolean;
+  status?: 'todo' | 'in_progress' | 'review' | 'completed';
+  priority?: 'low' | 'medium' | 'high' | 'urgent';
   category?: string;
-  dueDate?: string;
   subject?: string;
+  dueDate?: string;
+  startDate?: string;
+  estimatedMinutes?: number;
+  actualMinutes?: number;
+  subtasks?: SubTask[];
+  tags?: string[];
+  linkedSessionId?: string;
+  linkedDeckId?: string;
+  kanbanColumnId?: string;
+  sort_order?: number;
   userId?: string;
   createdAt?: string;
-  sort_order?: number;
 }
 
 export interface ScheduleItem {

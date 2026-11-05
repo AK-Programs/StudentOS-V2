@@ -181,12 +181,12 @@ export const AI_PERSONAS: AITeacherPersona[] = [
   },
   {
     id: 'study_buddy',
-    name: 'StudentOS Study Buddy',
+    name: 'Veylentra Study Buddy',
     speciality: 'General Coaching',
     style: 'Friendly peer, energetic, schedules helper',
     avatarChar: '🚀',
     avatarColor: 'from-emerald-400 to-teal-600',
-    systemPrompt: 'You are StudentOS Study Buddy. Help students keep track, summarize notes, and cheer them up!'
+    systemPrompt: 'You are Veylentra Study Buddy. Help students keep track, summarize notes, and cheer them up!'
   }
 ];
 

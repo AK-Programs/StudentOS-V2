@@ -16,9 +16,9 @@ const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
   console.log('[firebase-messaging-sw.js] Background FCM Message received:', payload);
-  const notificationTitle = payload.notification?.title || payload.data?.title || '📢 StudentOS Notification';
+  const notificationTitle = payload.notification?.title || payload.data?.title || '📢 Veylentra Notification';
   const notificationOptions = {
-    body: payload.notification?.body || payload.data?.body || 'New announcement available in StudentOS.',
+    body: payload.notification?.body || payload.data?.body || 'New announcement available in Veylentra.',
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
     tag: payload.data?.tag || `studentos-notif-${Date.now()}`,

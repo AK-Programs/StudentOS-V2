@@ -82,10 +82,10 @@ export default function AuthDiagnostic() {
       <div className="max-w-4xl mx-auto">
         <header className="border-b border-slate-800 pb-4 mb-6">
           <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-indigo-400">
-            StudentOS Auth Diagnostic
+            Veylentra Auth Diagnostic
           </h1>
           <p className="text-slate-400 text-sm mt-1">
-            Completely isolated from StudentOS wrapper logic. Testing pure Supabase JS SDK behavior.
+            Completely isolated from Veylentra wrapper logic. Testing pure Supabase JS SDK behavior.
           </p>
         </header>
 
