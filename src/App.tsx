@@ -6371,7 +6371,7 @@ ${roleLabel}: ${userQuery}
       // Fix: Only trigger web search when genuinely requested and not a greeting/small talk
       const q = (userQuery || '').trim().toLowerCase();
       const isGreeting = /^(hey|hi|hello|hii|heyy|yo|sup|thanks|thank you|ok|okay|bye|good morning|good night|how are you|what's up|whats up)[!.?\s]*$/.test(q);
-      const asksForSearch = /\b(search|look up|find|current|latest|news|today|video|videos|who is|what is|when did|where is)\b/i.test(userQuery);
+      const asksForSearch = /\b(search|look up|find online|current|latest|news|today|video|videos|who is|when did)\b/i.test(userQuery);
       const isWebSearchRequested = !isGreeting && asksForSearch && (aiWebSearchMode as string) !== 'off';
       if (isWebSearchRequested) {
         setAiStatusMessage('🔍 Searching verified web & academic sources...');
@@ -10782,60 +10782,6 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                     </div>
                                   </div>
                                 )}
-
-                                {/* AI Companion Expansion Bar */}
-                                <div className="bg-slate-950/60 p-3 sm:p-4 rounded-2xl border border-indigo-500/15 space-y-2.5 shadow-inner">
-                                  <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="text-indigo-400">⚡</span>
-                                      <p className="text-xs font-black text-white font-display uppercase tracking-wider">AI Study Note Companion</p>
-                                    </div>
-                                    <span className="text-[9px] text-slate-500">Transform drafts into study summaries or quiz blocks</span>
-                                  </div>
-                                  
-                                  <div className="flex flex-wrap gap-1.5">
-                                    <button 
-                                      type="button"
-                                      onClick={() => handleAINoteAction('summarize')}
-                                      disabled={aiGeneratingNotes}
-                                      className="px-2.5 py-1 rounded-xl bg-indigo-600/15 hover:bg-indigo-600/30 border border-indigo-500/20 text-[10px] font-bold text-indigo-300 transition-colors disabled:opacity-40 cursor-pointer"
-                                    >
-                                      📝 Summarize
-                                    </button>
-                                    <button 
-                                      type="button"
-                                      onClick={() => handleAINoteAction('expand')}
-                                      disabled={aiGeneratingNotes}
-                                      className="px-2.5 py-1 rounded-xl bg-indigo-600/15 hover:bg-indigo-600/30 border border-indigo-500/20 text-[10px] font-bold text-indigo-300 transition-colors disabled:opacity-40 cursor-pointer"
-                                    >
-                                      🚀 Expand
-                                    </button>
-                                    <button 
-                                      type="button"
-                                      onClick={() => handleAINoteAction('improve')}
-                                      disabled={aiGeneratingNotes}
-                                      className="px-2.5 py-1 rounded-xl bg-indigo-600/15 hover:bg-indigo-600/30 border border-indigo-500/20 text-[10px] font-bold text-indigo-300 transition-colors disabled:opacity-40 cursor-pointer"
-                                    >
-                                      ✍️ Polish
-                                    </button>
-                                    <button 
-                                      type="button"
-                                      onClick={() => handleAINoteAction('quiz')}
-                                      disabled={aiGeneratingNotes}
-                                      className="px-2.5 py-1 rounded-xl bg-purple-600/15 hover:bg-purple-600/30 border border-purple-500/20 text-[10px] font-bold text-purple-300 transition-colors disabled:opacity-40 cursor-pointer"
-                                    >
-                                      🧠 Quiz Block
-                                    </button>
-                                    <button 
-                                      type="button"
-                                      onClick={() => handleAINoteAction('action_items')}
-                                      disabled={aiGeneratingNotes}
-                                      className="px-2.5 py-1 rounded-xl bg-emerald-600/15 hover:bg-emerald-600/30 border border-emerald-500/20 text-[10px] font-bold text-emerald-300 transition-colors disabled:opacity-40 cursor-pointer"
-                                    >
-                                      📋 Action Items
-                                    </button>
-                                  </div>
-                                </div>
 
                                 {/* Workspace page utilities */}
                                 <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-white/5">
