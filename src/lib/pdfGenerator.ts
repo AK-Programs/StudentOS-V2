@@ -4,14 +4,11 @@
  * 
  * Veylentra Lecture Notes PDF Generator
  * Faithfully mirrors the Reader View formatting:
- * - Real tables: aligned multi-column cells, alternating rows, borders, header styling, and pagination
- * - Inline formatting: bold (**text**), italic (*text*), inline code (`code`) rendered with proper fonts
- * - Typography: H1, H2, H3 with hierarchical sizing, clean spacing, and orphan prevention
- * - Code blocks: dark terminal containers with monospaced text and language badge
- * - Math & symbol transliteration: math symbols (arrows, operators, Greek letters, powers) preserved
- * - Task list checkboxes ([x], [ ]) and bullet lists
- * - Blockquotes and callouts with colored accent borders
- * - Multi-page headers, footers with page numbers, and institutional branding
+ * - Real tables: aligned multi-column cells, repeating headers on new pages, borders
+ * - Inline formatting: bold (**text**), italic (*text*), math cleanup
+ * - Typography: H1, H2, H3 with hierarchical sizing
+ * - LaTeX handling: Converts LaTeX into readable plain text formulas
+ * - Multi-page headers, footers with page numbers
  */
 
 import { jsPDF } from 'jspdf';
@@ -79,117 +76,129 @@ export interface InlineRun {
 }
 
 /**
- * Transliterates common Unicode symbols, Greek letters, and math notations into
- * clean, readable WinAnsi / Latin-1 characters so jsPDF never drops them or renders "Ø=ÜÚ".
+ * Cleans up LaTeX commands and transliterates common symbols into readable text.
+ * Ensures the PDF doesn't contain raw backslash commands.
  */
-export function transliterateMathAndSymbols(text: string): string {
+export function cleanLatexAndSymbols(text: string): string {
   if (!text) return '';
 
-  return text
-    // Arrows
-    .replace(/⇄/g, '<->')
-    .replace(/↔/g, '<->')
-    .replace(/⇔/g, '<=>')
-    .replace(/→/g, '->')
-    .replace(/⇒/g, '=>')
-    .replace(/←/g, '<-')
-    .replace(/⇐/g, '<=')
-    .replace(/↑/g, '^')
-    .replace(/↓/g, 'v')
-    // Comparison & Arithmetic
-    .replace(/≤/g, '<=')
-    .replace(/≥/g, '>=')
-    .replace(/≠/g, '!=')
-    .replace(/≈/g, '~=')
-    .replace(/±/g, '+/-')
-    .replace(/×/g, '*')
-    .replace(/÷/g, '/')
+  let cleaned = text
+    // Remove display math wrappers
+    .replace(/\\\[|\\\]/g, ' ')
+    // Remove inline math wrappers
+    .replace(/\\\(|\\\)/g, ' ')
+    // Remove dollar signs
+    .replace(/\$/g, '')
+    // Handle LaTeX commands
+    .replace(/\\frac\{(.+?)\}\{(.+?)\}/g, '($1)/($2)')
+    .replace(/\\cdot/g, '·')
+    .replace(/\\times/g, ' × ')
+    .replace(/\\div/g, ' / ')
+    .replace(/\\pm/g, ' ± ')
+    .replace(/\\tag\{(.+?)\}/g, '($1)')
+    .replace(/\\text\{(.+?)\}/g, '$1')
+    .replace(/\\mathrm\{(.+?)\}/g, '$1')
+    .replace(/\\mathbf\{(.+?)\}/g, '$1')
+    .replace(/\\vec\{(.+?)\}/g, '$1')
+    .replace(/\\sqrt\{(.+?)\}/g, 'sqrt($1)')
+    .replace(/_\{(.+?)\}/g, '_$1') // simpler subscripts
+    .replace(/\^\{(.+?)\}/g, '^$1') // simpler superscripts
+    .replace(/\\approx/g, ' ≈ ')
+    .replace(/\\infty/g, '∞')
+    .replace(/\\Delta/g, 'Δ')
+    .replace(/\\pi/g, 'π')
+    .replace(/\\theta/g, 'θ')
+    .replace(/\\alpha/g, 'α')
+    .replace(/\\beta/g, 'β')
+    .replace(/\\gamma/g, 'γ')
+    .replace(/\\Omega/g, 'Ω')
+    .replace(/\\omega/g, 'ω')
+    .replace(/\\sigma/g, 'σ')
+    .replace(/\\phi/g, 'ϕ')
+    .replace(/\\tau/g, 'τ')
+    .replace(/\\lambda/g, 'λ')
+    .replace(/\\mu/g, 'μ')
+    .replace(/\\epsilon/g, 'ε')
+    .replace(/\\rho/g, 'ρ')
+    .replace(/\\eta/g, 'η')
+    .replace(/\\zeta/g, 'ζ')
+    .replace(/\\xi/g, 'ξ')
+    .replace(/\\psi/g, 'ψ')
+    .replace(/\\sum/g, '∑')
+    .replace(/\\int/g, '∫')
+    .replace(/\\partial/g, '∂')
+    .replace(/\\nabla/g, '∇')
+    .replace(/\\degree/g, '°')
+    .replace(/\\angle/g, '∠')
+    .replace(/\\perp/g, '⊥')
+    .replace(/\\parallel/g, '||')
+    .replace(/\\le|\\leq/g, ' ≤ ')
+    .replace(/\\ge|\\geq/g, ' ≥ ')
+    .replace(/\\ne|\\neq/g, ' ≠ ')
+    .replace(/\\rightarrow|\\to/g, ' → ')
+    .replace(/\\leftarrow/g, ' ← ')
+    .replace(/\\leftrightarrow/g, ' ↔ ')
+    .replace(/\\Rightarrow/g, ' ⇒ ')
+    .replace(/\\Leftarrow/g, ' ⇐ ')
+    .replace(/\\Leftrightarrow/g, ' ⇔ ')
+    .replace(/\\quad|\\qquad/g, '  ');
+
+  // Handle common Unicode symbols often used in science/math
+  cleaned = cleaned
+    .replace(/⇄/g, ' ↔ ')
+    .replace(/↔/g, ' ↔ ')
+    .replace(/⇔/g, ' ⇔ ')
+    .replace(/→/g, ' → ')
+    .replace(/⇒/g, ' ⇒ ')
+    .replace(/←/g, ' ← ')
+    .replace(/⇐/g, ' ⇐ ')
+    .replace(/≤/g, ' ≤ ')
+    .replace(/≥/g, ' ≥ ')
+    .replace(/≠/g, ' ≠ ')
+    .replace(/≈/g, ' ≈ ')
+    .replace(/±/g, ' ± ')
+    .replace(/×/g, ' × ')
+    .replace(/÷/g, ' / ')
     .replace(/√/g, 'sqrt')
-    .replace(/∞/g, 'infinity')
-    .replace(/∑/g, 'SUM')
-    .replace(/∫/g, 'INT')
-    .replace(/∂/g, 'd')
-    .replace(/∇/g, 'grad')
-    // Greek letters
-    .replace(/α/g, 'alpha')
-    .replace(/β/g, 'beta')
-    .replace(/γ/g, 'gamma')
-    .replace(/Γ/g, 'Gamma')
-    .replace(/δ/g, 'delta')
-    .replace(/Δ/g, 'Delta')
-    .replace(/ε/g, 'epsilon')
-    .replace(/θ/g, 'theta')
-    .replace(/Θ/g, 'Theta')
-    .replace(/λ/g, 'lambda')
-    .replace(/Λ/g, 'Lambda')
-    .replace(/μ/g, 'mu')
-    .replace(/π/g, 'pi')
-    .replace(/Π/g, 'Pi')
-    .replace(/σ/g, 'sigma')
-    .replace(/Σ/g, 'Sigma')
-    .replace(/τ/g, 'tau')
-    .replace(/φ/g, 'phi')
-    .replace(/Φ/g, 'Phi')
-    .replace(/ω/g, 'omega')
-    .replace(/Ω/g, 'Omega')
-    // Superscripts & Subscripts
-    .replace(/⁰/g, '^0')
-    .replace(/¹/g, '^1')
-    .replace(/²/g, '^2')
-    .replace(/³/g, '^3')
-    .replace(/⁴/g, '^4')
-    .replace(/⁵/g, '^5')
-    .replace(/⁶/g, '^6')
-    .replace(/⁷/g, '^7')
-    .replace(/⁸/g, '^8')
-    .replace(/⁹/g, '^9')
-    .replace(/⁺/g, '^+')
-    .replace(/⁻/g, '^-')
-    // Common symbols
-    .replace(/✓/g, '[x]')
-    .replace(/✗/g, '[ ]')
+    .replace(/∞/g, '∞')
+    .replace(/∑/g, '∑')
+    .replace(/∫/g, '∫')
+    .replace(/°/g, '°')
     .replace(/•/g, '-')
-    .replace(/★/g, '*')
-    .replace(/☆/g, '*')
-    .replace(/℃/g, ' deg C')
-    .replace(/℉/g, ' deg F')
-    .replace(/°/g, ' deg')
     .replace(/…/g, '...')
     .replace(/[“”]/g, '"')
     .replace(/[‘’]/g, "'")
     .replace(/–/g, '-')
     .replace(/—/g, ' -- ');
-}
 
-/**
- * Sanitizes text for PDF rendering:
- * 1. Transliterates math and symbols to preserve their meaning
- * 2. Strips raw emojis and unrenderable control characters
- * 3. Keeps printable ASCII and valid Latin-1 supplement
- */
-export function sanitizeTextForPdf(text: string): string {
-  if (!text) return '';
+  // Clean up any double spaces introduced
+  cleaned = cleaned.replace(/\s+/g, ' ');
 
-  let cleaned = transliterateMathAndSymbols(text);
-
-  // Remove emojis and multi-byte surrogate pairs
-  cleaned = cleaned.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2300}-\u{23FF}\u{2B00}-\u{2BFF}\u{200D}\u{FE0F}]/gu, '');
-
-  // Keep printable ASCII (0x20-0x7E) and Latin-1 supplement (0xA0-0xFF), plus newlines & tabs
-  cleaned = cleaned.replace(/[^\x20-\x7E\xA0-\xFF\n\r\t]/g, '');
-
-  // Normalize spaces
-  cleaned = cleaned.replace(/[ \t]{2,}/g, ' ');
+  // Final sweep to remove any remaining backslashes that might be left from unknown commands
+  cleaned = cleaned.replace(/\\/g, '');
 
   return cleaned.trim();
 }
 
 /**
- * Parses a string with markdown formatting into structured inline runs
+ * Sanitizes text for PDF rendering.
+ */
+export function sanitizeTextForPdf(text: string): string {
+  if (!text) return '';
+  let cleaned = cleanLatexAndSymbols(text);
+  
+  // Strip emojis as they are often unrenderable in standard PDF fonts
+  cleaned = cleaned.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2300}-\u{23FF}\u{2B00}-\u{2BFF}\u{200D}\u{FE0F}]/gu, '');
+  
+  return cleaned;
+}
+
+/**
+ * Parses a string with markdown formatting into structured inline runs.
  */
 export function parseInlineRuns(rawText: string): InlineRun[] {
-  const sanitized = transliterateMathAndSymbols(rawText);
-  if (!sanitized) return [];
+  // We keep the markdown symbols for parsing, then strip them during tokenization
+  if (!rawText) return [];
 
   // Match links [text](url), bold **text** or __text__, inline code `code`, italic *text* or _text_
   const tokenRegex = /(\[([^\]]+)\]\([^\)]+\)|\*\*(.+?)\*\*|__(.+?)__|`([^`]+)`|\*([^*]+)\*|_([^_]+)_)/g;
@@ -197,59 +206,35 @@ export function parseInlineRuns(rawText: string): InlineRun[] {
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
-  while ((match = tokenRegex.exec(sanitized)) !== null) {
+  while ((match = tokenRegex.exec(rawText)) !== null) {
     if (match.index > lastIndex) {
-      const textBefore = sanitized.slice(lastIndex, match.index);
+      const textBefore = rawText.slice(lastIndex, match.index);
       if (textBefore) {
-        runs.push({ text: textBefore, bold: false, italic: false, code: false });
+        runs.push({ text: cleanLatexAndSymbols(textBefore), bold: false, italic: false, code: false });
       }
     }
 
     if (match[2]) {
-      // Link: [text](url) -> render as text
-      runs.push({ text: match[2], bold: false, italic: false, code: false });
+      runs.push({ text: cleanLatexAndSymbols(match[2]), bold: false, italic: false, code: false });
     } else if (match[3] || match[4]) {
-      // Bold: **text** or __text__
-      runs.push({ text: match[3] || match[4], bold: true, italic: false, code: false });
+      runs.push({ text: cleanLatexAndSymbols(match[3] || match[4]), bold: true, italic: false, code: false });
     } else if (match[5]) {
-      // Code: `code`
-      runs.push({ text: match[5], bold: false, italic: false, code: true });
+      runs.push({ text: match[5], bold: false, italic: false, code: true }); // No math cleanup for code blocks
     } else if (match[6] || match[7]) {
-      // Italic: *text* or _text_
-      runs.push({ text: match[6] || match[7], bold: false, italic: true, code: false });
+      runs.push({ text: cleanLatexAndSymbols(match[6] || match[7]), bold: false, italic: true, code: false });
     }
 
     lastIndex = tokenRegex.lastIndex;
   }
 
-  if (lastIndex < sanitized.length) {
-    const remaining = sanitized.slice(lastIndex);
+  if (lastIndex < rawText.length) {
+    const remaining = rawText.slice(lastIndex);
     if (remaining) {
-      runs.push({ text: remaining, bold: false, italic: false, code: false });
+      runs.push({ text: cleanLatexAndSymbols(remaining), bold: false, italic: false, code: false });
     }
   }
 
   return runs;
-}
-
-/**
- * Strips raw markdown tags for plain measurement
- */
-export function cleanInlineMarkdown(text: string): string {
-  if (!text) return '';
-  const transliterated = transliterateMathAndSymbols(text);
-  return transliterated
-    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1')
-    .replace(/\*\*(.*?)\*\*/g, '$1')
-    .replace(/__(.*?)__/g, '$1')
-    .replace(/\*(.*?)\*/g, '$1')
-    .replace(/_(.*?)_/g, '$1')
-    .replace(/~~(.*?)~~/g, '$1')
-    .replace(/`(.*?)`/g, '$1')
-    .replace(/\$\$(.*?)\$\$/g, '$1')
-    .replace(/\$(.*?)\$/g, '$1')
-    .replace(/^[ \t]*#+\s*/, '')
-    .trim();
 }
 
 /**
@@ -263,10 +248,7 @@ function parseMarkdownToBlocks(content: string): ParsedBlock[] {
   const isTableRow = (lineStr: string): boolean => {
     const trimmed = lineStr.trim();
     if (!trimmed.includes('|')) return false;
-    // Starts with | or has at least 2 pipes
-    if (trimmed.startsWith('|') && trimmed.endsWith('|')) return true;
-    const parts = trimmed.split('|');
-    return parts.length >= 2;
+    return (trimmed.startsWith('|') && trimmed.endsWith('|')) || trimmed.split('|').length >= 2;
   };
 
   const isTableSeparator = (lineStr: string): boolean => {
@@ -280,20 +262,19 @@ function parseMarkdownToBlocks(content: string): ParsedBlock[] {
     const rawLine = lines[i];
     const trimmed = rawLine.trim();
 
-    // Empty lines
     if (!trimmed) {
       i++;
       continue;
     }
 
-    // Horizontal Divider
+    // Divider
     if (trimmed === '---' || trimmed === '***' || trimmed === '___') {
       blocks.push({ type: 'divider' });
       i++;
       continue;
     }
 
-    // Code Block ```lang
+    // Code Block
     if (trimmed.startsWith('```')) {
       const language = trimmed.slice(3).trim();
       const codeLines: string[] = [];
@@ -302,25 +283,18 @@ function parseMarkdownToBlocks(content: string): ParsedBlock[] {
         codeLines.push(lines[i]);
         i++;
       }
-      if (i < lines.length && lines[i].trim().startsWith('```')) {
-        i++; // skip closing ```
-      }
-      blocks.push({
-        type: 'code',
-        language: language || 'code',
-        code: codeLines.join('\n')
-      });
+      if (i < lines.length && lines[i].trim().startsWith('```')) i++;
+      blocks.push({ type: 'code', language: language || 'code', code: codeLines.join('\n') });
       continue;
     }
 
-    // Table Detection
+    // Table
     if (isTableRow(trimmed)) {
       const tableLines: string[] = [];
-      while (i < lines.length && isTableRow(lines[i])) {
+      while (i < lines.length && (isTableRow(lines[i]) || isTableSeparator(lines[i]))) {
         tableLines.push(lines[i].trim());
         i++;
       }
-
       if (tableLines.length >= 1) {
         const parseCells = (rowStr: string): string[] => {
           let s = rowStr.trim();
@@ -328,114 +302,74 @@ function parseMarkdownToBlocks(content: string): ParsedBlock[] {
           if (s.endsWith('|')) s = s.slice(0, -1);
           return s.split('|').map(c => c.trim());
         };
-
         let headers: string[] = [];
         const rows: string[][] = [];
-
         if (tableLines.length >= 2 && isTableSeparator(tableLines[1])) {
           headers = parseCells(tableLines[0]);
-          for (let r = 2; r < tableLines.length; r++) {
-            if (!isTableSeparator(tableLines[r])) {
-              rows.push(parseCells(tableLines[r]));
-            }
-          }
+          for (let r = 2; r < tableLines.length; r++) if (!isTableSeparator(tableLines[r])) rows.push(parseCells(tableLines[r]));
         } else {
           headers = parseCells(tableLines[0]);
-          for (let r = 1; r < tableLines.length; r++) {
-            if (!isTableSeparator(tableLines[r])) {
-              rows.push(parseCells(tableLines[r]));
-            }
-          }
+          for (let r = 1; r < tableLines.length; r++) if (!isTableSeparator(tableLines[r])) rows.push(parseCells(tableLines[r]));
         }
-
         if (headers.length > 0) {
-          blocks.push({
-            type: 'table',
-            headers,
-            rows
-          });
+          blocks.push({ type: 'table', headers, rows });
           continue;
         }
       }
     }
 
-    // Blockquote or Callout (> text)
+    // Callout
     if (trimmed.startsWith('>')) {
       const quoteLines: string[] = [];
       while (i < lines.length && lines[i].trim().startsWith('>')) {
         quoteLines.push(lines[i].trim().replace(/^>\s?/, ''));
         i++;
       }
-      blocks.push({
-        type: 'callout',
-        text: quoteLines.join(' ')
-      });
+      blocks.push({ type: 'callout', text: quoteLines.join(' ') });
       continue;
     }
 
-    // Headings: #, ##, ###, ####, #####, ######
+    // Heading
     const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)/);
     if (headingMatch) {
       const level = Math.min(headingMatch[1].length, 3) as 1 | 2 | 3;
-      blocks.push({
-        type: 'heading',
-        level,
-        text: headingMatch[2].trim()
-      });
+      blocks.push({ type: 'heading', level, text: headingMatch[2].trim() });
       i++;
       continue;
     }
 
-    // Task Items (- [ ] or - [x])
+    // Task
     if (trimmed.startsWith('- [ ] ') || trimmed.startsWith('- [x] ') || trimmed.startsWith('- [X] ')) {
-      const checked = trimmed.startsWith('- [x] ') || trimmed.startsWith('- [X] ');
-      blocks.push({
-        type: 'task',
-        checked,
-        text: trimmed.slice(6).trim()
-      });
+      blocks.push({ type: 'task', checked: trimmed.toLowerCase().startsWith('- [x] '), text: trimmed.slice(6).trim() });
       i++;
       continue;
     }
 
-    // Unordered List Items (- or *)
+    // Unordered List
     if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-      blocks.push({
-        type: 'list',
-        ordered: false,
-        text: trimmed.slice(2).trim()
-      });
+      blocks.push({ type: 'list', ordered: false, text: trimmed.slice(2).trim() });
       i++;
       continue;
     }
 
-    // Numbered List Items (1. , 2. )
+    // Ordered List
     const numberedMatch = trimmed.match(/^(\d+)\.\s+(.*)/);
     if (numberedMatch) {
-      blocks.push({
-        type: 'list',
-        ordered: true,
-        number: numberedMatch[1],
-        text: numberedMatch[2].trim()
-      });
+      blocks.push({ type: 'list', ordered: true, number: numberedMatch[1], text: numberedMatch[2].trim() });
       i++;
       continue;
     }
 
-    // Standard Paragraph
-    blocks.push({
-      type: 'paragraph',
-      text: trimmed
-    });
+    // Paragraph
+    blocks.push({ type: 'paragraph', text: trimmed });
     i++;
   }
-
   return blocks;
 }
 
 /**
- * Renders inline text runs with bold, italic, code styling and word-wrapping.
- * Returns the height taken by the rendered text.
+ * Renders inline text runs with formatting and word-wrapping.
+ * Returns the final Y position.
  */
 function renderFormattedRuns(
   doc: jsPDF,
@@ -446,607 +380,257 @@ function renderFormattedRuns(
   lineHeight: number,
   baseFontSize: number = 10,
   defaultColor: [number, number, number] = [51, 65, 85],
-  onPageBreakNeeded?: (neededH: number) => number
+  onPageBreakNeeded?: (lh: number) => number
 ): number {
-  if (runs.length === 0) return 0;
+  if (runs.length === 0) return startY;
 
-  // Flatten runs into tokens (words and spaces)
   interface Token {
     text: string;
     bold: boolean;
     italic: boolean;
     code: boolean;
-    isSpace: boolean;
     width: number;
   }
 
   const tokens: Token[] = [];
   for (const run of runs) {
-    const words = run.text.split(/(\s+)/);
-    for (const w of words) {
-      if (!w) continue;
-      const isSpace = /^\s+$/.test(w);
-
-      // Measure token with its font
-      if (run.code) {
-        doc.setFont('courier', 'normal');
-        doc.setFontSize(baseFontSize * 0.9);
-      } else if (run.bold && run.italic) {
-        doc.setFont('helvetica', 'bolditalic');
-        doc.setFontSize(baseFontSize);
-      } else if (run.bold) {
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(baseFontSize);
-      } else if (run.italic) {
-        doc.setFont('helvetica', 'italic');
-        doc.setFontSize(baseFontSize);
-      } else {
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(baseFontSize);
-      }
-
-      const width = isSpace ? doc.getTextWidth(' ') : doc.getTextWidth(w);
-      tokens.push({
-        text: isSpace ? ' ' : w,
-        bold: run.bold,
-        italic: run.italic,
-        code: run.code,
-        isSpace,
-        width
-      });
+    const textParts = run.text.split(/(\s+)/);
+    for (const p of textParts) {
+      if (!p) continue;
+      if (run.code) { doc.setFont('courier', 'normal'); doc.setFontSize(baseFontSize * 0.9); }
+      else if (run.bold && run.italic) { doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(baseFontSize); }
+      else if (run.bold) { doc.setFont('helvetica', 'bold'); doc.setFontSize(baseFontSize); }
+      else if (run.italic) { doc.setFont('helvetica', 'italic'); doc.setFontSize(baseFontSize); }
+      else { doc.setFont('helvetica', 'normal'); doc.setFontSize(baseFontSize); }
+      tokens.push({ text: p, bold: run.bold, italic: run.italic, code: run.code, width: doc.getTextWidth(p) });
     }
   }
 
-  // Pack tokens into wrapped lines
-  interface LineToken {
-    text: string;
-    bold: boolean;
-    italic: boolean;
-    code: boolean;
-    width: number;
-  }
-  const lines: LineToken[][] = [];
-  let currentLine: LineToken[] = [];
+  const lines: Token[][] = [];
+  let currentLine: Token[] = [];
   let currentLineWidth = 0;
 
   for (const token of tokens) {
-    if (token.isSpace) {
-      if (currentLine.length > 0) {
-        currentLine.push(token);
-        currentLineWidth += token.width;
-      }
-      continue;
-    }
-
+    if (token.text.trim() === '' && currentLine.length === 0) continue;
     if (currentLineWidth + token.width <= maxWidth || currentLine.length === 0) {
       currentLine.push(token);
       currentLineWidth += token.width;
     } else {
-      // Line break
-      // Remove trailing space from current line
-      while (currentLine.length > 0 && currentLine[currentLine.length - 1].text === ' ') {
-        currentLine.pop();
-      }
-      if (currentLine.length > 0) {
-        lines.push(currentLine);
-      }
-      currentLine = [token];
-      currentLineWidth = token.width;
+      lines.push(currentLine);
+      currentLine = token.text.trim() === '' ? [] : [token];
+      currentLineWidth = token.text.trim() === '' ? 0 : token.width;
     }
   }
+  if (currentLine.length > 0) lines.push(currentLine);
 
-  while (currentLine.length > 0 && currentLine[currentLine.length - 1].text === ' ') {
-    currentLine.pop();
-  }
-  if (currentLine.length > 0) {
-    lines.push(currentLine);
-  }
-
-  // Draw lines
   let curY = startY;
-  for (let l = 0; l < lines.length; l++) {
-    if (onPageBreakNeeded) {
-      curY = onPageBreakNeeded(lineHeight);
-    }
-
+  for (const line of lines) {
+    if (onPageBreakNeeded) curY = onPageBreakNeeded(lineHeight);
     let curX = startX;
-    const lineTokens = lines[l];
-
-    for (const t of lineTokens) {
-      if (t.code) {
-        doc.setFont('courier', 'normal');
-        doc.setFontSize(baseFontSize * 0.9);
-        doc.setTextColor(180, 83, 9); // Amber-700
-      } else if (t.bold && t.italic) {
-        doc.setFont('helvetica', 'bolditalic');
-        doc.setFontSize(baseFontSize);
-        doc.setTextColor(15, 23, 42); // Slate-900
-      } else if (t.bold) {
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(baseFontSize);
-        doc.setTextColor(15, 23, 42); // Slate-900 (Bold is prominent)
-      } else if (t.italic) {
-        doc.setFont('helvetica', 'italic');
-        doc.setFontSize(baseFontSize);
-        doc.setTextColor(defaultColor[0], defaultColor[1], defaultColor[2]);
-      } else {
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(baseFontSize);
-        doc.setTextColor(defaultColor[0], defaultColor[1], defaultColor[2]);
-      }
-
+    for (const t of line) {
+      if (t.code) { doc.setFont('courier', 'normal'); doc.setFontSize(baseFontSize * 0.9); doc.setTextColor(180, 83, 9); }
+      else if (t.bold) { doc.setFont('helvetica', 'bold'); doc.setFontSize(baseFontSize); doc.setTextColor(15, 23, 42); }
+      else if (t.italic) { doc.setFont('helvetica', 'italic'); doc.setFontSize(baseFontSize); doc.setTextColor(defaultColor[0], defaultColor[1], defaultColor[2]); }
+      else { doc.setFont('helvetica', 'normal'); doc.setFontSize(baseFontSize); doc.setTextColor(defaultColor[0], defaultColor[1], defaultColor[2]); }
       doc.text(t.text, curX, curY);
       curX += t.width;
     }
-
     curY += lineHeight;
   }
-
-  return lines.length * lineHeight;
+  return curY;
 }
 
 /**
  * Main export function for Lecture Notes PDF generation.
- * Faithfully mirrors the Reader View formatting.
  */
 export async function generateFormattedPdf(title: string, subject: string, content: string): Promise<void> {
-  const doc = new jsPDF({
-    orientation: 'portrait',
-    unit: 'pt',
-    format: 'a4'
-  });
-
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 40;
   const contentWidth = pageWidth - margin * 2;
   const bottomMargin = 45;
-
   let y = margin;
 
-  const checkPageBreak = (neededHeight: number): void => {
-    if (y + neededHeight > pageHeight - bottomMargin) {
+  const checkPageBreak = (needed: number): void => {
+    if (y + needed > pageHeight - bottomMargin) {
       doc.addPage();
       y = margin + 15;
     }
   };
 
-  const handlePageBreakForRuns = (lineHeight: number): number => {
-    if (y + lineHeight > pageHeight - bottomMargin) {
+  const handlePageBreakForRuns = (lh: number): number => {
+    if (y + lh > pageHeight - bottomMargin) {
       doc.addPage();
       y = margin + 15;
     }
     return y;
   };
 
-  // 1. Header Banner: Institutional Brand Accent
-  doc.setFillColor(30, 41, 59); // Slate-800
+  // Header
+  doc.setFillColor(30, 41, 59);
   doc.rect(margin, y, contentWidth, 54, 'F');
-
-  // Accent vertical stripe
-  doc.setFillColor(99, 102, 241); // Indigo-500
+  doc.setFillColor(99, 102, 241);
   doc.rect(margin, y, 6, 54, 'F');
-
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(15);
   doc.setTextColor(255, 255, 255);
-  const safeDocTitle = sanitizeTextForPdf(title) || 'Veylentra Lecture Note';
-  const truncatedTitle = doc.splitTextToSize(safeDocTitle, contentWidth - 30)[0] || safeDocTitle;
-  doc.text(truncatedTitle, margin + 16, y + 24);
-
+  doc.text(sanitizeTextForPdf(title).substring(0, 50) || 'Lecture Note', margin + 16, y + 24);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
-  doc.setTextColor(199, 210, 254); // Indigo-200
-  const dateStr = new Date().toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric'
-  });
-  const safeSubj = sanitizeTextForPdf(subject) || 'GENERAL';
-  doc.text(
-    `SUBJECT: ${safeSubj.toUpperCase()}  •  DATE: ${dateStr.toUpperCase()}  •  VEYLENTRA ACADEMIC OS`,
-    margin + 16,
-    y + 42
-  );
-
+  doc.setTextColor(199, 210, 254);
+  doc.text(`SUBJECT: ${sanitizeTextForPdf(subject).toUpperCase()}  •  VEYLENTRA ACADEMIC OS`, margin + 16, y + 42);
   y += 68;
 
-  // Parse structured markdown content
   const blocks = parseMarkdownToBlocks(content);
 
   for (const block of blocks) {
     switch (block.type) {
       case 'heading': {
-        const headingText = sanitizeTextForPdf(block.text);
-        if (!headingText) break;
-
-        // Prevent heading orphan: ensure at least 50pt available before heading
-        if (block.level === 1) {
-          y += 6;
-          checkPageBreak(50);
-          doc.setFont('helvetica', 'bold');
-          doc.setFontSize(15);
-          doc.setTextColor(15, 23, 42); // Slate-900
-          const hLines = doc.splitTextToSize(headingText, contentWidth);
-          doc.text(hLines, margin, y);
-          y += hLines.length * 18 + 4;
-
-          // Subtle divider under H1
-          doc.setDrawColor(226, 232, 240);
-          doc.setLineWidth(1);
-          doc.line(margin, y, margin + contentWidth, y);
-          y += 10;
-        } else if (block.level === 2) {
-          y += 6;
-          checkPageBreak(40);
-          doc.setFont('helvetica', 'bold');
-          doc.setFontSize(13);
-          doc.setTextColor(67, 56, 202); // Indigo-700
-          const hLines = doc.splitTextToSize(headingText, contentWidth);
-          doc.text(hLines, margin, y);
-          y += hLines.length * 16 + 6;
-        } else {
-          y += 4;
-          checkPageBreak(32);
-          doc.setFont('helvetica', 'bold');
-          doc.setFontSize(11);
-          doc.setTextColor(79, 70, 229); // Indigo-600
-          const hLines = doc.splitTextToSize(headingText, contentWidth);
-          doc.text(hLines, margin, y);
-          y += hLines.length * 14 + 5;
-        }
+        y += 10;
+        checkPageBreak(30);
+        const runs = parseInlineRuns(block.text);
+        const size = block.level === 1 ? 16 : block.level === 2 ? 14 : 12;
+        const color: [number, number, number] = block.level === 1 ? [15, 23, 42] : [67, 56, 202];
+        y = renderFormattedRuns(doc, runs, margin, y, contentWidth, size + 4, size, color, handlePageBreakForRuns);
+        y += 4;
         break;
       }
-
       case 'paragraph': {
         const runs = parseInlineRuns(block.text);
         if (runs.length === 0) break;
         checkPageBreak(20);
-        const drawnHeight = renderFormattedRuns(
-          doc,
-          runs,
-          margin,
-          y,
-          contentWidth,
-          14,
-          10,
-          [51, 65, 85],
-          (lh) => {
-            if (y + lh > pageHeight - bottomMargin) {
-              doc.addPage();
-              y = margin + 15;
-            } else {
-              y += lh;
-            }
-            return y;
-          }
-        );
-        y += 8;
+        y = renderFormattedRuns(doc, runs, margin, y, contentWidth, 14, 10, [51, 65, 85], handlePageBreakForRuns);
+        y += 6;
         break;
       }
-
       case 'list': {
         const runs = parseInlineRuns(block.text);
-        if (runs.length === 0) break;
-        const prefix = block.ordered ? `${block.number || '1'}. ` : '- ';
+        const prefix = block.ordered ? `${block.number}. ` : '• ';
         checkPageBreak(20);
-
-        const indent = 18;
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(10);
-        doc.setTextColor(79, 70, 229); // Indigo-600
+        doc.setTextColor(99, 102, 241);
         doc.text(prefix, margin, y);
-
-        const drawnH = renderFormattedRuns(
-          doc,
-          runs,
-          margin + indent,
-          y,
-          contentWidth - indent,
-          14,
-          10,
-          [51, 65, 85],
-          (lh) => {
-            if (y + lh > pageHeight - bottomMargin) {
-              doc.addPage();
-              y = margin + 15;
-            } else {
-              y += lh;
-            }
-            return y;
-          }
-        );
-        y += 6;
+        y = renderFormattedRuns(doc, runs, margin + 15, y, contentWidth - 15, 14, 10, [51, 65, 85], handlePageBreakForRuns);
+        y += 4;
         break;
       }
-
       case 'task': {
         const runs = parseInlineRuns(block.text);
-        if (runs.length === 0) break;
-        const boxSize = 9;
+        const prefix = block.checked ? '[X] ' : '[ ] ';
         checkPageBreak(20);
-
-        doc.setDrawColor(148, 163, 184); // Slate-400
-        doc.setLineWidth(1);
-        if (block.checked) {
-          doc.setFillColor(16, 185, 129); // Emerald-500
-          doc.roundedRect(margin, y - 8, boxSize, boxSize, 2, 2, 'FD');
-          doc.setTextColor(255, 255, 255);
-          doc.setFontSize(7);
-          doc.setFont('helvetica', 'bold');
-          doc.text('X', margin + 2, y - 1);
-        } else {
-          doc.setFillColor(255, 255, 255);
-          doc.roundedRect(margin, y - 8, boxSize, boxSize, 2, 2, 'S');
-        }
-
-        const textColor: [number, number, number] = block.checked ? [148, 163, 184] : [51, 65, 85];
-        renderFormattedRuns(
-          doc,
-          runs,
-          margin + 18,
-          y,
-          contentWidth - 22,
-          14,
-          10,
-          textColor,
-          (lh) => {
-            if (y + lh > pageHeight - bottomMargin) {
-              doc.addPage();
-              y = margin + 15;
-            } else {
-              y += lh;
-            }
-            return y;
-          }
-        );
-        y += 6;
+        doc.setFont('courier', 'bold');
+        doc.setFontSize(10);
+        if (block.checked) doc.setTextColor(16, 185, 129); else doc.setTextColor(100, 116, 139);
+        doc.text(prefix, margin, y);
+        y = renderFormattedRuns(doc, runs, margin + 25, y, contentWidth - 25, 14, 10, [51, 65, 85], handlePageBreakForRuns);
+        y += 4;
         break;
       }
-
       case 'callout': {
         const runs = parseInlineRuns(block.text);
-        if (runs.length === 0) break;
-        const plainText = cleanInlineMarkdown(block.text);
-        const estimatedLines = doc.splitTextToSize(plainText, contentWidth - 26);
-        const boxHeight = estimatedLines.length * 14 + 16;
-        checkPageBreak(boxHeight + 6);
-
-        // Background Tint Box
-        doc.setFillColor(243, 244, 246); // Slate-100
-        doc.roundedRect(margin, y - 4, contentWidth, boxHeight, 4, 4, 'F');
-
-        // Left Border Bar
-        doc.setFillColor(79, 70, 229); // Indigo-600
-        doc.roundedRect(margin, y - 4, 4, boxHeight, 2, 2, 'F');
-
-        // Callout text with formatting
-        renderFormattedRuns(
-          doc,
-          runs,
-          margin + 14,
-          y + 8,
-          contentWidth - 24,
-          14,
-          9.5,
-          [30, 41, 59]
-        );
-        y += boxHeight + 8;
+        checkPageBreak(40);
+        const startY = y - 10;
+        y = renderFormattedRuns(doc, runs, margin + 15, y, contentWidth - 20, 14, 10, [30, 41, 59], handlePageBreakForRuns);
+        const endY = y + 5;
+        doc.setDrawColor(203, 213, 225);
+        doc.rect(margin, startY, contentWidth, endY - startY, 'S');
+        doc.setFillColor(99, 102, 241);
+        doc.rect(margin, startY, 4, endY - startY, 'F');
+        y = endY + 10;
         break;
       }
-
       case 'code': {
-        const cleanLang = sanitizeTextForPdf(block.language).toUpperCase() || 'CODE';
+        checkPageBreak(40);
+        doc.setFillColor(15, 23, 42);
+        const codeLines = block.code.split('\n');
+        const boxH = codeLines.length * 12 + 20;
+        doc.rect(margin, y - 5, contentWidth, boxH, 'F');
         doc.setFont('courier', 'normal');
         doc.setFontSize(8.5);
-        const rawCodeLines = block.code.split('\n');
-        const codeLines = rawCodeLines.map(line => sanitizeTextForPdf(line));
-        const codeBoxHeight = codeLines.length * 12 + 20;
-        checkPageBreak(Math.min(codeBoxHeight, 140));
-
-        // Dark terminal background
-        doc.setFillColor(15, 23, 42); // Slate-900
-        doc.roundedRect(margin, y - 4, contentWidth, codeBoxHeight, 4, 4, 'F');
-
-        // Top Header of Code Block
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(7.5);
-        doc.setTextColor(148, 163, 184); // Slate-400
-        doc.text(cleanLang, margin + 10, y + 6);
-
-        // Code Content
-        doc.setFont('courier', 'normal');
-        doc.setFontSize(8.5);
-        doc.setTextColor(248, 250, 252); // Slate-50
-        let codeY = y + 18;
-        for (const cLine of codeLines) {
-          if (codeY > pageHeight - bottomMargin) {
-            doc.addPage();
-            codeY = margin + 15;
-            doc.setFillColor(15, 23, 42);
-            doc.roundedRect(margin, codeY - 4, contentWidth, codeBoxHeight, 4, 4, 'F');
+        doc.setTextColor(226, 232, 240);
+        let curCodeY = y + 10;
+        const codeBaseY = y;
+        for (let idx = 0; idx < codeLines.length; idx++) {
+          const line = codeLines[idx];
+          if (curCodeY > pageHeight - bottomMargin) { 
+            doc.addPage(); 
+            curCodeY = margin + 15; 
+            doc.setFillColor(15, 23, 42); 
+            // Draw background for remaining lines on new page
+            const remainingH = (codeLines.length - idx) * 12 + 20;
+            doc.rect(margin, curCodeY - 15, contentWidth, Math.min(remainingH, pageHeight - bottomMargin - curCodeY + 15), 'F'); 
+            doc.setTextColor(226, 232, 240); 
+            doc.setFont('courier', 'normal'); 
+            doc.setFontSize(8.5); 
           }
-          doc.text(cLine.substring(0, 85), margin + 10, codeY);
-          codeY += 12;
+          doc.text(sanitizeTextForPdf(line).substring(0, 90), margin + 10, curCodeY);
+          curCodeY += 12;
         }
-        y = codeY + 6;
+        y = curCodeY + 10;
         break;
       }
-
       case 'table': {
-        const numCols = Math.max(
-          block.headers.length,
-          ...block.rows.map(r => r.length),
-          1
-        );
-
+        const numCols = Math.max(block.headers.length, ...block.rows.map(r => r.length));
         const colWidth = contentWidth / numCols;
-        const cellPadding = 6;
-        const cellTextWidth = colWidth - cellPadding * 2;
-
-        const renderTableHeader = (currentY: number): number => {
+        const renderHeader = (curY: number) => {
+          doc.setFillColor(30, 41, 59);
+          doc.rect(margin, curY - 10, contentWidth, 20, 'F');
           doc.setFont('helvetica', 'bold');
           doc.setFontSize(9);
-
-          const headerWrappedLines: string[][] = [];
-          let maxHeaderLines = 1;
-          for (let c = 0; c < numCols; c++) {
-            const hText = cleanInlineMarkdown(block.headers[c] || `Column ${c + 1}`);
-            const wrapped = doc.splitTextToSize(hText, Math.max(cellTextWidth, 20));
-            headerWrappedLines.push(wrapped);
-            if (wrapped.length > maxHeaderLines) {
-              maxHeaderLines = wrapped.length;
-            }
-          }
-          const headerHeight = maxHeaderLines * 12 + 10;
-
-          // Header background
-          doc.setFillColor(30, 41, 59); // Slate-800
-          doc.rect(margin, currentY, contentWidth, headerHeight, 'F');
-
-          // Header outer border & column dividers
-          doc.setDrawColor(71, 85, 105); // Slate-600
-          doc.setLineWidth(0.5);
-          doc.rect(margin, currentY, contentWidth, headerHeight, 'S');
-
-          for (let c = 1; c < numCols; c++) {
-            const divX = margin + c * colWidth;
-            doc.line(divX, currentY, divX, currentY + headerHeight);
-          }
-
-          // Header text
           doc.setTextColor(255, 255, 255);
-          for (let c = 0; c < numCols; c++) {
-            const linesToPrint = headerWrappedLines[c] || [];
-            const cellX = margin + c * colWidth + cellPadding;
-            let textY = currentY + 13;
-            for (const line of linesToPrint) {
-              doc.text(line, cellX, textY);
-              textY += 12;
-            }
-          }
-
-          return currentY + headerHeight;
+          block.headers.forEach((h, idx) => doc.text(sanitizeTextForPdf(h).substring(0, 30), margin + (idx * colWidth) + 5, curY + 3));
+          return curY + 10;
         };
-
-        checkPageBreak(50);
-        y = renderTableHeader(y);
-
-        // Render Data Rows
+        checkPageBreak(40);
+        y = renderHeader(y);
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(8.5);
-
-        for (let rIdx = 0; rIdx < block.rows.length; rIdx++) {
-          const rowData = block.rows[rIdx];
-
-          const cellRuns: InlineRun[][] = [];
-          const cellWrappedLines: string[][] = [];
-          let maxLinesInRow = 1;
-
-          for (let c = 0; c < numCols; c++) {
-            const rawCell = rowData[c] || '';
-            const runs = parseInlineRuns(rawCell);
-            cellRuns.push(runs);
-
-            const plainCell = cleanInlineMarkdown(rawCell);
-            const wrapped = doc.splitTextToSize(plainCell, Math.max(cellTextWidth, 20));
-            cellWrappedLines.push(wrapped);
-            if (wrapped.length > maxLinesInRow) {
-              maxLinesInRow = wrapped.length;
-            }
+        doc.setTextColor(51, 65, 85);
+        block.rows.forEach((row, rIdx) => {
+          if (y > pageHeight - bottomMargin) { 
+            doc.addPage(); 
+            y = margin + 20; 
+            y = renderHeader(y); 
+            doc.setFont('helvetica', 'normal'); 
+            doc.setFontSize(8.5); 
+            doc.setTextColor(51, 65, 85); 
           }
-
-          const rowHeight = maxLinesInRow * 12 + 10;
-
-          if (y + rowHeight > pageHeight - bottomMargin) {
-            doc.addPage();
-            y = margin + 15;
-            y = renderTableHeader(y);
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(8.5);
-          }
-
-          // Alternating row background
-          if (rIdx % 2 === 1) {
-            doc.setFillColor(248, 250, 252); // Slate-50
-            doc.rect(margin, y, contentWidth, rowHeight, 'F');
-          } else {
-            doc.setFillColor(255, 255, 255);
-            doc.rect(margin, y, contentWidth, rowHeight, 'F');
-          }
-
-          // Row borders
-          doc.setDrawColor(226, 232, 240); // Slate-200
-          doc.setLineWidth(0.5);
-          doc.rect(margin, y, contentWidth, rowHeight, 'S');
-
-          // Column divider lines
-          for (let c = 1; c < numCols; c++) {
-            const divX = margin + c * colWidth;
-            doc.line(divX, y, divX, y + rowHeight);
-          }
-
-          // Render cell text with inline formatting
-          for (let c = 0; c < numCols; c++) {
-            const runs = cellRuns[c] || [];
-            const cellX = margin + c * colWidth + cellPadding;
-            const textY = y + 12;
-
-            renderFormattedRuns(
-              doc,
-              runs,
-              cellX,
-              textY,
-              Math.max(cellTextWidth, 20),
-              12,
-              8.5,
-              [51, 65, 85]
-            );
-          }
-
-          y += rowHeight;
-        }
-
-        y += 8;
+          if (rIdx % 2 === 0) doc.setFillColor(248, 250, 252); else doc.setFillColor(255, 255, 255);
+          doc.rect(margin, y - 10, contentWidth, 20, 'F');
+          doc.setDrawColor(226, 232, 240);
+          doc.rect(margin, y - 10, contentWidth, 20, 'S');
+          row.forEach((cell, cIdx) => {
+            const cellX = margin + (cIdx * colWidth);
+            doc.line(cellX, y - 10, cellX, y + 10);
+            doc.text(sanitizeTextForPdf(cell).substring(0, 35), cellX + 5, y + 3);
+          });
+          y += 20;
+        });
+        y += 10;
         break;
       }
-
       case 'divider': {
-        checkPageBreak(16);
-        y += 4;
-        doc.setDrawColor(203, 213, 225); // Slate-300
-        doc.setLineWidth(0.75);
+        checkPageBreak(20);
+        doc.setDrawColor(226, 232, 240);
         doc.line(margin, y, margin + contentWidth, y);
-        y += 10;
+        y += 20;
         break;
       }
     }
   }
 
-  // Multi-page Footers with page numbers
+  // Page Numbers
   const totalPages = doc.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) {
     doc.setPage(p);
-
-    // Footer divider line
-    doc.setDrawColor(226, 232, 240);
-    doc.setLineWidth(0.5);
-    doc.line(margin, pageHeight - 28, margin + contentWidth, pageHeight - 28);
-
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
-    doc.setTextColor(148, 163, 184); // Slate-400
-    doc.text('Veylentra Academic OS — Verified Lecture Note Document', margin, pageHeight - 16);
-    doc.text(`Page ${p} of ${totalPages}`, margin + contentWidth - 45, pageHeight - 16);
+    doc.setTextColor(148, 163, 184);
+    doc.text(`Page ${p} of ${totalPages}`, pageWidth - margin - 50, pageHeight - 20);
+    doc.text('VEYLENTRA ACADEMIC OS • VERIFIED LECTURE NOTE', margin, pageHeight - 20);
   }
 
-  // Save the PDF
-  const rawTitle = cleanInlineMarkdown(title) || 'lecture_note';
-  const safeFilename = rawTitle
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, '_')
-    .replace(/_+/g, '_');
-  doc.save(`${safeFilename}.pdf`);
+  doc.save(`${title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`);
 }
