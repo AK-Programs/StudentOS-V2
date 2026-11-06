@@ -40,6 +40,7 @@ import {
   detectMathInteractiveWidget,
   InteractiveMathWidget,
   saveStudyOutputToFlashcards,
+  MathRenderer,
   formatMathematicalText,
   extractTopicTeachingIntent
 } from './lib/studentosAiEngine';
@@ -190,7 +191,8 @@ const CodeBlock = ({ code, language }: { code: string; language: string; key?: a
 };
 
 const parseInlineMarkdown = (line: string) => {
-  const parts = line.split(/(\*\*.*?\*\*|`.*?`)/g);
+  // Support **, `, and inline math $...$ or \(...\)
+  const parts = line.split(/(\*\*.*?\*\*|`.*?`|\$.*?\$|\\\(.*?\\\))/g);
   return parts.map((part, idx) => {
     if (part.startsWith('**') && part.endsWith('**')) {
       return <strong key={idx} className="font-extrabold text-white">{part.slice(2, -2)}</strong>;
@@ -198,15 +200,19 @@ const parseInlineMarkdown = (line: string) => {
     if (part.startsWith('`') && part.endsWith('`')) {
       return <code key={idx} className="mx-1 px-1.5 py-0.5 rounded bg-slate-950 border border-white/5 font-mono text-[11px] text-amber-300 font-semibold">{part.slice(1, -1)}</code>;
     }
+    if ((part.startsWith('$') && part.endsWith('$')) || (part.startsWith('\\(') && part.endsWith('\\)'))) {
+      const formula = part.replace(/^\$|\$|^\\\(|\\\)$/g, '').trim();
+      return <MathRenderer key={idx} formula={formula} className="mx-0.5" />;
+    }
     return part;
   });
 };
 
 const renderMarkdown = (rawText: string) => {
   if (!rawText) return null;
-  const text = formatMathematicalText(rawText);
-
-  const parts = text.split(/(```[\s\S]*?```|\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\])/g);
+  
+  // Split by code blocks and display math blocks
+  const parts = rawText.split(/(```[\s\S]*?```|\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\])/g);
 
   return parts.map((part, index) => {
     if (part.startsWith('```')) {
@@ -222,9 +228,9 @@ const renderMarkdown = (rawText: string) => {
       return (
         <div
           key={index}
-          className="my-2.5 p-3 rounded-xl bg-indigo-950/50 border border-indigo-500/30 text-indigo-200 font-mono text-xs sm:text-sm overflow-x-auto text-center shadow-inner"
+          className="my-3.5 p-4 rounded-2xl bg-indigo-950/30 border border-indigo-500/20 text-indigo-100 flex justify-center overflow-x-auto shadow-sm"
         >
-          {formatMathematicalText(mathFormula)}
+          <MathRenderer formula={mathFormula} display={true} />
         </div>
       );
     }
@@ -10747,7 +10753,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                       ))}
                                     </div>
 
-                                    {/* Export Buttons */}
+                                     {/* Export Buttons */}
                                     <button
                                       onClick={() => {
                                         const blob = new Blob([activeNote.content || ''], { type: 'text/markdown' });
@@ -10763,15 +10769,31 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                       .MD
                                     </button>
                                     <button
-                                      onClick={() => {
-                                        generateFormattedPdf(activeNote.title, activeNote.subject, activeNote.content || '');
-                                        showNotification('📄 Generating note PDF...');
+                                      onClick={async () => {
+                                        showNotification('📄 Preparing high-fidelity PDF...');
+                                        // Wait a moment for KaTeX and layout to settle in the hidden buffer
+                                        setTimeout(async () => {
+                                          const buffer = document.getElementById('note-print-buffer');
+                                          if (buffer) {
+                                            await generateFormattedPdf(activeNote.title, activeNote.subject, buffer);
+                                            showNotification('✅ PDF Generated successfully');
+                                          } else {
+                                            showNotification('❌ Error: Print buffer not ready');
+                                          }
+                                        }, 1000);
                                       }}
                                       className="px-2 py-1 rounded bg-indigo-900/30 text-indigo-400 text-[10px] font-bold hover:bg-indigo-800/40"
                                       title="Export as PDF"
                                     >
                                       🖨️ PDF
                                     </button>
+                                  </div>
+                                </div>
+
+                                {/* Hidden Print Buffer for High-Fidelity Export */}
+                                <div id="note-print-buffer" className="fixed -left-[10000px] top-0 w-[800px] bg-white p-10 pointer-events-none opacity-0 select-none overflow-visible">
+                                  <div className="space-y-4 text-slate-900">
+                                    {renderMarkdown(activeNote.content || '')}
                                   </div>
                                 </div>
 

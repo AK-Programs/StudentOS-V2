@@ -1073,31 +1073,78 @@ export const MathVisualLearningBlock: React.FC<{ topic: MathVisualTopic }> = ({ 
 /**
  * Formats mathematical notation and LaTeX expressions into clean, readable symbols
  */
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
+
+/**
+ * Robust mathematical text formatting using KaTeX.
+ * Handles both inline \(...\) or $...$ and display \[...\] or $$...$$ delimiters.
+ */
 export function formatMathematicalText(raw: string): string {
   if (!raw) return '';
-  return raw
-    .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '($1)/($2)')
-    .replace(/\\sqrt\{([^{}]+)\}/g, '√($1)')
-    .replace(/\\pi\b/g, 'π')
-    .replace(/\\theta\b/g, 'θ')
-    .replace(/\\alpha\b/g, 'α')
-    .replace(/\\beta\b/g, 'β')
-    .replace(/\\Delta\b/g, 'Δ')
-    .replace(/\\angle\b/g, '∠')
-    .replace(/\\degree\b|\\circ\b|\^\\circ/g, '°')
-    .replace(/\\times\b|\\cdot\b/g, '×')
-    .replace(/\\div\b/g, '÷')
-    .replace(/\\pm\b/g, '±')
-    .replace(/\\leq\b|\\le\b/g, '≤')
-    .replace(/\\geq\b|\\ge\b/g, '≥')
-    .replace(/\\neq\b|\\ne\b/g, '≠')
-    .replace(/\\approx\b/g, '≈')
-    .replace(/\\infty\b/g, '∞')
-    .replace(/\\rightarrow\b|\\to\b/g, '→')
-    .replace(/\\Rightarrow\b/g, '⇒')
-    .replace(/\^2\b/g, '²')
-    .replace(/\^3\b/g, '³');
+  
+  // If the string starts/ends with math delimiters, render it fully as math
+  const isDisplay = (raw.startsWith('$$') && raw.endsWith('$$')) || (raw.startsWith('\\\[') && raw.endsWith('\\\]'));
+  const isInline = (raw.startsWith('$') && raw.endsWith('$')) || (raw.startsWith('\\\(') && raw.endsWith('\\\)'));
+
+  if (isDisplay || isInline) {
+    const formula = raw.replace(/^(\$\$|\\\[|\$|\\\()|(\$\$|\\\]|\$|\\\))$/g, '').trim();
+    try {
+      return katex.renderToString(formula, {
+        displayMode: isDisplay,
+        throwOnError: false,
+        strict: false
+      });
+    } catch (e) {
+      console.warn('KaTeX render error:', e);
+      return raw;
+    }
+  }
+
+  // Otherwise, attempt to find and replace math patterns within text
+  // This is a bit more complex, we'll let the higher-level renderer handle it usually
+  // but for legacy compatibility we'll do a basic pass
+  let processed = raw;
+  
+  // Replace display blocks $$...$$
+  processed = processed.replace(/\$\$([\s\S]+?)\$\$/g, (_, formula) => {
+    try {
+      return katex.renderToString(formula.trim(), { displayMode: true, throwOnError: false });
+    } catch { return _; }
+  });
+
+  // Replace inline blocks $...$
+  processed = processed.replace(/\$([^\$]+?)\$/g, (_, formula) => {
+    try {
+      return katex.renderToString(formula.trim(), { displayMode: false, throwOnError: false });
+    } catch { return _; }
+  });
+
+  return processed;
 }
+
+/**
+ * A React component to render LaTeX math safely.
+ */
+export const MathRenderer: React.FC<{ formula: string; display?: boolean; className?: string }> = ({ formula, display = false, className = '' }) => {
+  const containerRef = React.useRef<HTMLSpanElement>(null);
+
+  React.useEffect(() => {
+    if (containerRef.current) {
+      try {
+        katex.render(formula, containerRef.current, {
+          displayMode: display,
+          throwOnError: false,
+          strict: false
+        });
+      } catch (err) {
+        containerRef.current.textContent = formula;
+      }
+    }
+  }, [formula, display]);
+
+  return <span ref={containerRef} className={className} />;
+};
 
 export function detectMathInteractiveWidget(prompt: string, responseText?: string): MathVisualTopic {
   return detectMathVisualizationTopic(`${prompt || ''} ${responseText || ''}`);
