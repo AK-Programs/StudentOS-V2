@@ -81,7 +81,7 @@ function generateInitialTabUsage(): TabUsageEvent[] {
       role: roles[Math.floor(Math.random() * roles.length)],
       grade: grades[Math.floor(Math.random() * grades.length)],
       section: sections[Math.floor(Math.random() * sections.length)],
-      schoolId: 'dps-main',
+      schoolId: 'united-public-school',
       timestamp: new Date(now - ageMs).toISOString()
     });
   }
@@ -117,7 +117,7 @@ export function logTabOpen(
     role: user?.role || 'student',
     grade: user?.grade,
     section: user?.section,
-    schoolId: user?.schoolId || 'dps-main',
+    schoolId: user?.schoolId || 'united-public-school',
     timestamp: new Date().toISOString()
   };
 

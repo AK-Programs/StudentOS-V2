@@ -36,7 +36,7 @@ const DEMO_CAMPUS_PRESENCES: UserPresence[] = [
     grade: 'Grade 10',
     section: 'Solara',
     currentTab: 'study_hub',
-    schoolId: 'dps-main',
+    schoolId: 'united-public-school',
     status: 'online',
     lastSeen: Date.now() - 30000
   },
@@ -48,7 +48,7 @@ const DEMO_CAMPUS_PRESENCES: UserPresence[] = [
     grade: 'Grade 10',
     section: 'Solara',
     currentTab: 'ai_teacher',
-    schoolId: 'dps-main',
+    schoolId: 'united-public-school',
     status: 'online',
     lastSeen: Date.now() - 60000
   },
@@ -60,7 +60,7 @@ const DEMO_CAMPUS_PRESENCES: UserPresence[] = [
     grade: 'Grade 10',
     section: 'Solara',
     currentTab: 'homework',
-    schoolId: 'dps-main',
+    schoolId: 'united-public-school',
     status: 'online',
     lastSeen: Date.now() - 90000
   },
@@ -72,7 +72,7 @@ const DEMO_CAMPUS_PRESENCES: UserPresence[] = [
     grade: 'Grade 10',
     section: 'Vega',
     currentTab: 'whiteboard',
-    schoolId: 'dps-main',
+    schoolId: 'united-public-school',
     status: 'online',
     lastSeen: Date.now() - 120000
   },
@@ -84,7 +84,7 @@ const DEMO_CAMPUS_PRESENCES: UserPresence[] = [
     grade: 'Grade 10',
     section: 'Solara',
     currentTab: 'attendance_manager',
-    schoolId: 'dps-main',
+    schoolId: 'united-public-school',
     status: 'online',
     lastSeen: Date.now() - 15000
   }
@@ -125,7 +125,7 @@ class PresenceService {
       grade: user.grade,
       section: user.section,
       currentTab: user.currentTab || 'dashboard',
-      schoolId: user.schoolId || 'dps-main',
+      schoolId: user.schoolId || 'united-public-school',
       avatar: user.avatar,
       status: 'online',
       lastSeen: Date.now(),

@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * 
- * StudentOS Enterprise Admin & Super Admin Management Center
+ * Veylentra Enterprise Admin & Super Admin Management Center
  * Comprehensive console for Principals (School Admin) and Super Admins.
  * Features:
  * - School Overview with live KPI metrics and one-click Excel export shortcuts
@@ -136,8 +136,8 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
 
   // Multi-school & feature flags state
   const [schools, setSchoolsState] = useState<SchoolEntity[]>([]);
-  const [activeSchoolId, setActiveSchoolIdState] = useState<string>('dps-main');
-  const [featureFlags, setFeatureFlags] = useState<SchoolFeatureFlags>(getSchoolFeatureFlags('dps-main'));
+  const [activeSchoolId, setActiveSchoolIdState] = useState<string>('united-public-school');
+  const [featureFlags, setFeatureFlags] = useState<SchoolFeatureFlags>(getSchoolFeatureFlags('united-public-school'));
 
   // Presence state
   const [onlineUsersList, setOnlineUsersList] = useState<UserPresence[]>([]);
@@ -466,15 +466,7 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
 
   // Switch Active School (Super Admin only)
   const handleSwitchSchool = (schoolId: string) => {
-    if (!isSuperAdmin) {
-      showNotification('❌ Permission Denied: Only Super Admin can switch institutional campuses.');
-      return;
-    }
-    setActiveSchoolId(schoolId, currentUser);
-    setActiveSchoolIdState(schoolId);
-    setFeatureFlags(getSchoolFeatureFlags(schoolId));
-    loadAuditLogs();
-    showNotification(`🏫 Switched active campus view to ${schoolId.toUpperCase()}`);
+    // No-op for single school
   };
 
   // Toggle Feature Flag (Super Admin only)
@@ -1111,7 +1103,7 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
             </span>
           </div>
           <p className="text-xs text-slate-400 font-medium">
-            Campus: <strong className="text-white">{schools.find(s => s.id === activeSchoolId)?.name || 'DPS Main Campus'}</strong> • Institutional Operations & Governance.
+            Campus: <strong className="text-white">United Public School</strong> • Institutional Operations & Governance.
           </p>
         </div>
 
@@ -1137,46 +1129,15 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
       </div>
 
       {/* Subtab Navigation Bar */}
-      <div className="flex gap-1.5 border-b border-white/5 pb-2 overflow-x-auto scrollbar-thin scrollbar-thumb-white/10">
-        {/* Core Admin Tabs */}
-        {[
-          { id: 'overview', label: 'School Overview', icon: School },
-          { id: 'classes', label: 'Class & Section Manager', icon: Layers },
-          { id: 'credentials', label: 'Password Reset', icon: Key },
-          { id: 'requests', label: `Approvals (${pendingRequests.length + pendingLeaves.length})`, icon: Clock },
-          { id: 'users', label: `Directory (${users.length})`, icon: Users }
-        ].map(tab => {
-          const Icon = tab.icon;
-          const active = adminSubTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setAdminSubTab(tab.id as any)}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-                active
-                  ? 'bg-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <Icon className="w-3.5 h-3.5" />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
-
-        {/* Super Admin Exclusive Tabs */}
-        {isSuperAdmin && (
-          <>
-            <div className="h-6 w-px bg-white/10 self-center mx-1" />
+      <div className="flex flex-col gap-6 border-b border-white/5 pb-6">
+        
+        {/* GROUP 1: OVERVIEW */}
+        <div className="space-y-2">
+          <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest px-2">Overview</span>
+          <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
             {[
-              { id: 'presence', label: `Live Presence (${onlineUsersList.length})`, icon: Radio },
-              { id: 'tab_usage', label: 'Tab Usage Report', icon: BarChart2 },
-              { id: 'spectate', label: 'Spectate Student', icon: Eye },
-              { id: 'parent_links', label: `Parent Links (${parentLinks.length})`, icon: UserCheck },
-              { id: 'schools', label: 'School Switcher', icon: School },
-              { id: 'audit', label: `Audit Log (${auditLogs.length})`, icon: Shield },
-              { id: 'flags', label: 'Feature Flags', icon: Flag },
-              { id: 'experience_testing', label: 'Byte & Experience Lab', icon: FlaskConical }
+              { id: 'overview', label: 'Dashboard', icon: Activity },
+              { id: 'tab_usage', label: 'Analytics', icon: BarChart2 },
             ].map(tab => {
               const Icon = tab.icon;
               const active = adminSubTab === tab.id;
@@ -1184,10 +1145,10 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
                 <button
                   key={tab.id}
                   onClick={() => setAdminSubTab(tab.id as any)}
-                  className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
                     active
-                      ? 'bg-amber-600 text-white shadow-md'
-                      : 'text-amber-400/80 hover:text-amber-300 hover:bg-amber-500/10'
+                      ? 'bg-indigo-600 text-white shadow-lg'
+                      : 'text-slate-400 hover:text-white hover:bg-white/5'
                   }`}
                 >
                   <Icon className="w-3.5 h-3.5" />
@@ -1195,8 +1156,103 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
                 </button>
               );
             })}
-          </>
+          </div>
+        </div>
+
+        {/* GROUP 2: SCHOOL MANAGEMENT */}
+        <div className="space-y-2">
+          <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest px-2">School Management</span>
+          <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+            {[
+              { id: 'users', label: 'Students & Faculty', icon: Users },
+              { id: 'classes', label: 'Classes & Sections', icon: Layers },
+              { id: 'requests', label: `Approvals (${pendingRequests.length + pendingLeaves.length})`, icon: Clock },
+              { id: 'parent_links', label: 'Parent Links', icon: UserCheck },
+              { id: 'promotion', label: 'Academic Configuration', icon: GraduationCap },
+            ].map(tab => {
+              const Icon = tab.icon;
+              const active = adminSubTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setAdminSubTab(tab.id as any)}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+                    active
+                      ? 'bg-indigo-600 text-white shadow-lg'
+                      : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* GROUP 3: PLATFORM MANAGEMENT */}
+        {isSuperAdmin && (
+          <div className="space-y-2">
+            <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest px-2">Platform Management</span>
+            <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+              {[
+                { id: 'whats_new', label: "What's New & Updates", icon: Sparkles },
+                { id: 'flags', label: 'Platform Settings', icon: Flag },
+                { id: 'experience_testing', label: 'Integrations & Lab', icon: FlaskConical },
+                { id: 'presence', label: 'Live Presence', icon: Radio },
+              ].map(tab => {
+                const Icon = tab.icon;
+                const active = adminSubTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setAdminSubTab(tab.id as any)}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+                      active
+                        ? 'bg-amber-600 text-white shadow-lg'
+                        : 'text-amber-400/80 hover:text-amber-300 hover:bg-amber-500/10'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         )}
+
+        {/* GROUP 4: ADMINISTRATION */}
+        <div className="space-y-2">
+          <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest px-2">Administration</span>
+          <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+            {[
+              { id: 'credentials', label: 'Roles & Permissions', icon: Key },
+              { id: 'audit', label: 'Security & Audit Logs', icon: Shield },
+              { id: 'spectate', label: 'Workspace Monitoring', icon: Eye },
+            ].map(tab => {
+              const Icon = tab.icon;
+              const active = adminSubTab === tab.id;
+              // Some tabs are super_admin only
+              if (!isSuperAdmin && (tab.id === 'audit' || tab.id === 'spectate')) return null;
+              
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setAdminSubTab(tab.id as any)}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+                    active
+                      ? 'bg-slate-700 text-white shadow-lg border border-white/10'
+                      : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {/* =========================================================================
@@ -2203,68 +2259,7 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
       {/* =========================================================================
           VIEW 9: [SUPER ADMIN] SCHOOL SWITCHER
       ========================================================================= */}
-      {isSuperAdmin && adminSubTab === 'schools' && (
-        <div className="space-y-6 animate-fadeIn">
-          <div className="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl flex items-center justify-between text-xs text-indigo-300">
-            <div className="flex items-center gap-2">
-              <School className="w-4 h-4 shrink-0" />
-              <span>Multi-Tenancy Campus Switcher: Manage multiple school facilities across your institutional network. Standard admins cannot access this control.</span>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {schools.map(school => {
-              const isActive = school.id === activeSchoolId;
-              return (
-                <div
-                  key={school.id}
-                  className={`p-5 rounded-3xl border transition-all space-y-4 ${
-                    isActive
-                      ? 'bg-indigo-600/20 border-indigo-500 shadow-xl ring-1 ring-indigo-500'
-                      : 'bg-slate-900/60 border-white/10 hover:border-white/20'
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <span className="text-[10px] font-mono text-slate-400 uppercase block">{school.code}</span>
-                      <h4 className="text-base font-black text-white mt-0.5">{school.name}</h4>
-                      <p className="text-xs text-indigo-300 font-medium">{school.city}</p>
-                    </div>
-                    {isActive && (
-                      <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                        Active Campus
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-white/5">
-                    <div>
-                      <span className="text-slate-500 text-[10px] block">Students</span>
-                      <span className="font-mono font-bold text-white">{school.studentCount}</span>
-                    </div>
-                    <div>
-                      <span className="text-slate-500 text-[10px] block">Faculty</span>
-                      <span className="font-mono font-bold text-white">{school.teacherCount}</span>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => handleSwitchSchool(school.id)}
-                    disabled={isActive}
-                    className={`w-full py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-                      isActive
-                        ? 'bg-indigo-600 text-white cursor-default'
-                        : 'bg-white/5 hover:bg-white/10 text-slate-300'
-                    }`}
-                  >
-                    {isActive ? 'Currently Active' : 'Switch to this School'}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {/* Removed Multi-Tenancy School Switcher */}
 
       {/* =========================================================================
           VIEW 10: [SUPER ADMIN] ENTERPRISE AUDIT TRAIL
@@ -2354,7 +2349,7 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
           <div className="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl flex items-center justify-between text-xs text-indigo-300">
             <div className="flex items-center gap-2">
               <Flag className="w-4 h-4 shrink-0" />
-              <span>Campus Module Feature Flags: Enable or disable specific workspace capabilities for {schools.find(s => s.id === activeSchoolId)?.name}.</span>
+              <span>Campus Module Feature Flags: Enable or disable specific workspace capabilities for United Public School.</span>
             </div>
           </div>
 

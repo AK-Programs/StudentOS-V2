@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * 
- * StudentOS Enterprise Audit Logging Service
+ * Veylentra Enterprise Audit Logging Service
  * Records promotions, Excel exports, password resets, and student spectate sessions.
  */
 
@@ -71,7 +71,7 @@ const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     action: 'export_excel',
     details: 'Exported official monthly attendance sheet for Grade 10 - Solara (38 students) to Excel (.xlsx)',
     sourceClass: 'Grade 10 - Solara',
-    schoolId: 'dps-main'
+    schoolId: 'united-public-school'
   },
   {
     id: 'audit-init-02',
@@ -85,7 +85,7 @@ const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     targetStudentId: 'demo_alice',
     targetStudentName: 'Alice Smith',
     sourceClass: 'Grade 10 - Solara',
-    schoolId: 'dps-main'
+    schoolId: 'united-public-school'
   },
   {
     id: 'audit-init-03',
@@ -98,7 +98,7 @@ const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     details: 'Issued secure single-use credential reset token for student Bob Jones (Grade 10 - Solara)',
     targetStudentId: 'demo_bob',
     targetStudentName: 'Bob Jones',
-    schoolId: 'dps-main'
+    schoolId: 'united-public-school'
   },
   {
     id: 'audit-init-04',
@@ -111,7 +111,7 @@ const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
     details: 'Year-End Promotion: Promoted 32 active students from Grade 9 - Astra to Grade 10 - Astra (Academic Year 2026-2027)',
     sourceClass: 'Grade 9 - Astra',
     destinationClass: 'Grade 10 - Astra',
-    schoolId: 'dps-main',
+    schoolId: 'united-public-school',
     metadata: { studentCount: 32, academicYear: '2026-2027' }
   }
 ];
