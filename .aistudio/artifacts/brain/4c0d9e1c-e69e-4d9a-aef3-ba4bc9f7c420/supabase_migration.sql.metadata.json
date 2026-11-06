@@ -1,6 +1,6 @@
 {
-  "summary": "Complete SQL migration script for Supabase: adds notes.permission column and RLS policies, repairs attendance table columns (user_id, subject, updated_by, academic_year) and foreign key constraints, sets up parent_child_links, and configures realtime replication.",
-  "updatedAt": "2026-11-02T14:16:20.148111803Z",
+  "summary": "Supabase migration SQL for Feedback Posts table and RLS policies",
+  "updatedAt": "2026-11-06T09:37:07.084993293Z",
   "requestFeedback": true,
   "userFacing": true
 }

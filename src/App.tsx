@@ -3074,17 +3074,17 @@ What can I clarify today?` }
         if (posts && posts.length > 0) {
           const mapped: FeedbackPost[] = posts.map((p: any) => ({
             id: p.id,
-            author: p.author || 'Veylentra Member',
-            authorId: p.author_id,
-            role: p.role || 'student',
-            text: p.text,
-            title: p.title,
-            votes: typeof p.votes === 'number' ? p.votes : 0,
+            author: p.user_name || p.author || 'Veylentra Member',
+            authorId: p.user_id || p.author_id || 'anonymous',
+            role: p.user_role || p.role || 'student',
+            text: p.body || p.text || '',
+            title: p.title || 'Campus Suggestion',
+            votes: typeof p.votes === 'number' ? p.votes : 1,
             upvotedBy: Array.isArray(p.upvoted_by) ? p.upvoted_by : [],
             replies: Array.isArray(p.replies) ? p.replies : [],
-            category: p.category || 'facilities',
+            category: p.category || 'suggestion',
             status: p.status || 'open',
-            createdAt: p.created_at || Date.now()
+            createdAt: p.created_at || new Date().toISOString()
           }));
           setFeedbackPosts(mapped);
           return;
@@ -8195,113 +8195,37 @@ CRITICAL WEB GROUNDING DIRECTIVE:
 
                 return (
                   <>
-                    {/* SECTION 1: HOME */}
-                    <div className="space-y-1">
-                      {sidebarOpen && (
+                    {/* ORION COPILOT BUTTON — GLOBAL FOR ALL ROLES */}
+                    {matchesFilter('Orion AI Copilot Assistant', 'orion ai copilot voice assistant 3d') && (
+                      <div className="pb-1">
                         <button
                           type="button"
-                          onClick={() => toggleSidebarSection('home')}
-                          className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] font-bold text-slate-400 hover:text-slate-200 transition-colors cursor-pointer uppercase tracking-wider"
+                          onClick={() => setIsJarvisActive(true)}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider bg-gradient-to-r from-indigo-600/35 via-violet-600/35 to-teal-600/25 hover:from-indigo-600/60 hover:to-teal-600/50 text-white border border-indigo-400/40 shadow-lg shadow-indigo-500/15 transition-all cursor-pointer group"
+                          title="Open Orion AI Copilot & School Assistant"
                         >
-                          <span>Home</span>
-                          <ChevronDown
-                            className={`w-3.5 h-3.5 transition-transform duration-200 ${
-                              collapsedSidebarSections['home'] ? '-rotate-90' : ''
-                            }`}
-                          />
+                          <div className="w-5 h-5 rounded-lg bg-indigo-500/30 border border-indigo-300/50 flex items-center justify-center text-cyan-300 group-hover:scale-110 transition-transform shrink-0">
+                            <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                          </div>
+                          {sidebarOpen && (
+                            <div className="flex items-center justify-between flex-1 min-w-0">
+                              <span className="truncate font-black tracking-wider text-white">Orion</span>
+                              <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-indigo-500/30 text-indigo-200 font-mono font-extrabold uppercase shrink-0">3D</span>
+                            </div>
+                          )}
                         </button>
-                      )}
+                      </div>
+                    )}
 
-                      {(!collapsedSidebarSections['home'] || !sidebarOpen || q.length > 0) && (
-                        <div className="space-y-1">
-                          {!presentationMode && matchesFilter('Dashboard Overview', 'home summary stats') && (
-                            <button
-                              type="button"
-                              onClick={() => handleTabSelect('dashboard')}
-                              className={getSidebarBtnClass('dashboard')}
-                              title="Dashboard Overview"
-                            >
-                              {isSidebarTabActive('dashboard') && (
-                                <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                              )}
-                              <LayoutDashboard className="w-4 h-4 shrink-0" />
-                              {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Dashboard</span>}
-                            </button>
-                          )}
-
-                          {matchesFilter('Orion AI Copilot', 'orion ai copilot voice assistant 3d') && (
-                            <button
-                              type="button"
-                              onClick={() => setIsJarvisActive(true)}
-                              className="group relative w-full flex items-center transition-all duration-200 rounded-xl border text-left min-w-0 cursor-pointer bg-gradient-to-r from-indigo-600/30 via-violet-600/30 to-teal-600/20 hover:from-indigo-600/50 hover:to-teal-600/40 text-white border-indigo-400/30 gap-3 px-3 py-2"
-                              title="Open Orion AI Copilot & School Assistant"
-                            >
-                              <div className="w-4 h-4 rounded-md bg-indigo-500/30 border border-indigo-300/40 flex items-center justify-center text-cyan-300 group-hover:scale-110 transition-transform shrink-0">
-                                <Sparkles className="w-3 h-3 animate-pulse" />
-                              </div>
-                              {sidebarOpen && (
-                                <div className="flex items-center justify-between flex-1 min-w-0">
-                                  <span className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-white">Orion AI</span>
-                                  <span className="text-[9px] px-1 py-0.2 rounded bg-indigo-500/30 text-indigo-200 font-mono font-bold shrink-0 ml-1">3D</span>
-                                </div>
-                              )}
-                            </button>
-                          )}
-
-                          {matchesFilter("What's New", 'updates changelog releases announcements bulletins') && (
-                            <button
-                              type="button"
-                              onClick={() => handleTabSelect('whats_new')}
-                              className={getSidebarBtnClass('whats_new')}
-                              title="What's New in Veylentra"
-                            >
-                              {isSidebarTabActive('whats_new') && (
-                                <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                              )}
-                              <Zap className="w-4 h-4 shrink-0 text-amber-400" />
-                              {sidebarOpen && (
-                                <div className="flex items-center justify-between flex-1 min-w-0">
-                                  <span className="min-w-0 flex-1 truncate text-left">What's New</span>
-                                  {whatsNewUnreadCount > 0 && (
-                                    <span className="px-1.5 py-0.5 rounded-md bg-rose-500 text-white font-mono font-bold text-[10px] leading-none shrink-0 ml-1">
-                                      {whatsNewUnreadCount}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                              {!sidebarOpen && whatsNewUnreadCount > 0 && (
-                                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-rose-500" />
-                              )}
-                            </button>
-                          )}
-
-                          {!presentationMode && matchesFilter('Brain Battle', 'quiz game arena daily challenge multiplayer leaderboard xp') && (
-                            <button
-                              type="button"
-                              onClick={() => handleTabSelect('brain_battle')}
-                              className={getSidebarBtnClass('brain_battle')}
-                              title="Brain Battle"
-                            >
-                              {isSidebarTabActive('brain_battle') && (
-                                <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                              )}
-                              <Trophy className="w-4 h-4 shrink-0 text-amber-400" />
-                              {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Brain Battle</span>}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* SECTION 2: STUDY */}
+                    {/* SECTION 1: STUDY SUITE */}
                     <div className="space-y-1">
                       {sidebarOpen && (
                         <button
                           type="button"
                           onClick={() => toggleSidebarSection('study')}
-                          className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] font-bold text-slate-400 hover:text-slate-200 transition-colors cursor-pointer uppercase tracking-wider"
+                          className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] font-semibold text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
                         >
-                          <span>Study</span>
+                          <span>Study Suite</span>
                           <ChevronDown
                             className={`w-3.5 h-3.5 transition-transform duration-200 ${
                               collapsedSidebarSections['study'] ? '-rotate-90' : ''
@@ -8312,6 +8236,18 @@ CRITICAL WEB GROUNDING DIRECTIVE:
 
                       {(!collapsedSidebarSections['study'] || !sidebarOpen || q.length > 0) && (
                         <div className="space-y-1">
+                          {!presentationMode && matchesFilter('Dashboard Overview', 'home summary stats') && (
+                            <button
+                              type="button"
+                              onClick={() => handleTabSelect('dashboard')}
+                              className={getSidebarBtnClass('dashboard')}
+                              title="Dashboard Overview"
+                            >
+                              <LayoutDashboard className="w-4 h-4 shrink-0" />
+                              {sidebarOpen && <span className="truncate">Dashboard</span>}
+                            </button>
+                          )}
+
                           {(!presentationMode || isTabAllowedInPresentation('study_hub')) &&
                             matchesFilter('Study Hub Flashcards Tasks Planner', 'spaced repetition sm2 cards study center') && (
                               <div className="space-y-1">
@@ -8321,13 +8257,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                   className={getSidebarBtnClass('study_hub')}
                                   title="Study Hub: Flashcards, Tasks & Study Planner"
                                 >
-                                  {isSidebarTabActive('study_hub') && (
-                                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                                  )}
                                   <Layers className="w-4 h-4 shrink-0" />
                                   {sidebarOpen && (
                                     <div className="flex items-center justify-between flex-1 min-w-0">
-                                      <span className="min-w-0 flex-1 truncate text-left">Study Hub</span>
+                                      <span className="truncate">Study Hub</span>
                                       {dueCardsCount > 0 && (
                                         <span className="px-1.5 py-0.5 rounded-md bg-rose-500/20 border border-rose-500/30 text-rose-200 font-mono font-bold text-[10px] leading-none shrink-0 ml-1">
                                           {dueCardsCount} due
@@ -8357,7 +8290,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                             : 'text-slate-400 hover:text-white hover:bg-white/5'
                                         }`}
                                       >
-                                        <span className="min-w-0 truncate">Study Dashboard</span>
+                                        <span className="truncate">Study Dashboard</span>
                                       </button>
                                       <button
                                         type="button"
@@ -8372,7 +8305,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                             : 'text-slate-400 hover:text-white hover:bg-white/5'
                                         }`}
                                       >
-                                        <span className="min-w-0 truncate">Study Flashcards</span>
+                                        <span className="truncate">Study Flashcards</span>
                                         {dueCardsCount > 0 && (
                                           <span className="text-[10px] font-mono text-rose-400 font-bold shrink-0 ml-1">
                                             {dueCardsCount}
@@ -8391,7 +8324,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                             : 'text-slate-400 hover:text-white hover:bg-white/5'
                                         }`}
                                       >
-                                        <span className="min-w-0 truncate">Tasks & Objectives</span>
+                                        <span className="truncate">Tasks & Objectives</span>
                                       </button>
                                       <button
                                         type="button"
@@ -8405,7 +8338,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                             : 'text-slate-400 hover:text-white hover:bg-white/5'
                                         }`}
                                       >
-                                        <span className="min-w-0 truncate">Schedule Planner</span>
+                                        <span className="truncate">Schedule Planner</span>
                                       </button>
                                     </div>
                                   )}
@@ -8419,60 +8352,21 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                               className={getSidebarBtnClass('notes')}
                               title="Lecture Notes"
                             >
-                              {isSidebarTabActive('notes') && (
-                                <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                              )}
                               <FileText className="w-4 h-4 shrink-0" />
-                              {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Lecture Notes</span>}
+                              {sidebarOpen && <span className="truncate">Lecture Notes</span>}
                             </button>
                           )}
 
-                          {(!presentationMode || isTabAllowedInPresentation('whiteboard')) &&
-                            !isSportsTeacher &&
-                            matchesFilter('Whiteboard & Canvas', 'drawing board canvas 3d models whiteboard') && (
+                          {(!presentationMode || isTabAllowedInPresentation('calendar')) &&
+                            matchesFilter('Academic Calendar', 'schedule events dates exams') && (
                               <button
                                 type="button"
-                                onClick={() => handleTabSelect('whiteboard')}
-                                className={getSidebarBtnClass('whiteboard')}
-                                title="Whiteboard & Canvas"
+                                onClick={() => handleTabSelect('calendar')}
+                                className={getSidebarBtnClass('calendar')}
+                                title="Academic Calendar"
                               >
-                                {isSidebarTabActive('whiteboard') && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                                )}
-                                <PenTool className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Whiteboard & Canvas</span>}
-                              </button>
-                            )}
-
-                          {(!presentationMode || isTabAllowedInPresentation('ai_teacher')) &&
-                            matchesFilter('Byte Chat', 'tutor assistant buddy byte') && (
-                              <button
-                                type="button"
-                                onClick={() => handleTabSelect('ai_teacher')}
-                                className={getSidebarBtnClass('ai_teacher')}
-                                title="Byte Chat (AI Tutor)"
-                              >
-                                {isSidebarTabActive('ai_teacher') && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                                )}
-                                <Brain className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Byte Chat</span>}
-                              </button>
-                            )}
-
-                          {(!presentationMode || isTabAllowedInPresentation('materials')) &&
-                            matchesFilter('Materials Hub', 'resources files pdfs library course materials') && (
-                              <button
-                                type="button"
-                                onClick={() => handleTabSelect('materials')}
-                                className={getSidebarBtnClass('materials')}
-                                title="Course Materials Hub"
-                              >
-                                {isSidebarTabActive('materials') && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                                )}
-                                <BookOpen className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Course Materials</span>}
+                                <Calendar className="w-4 h-4 shrink-0" />
+                                {sidebarOpen && <span className="truncate">Academic Calendar</span>}
                               </button>
                             )}
 
@@ -8484,84 +8378,83 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('pomodoro')}
                                 title="Focus Timer"
                               >
-                                {isSidebarTabActive('pomodoro') && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                                )}
                                 <Clock className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Focus Timer</span>}
+                                {sidebarOpen && <span className="truncate">Focus Timer</span>}
                               </button>
                             )}
                         </div>
                       )}
                     </div>
 
-                    {/* SECTION 3: CLASS */}
+                    {/* SECTION 2: CLASSROOM & LEARNING */}
                     <div className="space-y-1">
                       {sidebarOpen && (
                         <button
                           type="button"
-                          onClick={() => toggleSidebarSection('class')}
-                          className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] font-bold text-slate-400 hover:text-slate-200 transition-colors cursor-pointer uppercase tracking-wider"
+                          onClick={() => toggleSidebarSection('classroom')}
+                          className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] font-semibold text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
                         >
-                          <span>Class</span>
+                          <span>Classroom & Learning</span>
                           <ChevronDown
                             className={`w-3.5 h-3.5 transition-transform duration-200 ${
-                              collapsedSidebarSections['class'] ? '-rotate-90' : ''
+                              collapsedSidebarSections['classroom'] ? '-rotate-90' : ''
                             }`}
                           />
                         </button>
                       )}
 
-                      {(!collapsedSidebarSections['class'] || !sidebarOpen || q.length > 0) && (
+                      {(!collapsedSidebarSections['classroom'] || !sidebarOpen || q.length > 0) && (
                         <div className="space-y-1">
-                          {/* Attendance — Attendance Manager for staff, Attendance Analytics for students */}
-                          {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '') ? (
-                            matchesFilter('Attendance Manager', 'roll call register attendance') && (
-                              <button
-                                type="button"
-                                onClick={() => handleTabSelect('attendance_manager')}
-                                className={getSidebarBtnClass('attendance_manager', 'attendance')}
-                                title="Attendance Manager"
-                              >
-                                {isSidebarTabActive('attendance_manager') && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-amber-400 shadow-sm shadow-amber-400/50 pointer-events-none" />
-                                )}
-                                <CheckCircle className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Attendance Manager</span>}
-                              </button>
-                            )
-                          ) : (
-                            matchesFilter('Class Attendance', 'roll call attendance status record') && (
-                              <button
-                                type="button"
-                                onClick={() => handleTabSelect('analytics')}
-                                className={getSidebarBtnClass('analytics')}
-                                title="My Attendance & Performance"
-                              >
-                                {isSidebarTabActive('analytics') && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                                )}
-                                <CheckCircle className="w-4 h-4 shrink-0 text-emerald-400" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Attendance</span>}
-                              </button>
-                            )
-                          )}
-
-                          {/* Homework & Assignments */}
-                          {(!presentationMode || isTabAllowedInPresentation('homework')) &&
+                          {(!presentationMode || isTabAllowedInPresentation('whiteboard')) &&
                             !isSportsTeacher &&
-                            matchesFilter('Class Homework', 'daily homework tasks') && (
+                            matchesFilter('Class Whiteboard', 'drawing board canvas 3d models') && (
                               <button
                                 type="button"
-                                onClick={() => handleTabSelect('homework')}
-                                className={getSidebarBtnClass('homework')}
-                                title="Class Homework"
+                                onClick={() => handleTabSelect('whiteboard')}
+                                className={getSidebarBtnClass('whiteboard')}
+                                title="Class Whiteboard"
                               >
-                                {isSidebarTabActive('homework') && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                                )}
-                                <ClipboardList className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Class Homework</span>}
+                                <PenTool className="w-4 h-4 shrink-0" />
+                                {sidebarOpen && <span className="truncate">Class Whiteboard</span>}
+                              </button>
+                            )}
+
+                          {(!presentationMode || isTabAllowedInPresentation('panel_board')) &&
+                            matchesFilter('Panel Board', 'smart panel display projector classroom interactive touch') && (
+                              <button
+                                type="button"
+                                onClick={handleOpenPanelBoard}
+                                className={isPanelBoardOpen ? 'group relative w-full flex items-center transition-all duration-200 rounded-xl border text-left min-w-0 cursor-pointer bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 border-indigo-500/50 gap-3 px-3 py-2.5' : getSidebarBtnClass('panel_board')}
+                                title="Panel Board Mode"
+                              >
+                                <Tv className="w-4 h-4 shrink-0 text-cyan-400" />
+                                {sidebarOpen && <span className="truncate">Panel Board</span>}
+                              </button>
+                            )}
+
+                          {(!presentationMode || isTabAllowedInPresentation('ai_teacher')) &&
+                            matchesFilter('Byte Chat', 'tutor assistant buddy byte') && (
+                              <button
+                                type="button"
+                                onClick={() => handleTabSelect('ai_teacher')}
+                                className={getSidebarBtnClass('ai_teacher')}
+                                title="Byte Chat"
+                              >
+                                <Brain className="w-4 h-4 shrink-0" />
+                                {sidebarOpen && <span className="truncate">Byte Chat</span>}
+                              </button>
+                            )}
+
+                          {(!presentationMode || isTabAllowedInPresentation('materials')) &&
+                            matchesFilter('Materials Hub', 'resources files pdfs library') && (
+                              <button
+                                type="button"
+                                onClick={() => handleTabSelect('materials')}
+                                className={getSidebarBtnClass('materials')}
+                                title="Materials Hub"
+                              >
+                                <BookOpen className="w-4 h-4 shrink-0" />
+                                {sidebarOpen && <span className="truncate">Materials Hub</span>}
                               </button>
                             )}
 
@@ -8573,48 +8466,37 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('assignments')}
                                 title="Assignment Center"
                               >
-                                {isSidebarTabActive('assignments') && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                                )}
                                 <CheckSquare className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Assignment Center</span>}
+                                {sidebarOpen && <span className="truncate">Assignment Center</span>}
                               </button>
                             )}
 
-                          {/* Performance Analytics */}
-                          {matchesFilter('Performance Analytics', 'reports grades stats gradebook') && (
+                          {(!presentationMode || isTabAllowedInPresentation('homework')) &&
+                            !isSportsTeacher &&
+                            matchesFilter('Class Homework', 'daily homework tasks') && (
+                              <button
+                                type="button"
+                                onClick={() => handleTabSelect('homework')}
+                                className={getSidebarBtnClass('homework')}
+                                title="Class Homework"
+                              >
+                                <ClipboardList className="w-4 h-4 shrink-0" />
+                                {sidebarOpen && <span className="truncate">Class Homework</span>}
+                              </button>
+                            )}
+
+                          {!presentationMode && matchesFilter('Brain Battle', 'quiz game arena daily challenge multiplayer leaderboard xp') && (
                             <button
                               type="button"
-                              onClick={() => handleTabSelect('analytics')}
-                              className={getSidebarBtnClass('analytics')}
-                              title="Performance Analytics & Gradebook"
+                              onClick={() => handleTabSelect('brain_battle')}
+                              className={getSidebarBtnClass('brain_battle')}
+                              title="Brain Battle"
                             >
-                              {isSidebarTabActive('analytics') && (
-                                <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                              )}
-                              <BarChart2 className="w-4 h-4 shrink-0" />
-                              {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Analytics</span>}
+                              <Trophy className="w-4 h-4 shrink-0 text-amber-400" />
+                              {sidebarOpen && <span className="truncate">Brain Battle</span>}
                             </button>
                           )}
 
-                          {/* Panel Board */}
-                          {(!presentationMode || isTabAllowedInPresentation('panel_board')) &&
-                            matchesFilter('Panel Board', 'smart panel display projector classroom interactive touch') && (
-                              <button
-                                type="button"
-                                onClick={handleOpenPanelBoard}
-                                className={isPanelBoardOpen ? 'group relative w-full flex items-center transition-all duration-200 rounded-xl border text-left min-w-0 cursor-pointer bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 border-indigo-500/50 gap-3 px-3 py-2.5' : getSidebarBtnClass('panel_board')}
-                                title="Panel Board (Class Smart Board)"
-                              >
-                                {(isPanelBoardOpen || isSidebarTabActive('panel_board')) && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-cyan-400 shadow-sm shadow-cyan-400/50 pointer-events-none" />
-                                )}
-                                <Tv className="w-4 h-4 shrink-0 text-cyan-400" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Panel Board</span>}
-                              </button>
-                            )}
-
-                          {/* Veylentra Meet */}
                           {(!presentationMode || isTabAllowedInPresentation('meet')) &&
                             matchesFilter('Veylentra Meet', 'video call virtual classroom') && (
                               <button
@@ -8623,119 +8505,58 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('meet')}
                                 title="Veylentra Meet"
                               >
-                                {isSidebarTabActive('meet') && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                                )}
                                 <Video className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Veylentra Meet</span>}
+                                {sidebarOpen && <span className="truncate">Veylentra Meet</span>}
                               </button>
                             )}
-
-                          {/* Global Chat */}
-                          {matchesFilter('Global Chat', 'messages rooms peer chat discussions') && (
-                            <button
-                              type="button"
-                              onClick={() => handleTabSelect('peer_chat')}
-                              className={getSidebarBtnClass('peer_chat')}
-                              title="Global Chat & Discussions"
-                            >
-                              {isSidebarTabActive('peer_chat') && (
-                                <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                              )}
-                              <MessageSquare className="w-4 h-4 shrink-0" />
-                              {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Global Chat</span>}
-                            </button>
-                          )}
-
-                          {/* Substitute Board for faculty/admin */}
-                          {matchesFilter('Substitute Board', 'teacher duty cover') && ['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '') && (
-                            <button
-                              type="button"
-                              onClick={() => handleTabSelect('substitutes')}
-                              className={getSidebarBtnClass('substitutes')}
-                              title="Substitute Board"
-                            >
-                              {isSidebarTabActive('substitutes') && (
-                                <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                              )}
-                              <RefreshCw className="w-4 h-4 shrink-0" />
-                              {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Substitute Board</span>}
-                            </button>
-                          )}
                         </div>
                       )}
                     </div>
 
-                    {/* SECTION 4: MORE */}
+                    {/* SECTION 3: CAMPUS & COMMUNITY */}
                     {!presentationMode && (
                       <div className="space-y-1">
                         {sidebarOpen && (
                           <button
                             type="button"
-                            onClick={() => toggleSidebarSection('more')}
-                            className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] font-bold text-slate-400 hover:text-slate-200 transition-colors cursor-pointer uppercase tracking-wider"
+                            onClick={() => toggleSidebarSection('community')}
+                            className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] font-semibold text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
                           >
-                            <span>More</span>
+                            <span>Campus & Community</span>
                             <ChevronDown
                               className={`w-3.5 h-3.5 transition-transform duration-200 ${
-                                collapsedSidebarSections['more'] ? '-rotate-90' : ''
+                                collapsedSidebarSections['community'] ? '-rotate-90' : ''
                               }`}
                             />
                           </button>
                         )}
 
-                        {(!collapsedSidebarSections['more'] || !sidebarOpen || q.length > 0) && (
+                        {(!collapsedSidebarSections['community'] || !sidebarOpen || q.length > 0) && (
                           <div className="space-y-1">
-                            {/* Admin Center */}
-                            {(effectiveRole === 'admin' || effectiveRole === 'super_admin') &&
-                              matchesFilter('Admin Center', 'super admin requests management system') && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleTabSelect('admin')}
-                                  className={getSidebarBtnClass('admin', 'admin')}
-                                  title="Admin Center"
-                                >
-                                  {isSidebarTabActive('admin') && (
-                                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-rose-400 shadow-sm shadow-rose-400/50 pointer-events-none" />
-                                  )}
-                                  <Shield className="w-4 h-4 shrink-0 text-rose-400" />
-                                  {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Admin Center</span>}
-                                </button>
-                              )}
-
-                            {/* Faculty Center for teachers */}
-                            {effectiveRole === 'teacher' && matchesFilter('Faculty Center', 'teacher dashboard classes') && (
+                            {matchesFilter('Global Chat', 'messages rooms peer chat') && (
                               <button
                                 type="button"
-                                onClick={() => handleTabSelect('faculty')}
-                                className={getSidebarBtnClass('faculty', 'faculty')}
-                                title="Faculty Center"
+                                onClick={() => handleTabSelect('peer_chat')}
+                                className={getSidebarBtnClass('peer_chat')}
+                                title="Global Chat"
                               >
-                                {isSidebarTabActive('faculty') && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-emerald-400 shadow-sm shadow-emerald-400/50 pointer-events-none" />
-                                )}
-                                <GraduationCap className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Faculty Center</span>}
+                                <MessageSquare className="w-4 h-4 shrink-0" />
+                                {sidebarOpen && <span className="truncate">Global Chat</span>}
                               </button>
                             )}
 
-                            {/* Feedback Board */}
-                            {matchesFilter('Feedback Board', 'suggestions ideas school improvements') && (
+                            {matchesFilter('House Standings', 'championship points leaderboard') && (
                               <button
                                 type="button"
-                                onClick={() => handleTabSelect('feedback')}
-                                className={getSidebarBtnClass('feedback')}
-                                title="Feedback Board"
+                                onClick={() => handleTabSelect('houses')}
+                                className={getSidebarBtnClass('houses')}
+                                title="House Standings"
                               >
-                                {isSidebarTabActive('feedback') && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                                )}
-                                <Send className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Feedback Board</span>}
+                                <Award className="w-4 h-4 shrink-0" />
+                                {sidebarOpen && <span className="truncate">House Standings</span>}
                               </button>
                             )}
 
-                            {/* Veylentra Life */}
                             {matchesFilter('Veylentra Life', 'competitions clubs events polls badges') && (
                               <button
                                 type="button"
@@ -8743,31 +8564,11 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('life')}
                                 title="Veylentra Life: Competitions, Clubs, Events & Polls"
                               >
-                                {isSidebarTabActive('life') && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                                )}
                                 <Compass className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Veylentra Life</span>}
+                                {sidebarOpen && <span className="truncate">Veylentra Life</span>}
                               </button>
                             )}
 
-                            {/* House Standings */}
-                            {matchesFilter('House Standings', 'championship points leaderboard ruby sapphire emerald topaz') && (
-                              <button
-                                type="button"
-                                onClick={() => handleTabSelect('houses')}
-                                className={getSidebarBtnClass('houses')}
-                                title="House Standings"
-                              >
-                                {isSidebarTabActive('houses') && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                                )}
-                                <Award className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">House Standings</span>}
-                              </button>
-                            )}
-
-                            {/* Sports & Activities */}
                             {isSportsTeacher && matchesFilter('Sports & Activities', 'athletics clubs pe') && (
                               <button
                                 type="button"
@@ -8775,78 +8576,176 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('sports_activities')}
                                 title="Sports & Activities"
                               >
-                                {isSidebarTabActive('sports_activities') && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                                )}
                                 <Activity className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Sports & Activities</span>}
+                                {sidebarOpen && <span className="truncate">Sports & Activities</span>}
                               </button>
                             )}
 
-                            {/* Educational Blogs */}
-                            {matchesFilter('Blogs', 'articles publications stories') && (
+                            {matchesFilter('Blogs', 'articles publications') && (
                               <button
                                 type="button"
                                 onClick={() => handleTabSelect('blogs')}
                                 className={getSidebarBtnClass('blogs')}
                                 title="Educational Blogs"
                               >
-                                {isSidebarTabActive('blogs') && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                                )}
                                 <Globe className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Blogs</span>}
+                                {sidebarOpen && <span className="truncate">Blogs</span>}
                               </button>
                             )}
 
-                            {/* Academic Calendar */}
-                            {(!presentationMode || isTabAllowedInPresentation('calendar')) &&
-                              matchesFilter('Academic Calendar', 'schedule events dates exams calendar') && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleTabSelect('calendar')}
-                                  className={getSidebarBtnClass('calendar')}
-                                  title="Academic Calendar"
-                                >
-                                  {isSidebarTabActive('calendar') && (
-                                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                                  )}
-                                  <Calendar className="w-4 h-4 shrink-0" />
-                                  {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Academic Calendar</span>}
-                                </button>
-                              )}
+                            {matchesFilter('Feedback Board', 'suggestions ideas') && (
+                              <button
+                                type="button"
+                                onClick={() => handleTabSelect('feedback')}
+                                className={getSidebarBtnClass('feedback')}
+                                title="Feedback Board"
+                              >
+                                <Send className="w-4 h-4 shrink-0" />
+                                {sidebarOpen && <span className="truncate">Feedback Board</span>}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
-                            {/* Profile & Settings */}
-                            {matchesFilter('Profile Settings', 'account user preferences profile') && (
+                    {/* SECTION 4: WORKSPACE & ADMINISTRATION */}
+                    {!presentationMode && (
+                      <div className="space-y-1">
+                        {sidebarOpen && (
+                          <button
+                            type="button"
+                            onClick={() => toggleSidebarSection('system')}
+                            className="w-full flex items-center justify-between px-2.5 py-1 text-[11px] font-semibold text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+                          >
+                            <span>Workspace & Account</span>
+                            <ChevronDown
+                              className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                                collapsedSidebarSections['system'] ? '-rotate-90' : ''
+                              }`}
+                            />
+                          </button>
+                        )}
+
+                        {(!collapsedSidebarSections['system'] || !sidebarOpen || q.length > 0) && (
+                          <div className="space-y-1">
+                            {matchesFilter('Performance Analytics', 'reports grades stats') && (
+                              <button
+                                type="button"
+                                onClick={() => handleTabSelect('analytics')}
+                                className={getSidebarBtnClass('analytics')}
+                                title="Performance Analytics"
+                              >
+                                <BarChart2 className="w-4 h-4 shrink-0" />
+                                {sidebarOpen && <span className="truncate">Analytics</span>}
+                              </button>
+                            )}
+
+                            {matchesFilter('Substitute Board', 'teacher duty cover') && ['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '') && (
+                              <button
+                                type="button"
+                                onClick={() => handleTabSelect('substitutes')}
+                                className={getSidebarBtnClass('substitutes')}
+                                title="Substitute Board"
+                              >
+                                <RefreshCw className="w-4 h-4 shrink-0" />
+                                {sidebarOpen && <span className="truncate">Substitute Board</span>}
+                              </button>
+                            )}
+
+                            {matchesFilter('Profile Settings', 'account user preferences') && (
                               <button
                                 type="button"
                                 onClick={() => handleTabSelect('profile')}
                                 className={getSidebarBtnClass('profile')}
                                 title="My Profile & Preferences"
                               >
-                                {isSidebarTabActive('profile') && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                                )}
                                 <User className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">Profile & Settings</span>}
+                                {sidebarOpen && (
+                                  <span className="truncate">
+                                    {(effectiveRole || 'student')
+                                      .split(',')
+                                      .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+                                      .join('')}{' '}
+                                    Profile
+                                  </span>
+                                )}
                               </button>
                             )}
 
-                            {/* About Veylentra */}
-                            {matchesFilter('About Veylentra', 'about version info system') && (
+                            {(effectiveRole as string) === 'parent' && matchesFilter('Parental Portal', 'parent guardian monitoring reports') && (
                               <button
                                 type="button"
-                                onClick={() => handleTabSelect('about')}
-                                className={getSidebarBtnClass('about')}
-                                title="About Veylentra"
+                                onClick={() => handleTabSelect('parent_portal')}
+                                className={getSidebarBtnClass('parent_portal')}
+                                title="Parental Portal"
                               >
-                                {isSidebarTabActive('about') && (
-                                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-indigo-400 shadow-sm shadow-indigo-400/50 pointer-events-none" />
-                                )}
-                                <Info className="w-4 h-4 shrink-0" />
-                                {sidebarOpen && <span className="min-w-0 flex-1 truncate text-left">About Veylentra</span>}
+                                <Shield className="w-4 h-4 shrink-0 text-violet-400" />
+                                {sidebarOpen && <span className="truncate font-semibold">Parental Portal</span>}
                               </button>
                             )}
+
+                            {matchesFilter("What's New", 'updates changelog releases') && (
+                              <button
+                                type="button"
+                                onClick={() => handleTabSelect('whats_new')}
+                                className={getSidebarBtnClass('whats_new')}
+                                title="What's New in Veylentra"
+                              >
+                                <Zap className="w-4 h-4 shrink-0" />
+                                {sidebarOpen && (
+                                  <div className="flex items-center justify-between flex-1 min-w-0">
+                                    <span className="truncate">What's New</span>
+                                    {whatsNewUnreadCount > 0 && (
+                                      <span className="px-1.5 py-0.5 rounded-md bg-rose-500 text-white font-mono font-bold text-[10px] leading-none shrink-0 ml-1">
+                                        {whatsNewUnreadCount}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                                {!sidebarOpen && whatsNewUnreadCount > 0 && (
+                                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-rose-500" />
+                                )}
+                              </button>
+                            )}
+
+                            {effectiveRole === 'teacher' && matchesFilter('Faculty Center', 'teacher dashboard classes') && (
+                              <button
+                                type="button"
+                                onClick={() => handleTabSelect('faculty')}
+                                className={getSidebarBtnClass('faculty', 'faculty')}
+                                title="Faculty Center"
+                              >
+                                <GraduationCap className="w-4 h-4 shrink-0" />
+                                {sidebarOpen && <span className="truncate">Faculty Center</span>}
+                              </button>
+                            )}
+
+                            {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '') &&
+                              matchesFilter('Attendance Manager', 'roll call register') && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleTabSelect('attendance_manager')}
+                                  className={getSidebarBtnClass('attendance_manager', 'attendance')}
+                                  title="Attendance Manager"
+                                >
+                                  <CheckCircle className="w-4 h-4 shrink-0" />
+                                  {sidebarOpen && <span className="truncate">Attendance Manager</span>}
+                                </button>
+                              )}
+
+                            {(effectiveRole === 'admin' || effectiveRole === 'super_admin') &&
+                              matchesFilter('Admin Center', 'super admin requests management') && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleTabSelect('admin')}
+                                  className={getSidebarBtnClass('admin', 'admin')}
+                                  title="Admin Center"
+                                >
+                                  <Shield className="w-4 h-4 shrink-0" />
+                                  {sidebarOpen && <span className="truncate">Admin Center</span>}
+                                </button>
+                              )}
                           </div>
                         )}
                       </div>
@@ -14361,43 +14260,45 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                   effectiveRole={(effectiveRole as UserRole) || 'student'}
                   feedbackPosts={feedbackPosts}
                   handleAddFeedback={async (newPost) => {
+                    const uid = currentUser?.uid || 'guest';
+                    let insertedRow: any = null;
+                    try {
+                      const { data, error } = await supabase
+                        .from('feedback_posts')
+                        .insert({
+                          user_id: uid,
+                          user_name: newPost.author || currentUser?.name || 'Veylentra Member',
+                          user_role: newPost.role || currentUser?.role || 'student',
+                          title: newPost.title || 'Campus Suggestion',
+                          body: newPost.text || '',
+                          category: newPost.category || 'suggestion',
+                          status: 'open'
+                        })
+                        .select()
+                        .maybeSingle();
+                      if (data) insertedRow = data;
+                    } catch (err) {
+                      console.warn('[Feedback Insert Supabase]', err);
+                    }
+
                     const createdPost: FeedbackPost = {
-                      id: `fb-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-                      author: newPost.author,
-                      authorId: currentUser?.uid,
-                      role: newPost.role,
-                      category: newPost.category,
-                      title: newPost.title,
-                      text: newPost.text,
+                      id: insertedRow?.id || `fb-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+                      author: insertedRow?.user_name || newPost.author,
+                      authorId: insertedRow?.user_id || uid,
+                      role: insertedRow?.user_role || newPost.role,
+                      category: insertedRow?.category || newPost.category,
+                      title: insertedRow?.title || newPost.title,
+                      text: insertedRow?.body || newPost.text,
                       votes: 1,
-                      upvotedBy: currentUser?.uid ? [currentUser.uid] : [],
-                      status: 'open',
+                      upvotedBy: [uid],
+                      status: insertedRow?.status || 'open',
                       replies: [],
-                      createdAt: new Date().toISOString()
+                      createdAt: insertedRow?.created_at || new Date().toISOString()
                     };
                     const updated = [createdPost, ...feedbackPosts];
                     setFeedbackPosts(updated);
                     saveFeedbacksToSupabase(updated);
-                    try {
-                      await supabase.from('feedback_posts').insert({
-                        id: createdPost.id,
-                        author: createdPost.author,
-                        author_id: currentUser?.uid || null,
-                        role: createdPost.role,
-                        category: createdPost.category,
-                        title: createdPost.title || null,
-                        text: createdPost.text,
-                        votes: createdPost.votes,
-                        upvoted_by: createdPost.upvotedBy,
-                        status: createdPost.status,
-                        replies: createdPost.replies,
-                        created_at: createdPost.createdAt,
-                        updated_at: new Date().toISOString()
-                      });
-                    } catch (err) {
-                      console.warn('[Feedback Insert Supabase]', err);
-                    }
-                    showNotification('🚀 Published suggestion on Student Board!');
+                    showNotification('🚀 Published suggestion on Feedback Board!');
                   }}
                   upvoteFeedback={async (id) => {
                     let nextVotes = 0;
@@ -14422,8 +14323,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                     try {
                       await supabase.from('feedback_posts').update({
                         votes: nextVotes,
-                        upvoted_by: nextUpvotedBy,
-                        updated_at: new Date().toISOString()
+                        upvoted_by: nextUpvotedBy
                       }).eq('id', id);
                     } catch (_) {}
                   }}
@@ -14433,10 +14333,11 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                     saveFeedbacksToSupabase(updated);
                     try {
                       await supabase.from('feedback_posts').update({
-                        status,
-                        updated_at: new Date().toISOString()
+                        status
                       }).eq('id', id);
-                    } catch (_) {}
+                    } catch (err) {
+                      console.warn('[Feedback Status Update]', err);
+                    }
                     showNotification(`Status updated to ${status}`);
                   }}
                   handleAddReply={async (postId, replyText) => {
@@ -14463,8 +14364,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                     saveFeedbacksToSupabase(updated);
                     try {
                       await supabase.from('feedback_posts').update({
-                        replies: updatedReplies,
-                        updated_at: new Date().toISOString()
+                        replies: updatedReplies
                       }).eq('id', postId);
                     } catch (_) {}
                     showNotification('Official response added.');
