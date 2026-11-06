@@ -3242,30 +3242,31 @@ app.post('/api/ai/magic-draw', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Prompt is required' });
     }
 
-    const systemInstruction = `You are a world-class vector illustrator for an educational whiteboard.
-Generate an accurate, detailed, and COMPLETELY FINISHED vector drawing for the user's requested prompt: "${userPrompt}".
-Coordinates MUST be within 900x600 (x:0-900, y:0-600).
+    const systemInstruction = `You are an expert vector illustrator for an educational whiteboard.
+Generate an accurate, recognizable, and COMPLETELY FINISHED vector drawing for the user's requested prompt: "${userPrompt}".
+Coordinates MUST be within 900x600 (x: 50 to 850, y: 50 to 550).
 
-ACCURACY & COMPLETENESS RULES:
-1. ALWAYS DRAW THE EXACT RECOGNIZABLE SUBJECT requested (e.g. Dragon, Tree, Bicycle, Car, Heart, Flower, Airplane).
-2. If asked for a Bicycle, draw TWO wheels with spokes, frame, handlebars, pedal, and seat. If a Dragon, draw head, body, wings, tail, legs, and scales. If a Tree, draw trunk, branches, leaves/canopy, and roots.
-3. Use 20 to 50 smooth curves and detailed strokes. Never return a single generic circle, rectangle box, or 3-shape sketch placeholder.
-4. LABELS: Place small descriptive labels on key parts with pointer arrows pointing to the exact part.
-5. Allowed stroke types: "curve" (smooth point array), "line", "circle", "ellipse", "rect", "arrow", "label".
-6. Return ONLY valid JSON.
+STRICT ACCURACY RULES:
+1. ALWAYS DRAW THE EXACT RECOGNIZABLE SUBJECT requested. If asked for a Dragon, it must look like a dragon (horns, snout, wings with membrane ribs, clawed legs, curved serpentine tail, scales). If a Bicycle, it must look like a bicycle (two round wheels with spokes, diamond frame tubes, handlebars, pedals, saddle). If a Tree, draw bark trunk, branching limbs, lush leafy canopy clusters, and roots.
+2. PREFER CURVE STROKES OVER STRAIGHT LINES: Use smooth curves with sufficient coordinate points [x1, y1, x2, y2, x3, y3, ...] to form realistic organic shapes. Never stop at 3 basic circles or a plain rectangle. Use 20 to 50 detailed strokes to make the drawing complete and impressive.
+3. LABELS: If you include labels, keep them small (size 10 to 12) and place them directly near or with a small arrow pointing to the exact part they name.
+4. If you cannot draw the requested object accurately, return {"success": false, "error": "Could not draw that"}. Do not draw an arbitrary or unrelated shape.
+5. Return ONLY valid JSON.
 
 Schema:
 {
   "title": "Clear Descriptive Title",
   "strokes": [
-    { "type": "curve", "points": [x1,y1,x2,y2,...], "color": "#hex", "size": 3 },
+    { "type": "curve", "points": [x1, y1, x2, y2, ...], "color": "#hex", "size": 3 },
+    { "type": "line", "points": [x1, y1, x2, y2], "color": "#hex", "size": 2 },
+    { "type": "circle", "x": center_x, "y": center_y, "radius": r, "color": "#hex", "size": 2, "fill": "transparent" },
     { "type": "ellipse", "x": center_x, "y": center_y, "width": w, "height": h, "color": "#hex", "size": 2, "fill": "transparent" },
-    { "type": "label", "x": x, "y": y, "text": "Part Label", "color": "#hex", "size": 12 },
-    { "type": "arrow", "points": [label_x, label_y, target_x, target_y], "color": "#hex", "size": 1.5 }
+    { "type": "arrow", "points": [x1, y1, x2, y2], "color": "#hex", "size": 1.5 },
+    { "type": "label", "x": x, "y": y, "text": "Part Label", "color": "#hex", "size": 11 }
   ]
 }`;
 
-    const fullPrompt = `Generate a detailed vector drawing of: "${userPrompt}"`;
+    const fullPrompt = `Generate complete detailed vector drawing JSON strokes for: "${userPrompt}"`;
     let providerUsed = 'ai';
     let modelUsed = 'ai_model';
     let rawText = '';
@@ -3275,8 +3276,8 @@ Schema:
             systemInstruction: systemInstruction,
             prompt: fullPrompt,
             jsonMode: true,
-            temperature: 0.3,
-            maxTokens: 8000
+            temperature: 0.2,
+            maxTokens: 12000
         });
         rawText = aiResponse;
     } catch (err) {
@@ -3286,8 +3287,8 @@ Schema:
                 systemInstruction: systemInstruction,
                 prompt: fullPrompt,
                 jsonMode: true,
-                temperature: 0.3,
-                maxTokens: 8000,
+                temperature: 0.2,
+                maxTokens: 12000,
                 modelOverride: 'apinex' 
         });
             rawText = retryResponse;
@@ -3312,7 +3313,7 @@ Schema:
       }
     }
 
-    if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length >= 1) {
+    if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length >= 3) {
       return res.status(200).json({
         success: true,
         title: parsed.title || userPrompt,

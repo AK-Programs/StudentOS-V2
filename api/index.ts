@@ -1708,169 +1708,6 @@ function repairTruncatedStrokesJson(raw: string): any {
   return null;
 }
 
-function getProceduralMagicPenStrokes(userPrompt: string) {
-  const p = String(userPrompt || '').toLowerCase();
-  
-  // 1. FULL MOUNTAIN RANGE / PEAKS / LANDSCAPE
-  if (p.includes('mountain') || p.includes('mountains') || p.includes('everest') || p.includes('peak') || p.includes('alps') || p.includes('himalaya') || p.includes('landscape') || p.includes('range')) {
-    return {
-      title: 'Mountain Range Diagram (Summit, Ridges & Foothills)',
-      strokes: [
-        { type: 'circle', x: 760, y: 100, radius: 45, color: '#f59e0b', size: 3, fill: '#fbbf24' },
-        { type: 'line', points: [760, 40, 760, 20], color: '#f59e0b', size: 2 },
-        { type: 'line', points: [825, 100, 845, 100], color: '#f59e0b', size: 2 },
-        { type: 'line', points: [805, 55, 820, 40], color: '#f59e0b', size: 2 },
-        { type: 'line', points: [715, 55, 700, 40], color: '#f59e0b', size: 2 },
-        { type: 'curve', points: [100,105, 130,85, 175,90, 205,115, 235,110, 255,130, 225,145, 130,145, 100,130, 100,105], color: '#cbd5e1', size: 2 },
-        { type: 'curve', points: [510,90, 540,70, 580,75, 605,95, 630,90, 645,110, 620,125, 530,125, 510,110, 510,90], color: '#cbd5e1', size: 2 },
-        { type: 'curve', points: [30,340, 130,260, 210,290, 310,210, 400,250, 450,190, 530,240, 620,180, 700,250, 810,290, 870,350], color: '#64748b', size: 2 },
-        { type: 'curve', points: [35,510, 105,380, 185,260, 255,180, 305,240, 365,330, 415,440, 445,510], color: '#475569', size: 4 },
-        { type: 'curve', points: [220,225, 235,240, 245,225, 255,180, 270,215, 285,230, 295,220], color: '#f8fafc', size: 3 },
-        { type: 'ellipse', x: 255, y: 198, width: 44, height: 32, color: '#f8fafc', size: 2, fill: 'transparent' },
-        { type: 'line', points: [255, 180, 275, 320, 295, 450], color: '#334155', size: 2 },
-        { type: 'curve', points: [215,510, 305,360, 385,230, 450,120, 510,210, 580,340, 655,460, 695,510], color: '#334155', size: 5 },
-        { type: 'curve', points: [415,180, 430,200, 440,185, 450,120, 465,175, 480,195, 490,175], color: '#f8fafc', size: 4 },
-        { type: 'ellipse', x: 450, y: 155, width: 62, height: 48, color: '#f8fafc', size: 2, fill: 'transparent' },
-        { type: 'curve', points: [450,120, 460,230, 470,340, 485,460, 490,510], color: '#1e293b', size: 3 },
-        { type: 'line', points: [460, 230, 420, 270], color: '#475569', size: 2 },
-        { type: 'line', points: [470, 320, 410, 370], color: '#475569', size: 2 },
-        { type: 'line', points: [480, 410, 400, 470], color: '#475569', size: 2 },
-        { type: 'curve', points: [475,510, 555,370, 635,240, 710,190, 765,270, 825,370, 875,510], color: '#475569', size: 4 },
-        { type: 'curve', points: [675,235, 690,250, 700,235, 710,190, 725,220, 740,245, 750,230], color: '#f8fafc', size: 3 },
-        { type: 'line', points: [710, 190, 720, 290, 740, 410, 750, 510], color: '#334155', size: 2 },
-        { type: 'curve', points: [20,510, 200,490, 450,505, 700,490, 880,510], color: '#15803d', size: 4 },
-        { type: 'curve', points: [145,510, 150,465, 155,510], color: '#166534', size: 3 },
-        { type: 'curve', points: [175,505, 180,455, 185,505], color: '#14532d', size: 3 },
-        { type: 'curve', points: [225,508, 230,460, 235,508], color: '#166534', size: 3 },
-        { type: 'curve', points: [615,505, 620,455, 625,505], color: '#166534', size: 3 },
-        { type: 'curve', points: [665,508, 670,460, 675,508], color: '#14532d', size: 3 },
-        { type: 'curve', points: [725,510, 730,465, 735,510], color: '#166534', size: 3 },
-        { type: 'curve', points: [470,505, 460,530, 475,555, 455,585, 480,600], color: '#38bdf8', size: 4 },
-        { type: 'arrow', points: [330, 75, 435, 115], color: '#94a3b8', size: 1.5 },
-        { type: 'label', x: 180, y: 70, text: 'Snowcapped Summit', color: '#f8fafc', size: 12 },
-        { type: 'arrow', points: [600, 210, 520, 230], color: '#94a3b8', size: 1.5 },
-        { type: 'label', x: 610, y: 205, text: 'Mountain Ridge / Arête', color: '#cbd5e1', size: 12 },
-        { type: 'arrow', points: [310, 565, 440, 560], color: '#94a3b8', size: 1.5 },
-        { type: 'label', x: 165, y: 560, text: 'Alpine Valley & River', color: '#38bdf8', size: 12 },
-        { type: 'arrow', points: [780, 460, 690, 480], color: '#94a3b8', size: 1.5 },
-        { type: 'label', x: 790, y: 455, text: 'Treeline Foothills', color: '#4ade80', size: 12 }
-      ]
-    };
-  }
-
-  // 2. TREE / FOREST / OAK
-  if (p.includes('tree') || p.includes('oak') || p.includes('forest') || (p.includes('plant') && !p.includes('cell'))) {
-    return {
-      title: 'Tree Diagram (Trunk, Branches & Canopy)',
-      strokes: [
-        { type: 'curve', points: [100,520, 250,510, 450,525, 650,515, 800,520], color: '#65a30d', size: 3 },
-        { type: 'curve', points: [390,520, 405,440, 418,360, 425,300], color: '#78350f', size: 5 },
-        { type: 'curve', points: [510,520, 495,440, 482,360, 475,300], color: '#78350f', size: 5 },
-        { type: 'curve', points: [435,510, 442,430, 448,340], color: '#92400e', size: 2 },
-        { type: 'curve', points: [465,510, 460,430, 455,340], color: '#92400e', size: 2 },
-        { type: 'curve', points: [430,330, 370,270, 310,240], color: '#78350f', size: 4 },
-        { type: 'curve', points: [470,330, 530,270, 590,240], color: '#78350f', size: 4 },
-        { type: 'curve', points: [450,320, 450,250, 440,190], color: '#78350f', size: 3 },
-        { type: 'curve', points: [250,280, 230,200, 290,130, 380,100, 450,90, 530,100, 620,130, 670,200, 650,280, 600,330, 520,350, 450,360, 370,350, 300,330, 250,280], color: '#16a34a', size: 4 },
-        { type: 'ellipse', x: 450, y: 220, width: 380, height: 230, color: '#22c55e', size: 3, fill: 'transparent' },
-        { type: 'ellipse', x: 340, y: 190, width: 190, height: 140, color: '#4ade80', size: 2, fill: 'transparent' },
-        { type: 'ellipse', x: 560, y: 190, width: 190, height: 140, color: '#4ade80', size: 2, fill: 'transparent' },
-        { type: 'ellipse', x: 450, y: 150, width: 220, height: 130, color: '#15803d', size: 2, fill: 'transparent' },
-        { type: 'arrow', points: [690, 115, 610, 150], color: '#94a3b8', size: 1.5 },
-        { type: 'label', x: 700, y: 110, text: 'Foliage Canopy', color: '#4ade80', size: 12 },
-        { type: 'arrow', points: [690, 240, 580, 240], color: '#94a3b8', size: 1.5 },
-        { type: 'label', x: 700, y: 235, text: 'Branches & Twigs', color: '#86efac', size: 12 },
-        { type: 'arrow', points: [640, 430, 500, 430], color: '#94a3b8', size: 1.5 },
-        { type: 'label', x: 650, y: 425, text: 'Trunk (Wood & Bark)', color: '#fbbf24', size: 12 },
-        { type: 'arrow', points: [640, 525, 480, 525], color: '#94a3b8', size: 1.5 },
-        { type: 'label', x: 650, y: 520, text: 'Roots System (Soil)', color: '#a3e635', size: 12 }
-      ]
-    };
-  }
-  
-  // 3. PLANT CELL (ONLY IF CELL WAS EXPLICITLY REQUESTED)
-  if (p.includes('cell')) {
-    return {
-      title: 'Plant Cell Diagram',
-      strokes: [
-        { type: 'curve', points: [180,120, 450,100, 720,120, 760,280, 740,460, 450,480, 180,460, 140,280, 180,120], color: '#22c55e', size: 4 },
-        { type: 'curve', points: [195,135, 450,115, 705,135, 742,280, 725,445, 450,465, 195,445, 158,280, 195,135], color: '#10b981', size: 2 },
-        { type: 'ellipse', x: 440, y: 290, width: 240, height: 180, color: '#38bdf8', size: 2, fill: 'transparent' },
-        { type: 'ellipse', x: 270, y: 230, width: 95, height: 85, color: '#a855f7', size: 2, fill: 'transparent' },
-        { type: 'circle', x: 270, y: 230, radius: 16, color: '#c084fc', size: 2, fill: '#c084fc' },
-        { type: 'ellipse', x: 570, y: 190, width: 50, height: 32, color: '#84cc16', size: 2, fill: 'transparent' },
-        { type: 'ellipse', x: 580, y: 390, width: 52, height: 34, color: '#84cc16', size: 2, fill: 'transparent' },
-        { type: 'ellipse', x: 310, y: 410, width: 48, height: 30, color: '#84cc16', size: 2, fill: 'transparent' },
-        { type: 'ellipse', x: 240, y: 340, width: 42, height: 24, color: '#f97316', size: 2, fill: 'transparent' },
-        { type: 'ellipse', x: 460, y: 430, width: 44, height: 26, color: '#f97316', size: 2, fill: 'transparent' },
-        { type: 'curve', points: [370,170, 390,165, 410,172, 425,168], color: '#ec4899', size: 2 },
-        { type: 'curve', points: [368,178, 388,173, 408,180, 423,176], color: '#ec4899', size: 2 },
-        { type: 'arrow', points: [100, 90, 180, 120], color: '#94a3b8', size: 1.5 },
-        { type: 'arrow', points: [100, 160, 195, 155], color: '#94a3b8', size: 1.5 },
-        { type: 'arrow', points: [130, 230, 220, 230], color: '#94a3b8', size: 1.5 },
-        { type: 'arrow', points: [440, 60, 440, 200], color: '#94a3b8', size: 1.5 },
-        { type: 'arrow', points: [790, 170, 600, 190], color: '#94a3b8', size: 1.5 },
-        { type: 'arrow', points: [790, 390, 610, 390], color: '#94a3b8', size: 1.5 },
-        { type: 'arrow', points: [130, 340, 215, 340], color: '#94a3b8', size: 1.5 },
-        { type: 'label', x: 20, y: 85, text: 'Cell Wall', color: '#f8fafc', size: 12 },
-        { type: 'label', x: 20, y: 155, text: 'Cell Membrane', color: '#f8fafc', size: 12 },
-        { type: 'label', x: 50, y: 225, text: 'Side Nucleus', color: '#f8fafc', size: 12 },
-        { type: 'label', x: 400, y: 40, text: 'Central Vacuole', color: '#f8fafc', size: 12 },
-        { type: 'label', x: 800, y: 165, text: 'Chloroplast', color: '#f8fafc', size: 12 },
-        { type: 'label', x: 800, y: 385, text: 'Chloroplast', color: '#f8fafc', size: 12 },
-        { type: 'label', x: 30, y: 335, text: 'Mitochondria', color: '#f8fafc', size: 12 }
-      ]
-    };
-  }
-
-  // 4. ATOM / PHYSICS
-  if (p.includes('atom') || p.includes('electron') || p.includes('bohr')) {
-    return {
-      title: 'Atomic Structure Diagram',
-      strokes: [
-        { type: 'circle', x: 450, y: 300, radius: 45, color: '#f43f5e', size: 3, fill: '#fda4af' },
-        { type: 'circle', x: 440, y: 290, radius: 14, color: '#fbbf24', size: 2, fill: '#fbbf24' },
-        { type: 'circle', x: 465, y: 310, radius: 14, color: '#f43f5e', size: 2, fill: '#f43f5e' },
-        { type: 'ellipse', x: 450, y: 300, width: 380, height: 160, color: '#38bdf8', size: 2, fill: 'transparent' },
-        { type: 'ellipse', x: 450, y: 300, width: 160, height: 380, color: '#818cf8', size: 2, fill: 'transparent' },
-        { type: 'ellipse', x: 450, y: 300, width: 300, height: 300, color: '#34d399', size: 2, fill: 'transparent' },
-        { type: 'circle', x: 260, y: 300, radius: 9, color: '#38bdf8', size: 2, fill: '#38bdf8' },
-        { type: 'circle', x: 450, y: 110, radius: 9, color: '#818cf8', size: 2, fill: '#818cf8' },
-        { type: 'circle', x: 600, y: 405, radius: 9, color: '#34d399', size: 2, fill: '#34d399' },
-        { type: 'arrow', points: [660, 200, 480, 280], color: '#94a3b8', size: 1.5 },
-        { type: 'label', x: 670, y: 195, text: 'Nucleus (Protons & Neutrons)', color: '#f43f5e', size: 12 },
-        { type: 'arrow', points: [660, 405, 615, 405], color: '#94a3b8', size: 1.5 },
-        { type: 'label', x: 670, y: 400, text: 'Electrons in Orbital Shell', color: '#38bdf8', size: 12 }
-      ]
-    };
-  }
-
-  // 5. SOLAR SYSTEM / SPACE
-  if (p.includes('solar') || p.includes('planet') || p.includes('space') || p.includes('orbit')) {
-    return {
-      title: 'Solar System Diagram',
-      strokes: [
-        { type: 'circle', x: 120, y: 300, radius: 85, color: '#f59e0b', size: 4, fill: '#fbbf24' },
-        { type: 'ellipse', x: 120, y: 300, width: 340, height: 260, color: '#475569', size: 1.5, fill: 'transparent' },
-        { type: 'ellipse', x: 120, y: 300, width: 560, height: 420, color: '#475569', size: 1.5, fill: 'transparent' },
-        { type: 'ellipse', x: 120, y: 300, width: 820, height: 540, color: '#475569', size: 1.5, fill: 'transparent' },
-        { type: 'circle', x: 290, y: 300, radius: 14, color: '#94a3b8', size: 2, fill: '#94a3b8' },
-        { type: 'circle', x: 400, y: 300, radius: 24, color: '#38bdf8', size: 2, fill: '#38bdf8' },
-        { type: 'circle', x: 530, y: 300, radius: 40, color: '#fb923c', size: 3, fill: '#f97316' },
-        { type: 'ellipse', x: 530, y: 300, width: 110, height: 35, color: '#fed7aa', size: 2, fill: 'transparent' },
-        { type: 'arrow', points: [120, 180, 120, 220], color: '#94a3b8', size: 1.5 },
-        { type: 'label', x: 90, y: 165, text: 'The Sun', color: '#fbbf24', size: 12 },
-        { type: 'arrow', points: [400, 240, 400, 275], color: '#94a3b8', size: 1.5 },
-        { type: 'label', x: 380, y: 225, text: 'Earth', color: '#38bdf8', size: 12 },
-        { type: 'arrow', points: [530, 220, 530, 260], color: '#94a3b8', size: 1.5 },
-        { type: 'label', x: 500, y: 205, text: 'Saturn (Planetary Ring)', color: '#fb923c', size: 12 }
-      ]
-    };
-  }
-
-  // 6. GENERAL SCHEMATIC REMOVED
-}
-
   // 2.5 Magic Draw / Magic Pen endpoint
   if (pathname === '/api/ai/magic-draw' || pathname === '/api/ai/magic-draw/') {
     const body = await parseJsonBody(req);
@@ -1879,38 +1716,31 @@ function getProceduralMagicPenStrokes(userPrompt: string) {
       return sendJson(res, 400, { success: false, error: 'Prompt is required', requestId });
     }
 
-    const systemInstruction = `You are a world-class vector illustrator for an educational whiteboard.
-Generate an accurate, highly detailed, and COMPLETELY FINISHED vector drawing for the user's prompt: "${userPrompt}".
+    const systemInstruction = `You are an expert vector illustrator for an educational whiteboard.
+Generate an accurate, recognizable, and COMPLETELY FINISHED vector drawing for the user's prompt: "${userPrompt}".
+Coordinates MUST stay inside 900x600 canvas (x: 50 to 850, y: 50 to 550).
 
-Output Format:
-You MUST return ONLY valid JSON matching this exact schema:
+STRICT ACCURACY RULES:
+1. DRAW THE EXACT REQUESTED SUBJECT. If asked for a Dragon, it must look like a dragon (horns, snout, wings with membrane ribs, clawed legs, curved serpentine tail, scales). If a Bicycle, it must look like a bicycle (two round wheels with spokes, diamond frame tubes, handlebars, pedals, saddle). If a Tree, draw bark trunk, branching limbs, lush leafy canopy clusters, and roots.
+2. PREFER CURVE STROKES OVER STRAIGHT LINES: Use smooth curves with sufficient coordinate points [x1, y1, x2, y2, x3, y3, ...] to form realistic organic shapes. Never stop at 3 basic circles or a plain rectangle. Use 20 to 50 detailed strokes to make the drawing complete and impressive.
+3. LABELS: If you include labels, keep them small (size 10 to 12) and place them directly near or with a small arrow pointing to the exact part they name.
+4. If you cannot draw the requested object accurately, return {"success": false, "error": "Could not draw that"}. Do not draw an arbitrary or unrelated shape.
+5. Return ONLY valid JSON.
+
+Schema:
 {
   "title": "Clear Descriptive Title",
   "strokes": [
     { "type": "curve", "points": [x1, y1, x2, y2, ...], "color": "#hex", "size": 3 },
     { "type": "line", "points": [x1, y1, x2, y2], "color": "#hex", "size": 2 },
-    { "type": "circle", "x": center_x, "y": center_y, "radius": r, "color": "#hex", "size": 2, "fill": "#hex" },
+    { "type": "circle", "x": center_x, "y": center_y, "radius": r, "color": "#hex", "size": 2, "fill": "transparent" },
     { "type": "ellipse", "x": center_x, "y": center_y, "width": w, "height": h, "color": "#hex", "size": 2, "fill": "transparent" },
-    { "type": "rect", "x": x, "y": y, "width": w, "height": h, "color": "#hex", "size": 2, "fill": "transparent" },
     { "type": "arrow", "points": [x1, y1, x2, y2], "color": "#hex", "size": 1.5 },
-    { "type": "label", "x": x, "y": y, "text": "Label Text", "color": "#hex", "size": 16 }
+    { "type": "label", "x": x, "y": y, "text": "Part Label", "color": "#hex", "size": 11 }
   ]
-}
+}`;
 
-CRITICAL CANVAS & DRAWING RULES:
-1. Coordinates MUST stay inside 900x600 canvas (x: 50 to 850, y: 50 to 550).
-2. DRAW THE REAL COMPLETE OBJECT WITH ALL NECESSARY STROKES:
-   - Rocket: pointed nose cone, cylindrical fuselage body, side stabilizer fins, thruster nozzle at base, orange/yellow exhaust flame, porthole window, and descriptive labels ("Nose Cone", "Fuselage", "Fin", "Flame").
-   - Bicycle: two wheels (circles with spokes), full diamond frame (chain stay, seat tube, down tube, top tube), seat, handlebars, pedals, and labels ("Wheel", "Frame", "Handlebars", "Pedal").
-   - Helicopter: cabin body, main rotor blades, tail boom, tail rotor, landing skids, labels ("Main Rotor", "Cabin", "Tail Rotor", "Skids").
-   - Earth: ocean sphere circle, detailed continent curves, equator line, labels ("Ocean", "Continent", "Equator").
-   - Door: outer frame, inner door panel, door handle knob, hinges, labels ("Frame", "Panel", "Handle").
-3. Use as many strokes as the object needs to be visually complete and accurate.
-4. LABELS: Every major part MUST have a "label" and an "arrow" pointing to it. Place the label text OUTSIDE the object's body. The arrow's end point MUST touch the part it names.
-5. Colors should be clean, vibrant, and educational (e.g. #3b82f6 for sky/water, #ef4444 for accents/red, #22c55e for green, #f59e0b for yellow).
-6. Return ONLY the JSON object. Do not include markdown or conversational explanations.`;
-
-    const fullPrompt = `Generate complete vector drawing JSON commands with all detailed parts and labels for: "${userPrompt}"`;
+    const fullPrompt = `Generate complete detailed vector drawing JSON strokes for: "${userPrompt}"`;
 
     const parseStrokesFromText = (rawText: string) => {
       if (!rawText) return null;
@@ -1935,25 +1765,6 @@ CRITICAL CANVAS & DRAWING RULES:
       return null;
     };
 
-    const checkCompleteness = (prompt: string, strokes: any[]) => {
-      const lowerPrompt = prompt.toLowerCase();
-      const labels = strokes.filter(s => s.type === 'label').map(s => String(s.text || '').toLowerCase());
-      
-      if (lowerPrompt.includes('rocket')) {
-        const mandatory = ['nose', 'body', 'fin', 'flame'];
-        return mandatory.every(m => labels.some(l => l.includes(m)));
-      }
-      if (lowerPrompt.includes('bicycle')) {
-        const mandatory = ['wheel', 'frame', 'handle'];
-        return mandatory.every(m => labels.some(l => l.includes(m)));
-      }
-      if (lowerPrompt.includes('helicopter')) {
-        const mandatory = ['rotor', 'cabin', 'tail'];
-        return mandatory.every(m => labels.some(l => l.includes(m)));
-      }
-      return strokes.length >= 15; // General fallback for other objects
-    };
-
     try {
       const resResult = await callRoutedCompletion(
         fullPrompt,
@@ -1963,40 +1774,15 @@ CRITICAL CANVAS & DRAWING RULES:
           taskType: 'fast',
           modelOverride: 'apinex',
           jsonMode: true,
-          maxTokens: 4096,
+          maxTokens: 8192,
           requestId
         }
       );
 
       const rawText = resResult?.text || '';
-      let parsed = parseStrokesFromText(rawText);
+      const parsed = parseStrokesFromText(rawText);
 
-      // Elaboration pass if mandatory parts are missing or strokes are insufficient
-      if (parsed && Array.isArray(parsed.strokes) && !checkCompleteness(userPrompt, parsed.strokes)) {
-        try {
-          const retryPrompt = `The vector drawing for "${userPrompt}" is missing some labels or key parts. Add the missing elements (e.g. Nose Cone, Fins, Handles, or specific labels). Return full JSON with ALL combined strokes for "${userPrompt}". Ensure every label has an arrow touching the part.`;
-          const retryResult = await callRoutedCompletion(
-            retryPrompt,
-            systemInstruction,
-            [],
-            {
-              taskType: 'fast',
-              modelOverride: 'apinex',
-              jsonMode: true,
-              maxTokens: 4096,
-              requestId
-            }
-          );
-          const retryParsed = parseStrokesFromText(retryResult?.text || '');
-          if (retryParsed && Array.isArray(retryParsed.strokes) && retryParsed.strokes.length >= parsed.strokes.length) {
-            parsed = retryParsed;
-          }
-        } catch (retryErr) {
-          console.warn('[Magic Draw Elaboration Pass] Optional pass skipped:', retryErr);
-        }
-      }
-
-      if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length >= 1) {
+      if (parsed && Array.isArray(parsed.strokes) && parsed.strokes.length >= 3) {
         return sendJson(res, 200, {
           success: true,
           title: parsed.title || userPrompt,
@@ -2009,14 +1795,14 @@ CRITICAL CANVAS & DRAWING RULES:
 
       return sendJson(res, 200, {
         success: false,
-        error: rawText ? `Failed to parse AI strokes: ${rawText.slice(0, 500)}` : 'Model returned empty response',
+        error: 'Could not draw that',
         requestId
       });
     } catch (mErr: any) {
       console.error('[Magic Draw AI Error]', mErr);
       return sendJson(res, 200, {
         success: false,
-        error: mErr?.message || 'Drawing failed',
+        error: 'Could not draw that',
         requestId
       });
     }

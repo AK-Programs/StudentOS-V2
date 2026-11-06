@@ -304,3 +304,63 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN
     NULL;
 END $$;
+
+-- ------------------------------------------------------------------------
+-- 6. FEEDBACK POSTS TABLE: PERSISTENT CAMPUS BOARD
+-- ------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.feedback_posts (
+    id TEXT PRIMARY KEY,
+    title TEXT,
+    text TEXT NOT NULL,
+    category TEXT DEFAULT 'academic',
+    author TEXT NOT NULL,
+    author_id TEXT,
+    role TEXT DEFAULT 'student',
+    status TEXT DEFAULT 'open', -- 'open', 'planned', 'done'
+    votes INTEGER DEFAULT 0,
+    upvoted_by TEXT[] DEFAULT '{}',
+    replies JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_status ON public.feedback_posts(status);
+CREATE INDEX IF NOT EXISTS idx_feedback_category ON public.feedback_posts(category);
+CREATE INDEX IF NOT EXISTS idx_feedback_created_at ON public.feedback_posts(created_at DESC);
+
+ALTER TABLE public.feedback_posts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anyone can read feedback posts" ON public.feedback_posts;
+CREATE POLICY "Anyone can read feedback posts" ON public.feedback_posts FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Authenticated users can insert feedback" ON public.feedback_posts;
+CREATE POLICY "Authenticated users can insert feedback" ON public.feedback_posts FOR INSERT WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Users and staff can update feedback" ON public.feedback_posts;
+CREATE POLICY "Users and staff can update feedback" ON public.feedback_posts FOR UPDATE USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Staff can delete feedback" ON public.feedback_posts;
+CREATE POLICY "Staff can delete feedback" ON public.feedback_posts FOR DELETE USING (true);
+
+-- ------------------------------------------------------------------------
+-- 7. PANEL DEVICES TABLE: CLASSROOM SMART BOARD BINDING
+-- ------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.panel_devices (
+    device_key TEXT PRIMARY KEY,
+    device_name TEXT,
+    grade TEXT NOT NULL,
+    section TEXT NOT NULL,
+    school TEXT DEFAULT 'Oakridge International Academy',
+    assigned_by TEXT,
+    assigned_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_ping TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    settings JSONB DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_panel_devices_grade_sec ON public.panel_devices(grade, section);
+
+ALTER TABLE public.panel_devices ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Panel devices full access" ON public.panel_devices;
+CREATE POLICY "Panel devices full access" ON public.panel_devices FOR ALL USING (true) WITH CHECK (true);
+

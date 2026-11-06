@@ -12,7 +12,7 @@ interface FeedbackBoardProps {
   feedbackPosts: FeedbackPost[];
   handleAddFeedback: (newPost: Omit<FeedbackPost, 'id' | 'votes' | 'status' | 'replies' | 'createdAt'>) => void;
   upvoteFeedback: (id: string) => void;
-  handleFacultyStatusUpdate: (id: string, status: 'pending' | 'under-review' | 'in-progress' | 'solved') => void;
+  handleFacultyStatusUpdate: (id: string, status: FeedbackPost['status']) => void;
   handleAddReply?: (postId: string, replyText: string) => void;
 }
 
@@ -44,7 +44,10 @@ export const FeedbackBoard: React.FC<FeedbackBoardProps> = ({
   // Filter posts based on category, status, and search query
   const filteredPosts = feedbackPosts.filter(post => {
     const matchesCategory = activeCategory === 'all' || post.category === activeCategory;
-    const matchesStatus = statusFilter === 'all' || post.status === statusFilter;
+    const matchesStatus = statusFilter === 'all' || post.status === statusFilter ||
+      (statusFilter === 'open' && (post.status === 'open' || post.status === 'pending')) ||
+      (statusFilter === 'planned' && (post.status === 'planned' || post.status === 'in-progress' || post.status === 'under-review')) ||
+      (statusFilter === 'done' && (post.status === 'done' || post.status === 'solved'));
     const matchesSearch = 
       post.text.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (post.title && post.title.toLowerCase().includes(searchQuery.toLowerCase())) ||
@@ -57,7 +60,7 @@ export const FeedbackBoard: React.FC<FeedbackBoardProps> = ({
     if (!newText.trim()) return;
 
     handleAddFeedback({
-      author: currentUser?.name || 'StudentOS User',
+      author: currentUser?.name || 'Veylentra Member',
       role: effectiveRole || 'student',
       category: newCategory,
       title: newTitle.trim() || undefined,
@@ -94,14 +97,17 @@ export const FeedbackBoard: React.FC<FeedbackBoardProps> = ({
 
   const getStatusBadge = (status: FeedbackPost['status']) => {
     switch (status) {
+      case 'done':
       case 'solved':
-        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"><CheckCircle2 size={13} /> Solved</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"><CheckCircle2 size={13} /> Done</span>;
+      case 'planned':
       case 'in-progress':
-        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30"><Clock size={13} /> In Progress</span>;
       case 'under-review':
-        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30"><Sparkles size={13} /> Under Review</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30"><Clock size={13} /> Planned</span>;
+      case 'open':
+      case 'pending':
       default:
-        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700"><AlertCircle size={13} /> Pending</span>;
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-sky-500/15 text-sky-400 border border-sky-500/30"><AlertCircle size={13} /> Open</span>;
     }
   };
 
@@ -184,10 +190,9 @@ export const FeedbackBoard: React.FC<FeedbackBoardProps> = ({
             className="px-3 py-2 text-xs rounded-xl bg-slate-950/80 border border-white/10 text-white focus:outline-none focus:border-indigo-500"
           >
             <option value="all">All Statuses</option>
-            <option value="pending">Pending</option>
-            <option value="under-review">Under Review</option>
-            <option value="in-progress">In Progress</option>
-            <option value="solved">Solved</option>
+            <option value="open">Open</option>
+            <option value="planned">Planned</option>
+            <option value="done">Done</option>
           </select>
         </div>
       </div>
@@ -274,30 +279,30 @@ export const FeedbackBoard: React.FC<FeedbackBoardProps> = ({
                     {/* Staff Status Controls */}
                     {isStaff && (
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-[11px] text-slate-400 font-medium mr-1">Staff Action:</span>
+                        <span className="text-[11px] text-slate-400 font-medium mr-1">Status:</span>
                         <button
-                          onClick={() => handleFacultyStatusUpdate(post.id, 'under-review')}
+                          onClick={() => handleFacultyStatusUpdate(post.id, 'open')}
                           className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-                            post.status === 'under-review' ? 'bg-indigo-500 text-white' : 'bg-white/5 text-slate-400 hover:text-white'
+                            post.status === 'open' || post.status === 'pending' ? 'bg-sky-500 text-white shadow-sm' : 'bg-white/5 text-slate-400 hover:text-white'
                           }`}
                         >
-                          Review
+                          Open
                         </button>
                         <button
-                          onClick={() => handleFacultyStatusUpdate(post.id, 'in-progress')}
+                          onClick={() => handleFacultyStatusUpdate(post.id, 'planned')}
                           className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-                            post.status === 'in-progress' ? 'bg-amber-500 text-slate-950 font-bold' : 'bg-white/5 text-slate-400 hover:text-white'
+                            post.status === 'planned' || post.status === 'in-progress' || post.status === 'under-review' ? 'bg-amber-500 text-slate-950 font-bold shadow-sm' : 'bg-white/5 text-slate-400 hover:text-white'
                           }`}
                         >
-                          In Progress
+                          Planned
                         </button>
                         <button
-                          onClick={() => handleFacultyStatusUpdate(post.id, 'solved')}
+                          onClick={() => handleFacultyStatusUpdate(post.id, 'done')}
                           className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-                            post.status === 'solved' ? 'bg-emerald-500 text-slate-950 font-bold' : 'bg-white/5 text-slate-400 hover:text-white'
+                            post.status === 'done' || post.status === 'solved' ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm' : 'bg-white/5 text-slate-400 hover:text-white'
                           }`}
                         >
-                          Solve
+                          Done
                         </button>
                       </div>
                     )}

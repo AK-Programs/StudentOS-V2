@@ -876,8 +876,8 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             }
           });
         } else if (stroke.type === 'label' || stroke.type === 'text') {
-          const rawSize = stroke.size || 12;
-          const cappedSize = Math.max(11, Math.min(16, rawSize));
+          const rawSize = stroke.size || 11;
+          const cappedSize = Math.max(10, Math.min(13, rawSize));
           drawItems.push({
             kind: 'shape',
             data: {

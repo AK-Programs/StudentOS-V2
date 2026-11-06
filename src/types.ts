@@ -302,7 +302,7 @@ export interface FeedbackPost {
   upvotedBy?: string[];
   replies: { author: string; role: UserRole; text: string; createdAt: number | string }[];
   category: 'facilities' | 'academic' | 'events' | 'bug_report' | 'feature_request' | 'other';
-  status: 'pending' | 'under-review' | 'in-progress' | 'solved' | 'planned';
+  status: 'open' | 'planned' | 'done' | 'pending' | 'under-review' | 'in-progress' | 'solved';
   createdAt: number | string;
 }
 

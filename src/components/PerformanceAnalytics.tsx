@@ -1,3 +1,16 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ * 
+ * Veylentra Performance Analytics Engine
+ * Role-separated live Supabase charts and academic operations:
+ * - Student: Marks bar chart, attendance trend line, recent test scores list
+ * - Teacher: Class average by subject, section attendance, low/high performers
+ * - Admin: School attendance trend, grade distribution, class comparison
+ * - Sub-tabs: Overview, Gradebook, Report Cards, Attendance
+ * - Clean empty states when database tables have no records
+ */
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { UserProfile, UserRole, GradebookEntry, GradebookAssessment, ReportCard } from '../types';
 import { supabase } from '../lib/supabase';
@@ -6,8 +19,22 @@ import DigitalReportCards from './DigitalReportCards';
 import { 
   BarChart3, BookOpen, FileText, CalendarCheck, TrendingUp, Award, 
   CheckCircle2, AlertTriangle, Sparkles, PieChart, Users, ArrowUpRight,
-  Shield, Layers, Clock, Star, RefreshCw
+  Shield, Layers, Clock, Star, RefreshCw, ChevronRight, School, UserCheck, Flame
 } from 'lucide-react';
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  Cell
+} from 'recharts';
 
 interface PerformanceAnalyticsProps {
   currentUser: UserProfile;
@@ -15,7 +42,21 @@ interface PerformanceAnalyticsProps {
   initialSubTab?: 'overview' | 'gradebook' | 'report_cards' | 'attendance';
 }
 
-export default function PerformanceAnalytics({ currentUser, effectiveRole = 'student', initialSubTab = 'overview' }: PerformanceAnalyticsProps) {
+const CUSTOM_TOOLTIP_STYLE = {
+  backgroundColor: '#0f172a',
+  borderColor: '#334155',
+  borderRadius: '12px',
+  color: '#f8fafc',
+  fontSize: '11px',
+  padding: '8px 12px',
+  boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5)'
+};
+
+export default function PerformanceAnalytics({ 
+  currentUser, 
+  effectiveRole = 'student', 
+  initialSubTab = 'overview' 
+}: PerformanceAnalyticsProps) {
   const [subTab, setSubTab] = useState<'overview' | 'gradebook' | 'report_cards' | 'attendance'>(initialSubTab);
   const [loading, setLoading] = useState(true);
   const [gradeEntries, setGradeEntries] = useState<GradebookEntry[]>([]);
@@ -39,7 +80,8 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
           const { data: entriesData } = await supabase
             .from('gradebook_entries')
             .select('*')
-            .eq('student_id', currentUser.uid);
+            .eq('student_id', currentUser.uid)
+            .order('updated_at', { ascending: false });
 
           const mappedEntries: GradebookEntry[] = (entriesData || []).map((e: any) => ({
             id: e.id,
@@ -69,7 +111,8 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
           const { data: attData } = await supabase
             .from('attendance')
             .select('*')
-            .eq('user_id', currentUser.uid);
+            .eq('user_id', currentUser.uid)
+            .order('date', { ascending: true });
 
           setAttendanceRecords(attData || []);
         }
@@ -85,7 +128,7 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
         const { data: allEntries } = await supabase
           .from('gradebook_entries')
           .select('*')
-          .limit(200);
+          .limit(300);
 
         setGradeEntries((allEntries || []).map((e: any) => ({
           id: e.id,
@@ -110,7 +153,8 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
         const { data: allAtt } = await supabase
           .from('attendance')
           .select('*')
-          .limit(300);
+          .order('date', { ascending: true })
+          .limit(500);
 
         setAttendanceRecords(allAtt || []);
 
@@ -135,8 +179,8 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
   // Derived Performance Metrics
   const metrics = useMemo(() => {
     if (isStudent) {
-      let totalScore = gradeEntries.reduce((acc, e) => acc + (e.score || 0), 0);
-      let totalMax = gradeEntries.reduce((acc, e) => acc + (e.maxScore || 100), 0);
+      const totalScore = gradeEntries.reduce((acc, e) => acc + (e.score || 0), 0);
+      const totalMax = gradeEntries.reduce((acc, e) => acc + (e.maxScore || 100), 0);
       let overallAvg = totalMax > 0 ? Math.round((totalScore / totalMax) * 100) : 0;
       let gpa = parseFloat(((overallAvg / 100) * 4).toFixed(2));
       let letter = computeLetterGrade(overallAvg);
@@ -260,6 +304,167 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
     }
   }, [gradeEntries, assessments, reportCards, attendanceRecords, isStudent, allStudentsCount]);
 
+  // ---------------------------------------------------------
+  // STUDENT SPECIFIC DATA FOR RECHARTS
+  // ---------------------------------------------------------
+  const studentMarksChartData = useMemo(() => {
+    if (metrics.subjects.length > 0) {
+      return metrics.subjects.map(s => ({
+        subject: s.name,
+        score: s.percentage,
+        letter: s.letter
+      }));
+    }
+    return [];
+  }, [metrics.subjects]);
+
+  const studentAttendanceTrendData = useMemo(() => {
+    if (!attendanceRecords || attendanceRecords.length === 0) return [];
+    // Group records into chronological buckets (e.g. by week or day)
+    const grouped: Record<string, { present: number; total: number }> = {};
+    attendanceRecords.forEach(a => {
+      const d = a.date ? a.date.slice(5) : 'Day'; // MM-DD
+      if (!grouped[d]) grouped[d] = { present: 0, total: 0 };
+      grouped[d].total += 1;
+      if (a.status === 'present' || a.status === 'late') {
+        grouped[d].present += 1;
+      }
+    });
+    return Object.entries(grouped).map(([date, counts]) => ({
+      date,
+      rate: Math.round((counts.present / counts.total) * 100)
+    })).slice(-10); // Last 10 records
+  }, [attendanceRecords]);
+
+  const studentRecentTestScores = useMemo(() => {
+    return gradeEntries.slice(0, 5);
+  }, [gradeEntries]);
+
+  // ---------------------------------------------------------
+  // TEACHER SPECIFIC DATA FOR RECHARTS
+  // ---------------------------------------------------------
+  const teacherClassAverageBySubject = useMemo(() => {
+    return metrics.subjects.map(s => ({
+      subject: s.name,
+      average: s.percentage,
+      letter: s.letter
+    }));
+  }, [metrics.subjects]);
+
+  const teacherSectionAttendanceData = useMemo(() => {
+    const sections = ['Astra', 'Elera', 'Solara', 'Vega'];
+    const sectionMap: Record<string, { present: number; total: number }> = {};
+    sections.forEach(sec => {
+      sectionMap[sec] = { present: 0, total: 0 };
+    });
+
+    attendanceRecords.forEach(a => {
+      const sec = a.section || 'Astra';
+      if (!sectionMap[sec]) sectionMap[sec] = { present: 0, total: 0 };
+      sectionMap[sec].total += 1;
+      if (a.status === 'present' || a.status === 'late') {
+        sectionMap[sec].present += 1;
+      }
+    });
+
+    return Object.entries(sectionMap)
+      .filter(([_, data]) => data.total > 0)
+      .map(([section, data]) => ({
+        section,
+        attendanceRate: Math.round((data.present / data.total) * 100)
+      }));
+  }, [attendanceRecords]);
+
+  const teacherPerformerLists = useMemo(() => {
+    const studentAverages: Record<string, { name: string; totalScore: number; totalMax: number }> = {};
+    gradeEntries.forEach(e => {
+      const id = e.studentId || e.studentName || 'Student';
+      if (!studentAverages[id]) {
+        studentAverages[id] = { name: e.studentName || 'Student', totalScore: 0, totalMax: 0 };
+      }
+      studentAverages[id].totalScore += e.score || 0;
+      studentAverages[id].totalMax += e.maxScore || 100;
+    });
+
+    const students = Object.values(studentAverages).map(s => {
+      const pct = s.totalMax > 0 ? Math.round((s.totalScore / s.totalMax) * 100) : 0;
+      return {
+        name: s.name,
+        average: pct,
+        letter: computeLetterGrade(pct)
+      };
+    });
+
+    const highPerformers = students.filter(s => s.average >= 80).sort((a, b) => b.average - a.average).slice(0, 5);
+    const lowPerformers = students.filter(s => s.average < 65).sort((a, b) => a.average - b.average).slice(0, 5);
+
+    return { highPerformers, lowPerformers };
+  }, [gradeEntries]);
+
+  // ---------------------------------------------------------
+  // ADMIN SPECIFIC DATA FOR RECHARTS
+  // ---------------------------------------------------------
+  const adminSchoolAttendanceTrend = useMemo(() => {
+    if (!attendanceRecords || attendanceRecords.length === 0) return [];
+    const dateMap: Record<string, { present: number; total: number }> = {};
+    attendanceRecords.forEach(a => {
+      const d = a.date ? a.date.slice(5) : 'Day';
+      if (!dateMap[d]) dateMap[d] = { present: 0, total: 0 };
+      dateMap[d].total += 1;
+      if (a.status === 'present' || a.status === 'late') {
+        dateMap[d].present += 1;
+      }
+    });
+
+    return Object.entries(dateMap).map(([date, data]) => ({
+      date,
+      presentRate: Math.round((data.present / data.total) * 100)
+    })).slice(-12);
+  }, [attendanceRecords]);
+
+  const adminGradeDistribution = useMemo(() => {
+    const distribution = [
+      { grade: 'A (90-100%)', count: 0, color: '#10b981' },
+      { grade: 'B (80-89%)', count: 0, color: '#6366f1' },
+      { grade: 'C (70-79%)', count: 0, color: '#38bdf8' },
+      { grade: 'D (60-69%)', count: 0, color: '#f59e0b' },
+      { grade: 'F (<60%)', count: 0, color: '#f43f5e' }
+    ];
+
+    gradeEntries.forEach(e => {
+      const pct = e.percentage || 0;
+      if (pct >= 90) distribution[0].count += 1;
+      else if (pct >= 80) distribution[1].count += 1;
+      else if (pct >= 70) distribution[2].count += 1;
+      else if (pct >= 60) distribution[3].count += 1;
+      else distribution[4].count += 1;
+    });
+
+    return distribution;
+  }, [gradeEntries]);
+
+  const adminClassComparison = useMemo(() => {
+    const classMap: Record<string, { totalPct: number; count: number }> = {};
+    const defaultGrades = ['Grade 8', 'Grade 9', 'Grade 10', 'Grade 11', 'Grade 12'];
+    defaultGrades.forEach(g => {
+      classMap[g] = { totalPct: 0, count: 0 };
+    });
+
+    reportCards.forEach((rc: any) => {
+      const g = rc.grade || rc.studentGrade || 'Grade 10';
+      if (!classMap[g]) classMap[g] = { totalPct: 0, count: 0 };
+      classMap[g].totalPct += rc.overallPercentage || rc.overall_percentage || 0;
+      classMap[g].count += 1;
+    });
+
+    return Object.entries(classMap)
+      .filter(([_, d]) => d.count > 0)
+      .map(([className, d]) => ({
+        class: className,
+        average: Math.round(d.totalPct / d.count)
+      }));
+  }, [reportCards]);
+
   return (
     <div className="space-y-6 w-full flex flex-col min-h-0">
       {loading && gradeEntries.length === 0 && (
@@ -328,12 +533,7 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
               }`}
             >
               <BookOpen className="w-4 h-4" />
-              <span className="text-[10px] font-black uppercase tracking-widest">{isStudent ? 'Grades' : 'Gradebook'}</span>
-              {gradeEntries.length > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full bg-indigo-500/30 text-indigo-300 text-[9px] font-mono font-bold border border-indigo-500/20">
-                  {gradeEntries.length}
-                </span>
-              )}
+              <span className="text-[10px] font-black uppercase tracking-widest">Digital Gradebook</span>
             </button>
 
             <button
@@ -345,7 +545,7 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
               }`}
             >
               <FileText className="w-4 h-4" />
-              <span className="text-[10px] font-black uppercase tracking-widest">Reports</span>
+              <span className="text-[10px] font-black uppercase tracking-widest">Report Cards</span>
               {reportCards.length > 0 && (
                 <span className="px-1.5 py-0.5 rounded-full bg-indigo-500/30 text-indigo-300 text-[9px] font-mono font-bold border border-indigo-500/20">
                   {reportCards.length}
@@ -368,7 +568,7 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
         </div>
       </div>
 
-      {/* SUB-TAB 1: OVERVIEW & TRENDS */}
+      {/* SUB-TAB 1: OVERVIEW & ROLE-SPECIFIC REAL GRAPHS */}
       {subTab === 'overview' && (
         <div className="space-y-6">
           {/* Top Quick Metrics Stat Bar */}
@@ -421,6 +621,358 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
               </span>
             </div>
           </div>
+
+          {/* ======================================================== */}
+          {/* 1. STUDENT VIEW: MARKS BAR CHART, ATTENDANCE LINE, RECENT TESTS */}
+          {/* ======================================================== */}
+          {isStudent && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                
+                {/* 1A. Marks Bar Chart */}
+                <div className="p-5 sm:p-6 bg-slate-900/80 border border-white/10 rounded-3xl backdrop-blur-md space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
+                        <BarChart3 className="w-4 h-4 text-indigo-400" />
+                        <span>Subject Marks Evaluation</span>
+                      </h4>
+                      <p className="text-[11px] text-slate-400 mt-0.5">Continuous score percentages by subject</p>
+                    </div>
+                  </div>
+
+                  {studentMarksChartData.length > 0 ? (
+                    <div className="h-64 w-full pt-2">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={studentMarksChartData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} vertical={false} />
+                          <XAxis dataKey="subject" tick={{ fill: '#94a3b8', fontSize: 10 }} angle={-25} textAnchor="end" />
+                          <YAxis domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 10 }} />
+                          <Tooltip contentStyle={CUSTOM_TOOLTIP_STYLE} formatter={(val: any) => [`${val}%`, 'Score']} />
+                          <Bar dataKey="score" radius={[6, 6, 0, 0]}>
+                            {studentMarksChartData.map((entry, index) => (
+                              <Cell 
+                                key={`cell-${index}`} 
+                                fill={entry.score >= 80 ? '#10b981' : entry.score >= 60 ? '#6366f1' : '#f59e0b'} 
+                              />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="h-64 flex flex-col items-center justify-center p-6 text-center rounded-2xl bg-slate-950/40 border border-white/5 space-y-2">
+                      <BarChart3 className="w-8 h-8 text-slate-600" />
+                      <p className="text-xs font-bold text-slate-300">No subject marks recorded yet</p>
+                      <p className="text-[11px] text-slate-500 max-w-xs">Evaluations entered in the Digital Gradebook or Report Cards will automatically display your subject bar chart here.</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* 1B. Attendance Trend Line */}
+                <div className="p-5 sm:p-6 bg-slate-900/80 border border-white/10 rounded-3xl backdrop-blur-md space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
+                        <TrendingUp className="w-4 h-4 text-emerald-400" />
+                        <span>Attendance Trend Line</span>
+                      </h4>
+                      <p className="text-[11px] text-slate-400 mt-0.5">Presence consistency over time</p>
+                    </div>
+                    <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-xl border border-emerald-500/20">
+                      {metrics.attendanceRate}% Overall
+                    </span>
+                  </div>
+
+                  {studentAttendanceTrendData.length > 0 ? (
+                    <div className="h-64 w-full pt-2">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={studentAttendanceTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} vertical={false} />
+                          <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 10 }} />
+                          <YAxis domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 10 }} />
+                          <Tooltip contentStyle={CUSTOM_TOOLTIP_STYLE} formatter={(val: any) => [`${val}%`, 'Presence']} />
+                          <Line type="monotone" dataKey="rate" stroke="#10b981" strokeWidth={3} dot={{ fill: '#10b981', r: 4 }} activeDot={{ r: 6 }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="h-64 flex flex-col items-center justify-center p-6 text-center rounded-2xl bg-slate-950/40 border border-white/5 space-y-2">
+                      <CalendarCheck className="w-8 h-8 text-slate-600" />
+                      <p className="text-xs font-bold text-slate-300">No attendance history logged yet</p>
+                      <p className="text-[11px] text-slate-500 max-w-xs">Check-ins recorded by your teachers in Attendance Manager will plot your live attendance trend line.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 1C. Recent Test Scores Card List */}
+              <div className="p-5 sm:p-6 bg-slate-900/80 border border-white/10 rounded-3xl backdrop-blur-md space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
+                      <Award className="w-4 h-4 text-amber-400" />
+                      <span>Recent Test Scores & Assessments</span>
+                    </h4>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Verified marks recorded in your academic ledger</p>
+                  </div>
+                  <span className="text-xs text-slate-400 font-mono">
+                    {studentRecentTestScores.length} recorded
+                  </span>
+                </div>
+
+                {studentRecentTestScores.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {studentRecentTestScores.map(entry => (
+                      <div key={entry.id} className="p-4 rounded-2xl bg-slate-950/70 border border-white/5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-white truncate">{entry.subject}</span>
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-md ${
+                            (entry.percentage || 0) >= 80 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
+                            (entry.percentage || 0) >= 60 ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' :
+                            'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                          }`}>
+                            Grade {entry.letterGrade || computeLetterGrade(entry.percentage || 0)}
+                          </span>
+                        </div>
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-xl font-mono font-black text-white">
+                            {entry.score} <span className="text-xs text-slate-400 font-normal">/ {entry.maxScore}</span>
+                          </span>
+                          <span className="text-xs font-mono font-bold text-slate-300">
+                            {entry.percentage}%
+                          </span>
+                        </div>
+                        {entry.comment && (
+                          <p className="text-[10px] text-slate-400 italic line-clamp-1">{entry.comment}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-8 text-center rounded-2xl bg-slate-950/40 border border-white/5 space-y-2">
+                    <p className="text-xs text-slate-400 font-medium">No recent test scores found in your profile.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* 2. TEACHER VIEW: CLASS AVG BY SUBJECT, SECTION ATTENDANCE, LOW/HIGH */}
+          {/* ======================================================== */}
+          {isTeacher && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                
+                {/* 2A. Class Average by Subject */}
+                <div className="p-5 sm:p-6 bg-slate-900/80 border border-white/10 rounded-3xl backdrop-blur-md space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
+                        <BookOpen className="w-4 h-4 text-indigo-400" />
+                        <span>Class Average by Subject</span>
+                      </h4>
+                      <p className="text-[11px] text-slate-400 mt-0.5">Cohort score benchmark per discipline</p>
+                    </div>
+                  </div>
+
+                  {teacherClassAverageBySubject.length > 0 ? (
+                    <div className="h-64 w-full pt-2">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={teacherClassAverageBySubject} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} vertical={false} />
+                          <XAxis dataKey="subject" tick={{ fill: '#94a3b8', fontSize: 10 }} angle={-25} textAnchor="end" />
+                          <YAxis domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 10 }} />
+                          <Tooltip contentStyle={CUSTOM_TOOLTIP_STYLE} formatter={(val: any) => [`${val}%`, 'Class Avg']} />
+                          <Bar dataKey="average" fill="#6366f1" radius={[6, 6, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="h-64 flex flex-col items-center justify-center p-6 text-center rounded-2xl bg-slate-950/40 border border-white/5 space-y-2">
+                      <BookOpen className="w-8 h-8 text-slate-600" />
+                      <p className="text-xs font-bold text-slate-300">No subject marks recorded yet</p>
+                      <p className="text-[11px] text-slate-500 max-w-xs">Use Digital Gradebook to record student test scores; class averages will calculate automatically.</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* 2B. Section Attendance */}
+                <div className="p-5 sm:p-6 bg-slate-900/80 border border-white/10 rounded-3xl backdrop-blur-md space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
+                        <CalendarCheck className="w-4 h-4 text-emerald-400" />
+                        <span>Section Attendance Comparison</span>
+                      </h4>
+                      <p className="text-[11px] text-slate-400 mt-0.5">Classroom presence rates across active sections</p>
+                    </div>
+                  </div>
+
+                  {teacherSectionAttendanceData.length > 0 ? (
+                    <div className="h-64 w-full pt-2">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={teacherSectionAttendanceData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} vertical={false} />
+                          <XAxis dataKey="section" tick={{ fill: '#94a3b8', fontSize: 10 }} />
+                          <YAxis domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 10 }} />
+                          <Tooltip contentStyle={CUSTOM_TOOLTIP_STYLE} formatter={(val: any) => [`${val}%`, 'Attendance Rate']} />
+                          <Bar dataKey="attendanceRate" fill="#10b981" radius={[6, 6, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="h-64 flex flex-col items-center justify-center p-6 text-center rounded-2xl bg-slate-950/40 border border-white/5 space-y-2">
+                      <CalendarCheck className="w-8 h-8 text-slate-600" />
+                      <p className="text-xs font-bold text-slate-300">No section attendance history</p>
+                      <p className="text-[11px] text-slate-500 max-w-xs">Mark attendance in Attendance Manager to compare section attendance rates.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 2C. Low / High Performers Split */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* High Performers */}
+                <div className="p-5 sm:p-6 bg-slate-900/80 border border-emerald-500/20 rounded-3xl backdrop-blur-md space-y-3">
+                  <div className="flex items-center gap-2 text-emerald-400">
+                    <Star className="w-4 h-4 fill-emerald-400" />
+                    <h5 className="text-sm font-bold text-white">Top High Performers (&ge; 80%)</h5>
+                  </div>
+                  {teacherPerformerLists.highPerformers.length > 0 ? (
+                    <div className="space-y-2">
+                      {teacherPerformerLists.highPerformers.map((s, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-slate-950/60 border border-white/5">
+                          <span className="text-xs font-bold text-white">{s.name}</span>
+                          <span className="text-xs font-mono font-bold text-emerald-400">{s.average}% &bull; {s.letter}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400 p-4 rounded-xl bg-slate-950/40 text-center">No high-performing students identified yet.</p>
+                  )}
+                </div>
+
+                {/* Scaffolding Needed */}
+                <div className="p-5 sm:p-6 bg-slate-900/80 border border-rose-500/20 rounded-3xl backdrop-blur-md space-y-3">
+                  <div className="flex items-center gap-2 text-rose-400">
+                    <AlertTriangle className="w-4 h-4" />
+                    <h5 className="text-sm font-bold text-white">Needs Scaffolding (&lt; 65%)</h5>
+                  </div>
+                  {teacherPerformerLists.lowPerformers.length > 0 ? (
+                    <div className="space-y-2">
+                      {teacherPerformerLists.lowPerformers.map((s, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-slate-950/60 border border-white/5">
+                          <span className="text-xs font-bold text-white">{s.name}</span>
+                          <span className="text-xs font-mono font-bold text-rose-400">{s.average}% &bull; {s.letter}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400 p-4 rounded-xl bg-slate-950/40 text-center">No students currently in need of critical scaffolding.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* 3. ADMIN VIEW: SCHOOL ATTENDANCE TREND, GRADE DISTRIBUTION, CLASS COMP */}
+          {/* ======================================================== */}
+          {isAdmin && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                
+                {/* 3A. School Attendance Trend */}
+                <div className="p-5 sm:p-6 bg-slate-900/80 border border-white/10 rounded-3xl backdrop-blur-md space-y-4 lg:col-span-1">
+                  <div>
+                    <h4 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4 text-emerald-400" />
+                      <span>School Attendance Trend</span>
+                    </h4>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Schoolwide check-in rate</p>
+                  </div>
+
+                  {adminSchoolAttendanceTrend.length > 0 ? (
+                    <div className="h-60 w-full pt-2">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={adminSchoolAttendanceTrend} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} vertical={false} />
+                          <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 10 }} />
+                          <YAxis domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 10 }} />
+                          <Tooltip contentStyle={CUSTOM_TOOLTIP_STYLE} formatter={(val: any) => [`${val}%`, 'Presence']} />
+                          <Area type="monotone" dataKey="presentRate" stroke="#10b981" fill="#10b981" fillOpacity={0.2} strokeWidth={2.5} />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="h-60 flex flex-col items-center justify-center p-6 text-center rounded-2xl bg-slate-950/40 border border-white/5 space-y-2">
+                      <CalendarCheck className="w-8 h-8 text-slate-600" />
+                      <p className="text-xs text-slate-400">No schoolwide attendance trend data yet.</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* 3B. Grade Distribution */}
+                <div className="p-5 sm:p-6 bg-slate-900/80 border border-white/10 rounded-3xl backdrop-blur-md space-y-4 lg:col-span-1">
+                  <div>
+                    <h4 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
+                      <BarChart3 className="w-4 h-4 text-purple-400" />
+                      <span>Cohort Grade Distribution</span>
+                    </h4>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Distribution across standard mark brackets</p>
+                  </div>
+
+                  <div className="h-60 w-full pt-2">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={adminGradeDistribution} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} vertical={false} />
+                        <XAxis dataKey="grade" tick={{ fill: '#94a3b8', fontSize: 9 }} />
+                        <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} />
+                        <Tooltip contentStyle={CUSTOM_TOOLTIP_STYLE} formatter={(val: any) => [val, 'Students']} />
+                        <Bar dataKey="count" radius={[6, 6, 0, 0]}>
+                          {adminGradeDistribution.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* 3C. Class Comparison */}
+                <div className="p-5 sm:p-6 bg-slate-900/80 border border-white/10 rounded-3xl backdrop-blur-md space-y-4 lg:col-span-1">
+                  <div>
+                    <h4 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
+                      <School className="w-4 h-4 text-sky-400" />
+                      <span>Class Academic Comparison</span>
+                    </h4>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Average overall performance by Grade</p>
+                  </div>
+
+                  {adminClassComparison.length > 0 ? (
+                    <div className="h-60 w-full pt-2">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={adminClassComparison} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} vertical={false} />
+                          <XAxis dataKey="class" tick={{ fill: '#94a3b8', fontSize: 10 }} />
+                          <YAxis domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 10 }} />
+                          <Tooltip contentStyle={CUSTOM_TOOLTIP_STYLE} formatter={(val: any) => [`${val}%`, 'Cohort Avg']} />
+                          <Bar dataKey="average" fill="#38bdf8" radius={[6, 6, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="h-60 flex flex-col items-center justify-center p-6 text-center rounded-2xl bg-slate-950/40 border border-white/5 space-y-2">
+                      <School className="w-8 h-8 text-slate-600" />
+                      <p className="text-xs text-slate-400">Class comparison will populate once report cards are issued.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* AI Score Engine & Predictions */}
           <div className="bg-gradient-to-br from-indigo-950/60 via-slate-900/90 to-slate-950 border border-indigo-500/30 p-4 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl relative overflow-hidden shadow-2xl">
@@ -494,54 +1046,10 @@ export default function PerformanceAnalytics({ currentUser, effectiveRole = 'stu
               </div>
             </div>
           </div>
-
-          {/* Academic Strengths & Key Scaffolding Areas */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-emerald-500/10 border border-emerald-500/20 p-4 sm:p-6 rounded-2xl sm:rounded-3xl space-y-3">
-              <h5 className="text-emerald-400 font-bold text-sm flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4" />
-                <span>Academic Strengths & Competencies</span>
-              </h5>
-              <ul className="space-y-2 text-xs text-emerald-100">
-                <li className="flex items-start gap-2">
-                  <span className="text-emerald-400 font-bold">✓</span>
-                  <span>Evaluated assessments indicate consistent retention across academic modules.</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-emerald-400 font-bold">✓</span>
-                  <span>Homework submissions and coursework assignments tracked in StudentOS.</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-emerald-400 font-bold">✓</span>
-                  <span>Active collaboration in peer study groups and AI Buddy research assistants.</span>
-                </li>
-              </ul>
-            </div>
-
-            <div className="bg-amber-500/10 border border-amber-500/20 p-4 sm:p-6 rounded-2xl sm:rounded-3xl space-y-3">
-              <h5 className="text-amber-400 font-bold text-sm flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4" />
-                <span>Growth Areas & Scaffolding Targets</span>
-              </h5>
-              <ul className="space-y-2 text-xs text-amber-100">
-                <li className="flex items-start gap-2">
-                  <span className="text-amber-400 font-bold">!</span>
-                  <span>Schedule structured revision blocks before scheduled term examinations.</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-amber-400 font-bold">!</span>
-                  <span>Leverage AI Buddy interactive study modes for exam drill and topic synthesis.</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-amber-400 font-bold">!</span>
-                  <span>Maintain consistent classroom attendance to maximize continuous evaluation credits.</span>
-                </li>
-              </ul>
-            </div>
-          </div>
         </div>
       )}
 
+      {/* SUB-TAB 2: DIGITAL GRADEBOOK */}
       {subTab === 'gradebook' && (
         <div>
           <DigitalGradebook currentUser={currentUser} effectiveRole={effectiveRole} />

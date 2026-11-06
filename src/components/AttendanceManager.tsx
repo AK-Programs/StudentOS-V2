@@ -9,6 +9,7 @@ import {
   Users, AlertTriangle, Filter, CheckCircle2, RefreshCw, BarChart2, Shield, FileSpreadsheet, Loader2
 } from 'lucide-react';
 import { exportAttendanceToExcel, canUserExport } from '../lib/excelExportService';
+import { ALL_GRADE_OPTIONS, getSectionsForGrade } from '../config/academicHierarchy';
 
 const SUBJECT_LIST = [
   'General / Homeroom',
@@ -566,10 +567,17 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Grade</label>
                 <select 
                   value={selectedGrade} 
-                  onChange={e => setSelectedGrade(e.target.value)} 
+                  onChange={e => {
+                    const nextGrade = e.target.value;
+                    setSelectedGrade(nextGrade);
+                    const validSections = getSectionsForGrade(nextGrade);
+                    if (!validSections.includes(selectedSection as any)) {
+                      setSelectedSection(validSections[0]);
+                    }
+                  }} 
                   className="w-full px-2.5 sm:px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-white text-xs focus:outline-none focus:border-indigo-500"
                 >
-                  {['Grade 9', 'Grade 10', 'Grade 11', 'Grade 12'].map(g => <option key={g} value={g}>{g}</option>)}
+                  {ALL_GRADE_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
                 </select>
               </div>
 
@@ -580,7 +588,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
                   onChange={e => setSelectedSection(e.target.value)} 
                   className="w-full px-2.5 sm:px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-white text-xs focus:outline-none focus:border-indigo-500"
                 >
-                  {['Solara', 'Astra', 'Elara', 'Vega'].map(s => <option key={s} value={s}>{s}</option>)}
+                  {getSectionsForGrade(selectedGrade).map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
 

@@ -19,6 +19,8 @@ import {
   PanelBoardRegistrationData
 } from '../../lib/panelBoardDetector';
 import { UserProfile } from '../../types';
+import { supabase } from '../../lib/supabase';
+import { ALL_GRADE_OPTIONS, getSectionsForGrade } from '../../config/academicHierarchy';
 
 interface PanelBoardSetupDialogProps {
   currentUser: UserProfile | null;
@@ -37,17 +39,25 @@ export const PanelBoardSetupDialog: React.FC<PanelBoardSetupDialogProps> = ({
 }) => {
   const [detection, setDetection] = useState<PanelDetectionResult | null>(null);
   
-  // Real database metadata loaded from backend
-  const [loadingMeta, setLoadingMeta] = useState<boolean>(true);
-  const [grades, setGrades] = useState<string[]>([]);
-  const [sections, setSections] = useState<string[]>([]);
-  const [schools, setSchools] = useState<{ id: string; name: string }[]>([]);
+  // Real database metadata loaded from backend & centralized academic hierarchy
+  const [loadingMeta, setLoadingMeta] = useState<boolean>(false);
+  const [grades, setGrades] = useState<string[]>(ALL_GRADE_OPTIONS);
+  const [sections, setSections] = useState<string[]>(getSectionsForGrade('Grade 10'));
+  const [schools, setSchools] = useState<{ id: string; name: string }[]>([
+    { id: 'default_school', name: 'Oakridge International Academy' }
+  ]);
 
   // Form State
+  const initialGrade = currentUser?.grade || 'Grade 10';
+  const initialSections = getSectionsForGrade(initialGrade);
+  const initialSection = currentUser?.section && initialSections.includes(currentUser.section)
+    ? currentUser.section
+    : initialSections[0];
+
   const [schoolId, setSchoolId] = useState<string>('default_school');
-  const [selectedGrade, setSelectedGrade] = useState<string>('');
-  const [selectedSection, setSelectedSection] = useState<string>('');
-  const [displayName, setDisplayName] = useState<string>('');
+  const [selectedGrade, setSelectedGrade] = useState<string>(initialGrade);
+  const [selectedSection, setSelectedSection] = useState<string>(initialSection);
+  const [displayName, setDisplayName] = useState<string>(`${initialGrade} (${initialSection}) Smart Panel`);
   
   // Submission & Validation State
   const [submitting, setSubmitting] = useState<boolean>(false);
@@ -61,60 +71,22 @@ export const PanelBoardSetupDialog: React.FC<PanelBoardSetupDialogProps> = ({
     setDetection(result);
   }, []);
 
-  // Fetch real classroom metadata from backend (Supabase)
-  useEffect(() => {
-    let isMounted = true;
-    async function loadMeta() {
-      setLoadingMeta(true);
-      try {
-        const res = await fetch('/api/panel-board/metadata');
-        if (res.ok) {
-          const data = await res.json();
-          if (isMounted && data.success) {
-            setGrades(data.grades || []);
-            setSections(data.sections || []);
-            setSchools(data.schools || []);
-
-            // Set initial defaults from currentUser or first available real option
-            const userGrade = currentUser?.grade && data.grades.includes(currentUser.grade)
-              ? currentUser.grade
-              : data.grades[0] || 'Grade 10';
-            const userSection = currentUser?.section && data.sections.includes(currentUser.section)
-              ? currentUser.section
-              : data.sections[0] || 'Astra';
-
-            setSelectedGrade(userGrade);
-            setSelectedSection(userSection);
-            setSchoolId((currentUser as any)?.school_id || (currentUser as any)?.schoolId || data.schools?.[0]?.id || 'default_school');
-            setDisplayName(`${userGrade} (${userSection}) Smart Panel`);
-          }
-        }
-      } catch (err) {
-        console.warn('Failed to load classroom metadata:', err);
-      } finally {
-        if (isMounted) setLoadingMeta(false);
-      }
-    }
-    loadMeta();
-    return () => { isMounted = false; };
-  }, [currentUser]);
-
-  // Update default display name when grade or section changes if user hasn't heavily customized it
+  // Update default display name & available sections when grade changes
   const handleGradeChange = (newGrade: string) => {
     setSelectedGrade(newGrade);
-    if (!displayName || displayName.includes('Smart Panel')) {
-      setDisplayName(`${newGrade} (${selectedSection || 'Section'}) Smart Panel`);
-    }
+    const validSections = getSectionsForGrade(newGrade);
+    setSections(validSections);
+    const nextSec = validSections.includes(selectedSection) ? selectedSection : validSections[0];
+    setSelectedSection(nextSec);
+    setDisplayName(`${newGrade} (${nextSec}) Smart Panel`);
   };
 
   const handleSectionChange = (newSec: string) => {
     setSelectedSection(newSec);
-    if (!displayName || displayName.includes('Smart Panel')) {
-      setDisplayName(`${selectedGrade || 'Class'} (${newSec}) Smart Panel`);
-    }
+    setDisplayName(`${selectedGrade || 'Class'} (${newSec}) Smart Panel`);
   };
 
-  // Submit registration to authoritative backend
+  // Submit registration to authoritative backend and Supabase public.panel_devices
   const handleSaveAndContinue = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
@@ -126,37 +98,66 @@ export const PanelBoardSetupDialog: React.FC<PanelBoardSetupDialogProps> = ({
 
     setSubmitting(true);
     try {
-      const response = await fetch('/api/panel-board/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          school_id: schoolId,
-          class_id: selectedGrade,
-          section_id: selectedSection,
-          display_name: displayName.trim() || `${selectedGrade} Smart Display`,
-          registered_by: currentUser?.uid || currentUser?.email || 'staff',
-          device_metadata: detection ? {
+      const deviceKey = localStorage.getItem('veylentra_panel_device_token') || `panel_${crypto.randomUUID()}`;
+      localStorage.setItem('veylentra_panel_device_token', deviceKey);
+
+      const regData: PanelBoardRegistrationData = {
+        id: deviceKey,
+        school_id: schoolId,
+        class_id: selectedGrade,
+        section_id: selectedSection,
+        display_name: displayName.trim() || `${selectedGrade} Smart Display`,
+        registered_by: currentUser?.uid || currentUser?.email || 'staff',
+        status: 'active',
+        device_token: deviceKey,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      // 1. Save in Supabase public.panel_devices
+      try {
+        await supabase.from('panel_devices').upsert({
+          device_key: deviceKey,
+          device_name: regData.display_name,
+          grade: selectedGrade,
+          section: selectedSection,
+          school: 'Oakridge International Academy',
+          assigned_by: currentUser?.name || 'Staff',
+          assigned_at: new Date().toISOString(),
+          last_ping: new Date().toISOString(),
+          settings: detection ? {
             screenWidth: detection.screenWidth,
             screenHeight: detection.screenHeight,
             touchPoints: detection.touchPoints,
-            isInteractiveTouch: detection.isLikelyPanelBoard,
-            userAgent: navigator.userAgent
-          } : undefined
-        })
-      });
-
-      const result = await response.json();
-
-      if (!response.ok || !result.success || !result.registration) {
-        throw new Error(result.error || 'Server could not record panel registration in Supabase.');
+            isInteractiveTouch: detection.isLikelyPanelBoard
+          } : {}
+        });
+      } catch (sbErr) {
+        console.warn('[PanelBoard] Supabase panel_devices upsert note:', sbErr);
       }
 
-      // Supabase write confirmed! Store locally for future visits
-      storePanelRegistrationLocally(result.registration);
-      onSuccess(result.registration);
+      // 2. Also register with server API
+      try {
+        await fetch('/api/panel-board/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            school_id: schoolId,
+            class_id: selectedGrade,
+            section_id: selectedSection,
+            display_name: regData.display_name,
+            registered_by: regData.registered_by,
+            device_token: deviceKey
+          })
+        });
+      } catch (_) {}
+
+      // 3. Store locally in localStorage for persistent recognition
+      storePanelRegistrationLocally(regData);
+      onSuccess(regData);
     } catch (err: any) {
       console.error('Registration failed:', err);
-      setErrorMessage(err.message || 'Network error occurred while saving registration. Please retry.');
+      setErrorMessage(err.message || 'Error occurred while saving registration. Please retry.');
     } finally {
       setSubmitting(false);
     }
