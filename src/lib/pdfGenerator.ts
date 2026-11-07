@@ -6,11 +6,11 @@
  * High-performance, pure vector PDF generation engine for Lecture Notes.
  * Directly renders text, headings, formulas, and bordered tables using native jsPDF commands.
  * Completely eliminates html2canvas and image rasterization:
- * - Sub-second generation (< 50ms vs 60s previously)
+ * - Sub-second generation (< 50ms)
  * - Pure vector typography without image rasterization or fuzzy text
  * - Normal word spacing and intact hyphens (no split words or collapsed letters)
  * - Complete titles (including long subtitles like "Orbits") and full dates
- * - Mathematical notation with stacked fractions and tags natively drawn with jsPDF
+ * - Mathematical notation with stacked fractions, subscripts/superscripts, and tags
  * - True bordered tables with alternating fills and repeating headers on page breaks
  * - Clean stripping of emojis, corrupted character sequences, and markdown bold markers (** / __)
  * - Direct doc.save(safeFilename) browser download
@@ -43,71 +43,163 @@ export function stripEmojiAndUnprintable(str: string): string {
 }
 
 /**
- * Converts mathematical LaTeX markup into clean, readable plaintext representation.
- * Handles superscripts (v^2 -> v²), subscripts (F_c), and LaTeX operator replacements.
+ * Cleans LaTeX symbols and handles common Greek letters.
  */
-export function cleanMathString(expr: string): string {
-  if (!expr) return '';
+export function cleanMathSymbol(s: string): string {
+  if (!s) return '';
+  return s.replace(/\\cdot/g, '·').replace(/\\times/g, '×').replace(/\\approx/g, '≈')
+          .replace(/\\neq/g, '≠').replace(/\\le(q)?\b/g, '≤').replace(/\\ge(q)?\b/g, '≥')
+          .replace(/\\pm/g, '±').replace(/\\infty/g, '∞').replace(/\\Delta/g, 'Δ')
+          .replace(/\\int/g, '∫').replace(/\\sum/g, 'Σ')
+          .replace(/\\omega/g, 'ω').replace(/\\Omega/g, 'Ω').replace(/\\theta/g, 'θ')
+          .replace(/\\alpha/g, 'α').replace(/\\beta/g, 'β').replace(/\\gamma/g, 'γ')
+          .replace(/\\pi/g, 'π').replace(/\\lambda/g, 'λ').replace(/\\mu/g, 'μ')
+          .replace(/\\rho/g, 'ρ').replace(/\\sigma/g, 'σ').replace(/\\tau/g, 'τ').replace(/\\phi/g, 'φ')
+          .replace(/\\partial/g, '∂').replace(/\\nabla/g, '∇')
+          .replace(/\\mathbf\{([^{}]+)\}/g, '$1').replace(/\\mathrm\{([^{}]+)\}/g, '$1')
+          .replace(/\\vec\{([^{}]+)\}/g, '$1').replace(/\\text\{([^{}]+)\}/g, '$1')
+          .replace(/\\[a-zA-Z]+/g, '').replace(/[{}]/g, '').trim();
+}
+
+/**
+ * Recursive Math Engine for jsPDF.
+ * Handles fractions, subscripts, superscripts, and plain text.
+ */
+export interface MathNode {
+  type: 'text' | 'frac' | 'sub' | 'sup';
+  value?: string;
+  num?: MathNode[];
+  den?: MathNode[];
+  base?: MathNode[];
+  script?: MathNode[];
+}
+
+/**
+ * Simple LaTeX-like tokenizer for formula structure.
+ */
+export function tokenizeMath(expr: string): MathNode[] {
+  const nodes: MathNode[] = [];
   let s = expr.trim();
 
   // Strip math delimiters
   s = s.replace(/^(\\\[|\$\$|\\\(|\$)/, '').replace(/(\\\]|\$\$|\\\)|\$)$/, '').trim();
 
-  // Strip equation tags e.g. \tag{1} -> (1)
-  let tag = '';
-  s = s.replace(/\\tag\{([^}]+)\}/g, (_, t) => {
-    tag = ` (${t.trim()})`;
-    return '';
-  }).trim();
-
-  // Common math symbols & operators
-  s = s.replace(/\\cdot/g, ' * ').replace(/\\times/g, ' x ').replace(/\\approx/g, ' ~= ')
-       .replace(/\\neq/g, ' != ').replace(/\\le(q)?\b/g, ' <= ').replace(/\\ge(q)?\b/g, ' >= ')
-       .replace(/\\pm/g, ' +/- ').replace(/\\infty/g, 'inf').replace(/\\Delta/g, 'Delta')
-       .replace(/\\int/g, 'integral').replace(/\\sum/g, 'sum')
-       .replace(/\\omega/g, 'omega').replace(/\\Omega/g, 'Omega').replace(/\\theta/g, 'theta')
-       .replace(/\\alpha/g, 'alpha').replace(/\\beta/g, 'beta').replace(/\\gamma/g, 'gamma')
-       .replace(/\\pi/g, 'pi').replace(/\\lambda/g, 'lambda').replace(/\\mu/g, 'mu')
-       .replace(/\\rho/g, 'rho').replace(/\\sigma/g, 'sigma').replace(/\\tau/g, 'tau').replace(/\\phi/g, 'phi');
-
-  // Format superscripts to Unicode superscript characters where applicable
-  s = s.replace(/\^\{2\}/g, '²').replace(/\^2/g, '²')
-       .replace(/\^\{3\}/g, '³').replace(/\^3/g, '³')
-       .replace(/\^\{1\}/g, '¹').replace(/\^1/g, '¹')
-       .replace(/\^\{([^{}]+)\}/g, '^$1');
-
-  // Subscripts: _{c} -> _c
-  s = s.replace(/_\{([^{}]+)\}/g, '_$1');
-
-  // Fractions fallback if inside string
-  for (let iter = 0; iter < 5; iter++) {
-    const prev = s;
-    s = s.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, (_, n, d) => `${n.trim()} / ${d.trim()}`);
-    if (prev === s) break;
+  let i = 0;
+  while (i < s.length) {
+    if (s.startsWith('\\frac', i)) {
+      i += 5;
+      const num = parseGroup(s, i);
+      i = num.end;
+      const den = parseGroup(s, i);
+      i = den.end;
+      nodes.push({ type: 'frac', num: tokenizeMath(num.content), den: tokenizeMath(den.content) });
+    } else if (s[i] === '_' || s[i] === '^') {
+      const type = s[i] === '_' ? 'sub' : 'sup';
+      i++;
+      const script = parseGroup(s, i);
+      i = script.end;
+      nodes.push({ type, script: tokenizeMath(script.content) });
+    } else {
+      let text = '';
+      while (i < s.length && !s.startsWith('\\frac', i) && s[i] !== '_' && s[i] !== '^' && s[i] !== '{') {
+        text += s[i];
+        i++;
+      }
+      if (text) nodes.push({ type: 'text', value: cleanMathSymbol(text) });
+      if (s[i] === '{') {
+        const group = parseGroup(s, i);
+        i = group.end;
+        nodes.push(...tokenizeMath(group.content));
+      }
+    }
   }
+  return nodes;
+}
 
-  // Styles & brackets
-  s = s.replace(/\\(text|mathrm|mathbf|mathit|vec|boldsymbol)\{([^{}]+)\}/g, '$2')
-       .replace(/\\sqrt\{([^{}]+)\}/g, 'sqrt($1)')
-       .replace(/\\left\(/g, '(').replace(/\\right\)/g, ')')
-       .replace(/\\left\[/g, '[').replace(/\\right\]/g, ']')
-       .replace(/\\left\\\{/g, '{').replace(/\\right\\\}/g, '}')
-       .replace(/\\left\|/g, '|').replace(/\\right\|/g, '|')
-       .replace(/\\[,;!]/g, ' ').replace(/\\(quad|qquad)/g, ' ').replace(/\\\\/g, ' ')
-       .replace(/\\[a-zA-Z]+/g, '').replace(/[{}]/g, '').replace(/\s+/g, ' ').trim();
+function parseGroup(s: string, startIdx: number): { content: string, end: number } {
+  let i = startIdx;
+  while (i < s.length && /\s/.test(s[i])) i++;
+  if (s[i] !== '{') {
+    // Single character group
+    return { content: s[i] || '', end: i + 1 };
+  }
+  let depth = 1;
+  let content = '';
+  i++; // skip {
+  const start = i;
+  while (i < s.length && depth > 0) {
+    if (s[i] === '{') depth++;
+    else if (s[i] === '}') depth--;
+    if (depth > 0) content += s[i];
+    i++;
+  }
+  return { content, end: i };
+}
 
-  return s + tag;
+/**
+ * Measures the width of a list of math nodes.
+ */
+function measureMathWidth(doc: jsPDF, nodes: MathNode[], fontSize: number): number {
+  let w = 0;
+  for (const node of nodes) {
+    if (node.type === 'text') {
+      doc.setFontSize(fontSize);
+      w += doc.getTextWidth(node.value || '');
+    } else if (node.type === 'frac') {
+      const numW = measureMathWidth(doc, node.num || [], fontSize * 0.85);
+      const denW = measureMathWidth(doc, node.den || [], fontSize * 0.85);
+      w += Math.max(numW, denW) + 6;
+    } else if (node.type === 'sub' || node.type === 'sup') {
+      w += measureMathWidth(doc, node.script || [], fontSize * 0.7);
+    }
+  }
+  return w;
+}
+
+/**
+ * Draws math nodes into the PDF.
+ */
+function drawMathNodes(doc: jsPDF, nodes: MathNode[], x: number, y: number, fontSize: number): number {
+  let curX = x;
+  for (const node of nodes) {
+    if (node.type === 'text') {
+      doc.setFontSize(fontSize);
+      doc.text(node.value || '', curX, y);
+      curX += doc.getTextWidth(node.value || '');
+    } else if (node.type === 'frac') {
+      const numW = measureMathWidth(doc, node.num || [], fontSize * 0.8);
+      const denW = measureMathWidth(doc, node.den || [], fontSize * 0.8);
+      const fracW = Math.max(numW, denW) + 4;
+      
+      // Draw Num
+      drawMathNodes(doc, node.num || [], curX + (fracW - numW) / 2, y - fontSize * 0.45, fontSize * 0.8);
+      // Draw Bar
+      doc.setLineWidth(0.7);
+      doc.line(curX + 1, y - fontSize * 0.25, curX + fracW - 1, y - fontSize * 0.25);
+      // Draw Den
+      drawMathNodes(doc, node.den || [], curX + (fracW - denW) / 2, y + fontSize * 0.45, fontSize * 0.8);
+      
+      curX += fracW;
+    } else if (node.type === 'sub') {
+      drawMathNodes(doc, node.script || [], curX, y + fontSize * 0.25, fontSize * 0.7);
+      curX += measureMathWidth(doc, node.script || [], fontSize * 0.7);
+    } else if (node.type === 'sup') {
+      drawMathNodes(doc, node.script || [], curX, y - fontSize * 0.35, fontSize * 0.7);
+      curX += measureMathWidth(doc, node.script || [], fontSize * 0.7);
+    }
+  }
+  return curX - x;
 }
 
 export interface TextSpan {
   text: string;
   bold: boolean;
   italic: boolean;
+  isMath?: boolean;
 }
 
 /**
- * Parses a single line into spans. Inline math is converted directly to clean text.
- * Strips all bold markers (** and __) so stars never appear in the output.
+ * Parses a single line into spans.
  */
 export function parseLineToSpans(line: string): TextSpan[] {
   const spans: TextSpan[] = [];
@@ -126,9 +218,7 @@ export function parseLineToSpans(line: string): TextSpan[] {
 
     const matched = match[0];
     if (matched.startsWith('$$') || matched.startsWith('\\[') || matched.startsWith('$') || matched.startsWith('\\(')) {
-      // Inline math: draw as clean readable text with normal spacing
-      const cleanMath = cleanMathString(matched);
-      spans.push({ text: cleanMath, bold: false, italic: false });
+      spans.push({ text: matched, bold: false, italic: false, isMath: true });
     } else if (matched.startsWith('**') || matched.startsWith('__')) {
       const inner = match[3] || '';
       spans.push({ text: stripEmojiAndUnprintable(inner), bold: true, italic: false });
@@ -151,48 +241,11 @@ export function parseLineToSpans(line: string): TextSpan[] {
     });
   }
 
-  return spans.filter(s => s.text.length > 0);
-}
-
-// Display Math Layout Data Structure
-export interface ParsedDisplayMath {
-  lhs: string;
-  hasFrac: boolean;
-  num: string;
-  den: string;
-  rhs: string;
-  tag: string;
+  return spans.filter(s => s.text.length > 0 || s.isMath);
 }
 
 /**
- * Parses display math expressions into LHS, Fraction (Numerator/Denominator), RHS, and Tag components.
- */
-export function parseDisplayMath(formula: string): ParsedDisplayMath {
-  let s = formula.trim();
-  s = s.replace(/^(\\\[|\$\$|\\\(|\$)/, '').replace(/(\\\]|\$\$|\\\)|\$)$/, '').trim();
-
-  let tag = '';
-  s = s.replace(/\\tag\{([^}]+)\}/g, (_, t) => {
-    tag = `(${t.trim()})`;
-    return '';
-  }).trim();
-
-  const fracMatch = s.match(/^(.*?)\\frac\{([^{}]+)\}\{([^{}]+)\}(.*)$/);
-  if (fracMatch) {
-    let lhs = cleanMathString(fracMatch[1]);
-    let num = cleanMathString(fracMatch[2]);
-    let den = cleanMathString(fracMatch[3]);
-    let rhs = cleanMathString(fracMatch[4]);
-    return { lhs, hasFrac: true, num, den, rhs, tag };
-  }
-
-  return { lhs: cleanMathString(s), hasFrac: false, num: '', den: '', rhs: '', tag };
-}
-
-/**
- * Native vector renderer for display math formulas using jsPDF commands.
- * Renders centered card background, stacked fraction (numerator, line, denominator),
- * and right-aligned equation tags (e.g. (1)).
+ * Vector renderer for display math.
  */
 export function drawDisplayMathInPdf(
   doc: jsPDF,
@@ -201,8 +254,17 @@ export function drawDisplayMathInPdf(
   contentWidth: number,
   curY: number
 ): number {
-  const parsed = parseDisplayMath(rawFormula);
-  const blockHeight = parsed.hasFrac ? 44 : 32;
+  let s = rawFormula.trim();
+  let tag = '';
+  s = s.replace(/\\tag\{([^}]+)\}/g, (_, t) => {
+    tag = `(${t.trim()})`;
+    return '';
+  }).trim();
+
+  const nodes = tokenizeMath(s);
+  const mathWidth = measureMathWidth(doc, nodes, 11);
+  const hasFrac = s.includes('\\frac');
+  const blockHeight = hasFrac ? 48 : 34;
 
   // Background rounded card
   doc.setFillColor(248, 250, 252);
@@ -213,75 +275,25 @@ export function drawDisplayMathInPdf(
 
   const centerY = curY + blockHeight / 2;
 
-  // Draw equation tag e.g. (1) on right margin
-  if (parsed.tag) {
+  // Draw equation tag e.g. (1) on right
+  if (tag) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9.5);
     doc.setTextColor(100, 116, 139);
-    doc.text(parsed.tag, margin + contentWidth - 12, centerY + 3, { align: 'right' });
+    doc.text(tag, margin + contentWidth - 12, centerY + 3, { align: 'right' });
   }
 
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(49, 46, 129); // indigo-900
 
-  if (!parsed.hasFrac) {
-    // Centered flat formula
-    doc.setFontSize(11);
-    doc.text(parsed.lhs, margin + contentWidth / 2, centerY + 3.5, { align: 'center' });
-    return blockHeight + 10;
-  }
-
-  // Centered formula with stacked fraction
-  doc.setFontSize(11);
-  const lhsWidth = parsed.lhs ? doc.getTextWidth(parsed.lhs + ' ') : 0;
-  const rhsWidth = parsed.rhs ? doc.getTextWidth(' ' + parsed.rhs) : 0;
-
-  doc.setFontSize(10);
-  const numW = doc.getTextWidth(parsed.num);
-  const denW = doc.getTextWidth(parsed.den);
-  const fracW = Math.max(numW, denW) + 14;
-
-  const totalW = lhsWidth + fracW + rhsWidth;
-  const startX = margin + (contentWidth - totalW) / 2;
-
-  let currentX = startX;
-
-  // LHS
-  if (parsed.lhs) {
-    doc.setFontSize(11);
-    doc.text(parsed.lhs, currentX, centerY + 3.5);
-    currentX += lhsWidth;
-  }
-
-  // Stacked Fraction
-  const fracCenterX = currentX + fracW / 2;
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'bold');
-  // Numerator above fraction bar
-  doc.text(parsed.num, fracCenterX, centerY - 5, { align: 'center' });
-
-  // Fraction line
-  doc.setDrawColor(49, 46, 129);
-  doc.setLineWidth(1);
-  doc.line(currentX + 2, centerY + 1, currentX + fracW - 2, centerY + 1);
-
-  // Denominator below fraction bar
-  doc.text(parsed.den, fracCenterX, centerY + 12, { align: 'center' });
-
-  currentX += fracW;
-
-  // RHS
-  if (parsed.rhs) {
-    doc.setFontSize(11);
-    doc.text(parsed.rhs, currentX, centerY + 3.5);
-  }
+  const startX = margin + (contentWidth - mathWidth) / 2;
+  drawMathNodes(doc, nodes, startX, centerY + 3.5, 11);
 
   return blockHeight + 10;
 }
 
 /**
- * Main PDF export function for Lecture Notes.
- * Renders document in milliseconds using pure jsPDF vector commands.
+ * Main PDF export function.
  */
 export async function generateFormattedPdf(
   title: string,
@@ -298,10 +310,10 @@ export async function generateFormattedPdf(
     format: 'a4'
   });
 
-  const pageWidth = doc.internal.pageSize.getWidth(); // 595.28 pt
-  const pageHeight = doc.internal.pageSize.getHeight(); // 841.89 pt
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 40;
-  const contentWidth = pageWidth - margin * 2; // 515.28 pt
+  const contentWidth = pageWidth - margin * 2;
   const contentBottom = pageHeight - 45;
 
   let curY = margin;
@@ -313,7 +325,7 @@ export async function generateFormattedPdf(
     }
   };
 
-  // 1. Header (Title, Subject, Date)
+  // Header
   const formattedDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const cleanSubject = stripEmojiAndUnprintable(subject || 'General').toUpperCase().trim();
   const cleanTitle = stripEmojiAndUnprintable(title || 'Lecture Note').trim();
@@ -344,52 +356,59 @@ export async function generateFormattedPdf(
   doc.line(margin, curY, margin + contentWidth, curY);
   curY += 18;
 
-  // 2. Body Parser
+  // Body
   const lines = rawContent.split('\n');
   let i = 0;
 
-  // Flow formatted paragraph with word spacing and stripped bold markers
   const drawParagraph = (spans: TextSpan[], indent = 0, fontSize = 10, lineHeight = 15): void => {
     let curX = margin + indent;
     const effMaxWidth = contentWidth - indent;
 
-    const words: { text: string; bold: boolean; italic: boolean }[] = [];
-    for (const span of spans) {
-      const parts = span.text.split(/(\s+)/);
-      for (const p of parts) {
-        if (!p) continue;
-        words.push({ text: p, bold: span.bold, italic: span.italic });
-      }
-    }
-
     checkPageBreak(lineHeight);
 
-    for (const w of words) {
-      if (/^\s+$/.test(w.text)) {
-        if (curX > margin + indent) {
-          doc.setFont('helvetica', 'normal');
-          doc.setFontSize(fontSize);
-          curX += doc.getTextWidth(' ');
+    for (const span of spans) {
+      if (span.isMath) {
+        const nodes = tokenizeMath(span.text);
+        const mathW = measureMathWidth(doc, nodes, fontSize);
+        if (curX + mathW > margin + indent + effMaxWidth && curX > margin + indent) {
+          curX = margin + indent;
+          curY += lineHeight;
+          checkPageBreak(lineHeight);
         }
+        doc.setTextColor(67, 56, 202);
+        drawMathNodes(doc, nodes, curX, curY + 10, fontSize);
+        curX += mathW;
         continue;
       }
 
-      const style = w.bold ? (w.italic ? 'bolditalic' : 'bold') : (w.italic ? 'italic' : 'normal');
-      doc.setFont('helvetica', style);
-      doc.setFontSize(fontSize);
-      const wordW = doc.getTextWidth(w.text);
+      const parts = span.text.split(/(\s+)/);
+      for (const p of parts) {
+        if (!p) continue;
+        if (/^\s+$/.test(p)) {
+          if (curX > margin + indent) {
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(fontSize);
+            curX += doc.getTextWidth(' ');
+          }
+          continue;
+        }
 
-      if (curX + wordW > margin + indent + effMaxWidth && curX > margin + indent) {
-        curX = margin + indent;
-        curY += lineHeight;
-        checkPageBreak(lineHeight);
+        const style = span.bold ? (span.italic ? 'bolditalic' : 'bold') : (span.italic ? 'italic' : 'normal');
+        doc.setFont('helvetica', style);
+        doc.setFontSize(fontSize);
+        const wordW = doc.getTextWidth(p);
+
+        if (curX + wordW > margin + indent + effMaxWidth && curX > margin + indent) {
+          curX = margin + indent;
+          curY += lineHeight;
+          checkPageBreak(lineHeight);
+        }
+
+        doc.setTextColor(span.bold ? 15 : 51, span.bold ? 23 : 65, span.bold ? 42 : 85);
+        doc.text(p, curX, curY + 10);
+        curX += wordW;
       }
-
-      doc.setTextColor(w.bold ? 15 : 51, w.bold ? 23 : 65, w.bold ? 42 : 85);
-      doc.text(w.text, curX, curY);
-      curX += wordW;
     }
-
     curY += lineHeight + 4;
   };
 
@@ -457,16 +476,11 @@ export async function generateFormattedPdf(
   while (i < lines.length) {
     const rawLine = lines[i];
     const trimmed = rawLine.trim();
-
-    if (!trimmed) {
-      i++;
-      continue;
-    }
+    if (!trimmed) { i++; continue; }
 
     if (trimmed === '---' || trimmed === '***' || trimmed === '___') {
       checkPageBreak(16);
       doc.setDrawColor(226, 232, 240);
-      doc.setLineWidth(0.75);
       doc.line(margin, curY + 6, margin + contentWidth, curY + 6);
       curY += 16;
       i++;
@@ -474,53 +488,29 @@ export async function generateFormattedPdf(
     }
 
     if (trimmed.startsWith('```')) {
-      const codeLines: string[] = [];
-      i++;
-      while (i < lines.length && !lines[i].trim().startsWith('```')) {
-        codeLines.push(lines[i]);
-        i++;
-      }
+      const codeLines: string[] = []; i++;
+      while (i < lines.length && !lines[i].trim().startsWith('```')) { codeLines.push(lines[i]); i++; }
       if (i < lines.length && lines[i].trim().startsWith('```')) i++;
-
       const blockHeight = codeLines.length * 13 + 14;
       checkPageBreak(Math.min(blockHeight, 100));
-
       doc.setFillColor(248, 250, 252);
       doc.roundedRect(margin, curY, contentWidth, blockHeight, 4, 4, 'F');
-      doc.setDrawColor(226, 232, 240);
-      doc.setLineWidth(0.5);
-      doc.roundedRect(margin, curY, contentWidth, blockHeight, 4, 4, 'S');
-
-      doc.setFont('courier', 'normal');
-      doc.setFontSize(8.5);
-      doc.setTextColor(30, 41, 59);
-
+      doc.setFont('courier', 'normal'); doc.setFontSize(8.5); doc.setTextColor(30, 41, 59);
       let codeY = curY + 13;
-      for (const cLine of codeLines) {
-        doc.text(cLine.substring(0, 85), margin + 8, codeY);
-        codeY += 13;
-      }
+      for (const cLine of codeLines) { doc.text(cLine.substring(0, 85), margin + 8, codeY); codeY += 13; }
       curY += blockHeight + 10;
       continue;
     }
 
-    // Display formulas ONLY - rendered with native jsPDF vector math drawer
     if (trimmed.startsWith('$$') || trimmed.startsWith('\\[')) {
       const opener = trimmed.startsWith('$$') ? '$$' : '\\[';
       const closer = opener === '$$' ? '$$' : '\\]';
       const mathLines: string[] = [];
-
       if (trimmed.endsWith(closer) && trimmed.length > opener.length + closer.length) {
-        mathLines.push(trimmed.slice(opener.length, -closer.length).trim());
-        i++;
+        mathLines.push(trimmed.slice(opener.length, -closer.length).trim()); i++;
       } else {
-        let firstContent = trimmed.slice(opener.length).trim();
-        if (firstContent) mathLines.push(firstContent);
-        i++;
-        while (i < lines.length && !lines[i].trim().includes(closer)) {
-          mathLines.push(lines[i]);
-          i++;
-        }
+        let first = trimmed.slice(opener.length).trim(); if (first) mathLines.push(first); i++;
+        while (i < lines.length && !lines[i].trim().includes(closer)) { mathLines.push(lines[i]); i++; }
         if (i < lines.length) {
           const lastLine = lines[i].trim();
           const closeIdx = lastLine.indexOf(closer);
@@ -528,9 +518,7 @@ export async function generateFormattedPdf(
           i++;
         }
       }
-
-      const rawFormula = mathLines.join(' ');
-      const blockHeight = drawDisplayMathInPdf(doc, rawFormula, margin, contentWidth, curY);
+      const blockHeight = drawDisplayMathInPdf(doc, mathLines.join(' '), margin, contentWidth, curY);
       checkPageBreak(blockHeight);
       curY += blockHeight;
       continue;
@@ -540,30 +528,15 @@ export async function generateFormattedPdf(
     if (headingMatch) {
       const level = headingMatch[1].length;
       let headingText = headingMatch[2].trim();
-      if (headingText.startsWith('**') && headingText.endsWith('**')) headingText = headingText.slice(2, -2).trim();
       headingText = stripEmojiAndUnprintable(headingText).trim();
-
       let fSize = level === 1 ? 16 : level === 2 ? 13 : level === 3 ? 11.5 : 10.5;
-      let tColor = level === 2 ? [49, 46, 129] : level === 3 ? [30, 41, 59] : [15, 23, 42];
-      let tSpace = level === 1 ? 16 : level === 2 ? 14 : level === 3 ? 11 : 9;
-
-      checkPageBreak(tSpace + fSize + 25);
-      curY += tSpace;
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(fSize);
-      doc.setTextColor(tColor[0], tColor[1], tColor[2]);
-
+      checkPageBreak(fSize + 30);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(fSize);
+      if (level === 2) doc.setTextColor(49, 46, 129);
+      else doc.setTextColor(15, 23, 42);
       const hLines = doc.splitTextToSize(headingText, contentWidth);
-      for (const hl of hLines) { doc.text(hl, margin, curY); curY += fSize + 3; }
-      
-      if (level === 2) {
-        doc.setDrawColor(226, 232, 240);
-        doc.setLineWidth(0.5);
-        doc.line(margin, curY + 1, margin + contentWidth, curY + 1);
-        curY += 4;
-      }
-      curY += level === 1 ? 8 : 5;
-      i++;
+      for (const hl of hLines) { doc.text(hl, margin, curY + 15); curY += fSize + 3; }
+      curY += 10; i++;
       continue;
     }
 
@@ -575,17 +548,10 @@ export async function generateFormattedPdf(
 
     if (isTableRow(trimmed)) {
       const tableLines: string[] = [];
-      while (i < lines.length && (isTableRow(lines[i]) || isTableSep(lines[i]))) {
-        tableLines.push(lines[i].trim());
-        i++;
-      }
+      while (i < lines.length && (isTableRow(lines[i]) || isTableSep(lines[i]))) { tableLines.push(lines[i].trim()); i++; }
       const parseCells = (rowStr: string) => {
         let s = rowStr.trim(); if (s.startsWith('|')) s = s.slice(1); if (s.endsWith('|')) s = s.slice(0, -1);
-        return s.split('|').map(c => {
-          let cell = c.trim();
-          cell = cell.replace(/(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\$[^\$\n]+?\$|\\\(.+?\\\))/g, m => cleanMathString(m));
-          return stripEmojiAndUnprintable(cell);
-        });
+        return s.split('|').map(c => stripEmojiAndUnprintable(c.trim()));
       };
       let hs: string[] = []; const rs: string[][] = [];
       if (tableLines.length >= 2 && isTableSep(tableLines[1])) {
@@ -593,8 +559,7 @@ export async function generateFormattedPdf(
       } else {
         hs = parseCells(tableLines[0]); for (let r = 1; r < tableLines.length; r++) if (!isTableSep(tableLines[r])) rs.push(parseCells(tableLines[r]));
       }
-      drawTable(hs, rs);
-      continue;
+      drawTable(hs, rs); continue;
     }
 
     if (trimmed.startsWith('>')) {
@@ -602,7 +567,7 @@ export async function generateFormattedPdf(
       while (i < lines.length && lines[i].trim().startsWith('>')) { quoteLines.push(lines[i].trim().replace(/^>\s?/, '')); i++; }
       const spans = parseLineToSpans(quoteLines.join(' ')); for (const sp of spans) sp.italic = true;
       const beforeY = curY; drawParagraph(spans, 18, 9.5, 14);
-      doc.setFillColor(67, 56, 202); doc.rect(margin + 4, beforeY - 10, 3, Math.max(curY - beforeY + 2, 16), 'F');
+      doc.setFillColor(67, 56, 202); doc.rect(margin + 4, beforeY, 3, Math.max(curY - beforeY, 16), 'F');
       continue;
     }
 
@@ -611,9 +576,10 @@ export async function generateFormattedPdf(
       if (isO) { const m = trimmed.match(/^(\d+\.)\s+(.*)/); bul = m ? m[1] : '1.'; con = m ? m[2] : con; }
       const spans = parseLineToSpans(con);
       checkPageBreak(15);
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5); doc.setTextColor(67, 56, 202); doc.text(bul, margin + 4, curY);
-      drawParagraph(spans, 18, 9.5, 14);
-      i++; continue;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5); doc.setTextColor(67, 56, 202);
+      doc.text(bul, margin + 4, curY + 10);
+      drawParagraph(spans, 18, 9.5, 14); i++;
+      continue;
     }
 
     drawParagraph(parseLineToSpans(trimmed), 0, 10, 15);
@@ -623,12 +589,10 @@ export async function generateFormattedPdf(
   const totalPages = doc.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) {
     doc.setPage(p); doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(148, 163, 184);
-    doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.5);
     doc.line(margin, pageHeight - 26, margin + contentWidth, pageHeight - 26);
     doc.text('VEYLENTRA ACADEMIC OS • VERIFIED LECTURE NOTE', margin, pageHeight - 15);
     doc.text(`Page ${p} of ${totalPages}`, margin + contentWidth, pageHeight - 15, { align: 'right' });
   }
 
-  const safeFilename = `${(title || 'lecture_note').replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`;
-  doc.save(safeFilename);
+  doc.save(`${(title || 'lecture_note').replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`);
 }
