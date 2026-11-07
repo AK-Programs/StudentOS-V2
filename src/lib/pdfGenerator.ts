@@ -174,11 +174,16 @@ async function renderMathToImage(formula: string, displayMode: boolean, fontSize
 const displayMathCache = new Map<string, Promise<{ dataUrl: string; width: number; height: number } | null>>();
 
 async function getDisplayMathImage(formula: string, fontSize: number): Promise<{ dataUrl: string; width: number; height: number } | null> {
-  const key = `${fontSize}:${formula.trim()}`;
-  if (!displayMathCache.has(key)) {
-    displayMathCache.set(key, renderMathToImage(formula, true, fontSize));
+  try {
+    const key = `${fontSize}:${formula.trim()}`;
+    if (!displayMathCache.has(key)) {
+      displayMathCache.set(key, renderMathToImage(formula, true, fontSize));
+    }
+    return await displayMathCache.get(key)!;
+  } catch (e) {
+    console.error('Display math rendering error:', e);
+    return null;
   }
-  return displayMathCache.get(key)!;
 }
 
 export interface TextSpan {
@@ -603,14 +608,5 @@ export async function generateFormattedPdf(
   }
 
   const safeFilename = `${(title || 'lecture_note').replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`;
-  
-  const blob = doc.output('blob');
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = safeFilename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  doc.save(safeFilename);
 }
