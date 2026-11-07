@@ -4,6 +4,9 @@
  * 
  * Veylentra Lecture Notes PDF Generator
  * High-fidelity, print-ready PDF export engine for 1:1 mirroring of Reader View.
+ * Implements KaTeX mathematical typesetting with strict HTML-only output to eliminate
+ * MathML symbol duplication, comprehensive Markdown AST parsing (headings 1-6),
+ * clean table layouts, and balanced pagination.
  */
 
 import { jsPDF } from 'jspdf';
@@ -24,6 +27,8 @@ function escapeHtml(str: string): string {
 
 /**
  * Renders mathematical expressions in text using KaTeX.
+ * Crucial: `output: 'html'` is set to strictly prevent KaTeX from outputting
+ * hidden MathML (<span class="katex-mathml">) which html2canvas captures as duplicate text.
  */
 export function renderMathInText(text: string): string {
   if (!text) return '';
@@ -32,10 +37,15 @@ export function renderMathInText(text: string): string {
   let result = text.replace(/(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\])/g, (match) => {
     const formula = match.replace(/^(\$\$|\\\[)|(\$\$|\\\])$/g, '').trim();
     try {
-      const rendered = katex.renderToString(formula, { displayMode: true, throwOnError: false, strict: false });
-      return `<div style="margin: 14pt 0; text-align: center; color: #312e81; page-break-inside: avoid; break-inside: avoid;" class="pdf-math-display">${rendered}</div>`;
-    } catch (e) {
-      return `<div style="margin: 12pt 0; text-align: center; font-family: monospace; color: #4338ca;">${escapeHtml(formula)}</div>`;
+      const rendered = katex.renderToString(formula, {
+        displayMode: true,
+        output: 'html',
+        throwOnError: false,
+        strict: false
+      });
+      return `<div style="margin: 12pt 0; text-align: center; color: #312e81; page-break-inside: avoid; break-inside: avoid; word-spacing: normal;" class="pdf-math-display">${rendered}</div>`;
+    } catch {
+      return `<div style="margin: 10pt 0; text-align: center; font-family: monospace; color: #4338ca;">${escapeHtml(formula)}</div>`;
     }
   });
 
@@ -43,9 +53,14 @@ export function renderMathInText(text: string): string {
   result = result.replace(/(\$[^\$\n]+?\$|\\\([^\n]+?\\\))/g, (match) => {
     const formula = match.replace(/^(\$|\\\()|(\$|\\\))$/g, '').trim();
     try {
-      const rendered = katex.renderToString(formula, { displayMode: false, throwOnError: false, strict: false });
-      return `<span class="pdf-math-inline" style="display: inline-block; vertical-align: middle; margin: 0 2px;">${rendered}</span>`;
-    } catch (e) {
+      const rendered = katex.renderToString(formula, {
+        displayMode: false,
+        output: 'html',
+        throwOnError: false,
+        strict: false
+      });
+      return `<span class="pdf-math-inline" style="display: inline-block; vertical-align: middle; margin: 0 1.5px; word-spacing: normal;">${rendered}</span>`;
+    } catch {
       return `<code style="font-family: monospace; color: #4338ca;">${escapeHtml(formula)}</code>`;
     }
   });
@@ -55,6 +70,7 @@ export function renderMathInText(text: string): string {
 
 /**
  * Parses inline markdown (bold, italic, code, math) to clean HTML.
+ * Preserves spaces between words to prevent html2canvas text merging.
  */
 export function formatInlineMarkdownToHtml(text: string): string {
   if (!text) return '';
@@ -63,10 +79,10 @@ export function formatInlineMarkdownToHtml(text: string): string {
   let html = renderMathInText(text);
 
   // Bold: **text** or __text__
-  html = html.replace(/(\*\*|__)(.*?)\1/g, '<strong style="font-weight: 800; color: #0f172a;">$2</strong>');
+  html = html.replace(/(\*\*|__)(.*?)\1/g, '<strong style="font-weight: 750; color: #0f172a; word-spacing: 0.06em; letter-spacing: 0.015em;">$2</strong>');
 
   // Italic: *text* or _text_ (when not inside HTML tags)
-  html = html.replace(/(?<!\w|\/|\=)(\*|_)(.*?)\1(?!\w)/g, '<em style="font-style: italic; color: #334155;">$2</em>');
+  html = html.replace(/(?<!\w|\/|\=)(\*|_)(.*?)\1(?!\w)/g, '<em style="font-style: italic; color: #334155; word-spacing: 0.06em;">$2</em>');
 
   // Inline code: `code`
   html = html.replace(/`([^`]+)`/g, '<code style="background-color: #f1f5f9; color: #0284c7; padding: 2px 5px; border-radius: 4px; font-family: monospace; font-size: 9.5pt; border: 1px solid #e2e8f0;">$1</code>');
@@ -76,6 +92,8 @@ export function formatInlineMarkdownToHtml(text: string): string {
 
 /**
  * Parses complete markdown document into print-ready HTML structure.
+ * Supports headings 1 through 6, clean tables without whole-table pagination locks,
+ * display math blocks, lists, and formatted paragraphs.
  */
 export function parseMarkdownToPrintHtml(content: string): string {
   if (!content) return '';
@@ -115,7 +133,6 @@ export function parseMarkdownToPrintHtml(content: string): string {
 
     // 2. Code Block
     if (trimmed.startsWith('```')) {
-      const language = trimmed.slice(3).trim();
       const codeLines: string[] = [];
       i++;
       while (i < lines.length && !lines[i].trim().startsWith('```')) {
@@ -134,13 +151,18 @@ export function parseMarkdownToPrintHtml(content: string): string {
     if ((trimmed.startsWith('$$') && trimmed.endsWith('$$')) || (trimmed.startsWith('\\\[') && trimmed.endsWith('\\\]'))) {
       const formula = trimmed.replace(/^(\$\$|\\\[)|(\$\$|\\\])$/g, '').trim();
       try {
-        const mathHtml = katex.renderToString(formula, { displayMode: true, throwOnError: false, strict: false });
+        const mathHtml = katex.renderToString(formula, {
+          displayMode: true,
+          output: 'html',
+          throwOnError: false,
+          strict: false
+        });
         htmlParts.push(`
-          <div style="margin: 14pt 0; padding: 8pt 0; text-align: center; color: #312e81; page-break-inside: avoid; break-inside: avoid;" class="pdf-math-display">
+          <div style="margin: 14pt 0; padding: 6pt 0; text-align: center; color: #312e81; page-break-inside: avoid; break-inside: avoid; word-spacing: normal;" class="pdf-math-display">
             ${mathHtml}
           </div>
         `);
-      } catch (e) {
+      } catch {
         htmlParts.push(`
           <div style="margin: 12pt 0; text-align: center; font-family: monospace; color: #4338ca; page-break-inside: avoid; break-inside: avoid;">
             ${escapeHtml(formula)}
@@ -151,7 +173,7 @@ export function parseMarkdownToPrintHtml(content: string): string {
       continue;
     }
 
-    // Multi-line Display Math Block starting with $$ or \[
+    // 4. Multi-line Display Math Block starting with $$ or \[
     if (trimmed.startsWith('$$') || trimmed.startsWith('\\\[')) {
       const mathLines: string[] = [];
       const opener = trimmed.startsWith('$$') ? '$$' : '\\\[';
@@ -177,13 +199,18 @@ export function parseMarkdownToPrintHtml(content: string): string {
       
       const formula = mathLines.join('\n').trim();
       try {
-        const mathHtml = katex.renderToString(formula, { displayMode: true, throwOnError: false, strict: false });
+        const mathHtml = katex.renderToString(formula, {
+          displayMode: true,
+          output: 'html',
+          throwOnError: false,
+          strict: false
+        });
         htmlParts.push(`
-          <div style="margin: 14pt 0; padding: 8pt 0; text-align: center; color: #312e81; page-break-inside: avoid; break-inside: avoid;" class="pdf-math-display">
+          <div style="margin: 14pt 0; padding: 6pt 0; text-align: center; color: #312e81; page-break-inside: avoid; break-inside: avoid; word-spacing: normal;" class="pdf-math-display">
             ${mathHtml}
           </div>
         `);
-      } catch (e) {
+      } catch {
         htmlParts.push(`
           <div style="margin: 12pt 0; text-align: center; font-family: monospace; color: #4338ca; page-break-inside: avoid; break-inside: avoid;">
             ${escapeHtml(formula)}
@@ -193,7 +220,67 @@ export function parseMarkdownToPrintHtml(content: string): string {
       continue;
     }
 
-    // 4. Tables
+    // 5. Headings: Levels 1 through 6
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      let titleText = headingMatch[2].trim();
+      // If the heading itself is wrapped in **bold**, strip the outer ** to avoid redundant markup
+      if (titleText.startsWith('**') && titleText.endsWith('**') && titleText.length > 4) {
+        titleText = titleText.slice(2, -2).trim();
+      }
+      const formattedTitle = formatInlineMarkdownToHtml(titleText);
+
+      let fontSize = '13pt';
+      let color = '#0f172a';
+      let marginTop = '16pt';
+      let marginBottom = '5pt';
+      let borderBottom = 'none';
+      let fontWeight = '750';
+
+      if (level === 1) {
+        fontSize = '18pt';
+        fontWeight = '900';
+        marginTop = '22pt';
+        marginBottom = '8pt';
+        borderBottom = '1.5pt solid #cbd5e1';
+      } else if (level === 2) {
+        fontSize = '14pt';
+        fontWeight = '800';
+        color = '#4338ca';
+        marginTop = '18pt';
+        marginBottom = '6pt';
+        borderBottom = '0.75pt solid #e2e8f0';
+      } else if (level === 3) {
+        fontSize = '12pt';
+        fontWeight = '750';
+        color = '#1e1b4b';
+        marginTop = '14pt';
+        marginBottom = '4pt';
+      } else if (level === 4) {
+        fontSize = '11pt';
+        fontWeight = '750';
+        color = '#334155';
+        marginTop = '12pt';
+        marginBottom = '4pt';
+      } else {
+        fontSize = '10pt';
+        fontWeight = '700';
+        color = '#475569';
+        marginTop = '10pt';
+        marginBottom = '3pt';
+      }
+
+      htmlParts.push(`
+        <h${level} style="font-size: ${fontSize}; font-weight: ${fontWeight}; color: ${color}; margin-top: ${marginTop}; margin-bottom: ${marginBottom}; ${borderBottom !== 'none' ? `border-bottom: ${borderBottom}; padding-bottom: 3pt;` : ''} font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; letter-spacing: 0.015em; word-spacing: 0.06em; page-break-after: avoid; break-after: avoid;">
+          ${formattedTitle}
+        </h${level}>
+      `);
+      i++;
+      continue;
+    }
+
+    // 6. Tables (page-break-inside on tr, NOT on table, to prevent blank page gaps)
     if (isTableRow(trimmed)) {
       const tableLines: string[] = [];
       while (i < lines.length && (isTableRow(lines[i]) || isTableSeparator(lines[i]))) {
@@ -225,12 +312,12 @@ export function parseMarkdownToPrintHtml(content: string): string {
 
         if (headers.length > 0) {
           let tableHtml = `
-            <table style="width: 100%; border-collapse: collapse; margin: 14pt 0; font-size: 9.5pt; font-family: sans-serif; page-break-inside: avoid; break-inside: avoid;">
+            <table style="width: 100%; border-collapse: collapse; margin: 12pt 0; font-size: 9pt; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; table-layout: auto;">
               <thead>
-                <tr style="background-color: #1e293b; color: #ffffff;">
+                <tr style="background-color: #1e293b; color: #ffffff; page-break-inside: avoid; break-inside: avoid;">
           `;
           headers.forEach(h => {
-            tableHtml += `<th style="padding: 8pt 10pt; text-align: left; font-weight: 700; border: 1pt solid #334155; color: #ffffff;">${formatInlineMarkdownToHtml(h)}</th>`;
+            tableHtml += `<th style="padding: 7pt 9pt; text-align: left; font-weight: 700; border: 1pt solid #334155; color: #ffffff; letter-spacing: 0.02em; word-spacing: 0.05em;">${formatInlineMarkdownToHtml(h)}</th>`;
           });
           tableHtml += `</tr></thead><tbody>`;
 
@@ -238,7 +325,7 @@ export function parseMarkdownToPrintHtml(content: string): string {
             const bg = rIdx % 2 === 0 ? '#ffffff' : '#f8fafc';
             tableHtml += `<tr style="background-color: ${bg}; page-break-inside: avoid; break-inside: avoid;">`;
             row.forEach(cell => {
-              tableHtml += `<td style="padding: 6pt 10pt; border: 1pt solid #cbd5e1; color: #334155; vertical-align: top;">${formatInlineMarkdownToHtml(cell)}</td>`;
+              tableHtml += `<td style="padding: 6pt 9pt; border: 1pt solid #cbd5e1; color: #334155; vertical-align: middle; line-height: 1.4; word-spacing: 0.05em; font-size: 9pt;">${formatInlineMarkdownToHtml(cell)}</td>`;
             });
             tableHtml += `</tr>`;
           });
@@ -250,7 +337,7 @@ export function parseMarkdownToPrintHtml(content: string): string {
       }
     }
 
-    // 5. Callouts / Blockquotes
+    // 7. Callouts / Blockquotes
     if (trimmed.startsWith('>')) {
       const quoteLines: string[] = [];
       while (i < lines.length && lines[i].trim().startsWith('>')) {
@@ -259,48 +346,19 @@ export function parseMarkdownToPrintHtml(content: string): string {
       }
       const quoteContent = quoteLines.join(' ');
       htmlParts.push(`
-        <blockquote style="margin: 10pt 0; padding: 10pt 14pt; background-color: #f8fafc; border-left: 4pt solid #4338ca; border-radius: 0 6pt 6pt 0; font-style: italic; color: #334155; font-size: 10.5pt; line-height: 1.5; page-break-inside: avoid; break-inside: avoid;">
+        <blockquote style="margin: 10pt 0; padding: 10pt 14pt; background-color: #f8fafc; border-left: 3.5pt solid #4338ca; border-radius: 0 6pt 6pt 0; font-style: italic; color: #334155; font-size: 10.5pt; line-height: 1.5; page-break-inside: avoid; break-inside: avoid; letter-spacing: 0.01em; word-spacing: 0.05em;">
           ${formatInlineMarkdownToHtml(quoteContent)}
         </blockquote>
       `);
       continue;
     }
 
-    // 6. Headings
-    if (trimmed.startsWith('# ')) {
-      htmlParts.push(`
-        <h1 style="font-size: 18pt; font-weight: 900; color: #0f172a; margin-top: 22pt; margin-bottom: 8pt; border-bottom: 1.5pt solid #cbd5e1; padding-bottom: 4pt; font-family: sans-serif; page-break-after: avoid; break-after: avoid;">
-          ${formatInlineMarkdownToHtml(trimmed.slice(2))}
-        </h1>
-      `);
-      i++;
-      continue;
-    }
-    if (trimmed.startsWith('## ')) {
-      htmlParts.push(`
-        <h2 style="font-size: 14pt; font-weight: 800; color: #4338ca; margin-top: 18pt; margin-bottom: 6pt; font-family: sans-serif; page-break-after: avoid; break-after: avoid;">
-          ${formatInlineMarkdownToHtml(trimmed.slice(3))}
-        </h2>
-      `);
-      i++;
-      continue;
-    }
-    if (trimmed.startsWith('### ')) {
-      htmlParts.push(`
-        <h3 style="font-size: 12pt; font-weight: 700; color: #1e1b4b; margin-top: 14pt; margin-bottom: 4pt; font-family: sans-serif; page-break-after: avoid; break-after: avoid;">
-          ${formatInlineMarkdownToHtml(trimmed.slice(4))}
-        </h3>
-      `);
-      i++;
-      continue;
-    }
-
-    // 7. Task Items
+    // 8. Task Items
     if (trimmed.startsWith('- [ ] ') || trimmed.startsWith('- [x] ') || trimmed.startsWith('- [X] ')) {
       const isChecked = trimmed.toLowerCase().startsWith('- [x] ');
       const taskText = trimmed.slice(6);
       htmlParts.push(`
-        <div style="margin: 4pt 0; font-family: sans-serif; font-size: 10.5pt; color: #334155; page-break-inside: avoid; break-inside: avoid;">
+        <div style="margin: 4pt 0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 10pt; color: #334155; page-break-inside: avoid; break-inside: avoid; word-spacing: 0.05em;">
           <span style="color: ${isChecked ? '#059669' : '#64748b'}; font-weight: bold; font-family: monospace;">[${isChecked ? '✓' : ' '}]</span> ${formatInlineMarkdownToHtml(taskText)}
         </div>
       `);
@@ -308,23 +366,23 @@ export function parseMarkdownToPrintHtml(content: string): string {
       continue;
     }
 
-    // 8. Unordered List Items
+    // 9. Unordered List Items (no page-break-inside avoid on parent ul to prevent page-spanning white gaps)
     if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
       const listItems: string[] = [];
       while (i < lines.length && (lines[i].trim().startsWith('- ') || lines[i].trim().startsWith('* ')) && !lines[i].trim().startsWith('- [')) {
         listItems.push(lines[i].trim().substring(2));
         i++;
       }
-      let listHtml = `<ul style="margin: 6pt 0; padding-left: 20pt; color: #334155; font-size: 10.5pt; page-break-inside: avoid; break-inside: avoid;">`;
+      let listHtml = `<ul style="margin: 6pt 0; padding-left: 18pt; color: #334155; font-size: 10.5pt;">`;
       listItems.forEach(item => {
-        listHtml += `<li style="margin-bottom: 4pt; line-height: 1.5;">${formatInlineMarkdownToHtml(item)}</li>`;
+        listHtml += `<li style="margin-bottom: 4pt; line-height: 1.55; word-spacing: 0.05em; letter-spacing: 0.01em;">${formatInlineMarkdownToHtml(item)}</li>`;
       });
       listHtml += `</ul>`;
       htmlParts.push(listHtml);
       continue;
     }
 
-    // 9. Ordered List Items
+    // 10. Ordered List Items
     const numberedMatch = trimmed.match(/^(\d+)\.\s+(.*)/);
     if (numberedMatch) {
       const listItems: { num: string; text: string }[] = [];
@@ -337,18 +395,18 @@ export function parseMarkdownToPrintHtml(content: string): string {
           break;
         }
       }
-      let listHtml = `<ol style="margin: 6pt 0; padding-left: 20pt; color: #334155; font-size: 10.5pt; page-break-inside: avoid; break-inside: avoid;" start="${listItems[0]?.num || 1}">`;
+      let listHtml = `<ol style="margin: 6pt 0; padding-left: 18pt; color: #334155; font-size: 10.5pt;" start="${listItems[0]?.num || 1}">`;
       listItems.forEach(item => {
-        listHtml += `<li style="margin-bottom: 4pt; line-height: 1.5;">${formatInlineMarkdownToHtml(item.text)}</li>`;
+        listHtml += `<li style="margin-bottom: 4pt; line-height: 1.55; word-spacing: 0.05em; letter-spacing: 0.01em;">${formatInlineMarkdownToHtml(item.text)}</li>`;
       });
       listHtml += `</ol>`;
       htmlParts.push(listHtml);
       continue;
     }
 
-    // 10. Paragraph
+    // 11. Regular Paragraph
     htmlParts.push(`
-      <p style="margin: 0 0 8pt 0; line-height: 1.6; color: #334155; font-size: 11pt; word-wrap: break-word;">
+      <p style="margin: 0 0 8pt 0; line-height: 1.6; color: #334155; font-size: 10.5pt; word-spacing: 0.05em; letter-spacing: 0.01em; word-wrap: break-word;">
         ${formatInlineMarkdownToHtml(trimmed)}
       </p>
     `);
@@ -385,45 +443,56 @@ export async function generateFormattedPdf(
     pointer-events: none;
     background-color: #ffffff;
     color: #0f172a;
-    padding: 32px;
+    padding: 28px 32px;
     box-sizing: border-box;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    letter-spacing: 0.015em;
+    word-spacing: 0.05em;
+    text-rendering: geometricPrecision;
+    -webkit-font-smoothing: antialiased;
   `;
 
-  // 2. Build Document Header HTML
+  // 2. Ensure KaTeX styles are present inside the stage container
+  const linkEl = document.createElement('link');
+  linkEl.rel = 'stylesheet';
+  linkEl.href = 'https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css';
+  container.appendChild(linkEl);
+
+  // 3. Build Document Header HTML with clear separation preventing title/date collision
   const formattedDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const headerHtml = `
-    <div style="margin-bottom: 24pt; border-bottom: 2.5pt solid #4338ca; padding-bottom: 12pt; page-break-after: avoid; break-after: avoid;">
-      <div style="display: flex; justify-content: space-between; align-items: flex-end;">
-        <div>
-          <h1 style="margin: 0; font-size: 22pt; font-weight: 900; color: #0f172a; font-family: sans-serif; line-height: 1.2;">${escapeHtml(title || 'Lecture Note')}</h1>
-          <p style="margin: 6pt 0 0 0; font-size: 10pt; font-weight: 800; color: #4338ca; text-transform: uppercase; letter-spacing: 0.08em; font-family: sans-serif;">
-            SUBJECT: ${escapeHtml((subject || 'General').toUpperCase())} &bull; VEYLENTRA ACADEMIC OS
-          </p>
+    <div style="margin-bottom: 20pt; border-bottom: 2pt solid #4338ca; padding-bottom: 12pt; page-break-after: avoid; break-after: avoid;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8pt;">
+        <div style="display: inline-block; background-color: #e0e7ff; color: #3730a3; padding: 3pt 8pt; border-radius: 4pt; font-size: 8pt; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
+          SUBJECT: ${escapeHtml((subject || 'General').toUpperCase())} &bull; VEYLENTRA ACADEMIC OS
         </div>
-        <div style="text-align: right;">
-          <p style="margin: 0; font-size: 8.5pt; font-weight: 600; color: #64748b; font-family: sans-serif;">${formattedDate}</p>
-          <p style="margin: 2pt 0 0 0; font-size: 7.5pt; color: #94a3b8; font-family: sans-serif;">VERIFIED LECTURE NOTE</p>
+        <div style="font-size: 8.5pt; font-weight: 600; color: #64748b; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
+          ${formattedDate}
         </div>
       </div>
+      <h1 style="margin: 0; font-size: 20pt; font-weight: 900; color: #0f172a; font-family: -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.25; letter-spacing: 0.015em; word-spacing: 0.06em;">
+        ${escapeHtml(title || 'Lecture Note')}
+      </h1>
     </div>
   `;
 
-  // 3. Build Note Body HTML with KaTeX Math and Markdown structure
+  // 4. Build Note Body HTML with KaTeX Math and Markdown structure
   const bodyHtml = parseMarkdownToPrintHtml(rawContent);
-  container.innerHTML = headerHtml + bodyHtml;
+  const contentWrapper = document.createElement('div');
+  contentWrapper.innerHTML = headerHtml + bodyHtml;
+  container.appendChild(contentWrapper);
 
-  // 4. Attach container to document.body so html2canvas computes full layout & KaTeX styles
+  // 5. Attach container to document.body so html2canvas computes full layout & KaTeX styles
   document.body.appendChild(container);
 
   try {
-    // 5. Wait for fonts (KaTeX, System fonts) to settle
+    // 6. Wait for fonts (KaTeX, System fonts) to settle
     if (document.fonts && document.fonts.ready) {
       await document.fonts.ready;
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, 350));
 
-    // 6. Initialize jsPDF
+    // 7. Initialize jsPDF
     const doc = new jsPDF({
       orientation: 'portrait',
       unit: 'pt',
@@ -435,7 +504,7 @@ export async function generateFormattedPdf(
     const margin = 36; // 0.5 inch margins
     const contentWidth = pageWidth - (margin * 2); // 523.28 pt
 
-    // 7. Render HTML to PDF via doc.html
+    // 8. Render HTML to PDF via doc.html
     await doc.html(container, {
       x: margin,
       y: margin,
@@ -476,7 +545,7 @@ export async function generateFormattedPdf(
       }
     });
   } finally {
-    // 8. Clean up DOM stage
+    // 9. Clean up DOM stage
     if (container.parentNode) {
       container.parentNode.removeChild(container);
     }
