@@ -10770,30 +10770,28 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                     </button>
                                     <button
                                       onClick={async () => {
-                                        showNotification('📄 Preparing high-fidelity PDF...');
-                                        // Wait a moment for KaTeX and layout to settle in the hidden buffer
-                                        setTimeout(async () => {
-                                          const buffer = document.getElementById('note-print-buffer');
-                                          if (buffer) {
-                                            await generateFormattedPdf(activeNote.title, activeNote.subject, buffer);
-                                            showNotification('✅ PDF Generated successfully');
-                                          } else {
-                                            showNotification('❌ Error: Print buffer not ready');
-                                          }
-                                        }, 1000);
+                                        if (!activeNote || !activeNote.content || !activeNote.content.trim()) {
+                                          showNotification('⚠️ Note content is empty.');
+                                          return;
+                                        }
+                                        showNotification('📄 Generating printable PDF note...');
+                                        try {
+                                          await generateFormattedPdf(
+                                            activeNote.title || 'Untitled Note',
+                                            activeNote.subject || 'General',
+                                            activeNote.content
+                                          );
+                                          showNotification('✅ PDF downloaded successfully!');
+                                        } catch (err: any) {
+                                          console.error('PDF Export Error:', err);
+                                          showNotification('❌ Failed to export PDF note.');
+                                        }
                                       }}
-                                      className="px-2 py-1 rounded bg-indigo-900/30 text-indigo-400 text-[10px] font-bold hover:bg-indigo-800/40"
+                                      className="px-2 py-1 rounded bg-indigo-900/30 text-indigo-400 text-[10px] font-bold hover:bg-indigo-800/40 cursor-pointer"
                                       title="Export as PDF"
                                     >
                                       🖨️ PDF
                                     </button>
-                                  </div>
-                                </div>
-
-                                {/* Hidden Print Buffer for High-Fidelity Export */}
-                                <div id="note-print-buffer" className="fixed -left-[10000px] top-0 w-[800px] bg-white p-10 pointer-events-none opacity-0 select-none overflow-visible">
-                                  <div className="space-y-4 text-slate-900">
-                                    {renderMarkdown(activeNote.content || '')}
                                   </div>
                                 </div>
 
