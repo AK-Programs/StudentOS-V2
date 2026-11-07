@@ -9,7 +9,7 @@
  * - Ultra-crisp vector typography without image rasterization or fuzzy text
  * - Normal word spacing and intact hyphens (no split words or collapsed letters)
  * - Complete titles (including long subtitles like "Orbits") and full dates
- * - Mathematical notation matching the Reader View (KaTeX-to-image integration for complex symbols)
+ * - Fast generation (< 8s) by rendering inline math as readable text and caching display formulas
  * - True bordered tables with alternating fills and repeating headers on page breaks
  * - Clean stripping of emojis and corrupted character sequences
  * - Lean PDF output (< 150 KB for typical notes)
@@ -42,7 +42,7 @@ export function stripEmojiAndUnprintable(str: string): string {
 
 /**
  * Converts mathematical LaTeX markup into clean, readable plaintext representation.
- * Used for tables and fallbacks where image rendering isn't applicable.
+ * Used for inline math, tables, and fallbacks where image rendering isn't applicable.
  */
 export function cleanMathToReadableText(expr: string): string {
   if (!expr) return '';
@@ -92,18 +92,12 @@ export function cleanMathToReadableText(expr: string): string {
 }
 
 /**
- * Helper to render KaTeX formula to an image for high-fidelity PDF output.
- * Renders into a hidden DOM element then captures with html2canvas.
- * Includes a mandatory 4-second timeout to prevent hanging.
+ * Helper to render KaTeX display formula to an image for high-fidelity PDF output.
+ * Uses a strict 2-second timeout.
  */
 async function renderMathToImage(formula: string, displayMode: boolean, fontSize: number): Promise<{ dataUrl: string, width: number, height: number } | null> {
-  return new Promise(async (resolve) => {
-    const timeout = setTimeout(() => {
-      console.warn(`Math rendering timed out for formula: ${formula.substring(0, 50)}...`);
-      if (container.parentNode) document.body.removeChild(container);
-      resolve(null);
-    }, 4000);
-
+  return new Promise((resolve) => {
+    let resolved = false;
     const container = document.createElement('div');
     container.style.position = 'fixed';
     container.style.left = '-9999px';
@@ -116,6 +110,19 @@ async function renderMathToImage(formula: string, displayMode: boolean, fontSize
     container.style.display = displayMode ? 'block' : 'inline-block';
     container.style.visibility = 'visible';
 
+    const cleanup = () => {
+      if (container.parentNode) document.body.removeChild(container);
+    };
+
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        console.warn(`Math rendering timed out (2s) for formula: ${formula.substring(0, 50)}...`);
+        cleanup();
+        resolve(null);
+      }
+    }, 2000); // 2 second timeout
+
     try {
       katex.render(formula, container, {
         displayMode,
@@ -124,42 +131,64 @@ async function renderMathToImage(formula: string, displayMode: boolean, fontSize
         strict: false
       });
       document.body.appendChild(container);
-      
-      // Tiny delay to ensure layout is complete
-      await new Promise(r => setTimeout(r, 50));
 
-      const canvas = await html2canvas(container, {
-        backgroundColor: '#ffffff',
-        scale: 2, // Higher resolution for crisp print
-        logging: false,
-        useCORS: true
-      });
-      
-      const dataUrl = canvas.toDataURL('image/png');
-      const ptWidth = (canvas.width / 2) * 0.75; // px to pt
-      const ptHeight = (canvas.height / 2) * 0.75;
-      
-      clearTimeout(timeout);
-      if (container.parentNode) document.body.removeChild(container);
-      resolve({ dataUrl, width: ptWidth, height: ptHeight });
+      setTimeout(async () => {
+        if (resolved) return;
+        try {
+          const canvas = await html2canvas(container, {
+            backgroundColor: '#ffffff',
+            scale: 2,
+            logging: false,
+            useCORS: true
+          });
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timeout);
+            const dataUrl = canvas.toDataURL('image/png');
+            const ptWidth = (canvas.width / 2) * 0.75;
+            const ptHeight = (canvas.height / 2) * 0.75;
+            cleanup();
+            resolve({ dataUrl, width: ptWidth, height: ptHeight });
+          }
+        } catch (e) {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timeout);
+            cleanup();
+            resolve(null);
+          }
+        }
+      }, 30);
     } catch (e) {
-      console.error('Math rendering error:', e);
-      clearTimeout(timeout);
-      if (container.parentNode) document.body.removeChild(container);
-      resolve(null);
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timeout);
+        cleanup();
+        resolve(null);
+      }
     }
   });
+}
+
+// Display formula image cache to avoid duplicate rendering
+const displayMathCache = new Map<string, Promise<{ dataUrl: string; width: number; height: number } | null>>();
+
+async function getDisplayMathImage(formula: string, fontSize: number): Promise<{ dataUrl: string; width: number; height: number } | null> {
+  const key = `${fontSize}:${formula.trim()}`;
+  if (!displayMathCache.has(key)) {
+    displayMathCache.set(key, renderMathToImage(formula, true, fontSize));
+  }
+  return displayMathCache.get(key)!;
 }
 
 export interface TextSpan {
   text: string;
   bold: boolean;
   italic: boolean;
-  isMath?: boolean;
 }
 
 /**
- * Parses a single line into spans, preserving raw math content for image rendering.
+ * Parses a single line into spans. Inline math is converted directly to clean text.
  */
 export function parseLineToSpans(line: string): TextSpan[] {
   const spans: TextSpan[] = [];
@@ -178,8 +207,9 @@ export function parseLineToSpans(line: string): TextSpan[] {
 
     const matched = match[0];
     if (matched.startsWith('$$') || matched.startsWith('\\[') || matched.startsWith('$') || matched.startsWith('\\(')) {
-      // Keep raw math for renderMathToImage
-      spans.push({ text: matched, bold: false, italic: false, isMath: true });
+      // Draw inline math as clean readable text with normal spacing
+      const cleanMath = cleanMathToReadableText(matched);
+      spans.push({ text: cleanMath, bold: false, italic: false });
     } else if (matched.startsWith('**') || matched.startsWith('__')) {
       const inner = match[3] || '';
       spans.push({ text: stripEmojiAndUnprintable(inner), bold: true, italic: false });
@@ -202,12 +232,12 @@ export function parseLineToSpans(line: string): TextSpan[] {
     });
   }
 
-  return spans.filter(s => s.text.length > 0 || s.isMath);
+  return spans.filter(s => s.text.length > 0);
 }
 
 /**
  * Main PDF export function for Lecture Notes.
- * Renders text normally but converts KaTeX math to embedded images for high fidelity.
+ * Renders text normally; uses cached image rendering ONLY for display formulas.
  */
 export async function generateFormattedPdf(
   title: string,
@@ -274,17 +304,13 @@ export async function generateFormattedPdf(
   const lines = rawContent.split('\n');
   let i = 0;
 
-  // Flow formatted paragraph with word spacing and math-image integration
-  const drawParagraph = async (spans: TextSpan[], indent = 0, fontSize = 10, lineHeight = 15): Promise<void> => {
+  // Flow formatted paragraph with word spacing
+  const drawParagraph = (spans: TextSpan[], indent = 0, fontSize = 10, lineHeight = 15): void => {
     let curX = margin + indent;
     const effMaxWidth = contentWidth - indent;
 
-    const words: { text: string; bold: boolean; italic: boolean; isMath?: boolean; formula?: string }[] = [];
+    const words: { text: string; bold: boolean; italic: boolean }[] = [];
     for (const span of spans) {
-      if (span.isMath) {
-        words.push({ text: '', bold: false, italic: false, isMath: true, formula: span.text });
-        continue;
-      }
       const parts = span.text.split(/(\s+)/);
       for (const p of parts) {
         if (!p) continue;
@@ -295,36 +321,6 @@ export async function generateFormattedPdf(
     checkPageBreak(lineHeight);
 
     for (const w of words) {
-      if (w.isMath) {
-        // Wrap every renderMathToImage call in a 4-second timeout is handled inside renderMathToImage
-        const img = await renderMathToImage(w.formula || '', false, fontSize);
-        if (img) {
-          if (curX + img.width > margin + indent + effMaxWidth && curX > margin + indent) {
-            curX = margin + indent;
-            curY += lineHeight;
-            checkPageBreak(lineHeight);
-          }
-          // Align image baseline with text
-          doc.addImage(img.dataUrl, 'PNG', curX, curY - img.height + (fontSize * 0.25), img.width, img.height);
-          curX += img.width;
-        } else {
-          // If it times out or throws, draw the formula as readable text and continue
-          const fallbackText = cleanMathToReadableText(w.formula || '');
-          doc.setFont('helvetica', 'normal');
-          doc.setFontSize(fontSize);
-          doc.setTextColor(67, 56, 202); // indigo-600 for math fallback
-          const wordW = doc.getTextWidth(fallbackText);
-          if (curX + wordW > margin + indent + effMaxWidth && curX > margin + indent) {
-            curX = margin + indent;
-            curY += lineHeight;
-            checkPageBreak(lineHeight);
-          }
-          doc.text(fallbackText, curX, curY);
-          curX += wordW;
-        }
-        continue;
-      }
-
       if (/^\s+$/.test(w.text)) {
         if (curX > margin + indent) {
           doc.setFont('helvetica', 'normal');
@@ -464,6 +460,7 @@ export async function generateFormattedPdf(
       continue;
     }
 
+    // Display formulas ONLY
     if (trimmed.startsWith('$$') || trimmed.startsWith('\\[')) {
       const opener = trimmed.startsWith('$$') ? '$$' : '\\[';
       const closer = opener === '$$' ? '$$' : '\\]';
@@ -489,7 +486,7 @@ export async function generateFormattedPdf(
       }
 
       const rawFormula = mathLines.join(' ');
-      const img = await renderMathToImage(rawFormula, true, 11);
+      const img = await getDisplayMathImage(rawFormula, 11);
       if (img) {
         checkPageBreak(img.height + 20);
         curY += 10;
@@ -577,7 +574,7 @@ export async function generateFormattedPdf(
       const quoteLines: string[] = [];
       while (i < lines.length && lines[i].trim().startsWith('>')) { quoteLines.push(lines[i].trim().replace(/^>\s?/, '')); i++; }
       const spans = parseLineToSpans(quoteLines.join(' ')); for (const sp of spans) sp.italic = true;
-      const beforeY = curY; await drawParagraph(spans, 18, 9.5, 14);
+      const beforeY = curY; drawParagraph(spans, 18, 9.5, 14);
       doc.setFillColor(67, 56, 202); doc.rect(margin + 4, beforeY - 10, 3, Math.max(curY - beforeY + 2, 16), 'F');
       continue;
     }
@@ -588,11 +585,11 @@ export async function generateFormattedPdf(
       const spans = parseLineToSpans(con);
       checkPageBreak(15);
       doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5); doc.setTextColor(67, 56, 202); doc.text(bul, margin + 4, curY);
-      await drawParagraph(spans, 18, 9.5, 14);
+      drawParagraph(spans, 18, 9.5, 14);
       i++; continue;
     }
 
-    await drawParagraph(parseLineToSpans(trimmed), 0, 10, 15);
+    drawParagraph(parseLineToSpans(trimmed), 0, 10, 15);
     i++;
   }
 
@@ -607,7 +604,6 @@ export async function generateFormattedPdf(
 
   const safeFilename = `${(title || 'lecture_note').replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`;
   
-  // After the PDF is built, return a Blob. Do not rely only on doc.save().
   const blob = doc.output('blob');
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

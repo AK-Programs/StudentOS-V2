@@ -10776,17 +10776,11 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                         }
                                         showNotification('📄 Generating printable PDF note...');
                                         try {
-                                          const exportPromise = generateFormattedPdf(
+                                          await generateFormattedPdf(
                                             activeNote.title || 'Untitled Note',
                                             activeNote.subject || 'General',
                                             activeNote.content
                                           );
-                                          
-                                          const timeoutPromise = new Promise((_, reject) => 
-                                            setTimeout(() => reject(new Error('PDF export timed out after 20 seconds.')), 20000)
-                                          );
-
-                                          await Promise.race([exportPromise, timeoutPromise]);
                                           showNotification('✅ PDF downloaded successfully!');
                                         } catch (err: any) {
                                           console.error('PDF Export Error:', err);
