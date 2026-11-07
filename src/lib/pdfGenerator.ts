@@ -47,7 +47,7 @@ export function stripEmojiAndUnprintable(str: string): string {
  */
 export function cleanMathSymbol(s: string): string {
   if (!s) return '';
-  return s.replace(/\\cdot/g, '·').replace(/\\times/g, '×').replace(/\\approx/g, '≈')
+  let result = s.replace(/\\cdot/g, '·').replace(/\\times/g, '×').replace(/\\approx/g, '≈')
           .replace(/\\neq/g, '≠').replace(/\\le(q)?\b/g, '≤').replace(/\\ge(q)?\b/g, '≥')
           .replace(/\\pm/g, '±').replace(/\\infty/g, '∞').replace(/\\Delta/g, 'Δ')
           .replace(/\\int/g, '∫').replace(/\\sum/g, 'Σ')
@@ -56,9 +56,11 @@ export function cleanMathSymbol(s: string): string {
           .replace(/\\pi/g, 'π').replace(/\\lambda/g, 'λ').replace(/\\mu/g, 'μ')
           .replace(/\\rho/g, 'ρ').replace(/\\sigma/g, 'σ').replace(/\\tau/g, 'τ').replace(/\\phi/g, 'φ')
           .replace(/\\partial/g, '∂').replace(/\\nabla/g, '∇')
-          .replace(/\\mathbf\{([^{}]+)\}/g, '$1').replace(/\\mathrm\{([^{}]+)\}/g, '$1')
-          .replace(/\\vec\{([^{}]+)\}/g, '$1').replace(/\\text\{([^{}]+)\}/g, '$1')
-          .replace(/\\[a-zA-Z]+/g, '').replace(/[{}]/g, '').trim();
+          // Extract text from \text{...}, \mathrm{...}, etc.
+          .replace(/\\(mathbf|mathrm|vec|text|boldsymbol)\{([^{}]+)\}/g, '$2');
+          
+  // Strip any remaining backslash commands and loose braces
+  return result.replace(/\\[a-zA-Z]+/g, '').replace(/[{}]/g, '').trim();
 }
 
 /**
@@ -105,7 +107,10 @@ export function tokenizeMath(expr: string): MathNode[] {
         text += s[i];
         i++;
       }
-      if (text) nodes.push({ type: 'text', value: cleanMathSymbol(text) });
+      if (text) {
+        const cleaned = cleanMathSymbol(text);
+        if (cleaned) nodes.push({ type: 'text', value: cleaned });
+      }
       if (s[i] === '{') {
         const group = parseGroup(s, i);
         i = group.end;
@@ -262,6 +267,12 @@ export function drawDisplayMathInPdf(
   }).trim();
 
   const nodes = tokenizeMath(s);
+  
+  // Skip drawing box if nodes are empty or just one empty text node
+  if (nodes.length === 0 || (nodes.length === 1 && nodes[0].type === 'text' && (!nodes[0].value || nodes[0].value.toLowerCase() === 'text'))) {
+    return 0;
+  }
+
   const mathWidth = measureMathWidth(doc, nodes, 11);
   const hasFrac = s.includes('\\frac');
   const blockHeight = hasFrac ? 48 : 34;
@@ -290,6 +301,57 @@ export function drawDisplayMathInPdf(
   drawMathNodes(doc, nodes, startX, centerY + 3.5, 11);
 
   return blockHeight + 10;
+}
+
+/**
+ * Draws spans into a specific bounding box (used for table cells).
+ */
+function drawSpansInBox(doc: jsPDF, spans: TextSpan[], x: number, y: number, maxWidth: number, fontSize: number, lineHeight: number): number {
+  let curX = x;
+  let curY = y;
+  
+  for (const span of spans) {
+    if (span.isMath) {
+      const nodes = tokenizeMath(span.text);
+      const mathW = measureMathWidth(doc, nodes, fontSize);
+      if (curX + mathW > x + maxWidth && curX > x) {
+        curX = x;
+        curY += lineHeight;
+      }
+      doc.setTextColor(67, 56, 202);
+      drawMathNodes(doc, nodes, curX, curY, fontSize);
+      curX += mathW;
+      continue;
+    }
+
+    const parts = span.text.split(/(\s+)/);
+    for (const p of parts) {
+      if (!p) continue;
+      if (/^\s+$/.test(p)) {
+        if (curX > x) {
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(fontSize);
+          curX += doc.getTextWidth(' ');
+        }
+        continue;
+      }
+
+      const style = span.bold ? (span.italic ? 'bolditalic' : 'bold') : (span.italic ? 'italic' : 'normal');
+      doc.setFont('helvetica', style);
+      doc.setFontSize(fontSize);
+      const wordW = doc.getTextWidth(p);
+
+      if (curX + wordW > x + maxWidth && curX > x) {
+        curX = x;
+        curY += lineHeight;
+      }
+
+      doc.setTextColor(span.bold ? 15 : 51, span.bold ? 23 : 65, span.bold ? 42 : 85);
+      doc.text(p, curX, curY);
+      curX += wordW;
+    }
+  }
+  return curY - y;
 }
 
 /**
@@ -412,13 +474,19 @@ export async function generateFormattedPdf(
     curY += lineHeight + 4;
   };
 
-  const drawTable = (headers: string[], rows: string[][]): void => {
-    if (headers.length === 0) return;
-    const weights = headers.map((h, colIdx) => {
-      let maxLen = h.length;
-      for (const r of rows) { if (r[colIdx] && r[colIdx].length > maxLen) maxLen = r[colIdx].length; }
+  const drawTable = (headerSpans: TextSpan[][], rowSpans: TextSpan[][][]): void => {
+    if (headerSpans.length === 0) return;
+    
+    // Allocate column widths proportionally
+    const weights = headerSpans.map((h, colIdx) => {
+      let maxLen = h.reduce((acc, s) => acc + s.text.length, 0);
+      for (const r of rowSpans) {
+        const cellLen = r[colIdx].reduce((acc, s) => acc + s.text.length, 0);
+        if (cellLen > maxLen) maxLen = cellLen;
+      }
       return Math.max(maxLen, 8);
     });
+
     const totalWeight = weights.reduce((a, b) => a + b, 0);
     const colWidths = weights.map(w => Math.floor((w / totalWeight) * contentWidth));
     colWidths[colWidths.length - 1] += (contentWidth - colWidths.reduce((a, b) => a + b, 0));
@@ -430,12 +498,9 @@ export async function generateFormattedPdf(
       doc.setDrawColor(51, 65, 85);
       doc.setLineWidth(0.5);
       let colX = margin;
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9);
-      doc.setTextColor(255, 255, 255);
-      for (let c = 0; c < headers.length; c++) {
+      for (let c = 0; c < headerSpans.length; c++) {
         doc.rect(colX, curY, colWidths[c], hHeight, 'S');
-        doc.text(headers[c], colX + 6, curY + 15);
+        drawSpansInBox(doc, headerSpans[c], colX + 6, curY + 15, colWidths[c] - 12, 9, 12);
         colX += colWidths[c];
       }
       return hHeight;
@@ -444,9 +509,16 @@ export async function generateFormattedPdf(
     checkPageBreak(30);
     curY += drawHeader();
 
-    for (let r = 0; r < rows.length; r++) {
-      const cellLinesList = rows[r].map((cell, idx) => doc.splitTextToSize(cell, colWidths[idx] - 12));
-      const rowHeight = Math.max(...cellLinesList.map(l => l.length), 1) * 12 + 8;
+    for (let r = 0; r < rowSpans.length; r++) {
+      const row = rowSpans[r];
+      const cellHeights = row.map((cell, idx) => {
+        // Rough estimate of height
+        const textLen = cell.reduce((acc, s) => acc + s.text.length, 0);
+        const lines = Math.ceil(textLen / (colWidths[idx] / 5)); // very rough
+        return Math.max(lines, 1) * 12 + 8;
+      });
+      const rowHeight = Math.max(...cellHeights);
+
       if (curY + rowHeight > contentBottom) {
         doc.addPage();
         curY = margin;
@@ -456,16 +528,10 @@ export async function generateFormattedPdf(
       doc.rect(margin, curY, contentWidth, rowHeight, 'F');
       doc.setDrawColor(203, 213, 225);
       doc.setLineWidth(0.5);
-      doc.setTextColor(51, 65, 85);
       let colX = margin;
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8.5);
-      for (let c = 0; c < rows[r].length; c++) {
+      for (let c = 0; c < row.length; c++) {
         doc.rect(colX, curY, colWidths[c], rowHeight, 'S');
-        const lines = cellLinesList[c];
-        for (let l = 0; l < lines.length; l++) {
-          doc.text(lines[l], colX + 6, curY + 14 + (l * 12));
-        }
+        drawSpansInBox(doc, row[c], colX + 6, curY + 14, colWidths[c] - 12, 8.5, 12);
         colX += colWidths[c];
       }
       curY += rowHeight;
@@ -549,17 +615,27 @@ export async function generateFormattedPdf(
     if (isTableRow(trimmed)) {
       const tableLines: string[] = [];
       while (i < lines.length && (isTableRow(lines[i]) || isTableSep(lines[i]))) { tableLines.push(lines[i].trim()); i++; }
-      const parseCells = (rowStr: string) => {
+      
+      const parseCellsToSpans = (rowStr: string): TextSpan[][] => {
         let s = rowStr.trim(); if (s.startsWith('|')) s = s.slice(1); if (s.endsWith('|')) s = s.slice(0, -1);
-        return s.split('|').map(c => stripEmojiAndUnprintable(c.trim()));
+        return s.split('|').map(c => parseLineToSpans(c.trim()));
       };
-      let hs: string[] = []; const rs: string[][] = [];
+
+      let hs: TextSpan[][] = []; 
+      const rs: TextSpan[][][] = [];
       if (tableLines.length >= 2 && isTableSep(tableLines[1])) {
-        hs = parseCells(tableLines[0]); for (let r = 2; r < tableLines.length; r++) if (!isTableSep(tableLines[r])) rs.push(parseCells(tableLines[r]));
+        hs = parseCellsToSpans(tableLines[0]); 
+        for (let r = 2; r < tableLines.length; r++) {
+          if (!isTableSep(tableLines[r])) rs.push(parseCellsToSpans(tableLines[r]));
+        }
       } else {
-        hs = parseCells(tableLines[0]); for (let r = 1; r < tableLines.length; r++) if (!isTableSep(tableLines[r])) rs.push(parseCells(tableLines[r]));
+        hs = parseCellsToSpans(tableLines[0]); 
+        for (let r = 1; r < tableLines.length; r++) {
+          if (!isTableSep(tableLines[r])) rs.push(parseCellsToSpans(tableLines[r]));
+        }
       }
-      drawTable(hs, rs); continue;
+      drawTable(hs, rs); 
+      continue;
     }
 
     if (trimmed.startsWith('>')) {
