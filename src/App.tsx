@@ -10776,15 +10776,21 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                         }
                                         showNotification('📄 Generating printable PDF note...');
                                         try {
-                                          await generateFormattedPdf(
+                                          const exportPromise = generateFormattedPdf(
                                             activeNote.title || 'Untitled Note',
                                             activeNote.subject || 'General',
                                             activeNote.content
                                           );
+                                          
+                                          const timeoutPromise = new Promise((_, reject) => 
+                                            setTimeout(() => reject(new Error('PDF export timed out after 20 seconds.')), 20000)
+                                          );
+
+                                          await Promise.race([exportPromise, timeoutPromise]);
                                           showNotification('✅ PDF downloaded successfully!');
                                         } catch (err: any) {
                                           console.error('PDF Export Error:', err);
-                                          showNotification('❌ Failed to export PDF note.');
+                                          showNotification(`❌ ${err.message || 'Failed to export PDF note.'}`);
                                         }
                                       }}
                                       className="px-2 py-1 rounded bg-indigo-900/30 text-indigo-400 text-[10px] font-bold hover:bg-indigo-800/40 cursor-pointer"

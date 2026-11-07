@@ -94,49 +94,61 @@ export function cleanMathToReadableText(expr: string): string {
 /**
  * Helper to render KaTeX formula to an image for high-fidelity PDF output.
  * Renders into a hidden DOM element then captures with html2canvas.
+ * Includes a mandatory 4-second timeout to prevent hanging.
  */
 async function renderMathToImage(formula: string, displayMode: boolean, fontSize: number): Promise<{ dataUrl: string, width: number, height: number } | null> {
-  const container = document.createElement('div');
-  container.style.position = 'fixed';
-  container.style.left = '-9999px';
-  container.style.top = '0';
-  container.style.padding = '4px';
-  container.style.fontSize = `${fontSize}pt`;
-  container.style.background = 'white';
-  container.style.color = '#000000';
-  container.style.width = displayMode ? '515pt' : 'auto';
-  container.style.display = displayMode ? 'block' : 'inline-block';
-  container.style.visibility = 'visible';
+  return new Promise(async (resolve) => {
+    const timeout = setTimeout(() => {
+      console.warn(`Math rendering timed out for formula: ${formula.substring(0, 50)}...`);
+      if (container.parentNode) document.body.removeChild(container);
+      resolve(null);
+    }, 4000);
 
-  try {
-    katex.render(formula, container, {
-      displayMode,
-      throwOnError: false,
-      trust: true,
-      strict: false
-    });
-    document.body.appendChild(container);
-    
-    // Tiny delay to ensure layout is complete
-    await new Promise(r => setTimeout(r, 25));
+    const container = document.createElement('div');
+    container.style.position = 'fixed';
+    container.style.left = '-9999px';
+    container.style.top = '0';
+    container.style.padding = '4px';
+    container.style.fontSize = `${fontSize}pt`;
+    container.style.background = 'white';
+    container.style.color = '#000000';
+    container.style.width = displayMode ? '515pt' : 'auto';
+    container.style.display = displayMode ? 'block' : 'inline-block';
+    container.style.visibility = 'visible';
 
-    const canvas = await html2canvas(container, {
-      backgroundColor: '#ffffff',
-      scale: 2, // Higher resolution for crisp print
-      logging: false,
-      useCORS: true
-    });
-    
-    const dataUrl = canvas.toDataURL('image/png');
-    const ptWidth = (canvas.width / 2) * 0.75; // px to pt
-    const ptHeight = (canvas.height / 2) * 0.75;
-    
-    document.body.removeChild(container);
-    return { dataUrl, width: ptWidth, height: ptHeight };
-  } catch (e) {
-    if (container.parentNode) document.body.removeChild(container);
-    return null;
-  }
+    try {
+      katex.render(formula, container, {
+        displayMode,
+        throwOnError: false,
+        trust: true,
+        strict: false
+      });
+      document.body.appendChild(container);
+      
+      // Tiny delay to ensure layout is complete
+      await new Promise(r => setTimeout(r, 50));
+
+      const canvas = await html2canvas(container, {
+        backgroundColor: '#ffffff',
+        scale: 2, // Higher resolution for crisp print
+        logging: false,
+        useCORS: true
+      });
+      
+      const dataUrl = canvas.toDataURL('image/png');
+      const ptWidth = (canvas.width / 2) * 0.75; // px to pt
+      const ptHeight = (canvas.height / 2) * 0.75;
+      
+      clearTimeout(timeout);
+      if (container.parentNode) document.body.removeChild(container);
+      resolve({ dataUrl, width: ptWidth, height: ptHeight });
+    } catch (e) {
+      console.error('Math rendering error:', e);
+      clearTimeout(timeout);
+      if (container.parentNode) document.body.removeChild(container);
+      resolve(null);
+    }
+  });
 }
 
 export interface TextSpan {
@@ -284,6 +296,7 @@ export async function generateFormattedPdf(
 
     for (const w of words) {
       if (w.isMath) {
+        // Wrap every renderMathToImage call in a 4-second timeout is handled inside renderMathToImage
         const img = await renderMathToImage(w.formula || '', false, fontSize);
         if (img) {
           if (curX + img.width > margin + indent + effMaxWidth && curX > margin + indent) {
@@ -294,6 +307,20 @@ export async function generateFormattedPdf(
           // Align image baseline with text
           doc.addImage(img.dataUrl, 'PNG', curX, curY - img.height + (fontSize * 0.25), img.width, img.height);
           curX += img.width;
+        } else {
+          // If it times out or throws, draw the formula as readable text and continue
+          const fallbackText = cleanMathToReadableText(w.formula || '');
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(fontSize);
+          doc.setTextColor(67, 56, 202); // indigo-600 for math fallback
+          const wordW = doc.getTextWidth(fallbackText);
+          if (curX + wordW > margin + indent + effMaxWidth && curX > margin + indent) {
+            curX = margin + indent;
+            curY += lineHeight;
+            checkPageBreak(lineHeight);
+          }
+          doc.text(fallbackText, curX, curY);
+          curX += wordW;
         }
         continue;
       }
@@ -461,12 +488,26 @@ export async function generateFormattedPdf(
         }
       }
 
-      const img = await renderMathToImage(mathLines.join(' '), true, 11);
+      const rawFormula = mathLines.join(' ');
+      const img = await renderMathToImage(rawFormula, true, 11);
       if (img) {
         checkPageBreak(img.height + 20);
         curY += 10;
         doc.addImage(img.dataUrl, 'PNG', margin + (contentWidth - img.width) / 2, curY, img.width, img.height);
         curY += img.height + 10;
+      } else {
+        const fallbackText = cleanMathToReadableText(rawFormula);
+        checkPageBreak(36);
+        doc.setFillColor(248, 250, 252);
+        doc.roundedRect(margin, curY, contentWidth, 28, 4, 4, 'F');
+        doc.setDrawColor(226, 232, 240);
+        doc.setLineWidth(0.5);
+        doc.roundedRect(margin, curY, contentWidth, 28, 4, 4, 'S');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11);
+        doc.setTextColor(49, 46, 129);
+        doc.text(fallbackText, margin + contentWidth / 2, curY + 18, { align: 'center' });
+        curY += 36;
       }
       continue;
     }
@@ -565,5 +606,15 @@ export async function generateFormattedPdf(
   }
 
   const safeFilename = `${(title || 'lecture_note').replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`;
-  doc.save(safeFilename);
+  
+  // After the PDF is built, return a Blob. Do not rely only on doc.save().
+  const blob = doc.output('blob');
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = safeFilename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
