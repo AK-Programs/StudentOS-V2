@@ -99,6 +99,11 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const editorRef = useRef<HTMLDivElement>(null);
   const [isAIProcessing, setIsAIProcessing] = useState(false);
+  const [isAIEditModalOpen, setIsAIEditModalOpen] = useState(false);
+  const [aiInstruction, setAiInstruction] = useState('Improve clarity, flow, and formatting');
+  const [aiActionMode, setAiActionMode] = useState<'replace' | 'insert_below' | 'append'>('replace');
+  const prevBlocksBackupRef = useRef<EducationalBlock[] | null>(null);
+  const [canUndoAI, setCanUndoAI] = useState(false);
 
   // Refs for focusing inputs
   const blockInputRefs = useRef<{ [key: string]: HTMLElement | null }>({});
@@ -120,31 +125,62 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
     }
   }, [noteId, initialContent]);
 
-  // Global Keyboard Shortcuts (Ctrl+A, Delete)
+  // Global Keyboard Shortcuts (Ctrl+A, Ctrl+C, Ctrl+X, Delete, Typing Replacement)
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       // Don't intercept if user is typing in a modal or something else specific
-      if (isMathModalOpen || isSketchModalOpen || slashMenuOpen) return;
+      if (isMathModalOpen || isSketchModalOpen || slashMenuOpen || isAIEditModalOpen) return;
 
-      // Ctrl+A / Cmd+A
+      const activeElement = document.activeElement;
+      const isInputFocused = activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA';
+
+      // Ctrl+A / Cmd+A - Select All Blocks
       if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
-        const activeElement = document.activeElement;
-        const isInput = activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA';
-        
-        // Only trigger document-wide select if we are in the editor area or nothing is focused
-        if (!isInput || (activeElement && editorRef.current?.contains(activeElement))) {
+        if (!isInputFocused || (activeElement && editorRef.current?.contains(activeElement))) {
           e.preventDefault();
           setSelectedBlockIds(blocks.map(b => b.id));
           setIsMultiSelectMode(true);
-          // Blur current input to show selection clearly
           if (activeElement instanceof HTMLElement) activeElement.blur();
         }
       }
 
+      // Ctrl+C / Cmd+C - Copy Selected Blocks
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c' && selectedBlockIds.length > 0 && !isInputFocused) {
+        e.preventDefault();
+        const selected = blocks.filter(b => selectedBlockIds.includes(b.id));
+        const md = blocksToMarkdown(selected);
+        navigator.clipboard.writeText(md);
+      }
+
+      // Ctrl+X / Cmd+X - Cut Selected Blocks
+      if ((e.ctrlKey || e.metaKey) && e.key === 'x' && selectedBlockIds.length > 0 && !isInputFocused) {
+        e.preventDefault();
+        const selected = blocks.filter(b => selectedBlockIds.includes(b.id));
+        const md = blocksToMarkdown(selected);
+        navigator.clipboard.writeText(md);
+        handleDeleteSelectedBlocks();
+      }
+
       // Delete / Backspace for multi-selection
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedBlockIds.length > 0 && !document.activeElement?.tagName.match(/INPUT|TEXTAREA/)) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedBlockIds.length > 0 && !isInputFocused) {
         e.preventDefault();
         handleDeleteSelectedBlocks();
+      }
+
+      // Typing over selected blocks replaces selection
+      if (selectedBlockIds.length > 0 && !isInputFocused && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        const newId = 'blk_' + Date.now();
+        const newBlock: ParagraphBlock = { id: newId, type: 'paragraph', text: e.key };
+        
+        const firstIdx = blocks.findIndex(b => b.id === selectedBlockIds[0]);
+        const next = blocks.filter(b => !selectedBlockIds.includes(b.id));
+        const insertIdx = firstIdx >= 0 ? Math.min(firstIdx, next.length) : 0;
+        
+        next.splice(insertIdx, 0, newBlock);
+        updateBlocks(next, newId);
+        setSelectedBlockIds([]);
+        setIsMultiSelectMode(false);
       }
 
       // Escape to clear selection
@@ -156,7 +192,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [blocks, selectedBlockIds, isMathModalOpen, isSketchModalOpen, slashMenuOpen]);
+  }, [blocks, selectedBlockIds, isMathModalOpen, isSketchModalOpen, slashMenuOpen, isAIEditModalOpen]);
 
   const handleDeleteSelectedBlocks = () => {
     if (selectedBlockIds.length === 0) return;
@@ -347,13 +383,16 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
     }
   };
 
-  const handleEditWithAI = async (instruction?: string) => {
+  const handleExecuteAIEdit = async () => {
     if (selectedBlockIds.length === 0 && !activeBlockId) return;
     
     setIsAIProcessing(true);
     const targetIds = selectedBlockIds.length > 0 ? selectedBlockIds : [activeBlockId!];
     const selectedBlocks = blocks.filter(b => targetIds.includes(b.id));
     const contentToEdit = blocksToMarkdown(selectedBlocks);
+
+    // Save backup for undo
+    prevBlocksBackupRef.current = [...blocks];
 
     try {
       const res = await fetch('/api/ai/notes', {
@@ -362,7 +401,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
         body: JSON.stringify({
           action: 'edit_note',
           content: contentToEdit,
-          instruction: instruction || 'Refine and improve this section.',
+          instruction: aiInstruction || 'Refine and improve this section.',
           subject: noteSubject
         })
       });
@@ -374,16 +413,37 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
         const newBlocks = markdownToBlocks(data.content);
         const startIdx = blocks.findIndex(b => b.id === targetIds[0]);
         const next = [...blocks];
-        // Replace selected blocks with new AI-generated blocks
-        next.splice(startIdx, targetIds.length, ...newBlocks);
+
+        if (aiActionMode === 'replace') {
+          // Replace selected blocks with new AI-generated blocks
+          next.splice(startIdx >= 0 ? startIdx : 0, targetIds.length, ...newBlocks);
+        } else if (aiActionMode === 'insert_below') {
+          // Insert below selected blocks
+          const lastIdx = blocks.findIndex(b => b.id === targetIds[targetIds.length - 1]);
+          next.splice((lastIdx >= 0 ? lastIdx : blocks.length) + 1, 0, ...newBlocks);
+        } else {
+          // Append to end of note
+          next.push(...newBlocks);
+        }
+
         updateBlocks(next);
         setSelectedBlockIds([]);
         setIsMultiSelectMode(false);
+        setIsAIEditModalOpen(false);
+        setCanUndoAI(true);
       }
     } catch (err) {
       console.error(err);
     } finally {
       setIsAIProcessing(false);
+    }
+  };
+
+  const handleUndoAIEdit = () => {
+    if (prevBlocksBackupRef.current) {
+      updateBlocks(prevBlocksBackupRef.current);
+      prevBlocksBackupRef.current = null;
+      setCanUndoAI(false);
     }
   };
 
@@ -440,11 +500,12 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
             {selectedBlockIds.length} Selected
           </div>
           <button
-            onClick={() => handleEditWithAI()}
+            onClick={() => setIsAIEditModalOpen(true)}
             disabled={isAIProcessing}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all disabled:opacity-50 cursor-pointer shadow-md"
+            title="Transform selected blocks with AI"
           >
-            {isAIProcessing ? <Sparkles className="w-3.5 h-3.5 animate-pulse" /> : <Wand2 className="w-3.5 h-3.5" />}
+            {isAIProcessing ? <Sparkles className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
             <span>Edit with AI</span>
           </button>
           <button
@@ -559,6 +620,16 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
 
           {/* Right Action Shortcuts */}
           <div className="flex items-center gap-1.5">
+            {canUndoAI && (
+              <button
+                type="button"
+                onClick={handleUndoAIEdit}
+                className="px-2.5 py-1 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                title="Undo last AI edit"
+              >
+                <span>↩ Undo AI Edit</span>
+              </button>
+            )}
             {onOpenHomeworkLinking && (
               <button
                 type="button"
@@ -931,6 +1002,124 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
           }
         }}
       />
+
+      {/* AI Edit Modal Dialog */}
+      {isAIEditModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200">
+          <div 
+            className="w-full max-w-lg bg-slate-900 border border-slate-700/80 rounded-3xl p-6 space-y-5 shadow-2xl relative overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Top Bar */}
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5 text-indigo-400 font-bold text-sm">
+                <div className="p-2 rounded-xl bg-indigo-600/20">
+                  <Wand2 className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div>
+                  <h3 className="text-white text-base">Edit with AI</h3>
+                  <p className="text-[10px] text-slate-400 font-normal">
+                    {selectedBlockIds.length > 0 ? `${selectedBlockIds.length} blocks selected` : 'Active block selected'}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setIsAIEditModalOpen(false)} className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Quick Action Presets */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-300">Quick AI Actions</label>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { label: '✨ Improve Clarity', prompt: 'Improve clarity, flow, and academic tone while preserving all formulas and formatting' },
+                  { label: '📝 Fix Grammar', prompt: 'Proofread and fix grammar, spelling, and sentence structure' },
+                  { label: '💡 Simplify', prompt: 'Simplify the explanation so it is easy for a high school student to master' },
+                  { label: '🎓 Convert to Example', prompt: 'Transform this text into a structured Worked Example block with step-by-step solution' },
+                  { label: '❓ Recall Questions', prompt: 'Generate 2 Active Recall self-test questions based on this text' },
+                  { label: '🎯 Summarize', prompt: 'Summarize key takeaways into a concise bullet list' }
+                ].map((preset, pIdx) => (
+                  <button
+                    key={pIdx}
+                    type="button"
+                    onClick={() => setAiInstruction(preset.prompt)}
+                    className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-indigo-600/30 text-slate-300 hover:text-indigo-200 text-[11px] font-semibold border border-white/5 transition-colors cursor-pointer"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Custom Instruction Input */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-300">Custom AI Instruction</label>
+              <textarea
+                rows={3}
+                value={aiInstruction}
+                onChange={e => setAiInstruction(e.target.value)}
+                placeholder="Describe what edits or transformation you want..."
+                className="w-full p-3 text-xs rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-none font-sans"
+              />
+            </div>
+
+            {/* Action Mode Selection */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-300">Apply Mode</label>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                {[
+                  { id: 'replace', label: 'Replace Selection' },
+                  { id: 'insert_below', label: 'Insert Below' },
+                  { id: 'append', label: 'Append to Note' }
+                ].map(mode => (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    onClick={() => setAiActionMode(mode.id as any)}
+                    className={`py-2 px-2 rounded-xl text-[11px] font-bold border transition-colors cursor-pointer text-center ${
+                      aiActionMode === mode.id
+                        ? 'bg-indigo-600/30 text-indigo-200 border-indigo-500/50'
+                        : 'bg-slate-950/60 text-slate-400 border-slate-800 hover:text-slate-200'
+                    }`}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsAIEditModalOpen(false)}
+                className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!aiInstruction.trim() || isAIProcessing}
+                onClick={handleExecuteAIEdit}
+                className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+              >
+                {isAIProcessing ? (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5 animate-spin" />
+                    <span>Processing Edits...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Apply AI Edits</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Sketch Canvas Modal */}
       <SketchCanvasModal
