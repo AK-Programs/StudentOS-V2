@@ -1,0 +1,1701 @@
+VEYLENTRA LECTURE NOTES — COMPLETE REWORK
+
+Build a World-Class AI-Powered Educational Note-Taking and Knowledge Workspace
+
+You are working on the existing production Veylentra React/Vite/TypeScript application.
+
+Your task is to completely rework and upgrade the existing Lecture Notes module into a premium, modern, educational workspace that is significantly easier and more powerful to use than conventional note-taking applications.
+
+This is a complete Lecture Notes experience rework, not a small UI update.
+
+The goal is to make Veylentra Lecture Notes a combination of:
+
+- The simplicity of Google Docs.
+- The flexibility of Notion.
+- The organization of Obsidian.
+- The structured content experience of Craft.
+- The productivity capabilities of modern workspace applications.
+- Educational intelligence specifically designed for students and teachers.
+
+However, DO NOT blindly copy another product's interface or architecture.
+
+Veylentra must have its own distinctive identity and educational advantages.
+
+---
+
+PART 1 — IMPORTANT IMPLEMENTATION RULES
+
+Before changing anything:
+
+1. Inspect the existing Lecture Notes implementation completely.
+2. Understand the current editor, document storage, database schema, Supabase integration, permissions, AI services, PDF export pipeline and existing navigation.
+3. Identify all existing Lecture Notes features.
+4. Identify which existing components and services can be reused.
+5. Inspect existing SQL migrations and actual schema before proposing database changes.
+6. Preserve existing working functionality.
+7. Do not introduce duplicate systems.
+8. Do not replace working integrations without a verified reason.
+9. Do not break existing PDF export.
+10. Do not weaken existing Supabase RLS policies.
+11. Do not create mock functionality and present it as working functionality.
+
+The existing PDF export was previously experiencing serious formatting problems but has now been fixed.
+
+Preserving the fixed PDF export is a critical requirement.
+
+Do not replace or casually rewrite its working implementation.
+
+Before modifying the document editor, inspect how its current content is rendered into PDFs.
+
+Every new block must be compatible with the PDF pipeline or have a deliberate, tested PDF rendering implementation.
+
+Do not declare the upgrade complete merely because the application compiles.
+
+---
+
+PART 2 — THE NEW EDITOR PHILOSOPHY
+
+Build a DOCUMENT-FIRST HYBRID EDITOR.
+
+Users should be able to open a blank note and immediately start typing.
+
+They should not need to understand Markdown, JSON, LaTeX syntax or complicated block concepts.
+
+The editor must support two complementary experiences:
+
+Normal document writing
+
+- Click and type.
+- Select text and format it.
+- Insert headings.
+- Create lists.
+- Add tables.
+- Insert equations.
+- Add images.
+- Create educational blocks.
+
+Advanced block capabilities
+
+- Move blocks.
+- Duplicate blocks.
+- Delete blocks.
+- Convert compatible block types.
+- Rearrange content.
+- Use slash commands.
+- Access contextual block menus.
+
+The normal writing experience must remain simple.
+
+Advanced capabilities should be discoverable without overwhelming beginners.
+
+Never require Markdown knowledge to create a well-formatted note.
+
+Raw Markdown and LaTeX may remain available as optional advanced editing modes.
+
+---
+
+PART 3 — COMPLETE LECTURE NOTES UI/UX REDESIGN
+
+Give Lecture Notes a complete, premium visual redesign.
+
+The interface should feel:
+
+- Modern.
+- Clean.
+- Premium.
+- Fast.
+- Minimal but powerful.
+- Consistent with Veylentra's existing design system.
+- Comfortable for long writing sessions.
+- Excellent on desktop, tablets and phones.
+
+Do not simply add more cards and gradients.
+
+Focus on information hierarchy, whitespace, typography, accessibility, predictable navigation and excellent interaction design.
+
+3.1 Workspace layout
+
+Create a responsive workspace with:
+
+Desktop
+
+A three-part layout where appropriate:
+
+1. Navigation/sidebar.
+2. Main document/library workspace.
+3. Optional contextual panel.
+
+The contextual panel should be collapsible.
+
+Do not permanently consume valuable writing space.
+
+Tablet
+
+- Collapsible navigation.
+- Comfortable editor width.
+- Responsive toolbar.
+- Contextual tools in a drawer or collapsible panel.
+
+Mobile
+
+- Full-screen document editor.
+- Sidebar becomes a drawer.
+- Compact formatting toolbar.
+- Bottom-sheet insertion menu.
+- Proper keyboard-aware layout.
+- Touch-friendly controls.
+- No horizontal overflow.
+- No controls hidden behind the keyboard or bottom navigation.
+
+Use existing Veylentra design tokens and theme infrastructure.
+
+Support dark mode and light mode.
+
+Do not introduce a separate theme system.
+
+3.2 Workspace navigation
+
+Provide:
+
+- All Notes.
+- Recent.
+- Starred.
+- My Folders.
+- Shared with Me.
+- Templates.
+- Archived.
+- Trash.
+
+Allow users to:
+
+- Create folders.
+- Rename folders.
+- Move notes.
+- Star notes.
+- Archive notes.
+- Restore archived notes.
+- Recover deleted notes where supported.
+- Organize using tags.
+- Search across their authorized notes.
+
+Tags must work independently of folders.
+
+A note can belong to a Mathematics folder and have tags such as:
+
+- Class 10.
+- Algebra.
+- Chapter 4.
+- Exam Revision.
+
+Support collections that can reference multiple notes without duplicating the underlying documents.
+
+---
+
+PART 4 — FLOATING PLUS BUTTON: QUICK CREATE
+
+Add a persistent floating "+" button at the bottom-right of the Lecture Notes workspace.
+
+This is an important part of the new UX.
+
+Clicking it should open a beautiful expandable speed-dial menu on desktop.
+
+On mobile, use a polished bottom sheet rather than a cramped radial menu.
+
+The menu should have three categories.
+
+4.1 Create
+
+- Create a Note.
+- Create a Folder.
+- Create a Study Page.
+- Create from Template.
+
+4.2 Educational
+
+- Math Workspace.
+- Create a Lesson.
+- Create a Checklist.
+- Create a Sketch.
+- Create a Revision Sheet.
+
+4.3 Bring Content In
+
+- Image to Note.
+- Import PDF.
+- Import Document.
+- Import Markdown.
+- Paste Content.
+
+Do not make the menu excessively large.
+
+Use searchable or categorized actions if necessary.
+
+Each action must perform its actual advertised operation.
+
+4.4 Image to Note — PRIORITY FEATURE
+
+Add a dedicated Image to Note action directly inside the floating plus menu.
+
+This feature is extremely important.
+
+Students and teachers frequently have handwritten notes in notebooks, on paper, on whiteboards or in photographs.
+
+They should be able to turn these into organized digital notes.
+
+User flow
+
+Click +
+    ↓
+Image to Note
+    ↓
+Upload or capture image
+    ↓
+AI analyzes the handwriting and document structure
+    ↓
+Extract text, formulas, lists and tables
+    ↓
+Organize the extracted information
+    ↓
+Display editable note preview
+    ↓
+User reviews and edits
+    ↓
+Save to Lecture Notes
+
+Image input
+
+Support:
+
+- Camera capture where available.
+- Image upload.
+- Multiple image uploads.
+- Drag and drop on desktop.
+- Clipboard image paste where supported.
+
+Accept common image formats supported by the existing application.
+
+AI processing
+
+The AI must attempt to recognize:
+
+- Handwritten text.
+- Printed text.
+- Headings.
+- Subheadings.
+- Paragraphs.
+- Mathematical formulas.
+- Fractions.
+- Exponents.
+- Roots.
+- Greek symbols.
+- Matrices.
+- Tables.
+- Numbered lists.
+- Bulleted lists.
+- Diagrams.
+- Labels and annotations.
+- Important definitions.
+- Examples and solved questions.
+
+Preserve the original meaning and order of the content.
+
+Organization
+
+AI should convert the extracted material into a beautifully organized editable document.
+
+For example:
+
+Original handwritten content:
+
+- A chapter heading.
+- Several paragraphs.
+- Three equations.
+- A handwritten comparison table.
+- A list of definitions.
+
+The generated note should contain:
+
+- Proper title.
+- Organized headings.
+- Readable paragraphs.
+- Correctly rendered equations.
+- Structured table.
+- Proper lists.
+- Highlighted definitions where appropriate.
+
+Do not simply dump all extracted text into one paragraph.
+
+Critical OCR/math accuracy rules
+
+Handwriting recognition is not always perfect.
+
+Therefore:
+
+- Do not invent unreadable content.
+- Mark uncertain words or formulas.
+- Preserve the original uploaded image for reference.
+- Allow users to compare extracted content against the original.
+- Allow manual correction before saving.
+- Never silently replace an uncertain mathematical symbol with a guessed one.
+- If an equation is uncertain, explicitly mark it for review.
+
+For example, an uncertain "1" versus "l" should not silently become a confident mathematical answer.
+
+Multiple images
+
+When several images are uploaded:
+
+- Preserve their order.
+- Detect whether they belong to the same document.
+- Combine them into one organized note when appropriate.
+- Avoid repeating overlapping content.
+- Preserve page boundaries where meaningful.
+- Allow the user to reorder uploaded images before processing.
+
+AI processing interface
+
+Show meaningful progress:
+
+1. Reading uploaded images.
+2. Recognizing handwriting.
+3. Extracting mathematical content.
+4. Identifying document structure.
+5. Organizing the note.
+6. Preparing editable preview.
+
+Do not fake progress percentages or report completion before the actual operation finishes.
+
+Review interface
+
+Before saving, show:
+
+- Original image.
+- Extracted note.
+- Detected equations.
+- Uncertain text.
+- Any warnings.
+
+Allow the user to:
+
+- Edit the note.
+- Reprocess an image.
+- Correct equations.
+- Remove incorrect sections.
+- Add missing content.
+- Save as a new note.
+
+Do not automatically overwrite an existing note.
+
+Technical implementation
+
+Inspect the existing approved AI provider architecture.
+
+Use only the project's currently approved AI providers and configured models:
+
+- APInex.
+- Ministral.
+- Groq.
+
+Do not introduce Gemini, NARA Router, NVIDIA or an unapproved provider.
+
+Use a suitable existing vision-capable model/provider configuration if available.
+
+If no configured model supports image input, explain the limitation and implement a clean provider capability check rather than silently pretending image recognition is available.
+
+Do not expose API keys in the browser.
+
+Images must be uploaded and processed through a secure, authorized workflow.
+
+Respect file-size limits and supported MIME types.
+
+Use private storage and appropriate access controls.
+
+Do not expose one user's uploaded handwritten notes to another user.
+
+---
+
+PART 5 — RICH-TEXT EDITOR
+
+Implement a complete, reliable rich-text editor.
+
+The editor should support normal writing without requiring users to manually create Markdown.
+
+5.1 Formatting
+
+Support:
+
+- Bold.
+- Italic.
+- Underline.
+- Strikethrough.
+- Text highlighting.
+- Text color.
+- Font size.
+- Text alignment.
+- Headings H1, H2 and H3.
+- Paragraphs.
+- Quotes.
+- Dividers.
+- Links.
+- Code formatting.
+- Inline mathematical expressions.
+
+Formatting should behave predictably.
+
+Selecting text must not unexpectedly lose the selection when a toolbar action is clicked.
+
+5.2 Lists
+
+Support:
+
+- Bulleted lists.
+- Numbered lists.
+- Nested lists.
+- Checklists.
+- Task lists.
+
+Users should be able to change list type without losing the text.
+
+5.3 Tables
+
+Implement a proper visual table editor.
+
+Users must be able to:
+
+- Insert tables.
+- Select row and column counts.
+- Add rows.
+- Delete rows.
+- Add columns.
+- Delete columns.
+- Resize columns where supported.
+- Edit cells naturally.
+- Navigate cells using keyboard.
+- Paste tabular data.
+- Copy table content.
+- Format header rows.
+- Export tables correctly to PDF.
+
+Do not force users to write Markdown table syntax.
+
+5.4 Images and media
+
+Support:
+
+- Upload.
+- Paste.
+- Drag and drop.
+- Resize.
+- Alignment.
+- Captions.
+- Alt text.
+- Delete.
+- Replace.
+
+Preserve image quality during PDF export while avoiding unnecessarily huge files.
+
+---
+
+PART 6 — SLASH COMMAND SYSTEM
+
+Implement a searchable slash-command menu.
+
+Typing "/" inside the document should open a contextual insertion menu.
+
+Include:
+
+Basic
+
+- Text.
+- Heading.
+- Subheading.
+- Bulleted List.
+- Numbered List.
+- Checklist.
+- Quote.
+- Divider.
+- Callout.
+
+Educational
+
+- Equation.
+- Formula.
+- Worked Example.
+- Definition.
+- Important Concept.
+- Warning.
+- Recall Question.
+- Diagram.
+- Flowchart.
+
+Media
+
+- Image.
+- File.
+- Link.
+- Table.
+- Code Block.
+
+Learning tools
+
+- Flashcards.
+- Practice Questions.
+- Quiz.
+- Revision Summary.
+
+Commands must be searchable.
+
+Support keyboard navigation and mobile touch interaction.
+
+The slash menu should not interfere with normal typing or cursor positioning.
+
+---
+
+PART 7 — ADVANCED MATHEMATICS WORKSPACE
+
+Mathematics support must be a first-class feature.
+
+Do not treat formulas as ordinary text.
+
+Implement a visual mathematical equation editor.
+
+7.1 Visual equation builder
+
+Provide controls for:
+
+- Fractions.
+- Superscripts.
+- Subscripts.
+- Square roots.
+- Nth roots.
+- Parentheses and brackets.
+- Greek letters.
+- Integrals.
+- Summations.
+- Limits.
+- Derivatives.
+- Matrices.
+- Vectors.
+- Inequalities.
+- Trigonometric functions.
+- Logarithms.
+- Equation alignment.
+
+Users should be able to build formulas visually.
+
+Raw LaTeX should remain available as an optional advanced mode.
+
+7.2 Equation editing
+
+Support:
+
+- Insert equation.
+- Edit existing equation.
+- Preview rendering.
+- Inline equations.
+- Display equations.
+- Multiple aligned equations.
+- Equation numbering where appropriate.
+
+Keep formulas editable after saving.
+
+Do not convert equations into static images as the primary storage format.
+
+Preserve underlying mathematical source.
+
+7.3 Equation keyboard
+
+On mobile, provide a dedicated mathematical keyboard or a suitable existing math input solution.
+
+Do not force users to type LaTeX using an ordinary mobile keyboard.
+
+7.4 Mathematical PDF export
+
+This is a critical compatibility requirement.
+
+All equations must render correctly in exported PDFs.
+
+Test:
+
+- Fractions.
+- Matrices.
+- Greek symbols.
+- Superscripts.
+- Subscripts.
+- Roots.
+- Integrals.
+- Equation alignment.
+- Long equations.
+- Equations inside tables.
+- Equations inside worked examples.
+
+No clipped formulas, missing glyphs or corrupted symbols.
+
+---
+
+PART 8 — EDUCATIONAL BLOCK LIBRARY
+
+Create reusable educational blocks.
+
+These are not merely colored cards.
+
+They must be real editable document elements.
+
+Implement:
+
+8.1 Concept Block
+
+Contains:
+
+- Concept title.
+- Explanation.
+- Key takeaway.
+- Optional example.
+
+8.2 Formula Block
+
+Contains:
+
+- Formula.
+- Variable definitions.
+- Units.
+- Explanation.
+- Optional worked example.
+
+8.3 Worked Example Block
+
+Structured format:
+
+Problem
+Given Information
+Required
+Solution Steps
+Final Answer
+
+8.4 Definition Block
+
+Clearly highlights an important definition.
+
+8.5 Important / Warning Block
+
+Supports:
+
+- Important information.
+- Exam tips.
+- Common mistakes.
+- Warnings.
+- Teacher notes.
+
+8.6 Recall Question Block
+
+Contains:
+
+- Question.
+- Hidden answer.
+- Reveal answer interaction.
+
+Students can test themselves directly inside the note.
+
+8.7 Diagram / Flowchart Block
+
+Allow creation and editing of diagrams and flowcharts.
+
+Support:
+
+- Shapes.
+- Connectors.
+- Labels.
+- Arrows.
+- Text.
+- Basic colors.
+- Resizing.
+- Export to PDF.
+
+8.8 Reusable blocks
+
+Allow users to duplicate and reuse educational blocks.
+
+Where appropriate, allow saving blocks as personal templates.
+
+---
+
+PART 9 — DRAWING AND HANDWRITING
+
+Implement a drawing/sketch workspace.
+
+This is especially useful for:
+
+- Physics diagrams.
+- Geometry.
+- Biology diagrams.
+- Chemistry structures.
+- Mind maps.
+- Flowcharts.
+- Teacher explanations.
+
+Support:
+
+- Pen.
+- Eraser.
+- Shapes.
+- Lines.
+- Arrows.
+- Text labels.
+- Undo.
+- Redo.
+- Clear.
+- Image background where appropriate.
+
+Allow users to insert sketches directly into their notes.
+
+Make the drawing interface usable on touch devices and stylus-enabled tablets.
+
+Do not attempt to build a full professional CAD application.
+
+Focus on educational diagrams and simple handwritten annotations.
+
+---
+
+PART 10 — NOTES TO LEARNING TOOLS
+
+This is one of Veylentra's biggest opportunities.
+
+A single note should be reusable for multiple learning experiences.
+
+Users should not have to recreate content manually.
+
+10.1 Note to Flashcards
+
+Allow users to:
+
+- Select a paragraph.
+- Select a definition.
+- Select a formula.
+- Select an entire section.
+- Convert selected content into flashcards.
+
+Integrate with the existing Veylentra Study Center flashcard system.
+
+Do not create a second flashcard system.
+
+Preserve the relationship between the source note and generated cards where supported.
+
+10.2 Note to Quiz
+
+Allow generation of:
+
+- Multiple-choice questions.
+- True/false questions.
+- Short-answer questions.
+- Fill-in-the-blank questions.
+- Formula-based questions.
+
+Let users review and edit questions before saving or publishing.
+
+10.3 Note to Revision Sheet
+
+Generate a structured revision sheet containing:
+
+- Main concepts.
+- Definitions.
+- Important formulas.
+- Key points.
+- Common mistakes.
+- Examples.
+- Quick revision questions.
+
+The user must be able to edit the generated result.
+
+10.4 Note to Study Guide
+
+Generate an organized study guide using selected notes.
+
+Do not invent unsupported information.
+
+Clearly distinguish generated additions from source material.
+
+10.5 Teacher Note to Lesson
+
+Allow teachers to convert notes into structured lesson material.
+
+Potential sections:
+
+- Learning objectives.
+- Introduction.
+- Teaching points.
+- Examples.
+- Classroom activities.
+- Recap.
+- Assessment questions.
+
+Do not automatically publish or assign lessons without explicit teacher action.
+
+---
+
+PART 11 — HOMEWORK-TO-NOTE LINKING
+
+This is a mandatory feature.
+
+Students and teachers must be able to link homework with relevant Lecture Notes.
+
+The goal is to make it easy to understand which notes are useful for a particular homework assignment.
+
+11.1 Student workflow
+
+Example:
+
+A student opens Mathematics homework:
+
+"Chapter 4 — Quadratic Equations"
+
+The student should see:
+
+Related Notes
+
+- Quadratic Equations — Class Notes.
+- Solving Quadratic Equations — Revision Sheet.
+- Important Formulas — Algebra.
+
+The student can open the linked note directly.
+
+11.2 Link from a note
+
+Inside a note, provide:
+
+- Link Homework.
+- View Linked Homework.
+- Remove Link.
+
+Allow users to search their authorized homework assignments and select one or more.
+
+11.3 Link from homework
+
+Inside a homework detail page, provide:
+
+- Link Existing Note.
+- Create Note for This Homework.
+- View Related Notes.
+
+Creating a note from homework should automatically establish the relationship.
+
+11.4 Permissions and targeting
+
+Respect existing Veylentra homework and class authorization rules.
+
+A student must only see homework and notes they are authorized to access.
+
+Teachers must only link notes to homework they are authorized to manage.
+
+Do not allow users to link arbitrary homework IDs to bypass access controls.
+
+11.5 Relationship model
+
+Inspect the current database before choosing a schema.
+
+If a separate many-to-many relationship is required, use an appropriate structure such as:
+
+lecture_note_homework_links
+
+id
+note_id
+homework_id
+linked_by
+created_at
+
+Use actual existing identifiers and naming conventions.
+
+Add proper:
+
+- Foreign keys.
+- Indexes.
+- RLS.
+- Duplicate prevention.
+- Deletion behavior.
+
+Do not assume these exact table names or fields are correct until the existing schema has been inspected.
+
+11.6 Display
+
+Show related homework inside notes and related notes inside homework.
+
+Include useful information:
+
+- Homework title.
+- Subject.
+- Class/section where authorized.
+- Due date.
+- Assignment status.
+- Note title.
+
+Do not expose private student submissions or grades through note links.
+
+---
+
+PART 12 — ORGANIZATION AND KNOWLEDGE MANAGEMENT
+
+Build a powerful but understandable organization system.
+
+Support:
+
+- Folders.
+- Nested folders.
+- Tags.
+- Collections.
+- Favorites.
+- Recent documents.
+- Archive.
+- Trash.
+- Templates.
+- Backlinks.
+- Note references.
+
+12.1 Note links
+
+Support internal note linking.
+
+For example:
+
+[[Quadratic Equations]]
+
+Users should be able to select a note from an autocomplete menu instead of typing the title manually.
+
+12.2 Backlinks
+
+If Note A references Note B, Note B should be able to display:
+
+"Referenced by Note A"
+
+Respect access permissions.
+
+12.3 Knowledge graph
+
+Treat the knowledge graph as a later enhancement.
+
+If implemented, it should display meaningful relationships between authorized notes.
+
+Do not prioritize an attractive graph over reliable search and linking.
+
+---
+
+PART 13 — COLLABORATION
+
+Support personal and shared workspaces.
+
+Students and teachers should be able to collaborate when authorized.
+
+Potential capabilities:
+
+- Share note.
+- Invite collaborators.
+- Read-only access.
+- Editing access.
+- Comment access.
+- Comments.
+- Suggestions.
+- Version history.
+- Restore previous versions.
+
+Respect the existing school's role and class structure.
+
+Do not allow public access to private school notes by default.
+
+Do not weaken RLS to make sharing easier.
+
+Implement collaboration in phases if required.
+
+---
+
+PART 14 — AUTOSAVE, VERSION HISTORY AND RECOVERY
+
+Implement dependable document persistence.
+
+Autosave
+
+- Save automatically.
+- Debounce frequent edits.
+- Display saving status.
+- Display saved status.
+- Display errors.
+- Retry failed saves safely.
+- Avoid duplicate writes.
+- Prevent accidental overwriting.
+
+Recovery
+
+If the browser closes unexpectedly:
+
+- Restore the last safely saved version.
+- Recover unsaved content where the current architecture permits.
+- Inform the user when recovery is available.
+
+Version History
+
+Allow users to:
+
+- View previous versions.
+- See when they were created.
+- Restore a previous version.
+- Compare versions where practical.
+
+Do not overwrite historical versions during normal autosaving.
+
+---
+
+PART 15 — IMPORT AND EXPORT
+
+Preserve existing PDF export and expand document portability.
+
+Import
+
+Where supported, allow:
+
+- Markdown.
+- PDF.
+- Text files.
+- DOCX.
+- Images.
+- Pasted content.
+
+For imported PDFs, preserve the original file and offer extraction into an editable note when supported.
+
+Export
+
+Support:
+
+- PDF.
+- Markdown.
+- Plain text.
+- Structured JSON backup.
+
+DOCX export can be considered if it fits the current architecture.
+
+PDF EXPORT — NON-NEGOTIABLE
+
+The existing fixed PDF exporter must remain functional.
+
+Test every new block type.
+
+Preserve:
+
+- Page breaks.
+- Tables.
+- Mathematical formulas.
+- Images.
+- Headings.
+- Lists.
+- Callouts.
+- Worked examples.
+- Diagrams.
+- Page margins.
+- Headers and footers where currently supported.
+- Font rendering.
+- Unicode and Greek symbols.
+
+Avoid:
+
+- Text overlapping.
+- Clipped formulas.
+- Broken tables.
+- Missing images.
+- Unexpected blank pages.
+- Incorrect pagination.
+- Raw Markdown markers.
+- LaTeX source appearing instead of rendered equations.
+
+Use real export tests with multi-page notes.
+
+Do not mark export successful if a required element failed to render.
+
+---
+
+PART 16 — AI INSIDE THE EDITOR
+
+AI should be contextual.
+
+It must not be required to create or edit ordinary notes.
+
+When a user selects content, show relevant AI actions.
+
+General writing
+
+- Improve Writing.
+- Fix Grammar.
+- Simplify Explanation.
+- Expand Explanation.
+- Summarize.
+- Translate.
+- Give Examples.
+
+Educational
+
+- Explain for a Younger Student.
+- Make Exam-Ready.
+- Extract Key Points.
+- Create Definitions.
+- Generate Practice Questions.
+- Create Flashcards.
+- Generate Revision Sheet.
+
+Teacher tools
+
+- Create Learning Objectives.
+- Generate Lesson Outline.
+- Add Teaching Examples.
+- Create Classroom Activity.
+- Generate Assessment Questions.
+
+AI safety and correctness
+
+- Do not silently replace user content.
+- Preview modifications before applying.
+- Allow undo.
+- Preserve mathematical meaning.
+- Do not invent source facts.
+- Identify uncertain mathematical interpretations.
+- Never expose AI provider credentials.
+- Use only approved configured providers.
+
+AI-generated content must remain editable.
+
+---
+
+PART 17 — SEARCH
+
+Implement fast, useful search.
+
+Search across:
+
+- Note titles.
+- Note body text.
+- Headings.
+- Tags.
+- Folder names.
+- Linked homework titles.
+- Internal note links.
+- Mathematical content where practical.
+
+Provide filters:
+
+- Subject.
+- Folder.
+- Tag.
+- Author.
+- Date.
+- Shared/personal.
+- Note type.
+
+Respect user authorization and RLS.
+
+Do not return unauthorized note content through search.
+
+---
+
+PART 18 — MOBILE, TABLET AND PWA EXPERIENCE
+
+Audit the entire Lecture Notes module at:
+
+Mobile
+
+- 320px.
+- 360px.
+- 375px.
+- 390px.
+- 414px.
+- 430px.
+
+Tablet
+
+- 768px.
+- 820px.
+- 1024px.
+
+Desktop
+
+- 1280px.
+- 1440px.
+- 1920px.
+
+Test both browser and installed PWA where available.
+
+Important:
+
+- Minimum practical touch targets around 44px.
+- Mobile equation input must be usable.
+- Tables must remain usable.
+- Toolbars must not cover content.
+- Drawers must fit.
+- Bottom sheets must respect safe areas.
+- Floating buttons must not overlap important controls.
+- Keyboard opening must not hide the editing area.
+- No horizontal overflow.
+- No clipped content.
+- No broken scrolling.
+- No inaccessible actions.
+
+Do not solve everything using "overflow-x: hidden".
+
+Fix underlying layout problems.
+
+Preserve desktop quality while improving mobile.
+
+---
+
+PART 19 — ACCESSIBILITY AND USABILITY
+
+Support:
+
+- Keyboard navigation.
+- Visible focus states.
+- Screen-reader labels.
+- Accessible dialogs.
+- Undo and redo.
+- Predictable keyboard shortcuts.
+- Clear empty states.
+- Helpful tooltips.
+- Clear error messages.
+- Reduced-motion preferences.
+
+Do not rely on color alone to communicate status.
+
+Make destructive actions reversible where possible.
+
+---
+
+PART 20 — DOCUMENT DATA ARCHITECTURE
+
+The new editor must use a structured document representation rather than relying entirely on one large Markdown string.
+
+An illustrative representation:
+
+{
+  "schemaVersion": 1,
+  "type": "document",
+  "content": [
+    {
+      "type": "heading",
+      "attrs": {
+        "level": 1
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Quadratic Equations"
+        }
+      ]
+    },
+    {
+      "type": "math",
+      "attrs": {
+        "latex": "ax^2+bx+c=0"
+      }
+    }
+  ]
+}
+
+This is an architectural example, not a mandatory final schema.
+
+Requirements:
+
+- Schema versioning.
+- Backward compatibility.
+- Migration of existing notes.
+- Import/export support.
+- Reliable autosave.
+- PDF rendering.
+- Clipboard compatibility.
+- Validation of document content.
+- Graceful handling of unsupported blocks.
+
+Do not discard existing notes during migration.
+
+Do not perform destructive schema migrations without a verified backup and migration strategy.
+
+Preserve the original content until migrated documents have been validated.
+
+---
+
+PART 21 — DATABASE AND SUPABASE SECURITY
+
+Inspect actual Supabase schema before adding or modifying tables.
+
+Determine the correct approach for:
+
+- Documents.
+- Folders.
+- Tags.
+- Collections.
+- Templates.
+- Document versions.
+- Uploaded images.
+- Homework relationships.
+- Collaborators.
+- Comments.
+
+Reuse existing tables when appropriate.
+
+If migrations are required:
+
+1. Create ordered SQL migration files.
+2. Add indexes.
+3. Add foreign keys.
+4. Add appropriate constraints.
+5. Add RLS policies.
+6. Verify existing roles and authorization.
+7. Provide a migration and rollback strategy where practical.
+
+Security requirements:
+
+- Users only access their authorized notes.
+- Teachers only manage authorized teaching resources.
+- Students cannot edit teacher-owned resources without permission.
+- Shared notes follow explicit permissions.
+- Homework links respect class and assignment authorization.
+- Uploaded images use appropriate storage access policies.
+- Private note content is never exposed through public URLs.
+- AI processing does not bypass authorization.
+
+Do not weaken existing RLS.
+
+---
+
+PART 22 — TECHNOLOGY AND ARCHITECTURE DECISIONS
+
+Inspect the current codebase before selecting or introducing editor libraries.
+
+Prefer a proven editor framework that supports:
+
+- Rich text.
+- Structured documents.
+- Custom blocks.
+- Mathematical content.
+- Tables.
+- Collaboration extensibility.
+- Serialization.
+- Clipboard operations.
+- Accessibility.
+
+Evaluate existing dependencies and integration compatibility first.
+
+Do not install multiple competing editor frameworks.
+
+Do not build an entire rich-text engine from scratch.
+
+Keep clear separation between:
+
+- Workspace UI.
+- Editor core.
+- Block implementations.
+- Document schema.
+- Persistence.
+- AI integration.
+- Import/export.
+- PDF rendering.
+- Learning tools.
+- Homework linking.
+
+Reuse existing Veylentra services and components.
+
+Do not turn the rework into one enormous component.
+
+---
+
+PART 23 — IMPLEMENTATION PHASES
+
+Do not attempt an uncontrolled rewrite in one massive change.
+
+Implement this as one coordinated product upgrade with staged, verifiable phases.
+
+Phase 1 — Architecture and preservation
+
+- Inspect existing Lecture Notes.
+- Audit database and RLS.
+- Inspect PDF exporter.
+- Inspect existing AI services.
+- Define document schema.
+- Plan existing note migration.
+- Identify reusable components.
+
+Phase 2 — Hybrid editor foundation
+
+- Rich-text editor.
+- Formatting toolbar.
+- Slash commands.
+- Structured document storage.
+- Basic blocks.
+- Undo/redo.
+- Autosave.
+
+Phase 3 — Educational editing
+
+- Visual math editor.
+- Tables.
+- Callouts.
+- Worked examples.
+- Definitions.
+- Recall blocks.
+- Sketches and diagrams.
+
+Phase 4 — Workspace and quick creation
+
+- Redesigned library.
+- Folders.
+- Tags.
+- Templates.
+- Floating plus menu.
+- Import options.
+
+Phase 5 — Image to Note
+
+- Image upload.
+- OCR/handwriting recognition.
+- Mathematical extraction.
+- AI organization.
+- Editable preview.
+- Uncertainty handling.
+- Secure storage.
+
+Phase 6 — Learning integration
+
+- Notes to Flashcards.
+- Notes to Quiz.
+- Notes to Revision Sheet.
+- Notes to Study Guide.
+- Teacher Note to Lesson.
+- Integrate with existing Study Center.
+
+Phase 7 — Homework linking
+
+- Link notes to homework.
+- Link homework to notes.
+- Related-content display.
+- Role-aware authorization.
+
+Phase 8 — Advanced workspace
+
+- Internal links.
+- Backlinks.
+- Search.
+- Sharing.
+- Comments.
+- Version history.
+
+Phase 9 — Export, responsive and performance audit
+
+- PDF compatibility.
+- Import/export.
+- Mobile/tablet optimization.
+- Performance.
+- Accessibility.
+- PWA verification.
+
+Do not leave half-implemented controls in the final UI.
+
+If a feature is not implemented, do not make it appear operational.
+
+---
+
+PART 24 — TESTING REQUIREMENTS
+
+Perform actual tests wherever the available environment permits.
+
+Editor tests
+
+- Create note.
+- Edit note.
+- Format text.
+- Insert heading.
+- Insert lists.
+- Insert checklist.
+- Insert equation.
+- Edit equation.
+- Insert table.
+- Edit table.
+- Insert image.
+- Paste image.
+- Insert callout.
+- Insert worked example.
+- Insert recall block.
+- Rearrange blocks.
+- Duplicate block.
+- Delete block.
+- Undo.
+- Redo.
+- Autosave.
+- Recover document.
+
+Image to Note tests
+
+Test:
+
+- Clear handwriting.
+- Messy handwriting.
+- Printed notes.
+- Mathematical formulas.
+- Tables.
+- Multiple pages.
+- Mixed handwriting and printed text.
+- Uncertain equations.
+- Low-quality images.
+
+Verify that uncertain content is marked rather than guessed.
+
+Homework linking tests
+
+- Link a note to homework.
+- Link multiple notes to homework.
+- Open a note from homework.
+- Open homework from a note.
+- Verify access using separate authorized student and teacher accounts.
+- Verify unauthorized users cannot retrieve linked private content.
+
+PDF tests
+
+Export notes containing:
+
+- Text.
+- Headings.
+- Lists.
+- Tables.
+- Equations.
+- Images.
+- Callouts.
+- Worked examples.
+- Diagrams.
+- Multiple pages.
+
+Inspect the actual exported PDF.
+
+Responsive tests
+
+Test all specified viewport widths.
+
+Check for:
+
+- Overflow.
+- Clipping.
+- Broken menus.
+- Inaccessible buttons.
+- Keyboard overlap.
+- Dialog problems.
+- Equation editor usability.
+- Table usability.
+
+Data integrity tests
+
+- Existing notes remain accessible.
+- Existing notes are not corrupted.
+- Migrations preserve content.
+- RLS remains effective.
+- Autosave does not overwrite newer content.
+- Version restoration works.
+- PDF export remains functional.
+
+---
+
+PART 25 — FINAL ACCEPTANCE CRITERIA
+
+The upgrade is complete only when:
+
+1. Students and teachers can create notes without Markdown knowledge.
+2. The hybrid editor works reliably.
+3. Equations can be inserted visually.
+4. Tables and lists are easy to create.
+5. The slash-command menu works.
+6. The floating plus menu works.
+7. Image to Note converts uploaded handwritten material into editable, organized content.
+8. Uncertain OCR/math results are clearly identified.
+9. Educational blocks are editable.
+10. Notes can generate flashcards and quizzes through existing Veylentra learning systems.
+11. Homework can be linked to relevant notes in both directions.
+12. Folders, tags and collections work.
+13. Autosave and recovery work.
+14. Existing notes remain intact.
+15. PDF export remains correct.
+16. Mobile and tablet editing are usable.
+17. Existing authorization and RLS remain secure.
+18. No fake functionality or false-success messages remain.
+
+---
+
+PART 26 — FINAL REPORT
+
+At completion, provide:
+
+1. Architecture
+
+Explain the editor architecture, document model and major design decisions.
+
+2. Changed Files
+
+List important files created, modified and removed.
+
+3. Database Changes
+
+List actual SQL migrations and explain RLS changes.
+
+Provide the complete SQL migration scripts separately if the project workflow requires manual Supabase execution.
+
+Do not claim a migration was applied to production unless it actually was.
+
+4. Editor Features
+
+List implemented formatting, blocks, math, slash commands and other capabilities.
+
+5. Image to Note
+
+Explain the image processing workflow, AI provider used, OCR capabilities and limitations.
+
+6. Homework Integration
+
+Explain the note-homework relationship and permission model.
+
+7. PDF Export
+
+Explain how the existing fixed exporter was preserved and what tests were performed.
+
+8. Responsive Testing
+
+List the actual screen sizes and environments tested.
+
+9. Known Limitations
+
+Clearly identify anything that still needs testing, provider support, credentials, configuration or production deployment.
+
+---
+
+FINAL PRODUCT VISION
+
+Veylentra Lecture Notes must not feel like a Markdown editor with an AI button attached.
+
+It must feel like a complete educational creation and knowledge workspace.
+
+A student should be able to:
+
+- Photograph handwritten class notes.
+- Convert them into organized digital notes.
+- Correct the extracted equations.
+- Add examples and explanations.
+- Link the note to homework.
+- Turn important concepts into flashcards.
+- Generate a revision sheet.
+- Export a beautiful PDF.
+
+A teacher should be able to:
+
+- Create structured lesson notes.
+- Insert equations and diagrams.
+- Upload handwritten teaching material.
+- Organize chapters and subjects.
+- Link notes to homework.
+- Generate practice questions.
+- Share authorized material with students.
+
+And both should be able to do these things without fighting the interface.
+
+Make the experience exceptionally simple, while making the underlying capabilities exceptionally powerful.
+
+The objective is not merely to add features.
+
+The objective is to make creating, organizing and learning from notes one of the best experiences in Veylentra.
+
+Do not sacrifice reliability, mathematical accuracy, document integrity, security or the fixed PDF export for visual polish.

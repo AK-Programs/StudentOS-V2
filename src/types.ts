@@ -263,6 +263,11 @@ export interface VaultNote {
   collaborators?: string[];
   sort_order?: number;
   permission?: 'edit' | 'view' | 'private';
+  isStarred?: boolean;
+  isArchived?: boolean;
+  tags?: string[];
+  folderId?: string | null;
+  version?: number;
 }
 
 export interface Homework {
