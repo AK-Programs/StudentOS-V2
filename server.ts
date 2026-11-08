@@ -3506,28 +3506,12 @@ CRITICAL OCR & MATHEMATICAL ACCURACY RULES:
       }
     }
 
-    // Fallback: If vision provider did not complete or was unavailable, use text synthesis through approved engine
+    // Ground strictly in vision OCR. If vision processing fails or is unconfigured, return error.
     if (!extractedContent) {
-      try {
-        const fallbackText = await generateAICompletion({
-          systemInstruction,
-          prompt: `A student uploaded ${imageList.length} handwritten note photo(s) on ${subject}. Transcribe and format a complete high-yield lecture note covering the standard curriculum topics for ${subject}.\nUser instructions: ${prompt || 'Transcribe handwritten study notes.'}\nRespond in valid JSON format.`,
-          jsonMode: true,
-          taskType: 'complex',
-          maxTokens: 3000
-        });
-
-        if (fallbackText) {
-          const parsed = JSON.parse(fallbackText);
-          extractedTitle = parsed.title || `${subject} Lecture Notes`;
-          extractedSubject = parsed.subject || subject;
-          extractedContent = parsed.content || fallbackText;
-          if (Array.isArray(parsed.detectedEquations)) detectedEquations.push(...parsed.detectedEquations);
-          if (Array.isArray(parsed.uncertainItems)) uncertainItems.push(...parsed.uncertainItems);
-        }
-      } catch (fbErr) {
-        extractedContent = `# ${subject} Study Notes\n\n## Overview\nTranscribed from notebook capture.\n\n$$\nE = mc^2\n$$\n\n- Key concepts and equations recorded.`;
-      }
+      return res.status(422).json({
+        success: false,
+        error: 'Could not transcribe handwriting or text from the uploaded image. Please ensure your photo is clear, well-lit, and in focus, then try again.'
+      });
     }
 
     // Scan content for equations if list is empty

@@ -18,7 +18,8 @@ import {
   BookOpen, 
   Users2,
   Lock,
-  RotateCcw
+  RotateCcw,
+  FolderPlus
 } from 'lucide-react';
 import { VaultNote, Homework } from '../../types';
 import { NoteFolder, NoteVersion } from '../../lib/lectureNotes/types';
@@ -30,6 +31,8 @@ import { NoteToLearningToolsModal } from './NoteToLearningToolsModal';
 import { HomeworkLinkModal } from './HomeworkLinkModal';
 import { NoteVersionHistoryModal } from './NoteVersionHistoryModal';
 import { NoteTemplatesModal } from './NoteTemplatesModal';
+import { VisualMathEditorModal } from './VisualMathEditorModal';
+import { SketchCanvasModal } from './SketchCanvasModal';
 import { generateFormattedPdf } from '../../lib/pdfGenerator';
 
 interface LectureNotesWorkspaceProps {
@@ -41,6 +44,7 @@ interface LectureNotesWorkspaceProps {
   onSelectNote: (id: string | null) => void;
   onUpdateNote: (id: string, updates: Partial<VaultNote>) => Promise<void> | void;
   onCreateNote: (note?: Partial<VaultNote>) => void;
+  onCreateFolder?: (folder: Partial<NoteFolder>) => void;
   onDeleteNote: (id: string) => void;
   renderMarkdown: (text: string) => React.ReactNode;
   showNotification: (msg: string) => void;
@@ -49,12 +53,13 @@ interface LectureNotesWorkspaceProps {
 export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
   notes = [],
   selectedNoteId,
-  folders = [],
+  folders: initialFolders = [],
   homeworkList = [],
   currentUserId = 'guest',
   onSelectNote,
   onUpdateNote,
   onCreateNote,
+  onCreateFolder: onCreateFolderProp,
   onDeleteNote,
   renderMarkdown,
   showNotification
@@ -69,6 +74,11 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
   const [viewMode, setViewMode] = useState<'editor' | 'reader' | 'split'>('editor');
   const [autoSaveState, setAutoSaveState] = useState<'saved' | 'saving' | 'offline'>('saved');
 
+  // Custom local folders state
+  const [localFolders, setLocalFolders] = useState<NoteFolder[]>(initialFolders);
+  const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+
   // Modals state
   const [isImageToNoteOpen, setIsImageToNoteOpen] = useState(false);
   const [isLearningToolsOpen, setIsLearningToolsOpen] = useState(false);
@@ -76,6 +86,15 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
   const [isHomeworkLinkOpen, setIsHomeworkLinkOpen] = useState(false);
   const [isVersionHistoryOpen, setIsVersionHistoryOpen] = useState(false);
   const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
+  const [isMathWorkspaceOpen, setIsMathWorkspaceOpen] = useState(false);
+  const [isSketchModalOpen, setIsSketchModalOpen] = useState(false);
+
+  // Synchronize initialFolders
+  useEffect(() => {
+    if (initialFolders && initialFolders.length > 0) {
+      setLocalFolders(initialFolders);
+    }
+  }, [initialFolders]);
 
   // Active note resolution
   const activeNote = notes.find(n => n.id === selectedNoteId) || notes[0] || null;
@@ -94,37 +113,59 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
     }
   }, [activeNote?.content, activeNote?.title]);
 
-  // Filter notes based on active filter, folder, tag, search
+  // Combine ALL active filter criteria cleanly (Search + Folder + Tag + Navigation Filter)
   const filteredNotes = notes.filter(n => {
+    // 1. Search Query
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      const match = (n.title || '').toLowerCase().includes(q) ||
-                    (n.content || '').toLowerCase().includes(q) ||
-                    (n.subject || '').toLowerCase().includes(q);
-      if (!match) return false;
+      const matchTitle = (n.title || '').toLowerCase().includes(q);
+      const matchSubject = (n.subject || '').toLowerCase().includes(q);
+      const matchContent = (n.content || '').toLowerCase().includes(q);
+      const tags = (n as any).tags || [];
+      const matchTags = tags.some((t: string) => t.toLowerCase().includes(q));
+      if (!matchTitle && !matchSubject && !matchContent && !matchTags) {
+        return false;
+      }
     }
 
+    // 2. Active Folder Filter
     if (activeFolderId) {
-      return (n as any).folder_id === activeFolderId;
+      const noteFolder = (n as any).folder_id || (n as any).folderId;
+      if (noteFolder !== activeFolderId) return false;
     }
 
+    // 3. Selected Tag Filter
     if (selectedTag) {
       const tags = (n as any).tags || [];
-      return tags.includes(selectedTag);
+      if (!tags.includes(selectedTag)) return false;
     }
 
+    // 4. Navigation View Filter
     switch (currentFilter) {
       case 'recent':
-        return true;
+        return !n.isArchived;
       case 'starred':
-        return Boolean(n.isStarred || (n as any).isPinned);
+        return Boolean(n.isStarred || (n as any).isPinned) && !n.isArchived;
       case 'shared':
-        return Boolean(n.collabCode);
+        return Boolean(n.collabCode) && !n.isArchived;
       case 'archived':
         return Boolean(n.isArchived);
+      case 'trash':
+        return Boolean((n as any).isDeleted);
+      case 'all':
       default:
-        return !n.isArchived;
+        return !n.isArchived && !(n as any).isDeleted;
     }
+  });
+
+  // Sort notes for 'recent' view by created/updated date descending
+  const sortedFilteredNotes = [...filteredNotes].sort((a, b) => {
+    if (currentFilter === 'recent') {
+      const dA = new Date(a.createdAt || 0).getTime();
+      const dB = new Date(b.createdAt || 0).getTime();
+      return dB - dA;
+    }
+    return 0;
   });
 
   // Handle note content changes with debounced autosave
@@ -139,7 +180,26 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
     }
   };
 
-  // PDF Export preservation
+  // Folder creation handler
+  const handleSaveNewFolder = () => {
+    if (!newFolderName.trim()) return;
+    const newFolder: NoteFolder = {
+      id: 'f_' + Date.now(),
+      name: newFolderName.trim(),
+      color: 'indigo',
+      createdAt: new Date().toISOString()
+    };
+    if (onCreateFolderProp) {
+      onCreateFolderProp(newFolder);
+    } else {
+      setLocalFolders(prev => [...prev, newFolder]);
+    }
+    setNewFolderName('');
+    setIsCreateFolderOpen(false);
+    showNotification(`✓ Folder "${newFolder.name}" created!`);
+  };
+
+  // Vector PDF Export
   const handleExportPdf = async () => {
     if (!activeNote || !activeNote.content?.trim()) {
       showNotification('⚠️ Note content is empty.');
@@ -160,19 +220,6 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
     }
   };
 
-  // Markdown file export
-  const handleExportMarkdown = () => {
-    if (!activeNote) return;
-    const blob = new Blob([activeNote.content || ''], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${(activeNote.title || 'Note').replace(/[^a-z0-9]/gi, '_')}.md`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    showNotification('✓ Exported Markdown file!');
-  };
-
   // Dynamic headings for Outline Table of Contents
   const headings: { level: number; text: string }[] = [];
   if (activeNote?.content) {
@@ -190,7 +237,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
 
   return (
     <div className="relative min-h-[700px] w-full flex flex-col space-y-4">
-      {/* Top Workspace Bar */}
+      {/* Top Workspace Header Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-slate-900/60 border border-white/5 backdrop-blur-md">
         <div className="flex items-center gap-2">
           {/* Mobile Sidebar Toggle Button */}
@@ -213,7 +260,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                 <span>•</span>
                 <span>{wordCount} words (~{readTimeMin}m)</span>
                 <span>•</span>
-                <span className={autoSaveState === 'saving' ? 'text-amber-400 font-mono' : 'text-emerald-400 font-mono'}>
+                <span className={autoSaveState === 'saving' ? 'text-amber-400 font-mono font-bold' : 'text-emerald-400 font-mono font-bold'}>
                   {autoSaveState === 'saving' ? '⏳ Saving...' : '✓ Saved'}
                 </span>
               </div>
@@ -223,13 +270,13 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
 
         {/* View Switchers & Export Tools */}
         <div className="flex items-center gap-1.5">
-          {/* Mode Tabs */}
+          {/* View Mode Tabs */}
           <div className="flex items-center gap-0.5 p-1 rounded-xl bg-slate-950 border border-white/5 text-xs font-semibold">
             <button
               type="button"
               onClick={() => setViewMode('editor')}
               className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer flex items-center gap-1 ${
-                viewMode === 'editor' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                viewMode === 'editor' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'
               }`}
             >
               <Edit3 className="w-3 h-3" />
@@ -239,7 +286,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
               type="button"
               onClick={() => setViewMode('reader')}
               className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer flex items-center gap-1 ${
-                viewMode === 'reader' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                viewMode === 'reader' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'
               }`}
             >
               <Eye className="w-3 h-3" />
@@ -249,7 +296,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
               type="button"
               onClick={() => setViewMode('split')}
               className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer flex items-center gap-1 ${
-                viewMode === 'split' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                viewMode === 'split' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'
               }`}
             >
               <Columns className="w-3 h-3" />
@@ -295,7 +342,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
       {/* Main 3-Zone Workspace Grid */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-4 flex-1">
         {/* Zone 1: Navigation Sidebar (Desktop sticky / Mobile drawer) */}
-        <div className={`md:col-span-3 ${mobileSidebarOpen ? 'block fixed inset-0 z-50 bg-slate-950/90 p-4' : 'hidden md:block'}`}>
+        <div className={`md:col-span-3 ${mobileSidebarOpen ? 'block fixed inset-0 z-50 bg-slate-950/95 p-4' : 'hidden md:block'}`}>
           {mobileSidebarOpen && (
             <div className="flex justify-end pb-2 md:hidden">
               <button onClick={() => setMobileSidebarOpen(false)} className="p-2 text-white">
@@ -304,9 +351,10 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
             </div>
           )}
           <LectureNotesSidebar
-            notes={filteredNotes}
+            allNotes={notes}
+            notes={sortedFilteredNotes}
             selectedNoteId={selectedNoteId}
-            folders={folders}
+            folders={localFolders}
             activeFolderId={activeFolderId}
             currentFilter={currentFilter}
             selectedTag={selectedTag}
@@ -323,9 +371,14 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
               onCreateNote({ title: 'Untitled Note', subject: 'General' });
               setMobileSidebarOpen(false);
             }}
-            onCreateFolder={() => {
-              showNotification('Create folder dialog opened');
+            onCreateFolder={() => setIsCreateFolderOpen(true)}
+            onToggleStar={id => {
+              const target = notes.find(n => n.id === id);
+              if (target) {
+                onUpdateNote(id, { isStarred: !target.isStarred });
+              }
             }}
+            onDeleteNote={onDeleteNote}
           />
         </div>
 
@@ -364,6 +417,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <div className="p-2 rounded-2xl bg-slate-950/40 border border-white/5">
                     <LectureNotesEditor
+                      noteId={activeNote.id}
                       initialContent={activeNote.content || ''}
                       noteTitle={activeNote.title}
                       noteSubject={activeNote.subject}
@@ -386,6 +440,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
               ) : (
                 /* Full Hybrid Editor */
                 <LectureNotesEditor
+                  noteId={activeNote.id}
                   initialContent={activeNote.content || ''}
                   noteTitle={activeNote.title}
                   noteSubject={activeNote.subject}
@@ -451,17 +506,15 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
       {/* Persistent Floating Quick Create '+' Button */}
       <FloatingQuickCreate
         onCreateNote={() => onCreateNote({ title: 'Untitled Note', subject: 'General' })}
-        onCreateFolder={() => showNotification('Folder created!')}
+        onCreateFolder={() => setIsCreateFolderOpen(true)}
         onOpenTemplate={() => setIsTemplatesOpen(true)}
-        onOpenMathWorkspace={() => {
-          // Open math workspace from floating '+'
-          showNotification('Math Workspace opened');
-        }}
+        onOpenMathWorkspace={() => setIsMathWorkspaceOpen(true)}
         onOpenImageToNote={() => setIsImageToNoteOpen(true)}
-        onOpenSketch={() => showNotification('Open sketch modal')}
+        onOpenSketch={() => setIsSketchModalOpen(true)}
         onOpenChecklist={() => {
           if (activeNote) {
             handleContentChange((activeNote.content || '') + '\n\n- [ ] Task 1\n- [ ] Task 2');
+            showNotification('✓ Added checklist to note');
           }
         }}
         onOpenLessonBuilder={() => {
@@ -505,6 +558,52 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
           }
         }}
       />
+
+      {/* Create Folder Modal */}
+      {isCreateFolderOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-sm bg-slate-900 border border-slate-700 rounded-3xl p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-indigo-400 font-bold text-sm">
+                <FolderPlus className="w-4 h-4" />
+                <span>Create New Folder</span>
+              </div>
+              <button onClick={() => setIsCreateFolderOpen(false)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-slate-300">Folder Name</label>
+              <input
+                type="text"
+                autoFocus
+                value={newFolderName}
+                onChange={e => setNewFolderName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleSaveNewFolder(); }}
+                placeholder="e.g. Physics Chapter 4"
+                className="w-full px-3 py-2 text-xs rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsCreateFolderOpen(false)}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!newFolderName.trim()}
+                onClick={handleSaveNewFolder}
+                className="px-4 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-xl shadow-md transition-colors"
+              >
+                Create Folder
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Priority Feature: Image to Note OCR Modal */}
       <ImageToNoteModal
@@ -576,6 +675,46 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
             content
           });
           showNotification(`✓ Initialized note with ${title}!`);
+        }}
+      />
+
+      {/* Standalone Visual Math Builder Modal */}
+      <VisualMathEditorModal
+        isOpen={isMathWorkspaceOpen}
+        initialLatex="F_c = \frac{m v^2}{r}"
+        initialName="Math Workspace Formula"
+        onClose={() => setIsMathWorkspaceOpen(false)}
+        onSave={(latex, name) => {
+          if (activeNote) {
+            handleContentChange((activeNote.content || '') + `\n\n$$\n${latex}\n$$`);
+            showNotification('✓ Added formula to current note!');
+          } else {
+            onCreateNote({
+              title: name || 'Math Derivation',
+              subject: 'Mathematics',
+              content: `# ${name || 'Math Derivation'}\n\n$$\n${latex}\n$$`
+            });
+            showNotification('✓ Created note with formula!');
+          }
+        }}
+      />
+
+      {/* Standalone Sketch Canvas Modal */}
+      <SketchCanvasModal
+        isOpen={isSketchModalOpen}
+        onClose={() => setIsSketchModalOpen(false)}
+        onSave={(dataUrl, caption) => {
+          if (activeNote) {
+            handleContentChange((activeNote.content || '') + `\n\n![${caption || 'Sketch Diagram'}](${dataUrl})`);
+            showNotification('✓ Added sketch diagram to current note!');
+          } else {
+            onCreateNote({
+              title: caption || 'Educational Sketch',
+              subject: 'Physics',
+              content: `# ${caption || 'Educational Sketch'}\n\n![${caption || 'Sketch Diagram'}](${dataUrl})`
+            });
+            showNotification('✓ Created note with sketch diagram!');
+          }
         }}
       />
     </div>

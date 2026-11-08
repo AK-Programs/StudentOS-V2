@@ -1,0 +1,1363 @@
+# VEYLENTRA LECTURE NOTES — CRITICAL BUG FIXES, EDITOR STABILITY AND COMPLETE FUNCTIONALITY REFINEMENT
+
+You are working on the existing production Veylentra React/Vite/TypeScript application.
+
+The Lecture Notes rework has already been implemented, but several important features are broken or difficult to use.
+
+**Your task is to debug the actual implementation, identify the underlying causes and fix the existing Lecture Notes system.**
+
+This is NOT a request to rebuild Lecture Notes from scratch.
+
+Do not discard the current hybrid-editor architecture or already-working features without first proving that a component must be replaced.
+
+Preserve all existing data, existing working integrations and the fixed PDF export.
+
+The main objective is to make Lecture Notes reliable, intuitive, genuinely editable and fully functional.
+
+---
+
+# PART 1 — START WITH A CODE-LEVEL INVESTIGATION
+
+Start by inspecting the entire Lecture Notes implementation and all connected code paths.
+
+At minimum inspect:
+
+```text
+src/components/lectureNotes/
+
+src/components/lectureNotes/LectureNotesWorkspace.tsx
+src/components/lectureNotes/LectureNotesSidebar.tsx
+src/components/lectureNotes/LectureNotesEditor.tsx
+src/components/lectureNotes/FloatingQuickCreate.tsx
+src/components/lectureNotes/VisualTableEditor.tsx
+src/components/lectureNotes/VisualMathEditorModal.tsx
+src/components/lectureNotes/ImageToNoteModal.tsx
+src/components/lectureNotes/SketchCanvasModal.tsx
+
+src/components/lectureNotes/blocks/EducationalBlockRenderer.tsx
+
+src/lib/lectureNotes/types.ts
+src/lib/lectureNotes/documentBridge.ts
+src/lib/lectureNotes/homeworkLinks.ts
+src/lib/supabaseNotes.ts
+
+src/App.tsx
+server.ts
+api/index.ts
+src/lib/pdfGenerator.ts
+```
+
+Also inspect:
+
+- Any additional Lecture Notes components.
+- All imports and call sites.
+- Existing SQL migrations related to notes, folders, versions and homework links.
+- Supabase RLS policies.
+- The current AI provider architecture.
+- The actual application routing and deployment configuration.
+
+Search the whole repository for duplicate Lecture Notes implementations and old handlers that might still be active.
+
+Trace the actual path:
+
+```text
+User interaction
+    ↓
+Lecture Notes component
+    ↓
+Editor state
+    ↓
+Document serialization
+    ↓
+Parent React state
+    ↓
+Supabase persistence
+    ↓
+Reader/PDF rendering
+```
+
+Do not assume that a component is working because its button renders.
+
+---
+
+# PART 2 — CRITICAL: FIX THE MISSING SIDEBAR NOTE LIST
+
+The current `LectureNotesSidebar.tsx` contains filters, folders, tags and search controls, but the current implementation does not render an actual collection of note results.
+
+This is a major functional problem.
+
+Implement a proper note-navigation list.
+
+## Required sidebar sections
+
+- All Notes
+- Recent Documents
+- Starred
+- Shared
+- Archived
+- Trash, only if supported by the actual deletion/archive architecture
+- Folders
+- Tags
+
+## Actual note list
+
+Every relevant view must display note entries.
+
+Each entry should show useful information:
+
+- Note title.
+- Subject.
+- Optional icon.
+- Updated date.
+- Starred state.
+- Optional folder/tag indicator.
+- Selection state.
+
+Users must be able to click a note and open it in the editor.
+
+The selected note must remain visually identifiable.
+
+## Fix filtering logic
+
+Audit `filteredNotes` in `LectureNotesWorkspace.tsx`.
+
+Ensure that all applicable filters combine correctly.
+
+For example:
+
+```text
+Search query
+    +
+Selected folder
+    +
+Selected tag
+    +
+Current navigation filter
+    =
+Final note results
+```
+
+Do not use early returns that accidentally skip other active filters.
+
+Fix:
+
+- All Notes.
+- Recent.
+- Starred.
+- Shared.
+- Archived.
+- Trash, if implemented.
+- Folder filtering.
+- Tag filtering.
+- Search.
+
+Recent should use a meaningful last-updated timestamp and a deliberate sorting rule rather than simply returning all notes.
+
+Counts must be calculated from the appropriate unfiltered source collection, not from the already-filtered results.
+
+The complete tag collection should remain discoverable when a tag is selected.
+
+## Search
+
+Make search functional.
+
+Search across:
+
+- Titles.
+- Subjects.
+- Document text.
+- Headings.
+- Tags.
+- Formula content where practical.
+
+Add:
+
+- Search loading state when required.
+- Empty-result state.
+- Clear search button.
+- Helpful no-results message.
+- Search result highlighting where practical.
+
+Do not claim search works if it only updates an input value.
+
+## Selection and editor synchronization
+
+The currently selected note must be consistent with the visible filtered list.
+
+When changing filters or folders:
+
+- Preserve the selected note if it remains visible.
+- If it is no longer part of the filtered results, show an appropriate empty/selection state or select a valid visible result.
+- Never display an unrelated note as though it belongs to the selected filter.
+
+Do not silently fall back to a hidden or unrelated first note.
+
+---
+
+# PART 3 — CRITICAL: FIX THE EDITOR STATE-SYNCHRONIZATION BUG
+
+Investigate this exact pattern in `LectureNotesEditor.tsx`:
+
+```ts
+useEffect(() => {
+  setBlocks(markdownToBlocks(initialContent));
+}, [initialContent]);
+```
+
+The parent `LectureNotesWorkspace` updates the active note content when the editor calls `onChange`.
+
+This means every keystroke can cause:
+
+```text
+User types
+    ↓
+Editor serializes blocks
+    ↓
+Parent updates activeNote.content
+    ↓
+initialContent changes
+    ↓
+Editor reparses all Markdown
+    ↓
+All block IDs can be regenerated
+    ↓
+React replaces editor inputs
+    ↓
+Focus and cursor can be lost
+```
+
+This is a probable root cause of the reported typing difficulty.
+
+**Fix the state architecture. Do not merely add more focus calls.**
+
+## Required behavior
+
+- Typing must not remount the active block.
+- Cursor position must remain stable.
+- Text selection must remain stable.
+- Table-cell focus must remain stable.
+- List-item focus must remain stable.
+- Math and educational block state must remain stable.
+- Stable block identifiers must be preserved.
+- The editor must not reparse its entire document after every local edit.
+
+Separate:
+
+1. Initial document loading.
+2. Switching to another note.
+3. Local editing.
+4. Parent persistence updates.
+5. Genuine external document updates.
+
+Use an explicit note identity and an appropriate synchronization strategy.
+
+Use refs or another robust document synchronization mechanism to distinguish locally generated changes from genuine external updates.
+
+Do not reset the document whenever the parent sends back the content produced by the editor itself.
+
+Ensure that switching from Note A to Note B correctly loads Note B.
+
+Ensure that a remote update does not silently overwrite unsaved local changes.
+
+Preserve unsaved edits safely during synchronization.
+
+---
+
+# PART 4 — MAKE THE WRITING SURFACE FEEL LIKE A REAL DOCUMENT
+
+Currently, users must click inside individual blocks before typing.
+
+Clicking an empty area in the editor does nothing.
+
+Fix this.
+
+The editor must behave like an actual document-writing surface.
+
+## Required interactions
+
+- Clicking an empty paragraph allows typing.
+- Clicking unused space after the final block creates a new paragraph.
+- Clicking below an existing block can create a paragraph at the appropriate insertion position.
+- Clicking near the end of the document should focus the final editable block.
+- A blank note should open with a usable writing cursor.
+- Users should be able to continue writing without manually inserting a block every time.
+
+## Keyboard behavior
+
+Implement predictable document keyboard behavior.
+
+At minimum:
+
+- Enter creates or continues appropriate content.
+- Enter inside a list creates another list item.
+- Enter on an empty list item exits the list.
+- Backspace at an empty paragraph behaves sensibly.
+- Backspace at the beginning of a paragraph can merge with the previous compatible paragraph.
+- Arrow keys move naturally between editable elements.
+- Tab behavior should be appropriate for lists and tables.
+- Ctrl/Cmd + Z supports undo.
+- Ctrl/Cmd + Shift + Z supports redo.
+- Keyboard shortcuts must not interfere with normal browser or operating-system behavior.
+
+Avoid making every document block an isolated editing island.
+
+If the existing custom editor architecture cannot reliably provide this behavior, evaluate using the project's existing editor library or a proven rich-text framework such as a suitable ProseMirror/Tiptap or Lexical implementation.
+
+Do not introduce competing editor engines.
+
+Preserve custom educational blocks through an appropriate document schema.
+
+---
+
+# PART 5 — FIX SLASH COMMANDS
+
+The current slash-command implementation opens a fixed full-screen modal and moves focus to an unrelated search input.
+
+This makes writing awkward.
+
+Rework the slash-command interaction.
+
+## Expected behavior
+
+When the user types `/` in an editable paragraph:
+
+1. Detect the slash at the current cursor position.
+2. Open a compact contextual command menu near the cursor.
+3. Let the user continue typing to search commands.
+4. Filter commands using the text following `/`.
+5. Preserve the current document and caret context.
+6. Allow keyboard and mouse selection.
+7. Insert the selected block at the correct location.
+8. Remove the slash command text from the document.
+9. Focus the new block or restore the original cursor appropriately.
+
+Example:
+
+```text
+User types:
+/math
+
+Command menu filters to mathematical commands.
+
+User chooses Equation.
+
+Equation block is inserted at the cursor position.
+
+Editor focuses the appropriate next editing position.
+```
+
+## Keyboard requirements
+
+- Arrow Up/Down navigates commands.
+- Enter selects a command.
+- Escape closes the menu.
+- Typing filters options.
+- Backspace updates the search query correctly.
+- Selecting an action must not duplicate the slash text.
+- Closing the menu should not destroy document focus.
+
+Do not use a full-screen dimmed modal for normal slash-command insertion.
+
+A floating contextual menu is preferred.
+
+Make it responsive and usable on mobile.
+
+---
+
+# PART 6 — RESTORE AUTOMATIC SCROLLING AND FOCUS
+
+The current toolbar often inserts new blocks after `blocks.length - 1`, regardless of where the user is editing.
+
+New blocks also do not reliably receive focus or scroll into view.
+
+Fix this.
+
+## Required insertion behavior
+
+When adding:
+
+- Paragraph.
+- Heading.
+- Table.
+- List.
+- Checklist.
+- Equation.
+- Concept.
+- Worked example.
+- Recall question.
+- Definition.
+- Callout.
+- Sketch.
+
+Use the active block/caret position where appropriate.
+
+If there is no active insertion point, insert at the end.
+
+After creating a new block:
+
+1. Render the new block.
+2. Scroll it into view smoothly.
+3. Focus its first editable control.
+4. Place the caret at the expected location.
+
+Do not scroll to the top after inserting content.
+
+Do not make the user repeatedly scroll manually to find newly created blocks.
+
+## Additional focus requirements
+
+- Adding a row should make the next row easy to edit.
+- Adding a list item should focus that item.
+- Adding a heading should focus the heading input.
+- Inserting a formula should return the user to the document.
+- Inserting a sketch should place the sketch at the intended position.
+- Inserting a table should bring the table into view.
+
+Normal typing must never trigger unnecessary page jumps.
+
+Respect user scroll position during ordinary edits.
+
+---
+
+# PART 7 — FIX TABLE EDITING
+
+The table editor currently has glitches.
+
+Inspect:
+
+`VisualTableEditor.tsx`
+
+and the synchronization path in:
+
+`LectureNotesEditor.tsx`
+
+Fix the actual causes, not just the CSS.
+
+## Requirements
+
+- Stable focus while editing cells.
+- No cursor loss after typing a character.
+- Correct header editing.
+- Correct cell editing.
+- Add row.
+- Remove row.
+- Add column.
+- Remove column.
+- Prevent deletion of the last required column where appropriate.
+- Prevent malformed or inconsistent row widths.
+- Preserve existing cell values when adding/removing columns.
+- Properly support empty cells.
+- Correctly serialize tables to Markdown.
+- Correctly import Markdown tables.
+- Responsive horizontal scrolling on mobile.
+- Reasonable column widths.
+- No table overflow outside the editor.
+- Useful keyboard navigation.
+- Proper focus after row/column operations.
+
+## Data integrity
+
+Use immutable updates.
+
+Do not mutate nested row or cell objects in place.
+
+Give table rows stable IDs where the schema permits.
+
+Do not rely solely on array indexes as React keys when operations can reorder or delete rows.
+
+Preserve tables when loading and saving the document.
+
+Test round-trip conversion:
+
+```text
+Markdown Table
+    ↓
+Document Table
+    ↓
+Edit Cells
+    ↓
+Serialize to Markdown
+    ↓
+Reload
+    ↓
+Verify All Values
+```
+
+---
+
+# PART 8 — FIX LISTS AND CHECKLISTS
+
+Lists and checklists currently have bugs.
+
+Make them behave like normal document lists.
+
+Support:
+
+- Bulleted lists.
+- Numbered lists.
+- Checklists.
+- Nested lists where supported.
+- Editing existing items.
+- Adding items.
+- Removing items.
+- Reordering items.
+- Toggling checkboxes.
+- Keyboard navigation.
+- Enter to create the next item.
+- Enter on an empty item to exit the list.
+- Backspace at the beginning to merge or exit appropriately.
+- Focus preservation.
+- Correct serialization.
+
+Important:
+
+Use unique IDs for every newly inserted list item.
+
+Do not reuse fixed identifiers such as `it_1` for multiple list items.
+
+Use immutable nested updates.
+
+Do not allow checkboxes to stop working after a save/reload.
+
+Preserve checked status through document serialization and PDF export.
+
+Test lists embedded between normal text blocks and educational blocks.
+
+---
+
+# PART 9 — FIX SKETCH / DRAWING
+
+Inspect:
+
+`SketchCanvasModal.tsx`
+
+and the sketch insertion path in:
+
+`LectureNotesEditor.tsx`
+
+There are two issues to investigate:
+
+1. The floating Quick Create action currently displays a notification instead of opening the sketch tool.
+2. The current canvas uses separate mouse/touch handling and accesses `touches[0]`. This can fail during touch-end events when the active touches collection is empty.
+
+Fix these properly.
+
+## Required behavior
+
+- Open the sketch modal from the floating `+` menu.
+- Open it from slash commands.
+- Save a sketch.
+- Insert the sketch at the actual requested insertion position.
+- Do not append it to the end if the user selected another position.
+- Display the saved sketch inside the document.
+- Preserve the sketch after reload.
+- Preserve the sketch in PDF export.
+
+## Drawing tools
+
+- Pen.
+- Eraser.
+- Line.
+- Rectangle.
+- Circle.
+- Color selection.
+- Adjustable line width.
+- Undo.
+- Redo.
+- Clear.
+- Caption.
+
+## Input support
+
+Use robust pointer handling.
+
+Prefer Pointer Events with:
+
+- Pointer down.
+- Pointer move.
+- Pointer up.
+- Pointer cancel.
+- Pointer capture where appropriate.
+
+Support:
+
+- Mouse.
+- Touch.
+- Stylus where supported.
+
+Correctly calculate drawing coordinates when the canvas is scaled responsively.
+
+Handle device-pixel-ratio rendering.
+
+A touch-end event must not throw an error because no active touch remains.
+
+Prevent page scrolling while drawing, without breaking the rest of the mobile interface.
+
+Test drawing, erasing, undoing, saving and inserting on desktop and mobile.
+
+---
+
+# PART 10 — URGENT: FIX IMAGE TO NOTE OCR HALLUCINATION
+
+This is one of the most important fixes.
+
+The uploaded image must be the source of truth.
+
+The AI must not create a generic chapter note when it fails to read the image.
+
+I inspected the current implementation and found two explicit fabricated fallbacks.
+
+## Current server-side issue
+
+In `server.ts`, the OCR endpoint:
+
+`POST /api/ai/image-to-note`
+
+first attempts image transcription.
+
+However, when that fails, its fallback calls `generateAICompletion()` with a prompt asking the model to:
+
+```text
+Transcribe and format a complete high-yield lecture note
+covering the standard curriculum topics for [subject].
+```
+
+That fallback does not send the original images to the text-generation call.
+
+This is not OCR.
+
+It allows the model to generate subject knowledge instead of extracting the uploaded content.
+
+There is another hardcoded fallback containing:
+
+```text
+E = mc^2
+```
+
+This must be removed.
+
+## Current client-side issue
+
+In `ImageToNoteModal.tsx`, the catch block also creates a fallback note containing:
+
+```text
+F_c = \frac{m v^2}{r}
+```
+
+This is fabricated content when image processing fails.
+
+Remove this behavior completely.
+
+## Required OCR rules
+
+The image-processing service must:
+
+1. Receive the actual uploaded images.
+2. Verify that valid images were received.
+3. Process their actual visual contents using a configured image-capable model.
+4. Extract only content supported by those images.
+5. Preserve original structure where possible.
+6. Organize the extraction without inventing missing sections.
+7. Mark uncertain text and mathematical symbols.
+8. Return a clear failure if image recognition is unavailable or fails.
+
+Do not use an ordinary text-only AI completion as a substitute for image OCR.
+
+Do not invent formulas, definitions, chapter summaries or examples.
+
+## Image-to-note structure
+
+The resulting note may be organized into:
+
+- Title.
+- Headings.
+- Paragraphs.
+- Tables.
+- Lists.
+- Formulas.
+- Examples.
+
+But the content must be grounded in the original image.
+
+Formatting may improve readability; it must not add unsupported subject matter.
+
+## Mathematical accuracy
+
+Be especially careful with:
+
+- `1` versus `l`.
+- `v` versus `ν`.
+- `x` versus `×`.
+- Minus signs.
+- Fraction bars.
+- Exponents.
+- Subscripts.
+- Greek letters.
+- Roots.
+- Matrix entries.
+
+Uncertain expressions must be flagged for review.
+
+Do not silently guess.
+
+## Preserve source images
+
+Keep the original uploaded images accessible as references inside the review interface or note attachments.
+
+Allow users to compare the original image against extracted content.
+
+## Multiple-image processing
+
+Support:
+
+- Multiple pages.
+- Image ordering.
+- Duplicate/overlapping content detection.
+- Preservation of page order.
+- Merging related pages without losing details.
+
+## OCR preview
+
+Before saving, show:
+
+- Original images.
+- Extracted content.
+- Detected formulas.
+- Uncertain items.
+- Warnings.
+
+Let users edit the extracted note before committing it.
+
+## Error handling
+
+If processing fails:
+
+- Preserve uploaded images.
+- Show a real error.
+- Offer retry.
+- Do not display a fabricated successful note.
+- Do not call `onSaveAsNote`.
+- Do not report success.
+
+## AI provider constraints
+
+Use only existing approved provider integrations and verified vision capabilities.
+
+Approved providers remain:
+
+- APInex.
+- Ministral.
+- Groq.
+
+Do not introduce Gemini, NARA Router or NVIDIA.
+
+Inspect the actual deployed provider configuration and available image-input support.
+
+If no configured provider can process images, report that honestly rather than simulating OCR.
+
+Add diagnostics for:
+
+- Number of images received.
+- Image validation.
+- Provider selected.
+- Provider status.
+- Response parsing.
+- Recognition failure.
+
+Never log full image data or API credentials.
+
+---
+
+# PART 11 — FIX THE FLOATING QUICK CREATE ACTIONS
+
+Inspect:
+
+`FloatingQuickCreate.tsx`
+
+and all callbacks passed from:
+
+`LectureNotesWorkspace.tsx`
+
+Some actions currently display notifications instead of doing anything.
+
+For example:
+
+- Folder creation displays a success notification without creating a folder.
+- Math Workspace displays a notification instead of opening a usable tool.
+- Sketch displays a notification instead of opening the actual sketch modal.
+
+Replace these placeholders with real actions.
+
+Verify every menu item.
+
+### Create
+
+- Note.
+- Folder.
+- Study Page.
+- Template.
+
+### Educational
+
+- Math Workspace.
+- Lesson.
+- Checklist.
+- Sketch.
+
+### Import
+
+- Markdown.
+- PDF.
+- Paste Content.
+- Image to Note.
+
+Important:
+
+Import PDF must not merely open an image uploader unless the actual action is clearly described as PDF-to-image transcription.
+
+Implement PDF upload and extraction through an appropriate supported workflow or clearly distinguish it from image OCR.
+
+Do not show a success notification before an operation succeeds.
+
+---
+
+# PART 12 — FIX FOLDER CREATION
+
+Inspect the current folder service and existing folders database structure.
+
+The sidebar and floating plus button must open a real Create Folder dialog.
+
+Support:
+
+- Folder name.
+- Optional description where supported.
+- Parent folder if nested folders are already supported.
+- Save.
+- Cancel.
+- Rename.
+- Delete with appropriate safety checks.
+- Move notes into folders.
+
+Persist changes through the existing folder service.
+
+Do not create a second folder system.
+
+Do not simply display:
+
+"Folder created!"
+
+unless a real folder was successfully saved.
+
+---
+
+# PART 13 — FIX AUTOSAVE AND PERSISTENCE
+
+Inspect:
+
+- `LectureNotesWorkspace.tsx`
+- `src/App.tsx` Lecture Notes callbacks.
+- `src/lib/supabaseNotes.ts`
+
+The editor currently reports saving state, but some parent/persistence error handlers swallow failures.
+
+Fix this.
+
+## Requirements
+
+- Debounced persistence.
+- No Supabase write on every keystroke.
+- No unnecessary editor remount.
+- Saving indicator.
+- Saved indicator.
+- Save failed indicator.
+- Retry action.
+- Pending changes tracking.
+- Flush pending save at suitable lifecycle boundaries.
+- Prevent stale requests from overwriting newer edits.
+- Avoid overwriting an external collaborator's newer changes without conflict handling.
+
+The persistence service must report whether a save actually succeeded.
+
+Do not treat a swallowed Supabase error as success.
+
+Maintain local recovery as a fallback, but do not claim remote synchronization succeeded when it did not.
+
+Keep Supabase as the persistent source of truth.
+
+---
+
+# PART 14 — FIX MARKDOWN IMPORT AND ROUND-TRIP CONVERSION
+
+The user reports that important Markdown functionality is not working.
+
+Inspect:
+
+`src/lib/lectureNotes/documentBridge.ts`
+
+and the Markdown import/export actions.
+
+Test:
+
+- Headings.
+- Bold.
+- Italic.
+- Inline code.
+- Code blocks.
+- Links.
+- Quotes.
+- Dividers.
+- Bulleted lists.
+- Numbered lists.
+- Nested lists.
+- Checklists.
+- Tables.
+- Inline math.
+- Display math.
+- Multiple paragraphs.
+- Blank lines.
+- Unicode symbols.
+
+Ensure that importing a Markdown file produces a usable editor document.
+
+Ensure that saving does not silently remove unsupported content.
+
+Ensure that exporting Markdown preserves the actual content.
+
+For unsupported syntax, preserve the original content safely rather than silently deleting it.
+
+Implement parser/serializer round-trip tests.
+
+Do not force users to type Markdown manually.
+
+---
+
+# PART 15 — PRESERVE MATH EDITOR FUNCTIONALITY
+
+The visual math editor is currently useful and should not be unnecessarily replaced.
+
+Improve:
+
+- Cursor placement.
+- Formula editing.
+- Initial formula loading.
+- Saving into the correct block.
+- Focus restoration after closing the modal.
+- Mobile usability.
+- Equation keyboard.
+- Formula preview.
+- Long equations.
+- Matrix support.
+- Fractions.
+- Roots.
+- Subscripts and superscripts.
+- Greek symbols.
+- Multiple aligned lines.
+
+When creating a formula from slash commands, insert it at the command's position.
+
+Do not always append it to the end of the document.
+
+Make sure the math editor and block synchronization do not reset each other.
+
+---
+
+# PART 16 — FIX HOMEWORK LINKING WITHOUT REGRESSION
+
+Preserve the existing feature that links Lecture Notes with homework.
+
+Verify:
+
+- A note can link to homework.
+- Multiple notes can link to one homework item.
+- Homework can show its related notes.
+- Notes can show related homework.
+- Unlinking works.
+- The relationship survives reload.
+- Links are visible on another authorized device.
+- RLS prevents unauthorized relationships.
+
+Inspect `homeworkLinks.ts`.
+
+Do not silently swallow database upsert errors and report successful synchronization.
+
+If local fallback is used, clearly distinguish local-only links from successfully synchronized links.
+
+Do not weaken existing class/student/teacher authorization.
+
+---
+
+# PART 17 — FULL SIDEBAR AND EDITOR RESPONSIVENESS
+
+Fix the sidebar and editor for:
+
+### Mobile
+
+320px, 360px, 375px, 390px, 414px, 430px.
+
+### Tablet
+
+768px, 820px, 1024px.
+
+### Desktop
+
+1280px, 1440px, 1920px.
+
+The sidebar must:
+
+- Have appropriate width.
+- Have a usable scroll area.
+- Show the note results list.
+- Work as a proper drawer on mobile.
+- Have a working close button.
+- Not cover the editor after closing.
+- Preserve selected note state.
+
+The editor must:
+
+- Use available viewport width.
+- Keep the writing surface comfortable.
+- Avoid excessively narrow text.
+- Keep toolbars usable.
+- Support long notes.
+- Keep new blocks visible.
+- Preserve mobile keyboard behavior.
+- Avoid overlapping floating controls.
+
+Do not solve all layout problems with `overflow-x: hidden`.
+
+Fix the underlying layout.
+
+---
+
+# PART 18 — REMOVE FALSE FUNCTIONALITY
+
+Audit the complete Lecture Notes interface for:
+
+- Placeholder success notifications.
+- Buttons that do not perform their advertised operation.
+- Dead navigation controls.
+- Modals that never open.
+- Empty callbacks.
+- Actions that only update local state.
+- Features that display fake success when persistence fails.
+
+Every visible action must work.
+
+If a feature cannot be completed in the current phase, clearly label it as unavailable or remove the misleading action temporarily.
+
+Do not pretend an action has completed.
+
+---
+
+# PART 19 — PDF EXPORT: PROTECT THE WORKING IMPLEMENTATION
+
+The existing PDF export is confirmed to be working in the user's application.
+
+Do not replace the existing fixed PDF exporter unnecessarily.
+
+Make the smallest changes needed to support the current block format.
+
+Before and after modifications:
+
+- Verify the current export behavior.
+- Export a representative existing note.
+- Export a note containing tables.
+- Export a note containing lists/checklists.
+- Export formulas.
+- Export sketches.
+- Export a long multi-page note.
+- Inspect actual generated PDFs.
+
+Preserve:
+
+- Formula rendering.
+- Page breaks.
+- Typography.
+- Tables.
+- Lists.
+- Images.
+- Spacing.
+- Unicode.
+- Greek letters.
+- Pagination.
+
+Do not declare PDF preservation successful based only on a successful function return.
+
+Inspect actual PDF output.
+
+---
+
+# PART 20 — TEST THE COMPLETE USER JOURNEYS
+
+Run the following tests with actual application behavior.
+
+## Test A — Open notes
+
+1. Open Lecture Notes.
+2. Click All Notes.
+3. Verify that note entries appear.
+4. Select a note.
+5. Verify the correct note opens.
+6. Switch to another note.
+7. Verify document content and editor state update correctly.
+
+## Test B — Sidebar filters
+
+Test:
+
+- All Notes.
+- Recent.
+- Starred.
+- Shared.
+- Archived.
+- Folders.
+- Tags.
+- Search.
+
+Verify correct results and counts.
+
+## Test C — Continuous typing
+
+1. Open a blank note.
+2. Click the blank writing surface.
+3. Type a paragraph.
+4. Continue typing.
+5. Verify cursor position never disappears.
+6. Press Enter.
+7. Create another paragraph.
+8. Add a heading.
+9. Continue typing.
+
+The user must not need to click the block again after every character.
+
+## Test D — Slash commands
+
+1. Type normal text.
+2. Type `/`.
+3. Search for Table.
+4. Insert a table.
+5. Verify the slash text disappears.
+6. Verify table insertion position.
+7. Verify the editor focuses the new table.
+8. Insert an equation using slash commands.
+9. Verify correct insertion and focus.
+
+## Test E — Lists
+
+Create:
+
+- Bulleted list.
+- Numbered list.
+- Checklist.
+
+Add and remove items.
+
+Check and uncheck tasks.
+
+Press Enter and Backspace.
+
+Reload the note and verify that list structure and checklist state remain intact.
+
+## Test F — Tables
+
+Create a 3-column table.
+
+Edit every header and cell.
+
+Add rows.
+
+Remove rows.
+
+Add columns.
+
+Remove columns.
+
+Reload the note and verify all cells.
+
+Test mobile scrolling.
+
+## Test G — Drawing
+
+Open the sketch tool from:
+
+- Floating plus menu.
+- Slash commands.
+
+Draw using a mouse.
+
+Draw using touch if available.
+
+Use the eraser.
+
+Undo.
+
+Save.
+
+Insert.
+
+Reload.
+
+Verify that the sketch remains visible.
+
+## Test H — Image to Note
+
+Upload an actual handwritten image.
+
+Verify that the output contains information from the uploaded image, not generic subject material.
+
+Test an unclear equation.
+
+Verify the uncertainty is identified.
+
+Simulate provider failure.
+
+Expected behavior:
+
+- Show actual failure.
+- Keep uploaded images.
+- Do not create fabricated notes.
+- Do not insert hardcoded formulas.
+- Do not report OCR success.
+
+## Test I — Markdown
+
+Import a sample Markdown file containing:
+
+- Headings.
+- Paragraphs.
+- Lists.
+- Tables.
+- Mathematical formulas.
+- Code.
+
+Verify its output in the editor.
+
+Export Markdown and reload it.
+
+Verify content preservation.
+
+## Test J — Autosave
+
+Type a long paragraph.
+
+Verify:
+
+- No cursor loss.
+- No duplicate content.
+- No stale content overwrite.
+- Successful persistence.
+- Correct failure state when persistence is intentionally unavailable.
+
+## Test K — PDF
+
+Generate and inspect PDFs with all relevant block types.
+
+## Test L — Homework linking
+
+Link and unlink notes.
+
+Reload both homework and Lecture Notes.
+
+Verify both directions.
+
+---
+
+# PART 21 — DO NOT BREAK OTHER VEYLENTRA FEATURES
+
+The following existing systems must continue working:
+
+- Supabase notes storage.
+- Existing user accounts.
+- Existing note permissions.
+- Collaboration.
+- AI provider architecture.
+- Study Center flashcards.
+- Homework.
+- PDF export.
+- Theme system.
+- PWA.
+- Mobile navigation.
+- Existing Veylentra application routing.
+
+Do not make broad changes to `App.tsx` unless required.
+
+Do not introduce a new notification system.
+
+Do not duplicate the Homework system.
+
+Do not introduce a separate flashcard engine.
+
+Do not introduce an alternate Supabase client.
+
+---
+
+# PART 22 — REQUIRED COMPLETION REPORT
+
+After implementing the fixes, provide:
+
+### Confirmed root causes
+
+Explain which specific bugs caused:
+
+- Missing note listings.
+- Broken sidebar filtering.
+- Editor focus loss.
+- Slash-command difficulty.
+- Table glitches.
+- List glitches.
+- Sketch failure.
+- OCR hallucinations.
+- False autosave success.
+
+Separate confirmed code defects from issues that required runtime investigation.
+
+### Changed files
+
+List the important files modified.
+
+### Database changes
+
+List any SQL migrations.
+
+### OCR changes
+
+Explain how the real images are processed and what happens if image recognition fails.
+
+### Editor changes
+
+Explain how cursor stability, continuous typing, block insertion and auto-scroll are handled.
+
+### Testing
+
+List the tests actually run.
+
+### Remaining limitations
+
+Be transparent about anything that still requires production environment, Supabase credentials, provider support or real-device testing.
+
+**Do not claim a fix was verified if it was only implemented but not tested.**
+
+---
+
+# FINAL REQUIREMENT
+
+The central problem is that Lecture Notes currently looks like an advanced editor but does not behave like a natural writing application.
+
+Fix that.
+
+A student or teacher should be able to:
+
+1. Open a note.
+2. Click anywhere in the writing area.
+3. Start typing immediately.
+4. Add headings, lists, tables and formulas naturally.
+5. Insert blocks without losing their position.
+6. Continue writing without constantly scrolling manually.
+7. Upload handwritten notes and receive a faithful transcription.
+8. Draw diagrams that actually work.
+9. Find and organize all their notes.
+10. Save and export without losing content.
+
+**Prioritize reliable editing, note visibility, accurate OCR, stable tables/lists and functional navigation before adding any more features or visual decoration.**
+
+Make Lecture Notes feel effortless to use, not merely impressive to look at.

@@ -23,16 +23,15 @@ import {
   Copy, 
   ArrowUp, 
   ArrowDown, 
-  MoreVertical,
   PenTool,
   Search,
   Sparkles,
   Link2,
-  X
+  X,
+  ChevronRight
 } from 'lucide-react';
 import { 
   EducationalBlock, 
-  EducationalDocument, 
   HeadingBlock, 
   ParagraphBlock, 
   ListBlock, 
@@ -47,6 +46,7 @@ import { SketchCanvasModal } from './SketchCanvasModal';
 import { VaultNote } from '../../types';
 
 interface LectureNotesEditorProps {
+  noteId?: string;
   initialContent: string;
   noteTitle: string;
   noteSubject: string;
@@ -59,6 +59,7 @@ interface LectureNotesEditorProps {
 }
 
 export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
+  noteId,
   initialContent,
   noteTitle,
   noteSubject,
@@ -71,23 +72,54 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
 }) => {
   const [blocks, setBlocks] = useState<EducationalBlock[]>(() => markdownToBlocks(initialContent));
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
+  
+  // Track last serialized Markdown to prevent reparsing local edits
+  const lastSerializedMdRef = useRef<string>('');
+  const prevNoteIdRef = useRef<string | undefined>(noteId);
+  
+  // Modals state
   const [isMathModalOpen, setIsMathModalOpen] = useState(false);
   const [mathModalData, setMathModalData] = useState<{ latex: string; name?: string; targetBlockId?: string }>({ latex: 'E = mc^2' });
   const [isSketchModalOpen, setIsSketchModalOpen] = useState(false);
+
+  // Compact Inline Slash Menu State
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState('');
   const [slashBlockId, setSlashBlockId] = useState<string | null>(null);
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
 
-  // Sync internal blocks when note selection changes externally
+  // Refs for focusing inputs
+  const blockInputRefs = useRef<{ [key: string]: HTMLElement | null }>({});
+
+  // Synchronize internal blocks when note ID changes OR external update occurs
   useEffect(() => {
-    setBlocks(markdownToBlocks(initialContent));
-  }, [initialContent]);
+    const isNoteChanged = noteId !== prevNoteIdRef.current;
+    prevNoteIdRef.current = noteId;
+
+    if (isNoteChanged || (initialContent !== lastSerializedMdRef.current && initialContent.trim() !== '')) {
+      const parsed = markdownToBlocks(initialContent);
+      setBlocks(parsed);
+      lastSerializedMdRef.current = initialContent;
+    }
+  }, [noteId, initialContent]);
 
   // Propagate changes to parent in clean serialized Markdown
-  const updateBlocks = (newBlocks: EducationalBlock[]) => {
+  const updateBlocks = (newBlocks: EducationalBlock[], shouldFocusId?: string) => {
     setBlocks(newBlocks);
     const md = blocksToMarkdown(newBlocks);
+    lastSerializedMdRef.current = md;
     onChange(md);
+
+    if (shouldFocusId) {
+      setActiveBlockId(shouldFocusId);
+      setTimeout(() => {
+        const el = blockInputRefs.current[shouldFocusId];
+        if (el) {
+          el.focus();
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }, 50);
+    }
   };
 
   const handleBlockChange = (idx: number, updated: EducationalBlock) => {
@@ -96,8 +128,15 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
     updateBlocks(next);
   };
 
-  const handleAddBlockBelow = (idx: number, type: EducationalBlock['type'] = 'paragraph') => {
-    const id = 'blk_' + Math.random().toString(36).substring(2, 9);
+  const handleAddBlockBelow = (targetIdx?: number, type: EducationalBlock['type'] = 'paragraph') => {
+    const activeIdx = targetIdx !== undefined 
+      ? targetIdx 
+      : activeBlockId 
+      ? blocks.findIndex(b => b.id === activeBlockId)
+      : blocks.length - 1;
+
+    const insertIdx = activeIdx >= 0 ? activeIdx : blocks.length - 1;
+    const id = 'blk_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     let newBlock: EducationalBlock;
 
     switch (type) {
@@ -108,7 +147,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
         newBlock = { id, type: 'concept', title: 'New Concept', explanation: '', keyTakeaway: '' };
         break;
       case 'formula':
-        newBlock = { id, type: 'formula', name: 'Formula', latex: 'F = m a', variables: [] };
+        newBlock = { id, type: 'formula', name: 'Formula', latex: 'F_c = \\frac{m v^2}{r}', variables: [] };
         break;
       case 'worked_example':
         newBlock = { id, type: 'worked_example', problem: '', steps: [''], finalAnswer: '' };
@@ -117,7 +156,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
         newBlock = { id, type: 'definition', term: '', definition: '' };
         break;
       case 'callout':
-        newBlock = { id, type: 'callout', variant: 'info', title: 'Important Takeaway', text: '' };
+        newBlock = { id, type: 'callout', variant: 'info', title: 'Important Note', text: '' };
         break;
       case 'recall_question':
         newBlock = { id, type: 'recall_question', question: '', answer: '', isRevealed: false };
@@ -126,7 +165,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
         newBlock = { id, type: 'table', headers: ['Variable', 'Description', 'Value'], rows: [['', '', '']] };
         break;
       case 'list':
-        newBlock = { id, type: 'list', listType: 'bullet', items: [{ id: 'it_1', text: '' }] };
+        newBlock = { id, type: 'list', listType: 'bullet', items: [{ id: 'it_' + Date.now() + '_1', text: '' }] };
         break;
       default:
         newBlock = { id, type: 'paragraph', text: '' };
@@ -134,18 +173,19 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
     }
 
     const next = [...blocks];
-    next.splice(idx + 1, 0, newBlock);
-    updateBlocks(next);
-    setActiveBlockId(id);
+    next.splice(insertIdx + 1, 0, newBlock);
+    updateBlocks(next, id);
   };
 
   const handleDeleteBlock = (idx: number) => {
     if (blocks.length <= 1) {
-      updateBlocks([{ id: 'blk_1', type: 'paragraph', text: '' }]);
+      const resetId = 'blk_' + Date.now();
+      updateBlocks([{ id: resetId, type: 'paragraph', text: '' }], resetId);
       return;
     }
     const next = blocks.filter((_, i) => i !== idx);
-    updateBlocks(next);
+    const prevId = next[Math.max(0, idx - 1)]?.id;
+    updateBlocks(next, prevId);
   };
 
   const handleMoveBlock = (idx: number, direction: 'up' | 'down') => {
@@ -155,18 +195,18 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
     const temp = next[idx];
     next[idx] = next[targetIdx];
     next[targetIdx] = temp;
-    updateBlocks(next);
+    updateBlocks(next, temp.id);
   };
 
   const handleDuplicateBlock = (idx: number) => {
     const clone = JSON.parse(JSON.stringify(blocks[idx]));
-    clone.id = 'blk_' + Math.random().toString(36).substring(2, 9);
+    clone.id = 'blk_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     const next = [...blocks];
     next.splice(idx + 1, 0, clone);
-    updateBlocks(next);
+    updateBlocks(next, clone.id);
   };
 
-  // Slash commands registry
+  // Slash commands options
   const slashOptions = [
     { label: 'Paragraph', desc: 'Normal body text', type: 'paragraph', icon: '¶' },
     { label: 'Heading 1', desc: 'Main chapter heading', type: 'h1', icon: 'H1' },
@@ -182,23 +222,46 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
     { label: 'Definition Block', desc: 'Academic definition with context', type: 'definition', icon: '📖' },
     { label: 'Recall Question', desc: 'Self-testing with hidden answer', type: 'recall_question', icon: '❓' },
     { label: 'Warning / Exam Tip', desc: 'Important exam note or common mistake', type: 'callout', icon: '⚠️' },
-    { label: 'Sketch / Diagram', desc: 'Handwritten diagram canvas', type: 'sketch', icon: '✏️' },
-    { label: 'Divider', desc: 'Horizontal visual separator', type: 'divider', icon: '—' }
+    { label: 'Sketch / Diagram', desc: 'Handwritten diagram canvas', type: 'sketch', icon: '✏️' }
   ];
+
+  const filteredSlashOptions = slashOptions.filter(o => 
+    !slashQuery || o.label.toLowerCase().includes(slashQuery.toLowerCase()) || o.desc.toLowerCase().includes(slashQuery.toLowerCase())
+  );
 
   const handleSelectSlash = (opt: typeof slashOptions[0]) => {
     setSlashMenuOpen(false);
+    setSlashQuery('');
+    
+    // Clean slash text from active block
     const currentIdx = blocks.findIndex(b => b.id === slashBlockId);
+    if (currentIdx >= 0 && blocks[currentIdx].type === 'paragraph') {
+      const p = blocks[currentIdx] as ParagraphBlock;
+      const cleanText = p.text.replace(/\/[\w]*$/, '').trim();
+      handleBlockChange(currentIdx, { ...p, text: cleanText });
+    }
+
     const insertIdx = currentIdx >= 0 ? currentIdx : blocks.length - 1;
 
     if (opt.type === 'h1' || opt.type === 'h2' || opt.type === 'h3') {
       const level = opt.type === 'h1' ? 1 : opt.type === 'h2' ? 2 : 3;
+      const hId = slashBlockId || 'blk_h_' + Date.now();
       handleBlockChange(insertIdx, {
-        id: slashBlockId || 'blk_h',
+        id: hId,
         type: 'heading',
         level: level as 1 | 2 | 3,
         text: ''
       });
+      setActiveBlockId(hId);
+    } else if (opt.type === 'bullet' || opt.type === 'number' || opt.type === 'checklist') {
+      const listId = 'blk_list_' + Date.now();
+      handleBlockChange(insertIdx, {
+        id: listId,
+        type: 'list',
+        listType: opt.type as any,
+        items: [{ id: 'it_' + Date.now() + '_1', text: '', checked: false }]
+      });
+      setActiveBlockId(listId);
     } else if (opt.type === 'formula') {
       setMathModalData({ latex: 'F_c = \\frac{m v^2}{r}', name: 'Formula', targetBlockId: slashBlockId || undefined });
       setIsMathModalOpen(true);
@@ -209,15 +272,32 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
     }
   };
 
+  // Click empty document surface to focus or create paragraph
+  const handleDocumentSurfaceClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      if (blocks.length > 0) {
+        const lastBlock = blocks[blocks.length - 1];
+        if (lastBlock.type === 'paragraph' && !(lastBlock as ParagraphBlock).text.trim()) {
+          setActiveBlockId(lastBlock.id);
+          blockInputRefs.current[lastBlock.id]?.focus();
+        } else {
+          handleAddBlockBelow(blocks.length - 1, 'paragraph');
+        }
+      } else {
+        handleAddBlockBelow(0, 'paragraph');
+      }
+    }
+  };
+
   return (
     <div className="space-y-4">
-      {/* Top Floating Formatting Bar */}
+      {/* Top Floating Formatting Toolbar */}
       {!readOnly && (
         <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-2 p-2 rounded-2xl bg-slate-900/90 border border-slate-700/80 backdrop-blur-md shadow-lg">
           <div className="flex flex-wrap items-center gap-1">
             <button
               type="button"
-              onClick={() => handleAddBlockBelow(blocks.length - 1, 'heading')}
+              onClick={() => handleAddBlockBelow(undefined, 'heading')}
               className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer text-xs font-bold"
               title="Add Heading"
             >
@@ -225,7 +305,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => handleAddBlockBelow(blocks.length - 1, 'paragraph')}
+              onClick={() => handleAddBlockBelow(undefined, 'paragraph')}
               className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer text-xs"
               title="Add Paragraph"
             >
@@ -246,7 +326,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => handleAddBlockBelow(blocks.length - 1, 'table')}
+              onClick={() => handleAddBlockBelow(undefined, 'table')}
               className="px-2.5 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
               title="Insert Table"
             >
@@ -255,7 +335,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => handleAddBlockBelow(blocks.length - 1, 'concept')}
+              onClick={() => handleAddBlockBelow(undefined, 'concept')}
               className="px-2 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
               title="Insert Concept Block"
             >
@@ -264,7 +344,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => handleAddBlockBelow(blocks.length - 1, 'worked_example')}
+              onClick={() => handleAddBlockBelow(undefined, 'worked_example')}
               className="px-2 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
               title="Insert Worked Example"
             >
@@ -273,12 +353,21 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => handleAddBlockBelow(blocks.length - 1, 'recall_question')}
+              onClick={() => handleAddBlockBelow(undefined, 'recall_question')}
               className="px-2 py-1 rounded-lg bg-violet-600/20 hover:bg-violet-600/30 text-violet-300 border border-violet-500/30 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
               title="Insert Recall Question"
             >
               <HelpCircle className="w-3.5 h-3.5" />
               <span>Recall</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsSketchModalOpen(true)}
+              className="px-2 py-1 rounded-lg bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/30 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+              title="Draw Diagram"
+            >
+              <PenTool className="w-3.5 h-3.5" />
+              <span>Sketch</span>
             </button>
           </div>
 
@@ -309,8 +398,11 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
         </div>
       )}
 
-      {/* Main Blocks List */}
-      <div className="space-y-3 min-h-[360px] pb-12">
+      {/* Main Document Block List (Writing Surface) */}
+      <div 
+        className="space-y-3 min-h-[420px] pb-16 cursor-text"
+        onClick={handleDocumentSurfaceClick}
+      >
         {blocks.map((block, idx) => {
           const isHeading = block.type === 'heading';
           const isParagraph = block.type === 'paragraph';
@@ -324,9 +416,9 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
               }`}
               onClick={() => setActiveBlockId(block.id)}
             >
-              {/* Block Handle & Reorder controls (on hover/focus) */}
+              {/* Block Controls & Reorder handle */}
               {!readOnly && (
-                <div className="absolute -left-8 top-2 hidden group-hover:flex md:flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="absolute -left-8 top-2 hidden group-hover:flex md:flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                   <button
                     type="button"
                     onClick={() => handleMoveBlock(idx, 'up')}
@@ -364,17 +456,24 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
                 </div>
               )}
 
-              {/* Native Heading */}
+              {/* Heading Block */}
               {isHeading && (
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-mono text-indigo-400 font-bold shrink-0">
                     H{(block as HeadingBlock).level}
                   </span>
                   <input
+                    ref={el => { blockInputRefs.current[block.id] = el; }}
                     type="text"
                     value={(block as HeadingBlock).text}
                     readOnly={readOnly}
                     onChange={e => handleBlockChange(idx, { ...block, text: e.target.value })}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddBlockBelow(idx, 'paragraph');
+                      }
+                    }}
                     placeholder="Heading..."
                     className={`w-full bg-transparent border-b border-transparent focus:border-indigo-500/50 focus:outline-none font-bold text-white transition-colors ${
                       (block as HeadingBlock).level === 1 ? 'text-2xl font-display' : (block as HeadingBlock).level === 2 ? 'text-xl font-display' : 'text-base'
@@ -383,28 +482,102 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
                 </div>
               )}
 
-              {/* Native Paragraph */}
+              {/* Paragraph Block */}
               {isParagraph && (
                 <div className="relative">
                   <textarea
-                    rows={Math.max(2, Math.ceil(((block as ParagraphBlock).text || '').length / 90))}
+                    ref={el => { blockInputRefs.current[block.id] = el; }}
+                    rows={Math.max(1, Math.ceil(((block as ParagraphBlock).text || '').length / 85))}
                     value={(block as ParagraphBlock).text}
                     readOnly={readOnly}
                     onChange={e => {
                       const val = e.target.value;
-                      if (val.endsWith('/') && !slashMenuOpen) {
+                      const match = val.match(/\/(\w*)$/);
+                      if (match) {
                         setSlashBlockId(block.id);
+                        setSlashQuery(match[1]);
                         setSlashMenuOpen(true);
+                        setSlashSelectedIndex(0);
+                      } else {
+                        if (slashMenuOpen) setSlashMenuOpen(false);
                       }
                       handleBlockChange(idx, { ...block, text: val });
                     }}
-                    placeholder="Click to type... (Type / for commands)"
+                    onKeyDown={e => {
+                      if (slashMenuOpen) {
+                        if (e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          setSlashSelectedIndex(prev => (prev + 1) % Math.max(1, filteredSlashOptions.length));
+                          return;
+                        }
+                        if (e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          setSlashSelectedIndex(prev => (prev - 1 + filteredSlashOptions.length) % Math.max(1, filteredSlashOptions.length));
+                          return;
+                        }
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          if (filteredSlashOptions[slashSelectedIndex]) {
+                            handleSelectSlash(filteredSlashOptions[slashSelectedIndex]);
+                          }
+                          return;
+                        }
+                        if (e.key === 'Escape') {
+                          e.preventDefault();
+                          setSlashMenuOpen(false);
+                          return;
+                        }
+                      }
+
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleAddBlockBelow(idx, 'paragraph');
+                      } else if (e.key === 'Backspace' && !(block as ParagraphBlock).text && blocks.length > 1) {
+                        e.preventDefault();
+                        handleDeleteBlock(idx);
+                      }
+                    }}
+                    placeholder="Click to write... (Type / for options)"
                     className="w-full bg-transparent text-xs text-slate-200 leading-relaxed focus:outline-none resize-none font-sans"
                   />
+
+                  {/* Compact Contextual Slash Popover Dropdown */}
+                  {slashMenuOpen && slashBlockId === block.id && (
+                    <div className="absolute left-0 top-full mt-1 z-30 w-72 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-2 space-y-1 animate-in fade-in duration-100">
+                      <div className="px-2 py-1 flex items-center justify-between border-b border-slate-800 text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                        <span>Insert Block</span>
+                        <span className="text-indigo-400">↑↓ to navigate</span>
+                      </div>
+                      <div className="max-h-48 overflow-y-auto space-y-0.5">
+                        {filteredSlashOptions.length === 0 ? (
+                          <p className="p-2 text-xs text-slate-500 italic">No commands matching "{slashQuery}"</p>
+                        ) : (
+                          filteredSlashOptions.map((opt, oIdx) => (
+                            <button
+                              key={oIdx}
+                              type="button"
+                              onClick={() => handleSelectSlash(opt)}
+                              className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-left transition-colors cursor-pointer ${
+                                slashSelectedIndex === oIdx ? 'bg-indigo-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800'
+                              }`}
+                            >
+                              <span className="w-5 h-5 rounded bg-slate-950 flex items-center justify-center text-xs font-bold text-indigo-400 shrink-0">
+                                {opt.icon}
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-xs truncate">{opt.label}</p>
+                                <p className="text-[9px] text-slate-400 truncate opacity-80">{opt.desc}</p>
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Native List */}
+              {/* List Block */}
               {isList && (
                 <div className="space-y-1.5 pl-2">
                   {(block as ListBlock).items.map((item, itIdx) => (
@@ -437,6 +610,27 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
                           newItems[itIdx].text = e.target.value;
                           handleBlockChange(idx, { ...block, items: newItems });
                         }}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (!item.text.trim()) {
+                              // Exit list if current item is empty
+                              const newItems = (block as ListBlock).items.filter((_, i) => i !== itIdx);
+                              if (newItems.length === 0) {
+                                handleBlockChange(idx, { id: block.id, type: 'paragraph', text: '' });
+                              } else {
+                                handleBlockChange(idx, { ...block, items: newItems });
+                                handleAddBlockBelow(idx, 'paragraph');
+                              }
+                            } else {
+                              // Add new list item with unique ID
+                              const newItemId = 'it_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+                              const newItems = [...(block as ListBlock).items];
+                              newItems.splice(itIdx + 1, 0, { id: newItemId, text: '', checked: false });
+                              handleBlockChange(idx, { ...block, items: newItems });
+                            }
+                          }
+                        }}
                         placeholder="List item..."
                         className="flex-1 bg-transparent focus:outline-none border-b border-transparent focus:border-slate-700 py-0.5"
                       />
@@ -446,7 +640,8 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
                     <button
                       type="button"
                       onClick={() => {
-                        const newItems = [...(block as ListBlock).items, { id: 'it_' + Date.now(), text: '' }];
+                        const newItemId = 'it_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+                        const newItems = [...(block as ListBlock).items, { id: newItemId, text: '', checked: false }];
                         handleBlockChange(idx, { ...block, items: newItems });
                       }}
                       className="text-[11px] text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1 pt-1 cursor-pointer"
@@ -475,59 +670,6 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
         })}
       </div>
 
-      {/* Slash Command Palette Modal / Dropdown */}
-      {slashMenuOpen && (
-        <div 
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in"
-          onClick={() => setSlashMenuOpen(false)}
-        >
-          <div 
-            className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-4 space-y-3"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-              <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5" /> Slash Commands
-              </span>
-              <button 
-                onClick={() => setSlashMenuOpen(false)}
-                className="p-1 rounded text-slate-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <input
-              type="text"
-              autoFocus
-              value={slashQuery}
-              onChange={e => setSlashQuery(e.target.value)}
-              placeholder="Search command (math, table, concept...)"
-              className="w-full px-3 py-2 text-xs rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            />
-            <div className="grid grid-cols-2 gap-1.5 max-h-56 overflow-y-auto pr-1">
-              {slashOptions
-                .filter(o => !slashQuery || o.label.toLowerCase().includes(slashQuery.toLowerCase()))
-                .map((opt, oIdx) => (
-                  <button
-                    key={oIdx}
-                    type="button"
-                    onClick={() => handleSelectSlash(opt)}
-                    className="flex items-center gap-2 p-2 rounded-xl bg-slate-800/60 hover:bg-indigo-600/20 border border-slate-800 hover:border-indigo-500/40 text-left transition-colors cursor-pointer group"
-                  >
-                    <span className="w-7 h-7 rounded-lg bg-slate-900 flex items-center justify-center text-xs font-bold text-indigo-400 group-hover:text-white shrink-0">
-                      {opt.icon}
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-slate-200 group-hover:text-white truncate">{opt.label}</p>
-                      <p className="text-[10px] text-slate-400 truncate">{opt.desc}</p>
-                    </div>
-                  </button>
-                ))}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Visual Math Builder Modal */}
       <VisualMathEditorModal
         isOpen={isMathModalOpen}
@@ -547,6 +689,8 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
               });
             }
           } else {
+            const activeIdx = activeBlockId ? blocks.findIndex(b => b.id === activeBlockId) : blocks.length - 1;
+            const insertIdx = activeIdx >= 0 ? activeIdx : blocks.length - 1;
             const newFormula: FormulaBlock = {
               id: 'blk_math_' + Date.now(),
               type: 'formula',
@@ -554,7 +698,9 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
               name: name || 'Formula',
               variables: []
             };
-            updateBlocks([...blocks, newFormula]);
+            const next = [...blocks];
+            next.splice(insertIdx + 1, 0, newFormula);
+            updateBlocks(next, newFormula.id);
           }
         }}
       />
@@ -564,13 +710,17 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
         isOpen={isSketchModalOpen}
         onClose={() => setIsSketchModalOpen(false)}
         onSave={(dataUrl, caption) => {
+          const activeIdx = activeBlockId ? blocks.findIndex(b => b.id === activeBlockId) : blocks.length - 1;
+          const insertIdx = activeIdx >= 0 ? activeIdx : blocks.length - 1;
           const newSketch = {
             id: 'blk_sketch_' + Date.now(),
             type: 'sketch' as const,
             dataUrl,
             caption
           };
-          updateBlocks([...blocks, newSketch]);
+          const next = [...blocks];
+          next.splice(insertIdx + 1, 0, newSketch);
+          updateBlocks(next, newSketch.id);
         }}
       />
     </div>

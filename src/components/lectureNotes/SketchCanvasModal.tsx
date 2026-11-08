@@ -76,12 +76,22 @@ export const SketchCanvasModal: React.FC<SketchCanvasModalProps> = ({
     saveHistoryState();
   };
 
-  const getCanvasCoords = (e: React.MouseEvent | React.TouchEvent) => {
+  const getCanvasCoords = (e: React.MouseEvent | React.TouchEvent | React.PointerEvent) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    let clientX = 0;
+    let clientY = 0;
+
+    if ('touches' in e && (e.touches.length > 0 || e.changedTouches?.length > 0)) {
+      const touch = e.touches[0] || e.changedTouches[0];
+      clientX = touch.clientX;
+      clientY = touch.clientY;
+    } else {
+      clientX = (e as React.MouseEvent).clientX || 0;
+      clientY = (e as React.MouseEvent).clientY || 0;
+    }
+
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     return {

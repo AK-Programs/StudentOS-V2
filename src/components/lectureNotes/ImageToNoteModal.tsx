@@ -93,9 +93,12 @@ export const ImageToNoteModal: React.FC<ImageToNoteModalProps> = ({
     }
   };
 
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   const handleProcessImages = async () => {
     if (images.length === 0) return;
     setIsProcessing(true);
+    setErrorMessage(null);
     setProcessingStep('1. Reading uploaded images & inspecting resolution...');
 
     try {
@@ -115,7 +118,7 @@ export const ImageToNoteModal: React.FC<ImageToNoteModalProps> = ({
 
       const data = await resp.json();
       if (!resp.ok || !data.success) {
-        throw new Error(data.error || 'Failed to extract handwriting.');
+        throw new Error(data.error || 'Failed to extract handwriting from the uploaded image.');
       }
 
       setProcessingStep('5. Organizing document & preparing editable preview...');
@@ -127,10 +130,8 @@ export const ImageToNoteModal: React.FC<ImageToNoteModalProps> = ({
       setHasExtracted(true);
     } catch (err: any) {
       console.error('[ImageToNote] Extraction error:', err);
-      // Fallback draft note
-      setExtractedTitle(`${subject} Lecture Notes`);
-      setExtractedContent(`# ${subject} Lecture Notes\n\n## Overview\nTranscribed from notebook capture.\n\n$$\nF_c = \\frac{m v^2}{r}\n$$\n\n- Key definitions and formulas transcribed from image.`);
-      setHasExtracted(true);
+      setErrorMessage(err.message || 'Handwriting recognition failed. Please upload a clearer photo and try again.');
+      setHasExtracted(false);
     } finally {
       setIsProcessing(false);
       setProcessingStep('');
@@ -180,6 +181,22 @@ export const ImageToNoteModal: React.FC<ImageToNoteModalProps> = ({
 
         {/* Modal Body */}
         <div className="p-6 overflow-y-auto flex-1 space-y-5">
+          {errorMessage && (
+            <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center justify-between gap-3 animate-fadeIn">
+              <div className="flex items-center gap-2">
+                <span className="text-base">⚠️</span>
+                <span>{errorMessage}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setErrorMessage(null)}
+                className="text-xs text-rose-400 font-bold hover:underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
           {!hasExtracted ? (
             /* Upload / Capture Stage */
             <div className="space-y-4">
