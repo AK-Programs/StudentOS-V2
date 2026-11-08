@@ -31,6 +31,7 @@ interface FloatingQuickCreateProps {
   onImportMarkdown: () => void;
   onImportPdf: () => void;
   onPasteContent: () => void;
+  onOpenCreateWithAI: () => void;
 }
 
 export const FloatingQuickCreate: React.FC<FloatingQuickCreateProps> = ({
@@ -44,7 +45,8 @@ export const FloatingQuickCreate: React.FC<FloatingQuickCreateProps> = ({
   onOpenLessonBuilder,
   onImportMarkdown,
   onImportPdf,
-  onPasteContent
+  onPasteContent,
+  onOpenCreateWithAI
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [mobileTab, setMobileTab] = useState<'create' | 'educational' | 'import'>('create');
@@ -57,9 +59,15 @@ export const FloatingQuickCreate: React.FC<FloatingQuickCreateProps> = ({
       onClick: () => { setIsOpen(false); onCreateNote(); }
     },
     {
+      label: 'Create with AI',
+      desc: 'Generate a full note from a topic prompt',
+      icon: <Sparkles className="w-4 h-4 text-amber-400" />,
+      onClick: () => { setIsOpen(false); onOpenCreateWithAI(); }
+    },
+    {
       label: 'Create Folder',
       desc: 'Organize notes by subject or chapter',
-      icon: <FolderPlus className="w-4 h-4 text-amber-400" />,
+      icon: <FolderPlus className="w-4 h-4 text-blue-400" />,
       onClick: () => { setIsOpen(false); onCreateFolder(); }
     },
     {

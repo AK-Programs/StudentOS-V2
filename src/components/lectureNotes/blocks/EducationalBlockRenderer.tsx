@@ -15,7 +15,8 @@ import {
   Plus, 
   Calculator,
   GraduationCap,
-  Sparkles
+  Sparkles,
+  X
 } from 'lucide-react';
 import katex from 'katex';
 import { 
@@ -74,50 +75,38 @@ export const EducationalBlockRenderer: React.FC<EducationalBlockRendererProps> =
               <span className="p-1.5 rounded-xl bg-indigo-500/20 text-indigo-400">
                 <Lightbulb className="w-4 h-4" />
               </span>
-              {isEditing ? (
+              {!readOnly ? (
                 <input
                   type="text"
                   value={b.title}
                   onChange={e => onChange({ ...b, title: e.target.value })}
-                  placeholder="Concept Title"
-                  className="bg-slate-900 border border-slate-700 px-2 py-1 rounded text-sm font-bold text-white focus:outline-none"
+                  placeholder="Enter Concept Title..."
+                  className="bg-transparent border-b border-transparent focus:border-indigo-500/50 px-0 py-0.5 text-sm font-bold text-white focus:outline-none w-full"
                 />
               ) : (
                 <h4 className="text-sm font-bold text-indigo-200">{b.title || 'Core Concept'}</h4>
               )}
             </div>
-            {!readOnly && (
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(!isEditing)}
-                  className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/10 text-xs cursor-pointer"
-                  title="Toggle edit mode"
-                >
-                  <Edit3 className="w-3.5 h-3.5" />
-                </button>
-                {onDelete && (
-                  <button
-                    type="button"
-                    onClick={onDelete}
-                    className="p-1 rounded text-rose-400 hover:bg-rose-500/20 text-xs cursor-pointer"
-                    title="Delete block"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
+            {!readOnly && onDelete && (
+              <button
+                type="button"
+                onClick={onDelete}
+                className="opacity-0 group-hover:opacity-100 p-1 rounded text-rose-400 hover:bg-rose-500/20 text-xs cursor-pointer transition-opacity"
+                title="Delete block"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
             )}
           </div>
 
           {/* Explanation */}
-          {isEditing ? (
+          {!readOnly ? (
             <textarea
-              rows={2}
+              rows={Math.max(1, Math.ceil((b.explanation || '').length / 60))}
               value={b.explanation}
               onChange={e => onChange({ ...b, explanation: e.target.value })}
-              placeholder="Detailed explanation of the concept..."
-              className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-xs text-slate-200 focus:outline-none"
+              placeholder="Write a detailed explanation of the concept..."
+              className="w-full bg-transparent border-none p-0 text-xs text-slate-200 focus:outline-none resize-none"
             />
           ) : (
             <p className="text-xs text-slate-300 leading-relaxed">{b.explanation}</p>
@@ -128,13 +117,13 @@ export const EducationalBlockRenderer: React.FC<EducationalBlockRendererProps> =
             <span className="font-bold text-indigo-300 flex items-center gap-1.5 text-[11px] uppercase tracking-wider">
               <span>🎯</span> Key Takeaway
             </span>
-            {isEditing ? (
+            {!readOnly ? (
               <input
                 type="text"
                 value={b.keyTakeaway}
                 onChange={e => onChange({ ...b, keyTakeaway: e.target.value })}
-                placeholder="Core rule or takeaway..."
-                className="w-full bg-slate-900 border border-slate-700 px-2 py-1 rounded text-xs text-slate-100 focus:outline-none"
+                placeholder="Enter the core rule or key takeaway..."
+                className="w-full bg-transparent border-none px-0 py-0.5 text-xs text-slate-100 focus:outline-none"
               />
             ) : (
               <p className="text-slate-200 font-medium">{b.keyTakeaway}</p>
@@ -153,7 +142,17 @@ export const EducationalBlockRenderer: React.FC<EducationalBlockRendererProps> =
               <span className="p-1.5 rounded-xl bg-purple-500/20 text-purple-400 font-serif font-bold text-xs">
                 ∑
               </span>
-              <span className="text-xs font-bold text-purple-200">{b.name || 'Formula'}</span>
+              {!readOnly ? (
+                <input
+                  type="text"
+                  value={b.name}
+                  onChange={e => onChange({ ...b, name: e.target.value })}
+                  placeholder="Formula Name..."
+                  className="bg-transparent border-none p-0 text-xs font-bold text-purple-200 focus:outline-none"
+                />
+              ) : (
+                <span className="text-xs font-bold text-purple-200">{b.name || 'Formula'}</span>
+              )}
             </div>
             {!readOnly && (
               <div className="flex items-center gap-1">
@@ -163,13 +162,13 @@ export const EducationalBlockRenderer: React.FC<EducationalBlockRendererProps> =
                   className="px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
                 >
                   <Calculator className="w-3.5 h-3.5" />
-                  <span>Edit in Math Builder</span>
+                  <span>Edit LaTeX</span>
                 </button>
                 {onDelete && (
                   <button
                     type="button"
                     onClick={onDelete}
-                    className="p-1 rounded text-rose-400 hover:bg-rose-500/20 text-xs cursor-pointer ml-1"
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded text-rose-400 hover:bg-rose-500/20 text-xs cursor-pointer ml-1 transition-opacity"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -179,34 +178,116 @@ export const EducationalBlockRenderer: React.FC<EducationalBlockRendererProps> =
           </div>
 
           {/* KaTeX Vector Display */}
-          <div className="py-4 px-6 bg-slate-900/60 rounded-xl border border-slate-800 flex items-center justify-center overflow-x-auto shadow-inner">
+          <div className="py-4 px-6 bg-slate-900/60 rounded-xl border border-slate-800 flex items-center justify-center overflow-x-auto shadow-inner min-h-[60px]">
             <div ref={mathRef} className="text-xl sm:text-2xl text-slate-100" />
           </div>
 
           {/* Explanation if present */}
-          {b.explanation && (
-            <p className="text-xs text-slate-400 italic">{b.explanation}</p>
+          {!readOnly ? (
+            <input
+              type="text"
+              value={b.explanation || ''}
+              onChange={e => onChange({ ...b, explanation: e.target.value })}
+              placeholder="Short derivation or context note (optional)..."
+              className="w-full bg-transparent border-none p-0 text-xs text-slate-400 italic focus:outline-none"
+            />
+          ) : (
+            b.explanation && <p className="text-xs text-slate-400 italic">{b.explanation}</p>
           )}
 
-          {/* Variable definitions table if present */}
-          {b.variables && b.variables.length > 0 && (
-            <div className="overflow-x-auto pt-2">
+          {/* Variable definitions table */}
+          {(b.variables && b.variables.length > 0 || !readOnly) && (
+            <div className="overflow-x-auto pt-2 space-y-2">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest px-2">Variables:</span>
               <table className="w-full text-[11px] border-collapse">
                 <thead>
                   <tr className="border-b border-slate-800 text-slate-400 font-semibold text-left">
                     <th className="py-1 px-2">Symbol</th>
-                    <th className="py-1 px-2">Quantity / Meaning</th>
+                    <th className="py-1 px-2">Meaning</th>
                     <th className="py-1 px-2">SI Unit</th>
+                    {!readOnly && <th className="w-8"></th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {b.variables.map((v, vIdx) => (
+                  {(b.variables || []).map((v, vIdx) => (
                     <tr key={vIdx} className="border-b border-slate-800/40 text-slate-300">
-                      <td className="py-1 px-2 font-serif font-bold text-purple-300">${v.symbol}$</td>
-                      <td className="py-1 px-2">{v.meaning}</td>
-                      <td className="py-1 px-2 text-slate-400">{v.unit || '-'}</td>
+                      <td className="py-1 px-2 font-serif">
+                        {!readOnly ? (
+                          <input
+                            type="text"
+                            value={v.symbol}
+                            onChange={e => {
+                              const newVars = [...b.variables];
+                              newVars[vIdx].symbol = e.target.value;
+                              onChange({ ...b, variables: newVars });
+                            }}
+                            className="bg-transparent border-none p-0 w-full font-bold text-purple-300 focus:outline-none"
+                          />
+                        ) : (
+                          <span className="font-bold text-purple-300">${v.symbol}$</span>
+                        )}
+                      </td>
+                      <td className="py-1 px-2">
+                        {!readOnly ? (
+                          <input
+                            type="text"
+                            value={v.meaning}
+                            onChange={e => {
+                              const newVars = [...b.variables];
+                              newVars[vIdx].meaning = e.target.value;
+                              onChange({ ...b, variables: newVars });
+                            }}
+                            className="bg-transparent border-none p-0 w-full focus:outline-none"
+                          />
+                        ) : v.meaning}
+                      </td>
+                      <td className="py-1 px-2 text-slate-400">
+                        {!readOnly ? (
+                          <input
+                            type="text"
+                            value={v.unit || ''}
+                            onChange={e => {
+                              const newVars = [...b.variables];
+                              newVars[vIdx].unit = e.target.value;
+                              onChange({ ...b, variables: newVars });
+                            }}
+                            placeholder="-"
+                            className="bg-transparent border-none p-0 w-full focus:outline-none"
+                          />
+                        ) : (v.unit || '-')}
+                      </td>
+                      {!readOnly && (
+                        <td className="py-1 px-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newVars = b.variables.filter((_, idx) => idx !== vIdx);
+                              onChange({ ...b, variables: newVars });
+                            }}
+                            className="p-1 rounded text-slate-600 hover:text-rose-400"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
+                  {!readOnly && (
+                    <tr>
+                      <td colSpan={4} className="pt-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newVars = [...(b.variables || []), { symbol: '', meaning: '', unit: '' }];
+                            onChange({ ...b, variables: newVars });
+                          }}
+                          className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 px-2"
+                        >
+                          <Plus className="w-3 h-3" /> Add Variable
+                        </button>
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -228,37 +309,27 @@ export const EducationalBlockRenderer: React.FC<EducationalBlockRendererProps> =
                 Worked Example
               </h4>
             </div>
-            {!readOnly && (
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(!isEditing)}
-                  className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/10 text-xs cursor-pointer"
-                >
-                  <Edit3 className="w-3.5 h-3.5" />
-                </button>
-                {onDelete && (
-                  <button
-                    type="button"
-                    onClick={onDelete}
-                    className="p-1 rounded text-rose-400 hover:bg-rose-500/20 text-xs cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
+            {!readOnly && onDelete && (
+              <button
+                type="button"
+                onClick={onDelete}
+                className="opacity-0 group-hover:opacity-100 p-1 rounded text-rose-400 hover:bg-rose-500/20 text-xs cursor-pointer transition-opacity"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
             )}
           </div>
 
           {/* Problem Statement */}
           <div className="space-y-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Problem:</span>
-            {isEditing ? (
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Problem Statement:</span>
+            {!readOnly ? (
               <textarea
-                rows={2}
+                rows={Math.max(1, Math.ceil((b.problem || '').length / 70))}
                 value={b.problem}
                 onChange={e => onChange({ ...b, problem: e.target.value })}
-                className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-xs text-white focus:outline-none"
+                placeholder="Enter the problem statement here..."
+                className="w-full bg-transparent border-none p-0 text-xs font-medium text-slate-100 focus:outline-none resize-none"
               />
             ) : (
               <p className="text-xs font-medium text-slate-100">{b.problem}</p>
@@ -266,85 +337,109 @@ export const EducationalBlockRenderer: React.FC<EducationalBlockRendererProps> =
           </div>
 
           {/* Given & Required */}
-          {(b.given || b.required || isEditing) && (
+          {!readOnly || b.given || b.required ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-              {(b.given || isEditing) && (
-                <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800">
-                  <span className="text-[10px] font-bold text-slate-400 block mb-0.5">Given:</span>
-                  {isEditing ? (
-                    <input
-                      type="text"
-                      value={b.given || ''}
-                      onChange={e => onChange({ ...b, given: e.target.value })}
-                      className="w-full bg-transparent border-b border-slate-700 text-xs text-slate-200 focus:outline-none"
-                    />
-                  ) : (
-                    <span className="text-slate-300">{b.given}</span>
-                  )}
-                </div>
-              )}
-              {(b.required || isEditing) && (
-                <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800">
-                  <span className="text-[10px] font-bold text-slate-400 block mb-0.5">Required:</span>
-                  {isEditing ? (
-                    <input
-                      type="text"
-                      value={b.required || ''}
-                      onChange={e => onChange({ ...b, required: e.target.value })}
-                      className="w-full bg-transparent border-b border-slate-700 text-xs text-slate-200 focus:outline-none"
-                    />
-                  ) : (
-                    <span className="text-slate-300">{b.required}</span>
-                  )}
-                </div>
-              )}
+              <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800">
+                <span className="text-[10px] font-bold text-slate-400 block mb-0.5 uppercase tracking-tighter">Given:</span>
+                {!readOnly ? (
+                  <input
+                    type="text"
+                    value={b.given || ''}
+                    onChange={e => onChange({ ...b, given: e.target.value })}
+                    placeholder="e.g. m = 5kg, v = 10m/s"
+                    className="w-full bg-transparent border-none px-0 py-0.5 text-xs text-slate-200 focus:outline-none"
+                  />
+                ) : (
+                  <span className="text-slate-300">{b.given}</span>
+                )}
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800">
+                <span className="text-[10px] font-bold text-slate-400 block mb-0.5 uppercase tracking-tighter">Required:</span>
+                {!readOnly ? (
+                  <input
+                    type="text"
+                    value={b.required || ''}
+                    onChange={e => onChange({ ...b, required: e.target.value })}
+                    placeholder="e.g. Find net force (F)"
+                    className="w-full bg-transparent border-none px-0 py-0.5 text-xs text-slate-200 focus:outline-none"
+                  />
+                ) : (
+                  <span className="text-slate-300">{b.required}</span>
+                )}
+              </div>
             </div>
-          )}
+          ) : null}
 
           {/* Solution Steps */}
           <div className="space-y-1.5 pt-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Solution Steps:</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Step-by-Step Solution:</span>
             <div className="space-y-1.5">
               {(b.steps || []).map((step, idx) => (
-                <div key={idx} className="flex items-start gap-2 text-xs text-slate-300">
+                <div key={idx} className="flex items-start gap-2 text-xs text-slate-300 group/step">
                   <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-[10px] shrink-0 mt-0.5">
                     {idx + 1}
                   </span>
-                  {isEditing ? (
-                    <input
-                      type="text"
-                      value={step}
-                      onChange={e => {
-                        const newSteps = [...b.steps];
-                        newSteps[idx] = e.target.value;
-                        onChange({ ...b, steps: newSteps });
-                      }}
-                      className="flex-1 bg-slate-900 border border-slate-700 px-2 py-1 rounded text-xs text-slate-200 focus:outline-none"
-                    />
+                  {!readOnly ? (
+                    <div className="flex-1 flex items-start gap-2">
+                      <textarea
+                        rows={Math.max(1, Math.ceil((step || '').length / 60))}
+                        value={step}
+                        onChange={e => {
+                          const newSteps = [...b.steps];
+                          newSteps[idx] = e.target.value;
+                          onChange({ ...b, steps: newSteps });
+                        }}
+                        placeholder={`Explain step ${idx + 1}...`}
+                        className="flex-1 bg-transparent border-none p-0 text-xs text-slate-200 focus:outline-none resize-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newSteps = b.steps.filter((_, i) => i !== idx);
+                          onChange({ ...b, steps: newSteps });
+                        }}
+                        className="opacity-0 group-hover/step:opacity-100 p-1 rounded text-slate-600 hover:text-rose-400 transition-opacity"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
                   ) : (
                     <p className="flex-1 leading-relaxed">{step}</p>
                   )}
                 </div>
               ))}
+              {!readOnly && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newSteps = [...(b.steps || []), ''];
+                    onChange({ ...b, steps: newSteps });
+                  }}
+                  className="text-[10px] font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 ml-7 px-0"
+                >
+                  <Plus className="w-3 h-3" /> Add Next Step
+                </button>
+              )}
             </div>
           </div>
 
           {/* Final Answer */}
-          {(b.finalAnswer || isEditing) && (
+          {!readOnly || b.finalAnswer ? (
             <div className="p-3 rounded-xl bg-emerald-900/40 border border-emerald-500/30 flex items-center justify-between">
-              <span className="text-xs font-bold text-emerald-300">Final Answer:</span>
-              {isEditing ? (
+              <span className="text-xs font-bold text-emerald-300">Final Result:</span>
+              {!readOnly ? (
                 <input
                   type="text"
                   value={b.finalAnswer}
                   onChange={e => onChange({ ...b, finalAnswer: e.target.value })}
-                  className="bg-slate-900 border border-slate-700 px-2 py-1 rounded text-xs text-white font-bold focus:outline-none"
+                  placeholder="Enter final answer..."
+                  className="bg-transparent border-none p-0 text-right text-xs text-white font-bold focus:outline-none"
                 />
               ) : (
                 <span className="text-xs font-bold text-emerald-200 font-mono">{b.finalAnswer}</span>
               )}
             </div>
-          )}
+          ) : null}
         </div>
       );
     }
@@ -354,62 +449,75 @@ export const EducationalBlockRenderer: React.FC<EducationalBlockRendererProps> =
       return (
         <div className="my-4 rounded-2xl border border-sky-500/30 bg-sky-950/20 p-5 space-y-2 relative group">
           <div className="flex items-center justify-between">
-            <div className="flex items-baseline gap-2">
-              <span className="text-[11px] font-bold text-sky-400 uppercase tracking-wider flex items-center gap-1">
+            <div className="flex items-baseline gap-2 flex-1">
+              <span className="text-[11px] font-bold text-sky-400 uppercase tracking-wider flex items-center gap-1 shrink-0">
                 <BookOpen className="w-3.5 h-3.5" />
                 <span>Definition:</span>
               </span>
-              {isEditing ? (
-                <input
-                  type="text"
-                  value={b.term}
-                  onChange={e => onChange({ ...b, term: e.target.value })}
-                  placeholder="Term"
-                  className="bg-slate-900 border border-slate-700 px-2 py-0.5 rounded text-xs font-bold text-white focus:outline-none"
-                />
+              {!readOnly ? (
+                <div className="flex items-center gap-2 flex-1">
+                  <input
+                    type="text"
+                    value={b.term}
+                    onChange={e => onChange({ ...b, term: e.target.value })}
+                    placeholder="Enter Term..."
+                    className="bg-transparent border-none p-0 text-sm font-bold text-sky-200 focus:outline-none flex-1"
+                  />
+                  <input
+                    type="text"
+                    value={b.pronunciation || ''}
+                    onChange={e => onChange({ ...b, pronunciation: e.target.value })}
+                    placeholder="(pronunciation)"
+                    className="bg-transparent border-none p-0 text-[10px] text-slate-500 italic focus:outline-none w-24 text-right"
+                  />
+                </div>
               ) : (
-                <span className="text-sm font-bold text-sky-200">{b.term}</span>
-              )}
-              {b.pronunciation && (
-                <span className="text-[11px] text-slate-400 italic">({b.pronunciation})</span>
+                <>
+                  <span className="text-sm font-bold text-sky-200">{b.term}</span>
+                  {b.pronunciation && (
+                    <span className="text-[11px] text-slate-400 italic">({b.pronunciation})</span>
+                  )}
+                </>
               )}
             </div>
-            {!readOnly && (
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(!isEditing)}
-                  className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/10 text-xs cursor-pointer"
-                >
-                  <Edit3 className="w-3.5 h-3.5" />
-                </button>
-                {onDelete && (
-                  <button
-                    type="button"
-                    onClick={onDelete}
-                    className="p-1 rounded text-rose-400 hover:bg-rose-500/20 text-xs cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
+            {!readOnly && onDelete && (
+              <button
+                type="button"
+                onClick={onDelete}
+                className="opacity-0 group-hover:opacity-100 p-1 rounded text-rose-400 hover:bg-rose-500/20 text-xs cursor-pointer transition-opacity"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
             )}
           </div>
 
           {/* Definition Text */}
-          {isEditing ? (
+          {!readOnly ? (
             <textarea
-              rows={2}
+              rows={Math.max(1, Math.ceil((b.definition || '').length / 70))}
               value={b.definition}
               onChange={e => onChange({ ...b, definition: e.target.value })}
-              className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-xs text-slate-200 focus:outline-none"
+              placeholder="Write the formal academic definition..."
+              className="w-full bg-transparent border-none p-0 text-xs text-slate-200 focus:outline-none resize-none"
             />
           ) : (
             <p className="text-xs text-slate-300 leading-relaxed font-normal">{b.definition}</p>
           )}
 
-          {b.context && (
-            <p className="text-[11px] text-slate-400 italic pt-1">Context: {b.context}</p>
+          {/* Context */}
+          {!readOnly ? (
+            <div className="flex items-center gap-1 pt-1 border-t border-white/5">
+              <span className="text-[10px] text-slate-500 font-bold uppercase shrink-0">Context:</span>
+              <input
+                type="text"
+                value={b.context || ''}
+                onChange={e => onChange({ ...b, context: e.target.value })}
+                placeholder="Field of study or context..."
+                className="bg-transparent border-none p-0 text-[10px] text-slate-400 italic focus:outline-none w-full"
+              />
+            </div>
+          ) : (
+            b.context && <p className="text-[11px] text-slate-400 italic pt-1">Context: {b.context}</p>
           )}
         </div>
       );
@@ -430,37 +538,49 @@ export const EducationalBlockRenderer: React.FC<EducationalBlockRendererProps> =
       return (
         <div className={`my-4 rounded-2xl border ${borderClass} p-4 space-y-2 relative group`}>
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-1">
               {icon}
-              <span className="text-xs font-bold text-slate-200">{b.title || 'Note'}</span>
-            </div>
-            {!readOnly && (
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(!isEditing)}
-                  className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/10 text-xs cursor-pointer"
-                >
-                  <Edit3 className="w-3.5 h-3.5" />
-                </button>
-                {onDelete && (
-                  <button
-                    type="button"
-                    onClick={onDelete}
-                    className="p-1 rounded text-rose-400 hover:bg-rose-500/20 text-xs cursor-pointer"
+              {!readOnly ? (
+                <div className="flex items-center gap-2 flex-1">
+                  <input
+                    type="text"
+                    value={b.title}
+                    onChange={e => onChange({ ...b, title: e.target.value })}
+                    placeholder="Callout Title..."
+                    className="bg-transparent border-none p-0 text-xs font-bold text-slate-200 focus:outline-none flex-1"
+                  />
+                  <select
+                    value={b.variant}
+                    onChange={e => onChange({ ...b, variant: e.target.value as any })}
+                    className="bg-slate-950/60 text-[9px] font-bold text-slate-400 rounded px-1 py-0.5 border border-white/10 focus:outline-none"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
+                    <option value="info">Info</option>
+                    <option value="warning">Warning</option>
+                    <option value="exam_tip">Exam Tip</option>
+                    <option value="mistake">Common Mistake</option>
+                  </select>
+                </div>
+              ) : (
+                <span className="text-xs font-bold text-slate-200">{b.title || 'Note'}</span>
+              )}
+            </div>
+            {!readOnly && onDelete && (
+              <button
+                type="button"
+                onClick={onDelete}
+                className="opacity-0 group-hover:opacity-100 p-1 rounded text-rose-400 hover:bg-rose-500/20 text-xs cursor-pointer transition-opacity"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
             )}
           </div>
-          {isEditing ? (
+          {!readOnly ? (
             <textarea
-              rows={2}
+              rows={Math.max(1, Math.ceil((b.text || '').length / 70))}
               value={b.text}
               onChange={e => onChange({ ...b, text: e.target.value })}
-              className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-xs text-slate-200 focus:outline-none"
+              placeholder="Enter details..."
+              className="w-full bg-transparent border-none p-0 text-xs text-slate-200 focus:outline-none resize-none"
             />
           ) : (
             <p className="text-xs text-slate-300 leading-relaxed">{b.text}</p>
@@ -484,36 +604,25 @@ export const EducationalBlockRenderer: React.FC<EducationalBlockRendererProps> =
                 Active Recall Self-Test
               </span>
             </div>
-            {!readOnly && (
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(!isEditing)}
-                  className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/10 text-xs cursor-pointer"
-                >
-                  <Edit3 className="w-3.5 h-3.5" />
-                </button>
-                {onDelete && (
-                  <button
-                    type="button"
-                    onClick={onDelete}
-                    className="p-1 rounded text-rose-400 hover:bg-rose-500/20 text-xs cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
+            {!readOnly && onDelete && (
+              <button
+                type="button"
+                onClick={onDelete}
+                className="opacity-0 group-hover:opacity-100 p-1 rounded text-rose-400 hover:bg-rose-500/20 text-xs cursor-pointer transition-opacity"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
             )}
           </div>
 
           {/* Question */}
-          {isEditing ? (
+          {!readOnly ? (
             <textarea
-              rows={2}
+              rows={Math.max(1, Math.ceil((b.question || '').length / 70))}
               value={b.question}
               onChange={e => onChange({ ...b, question: e.target.value })}
               placeholder="Question to test yourself..."
-              className="w-full bg-slate-900 border border-slate-700 p-2 rounded text-xs text-white focus:outline-none"
+              className="w-full bg-transparent border-none p-0 text-xs text-white focus:outline-none resize-none font-semibold"
             />
           ) : (
             <p className="text-xs font-semibold text-slate-100">{b.question}</p>
@@ -521,26 +630,29 @@ export const EducationalBlockRenderer: React.FC<EducationalBlockRendererProps> =
 
           {/* Answer Card with Reveal Toggle */}
           <div className="pt-1">
-            {isRevealed ? (
-              <div className="p-3.5 rounded-xl bg-slate-900/90 border border-violet-500/30 text-xs space-y-2 animate-in fade-in duration-200">
+            {isRevealed || !readOnly ? (
+              <div className={`p-3.5 rounded-xl bg-slate-900/90 border border-violet-500/30 text-xs space-y-2 animate-in fade-in duration-200 ${!readOnly ? 'ring-1 ring-violet-500/20' : ''}`}>
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1">
                     <CheckCircle2 className="w-3 h-3" /> Answer
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => onChange({ ...b, isRevealed: false })}
-                    className="text-[10px] text-slate-400 hover:text-slate-200 flex items-center gap-1 cursor-pointer"
-                  >
-                    <EyeOff className="w-3 h-3" /> Hide Answer
-                  </button>
+                  {readOnly && (
+                    <button
+                      type="button"
+                      onClick={() => onChange({ ...b, isRevealed: false })}
+                      className="text-[10px] text-slate-400 hover:text-slate-200 flex items-center gap-1 cursor-pointer"
+                    >
+                      <EyeOff className="w-3 h-3" /> Hide Answer
+                    </button>
+                  )}
                 </div>
-                {isEditing ? (
+                {!readOnly ? (
                   <textarea
-                    rows={2}
+                    rows={Math.max(1, Math.ceil((b.answer || '').length / 70))}
                     value={b.answer}
                     onChange={e => onChange({ ...b, answer: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-700 p-1.5 rounded text-xs text-slate-200 focus:outline-none"
+                    placeholder="Write the correct answer here..."
+                    className="w-full bg-transparent border-none p-0 text-xs text-slate-200 focus:outline-none resize-none"
                   />
                 ) : (
                   <p className="text-slate-200 font-medium leading-relaxed">{b.answer}</p>
@@ -611,7 +723,17 @@ export const EducationalBlockRenderer: React.FC<EducationalBlockRendererProps> =
             alt={b.caption || 'Handwritten sketch'} 
             className="max-h-72 mx-auto rounded-xl shadow-md"
           />
-          {b.caption && <p className="text-xs text-slate-400 italic">{b.caption}</p>}
+          {!readOnly ? (
+            <input
+              type="text"
+              value={b.caption || ''}
+              onChange={e => onChange({ ...b, caption: e.target.value })}
+              placeholder="Add caption..."
+              className="bg-transparent border-none p-0 text-xs text-slate-400 italic focus:outline-none w-full text-center"
+            />
+          ) : (
+            b.caption && <p className="text-xs text-slate-400 italic">{b.caption}</p>
+          )}
           {!readOnly && onDelete && (
             <button
               type="button"

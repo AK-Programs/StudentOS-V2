@@ -47,25 +47,20 @@ export const ImageToNoteModal: React.FC<ImageToNoteModalProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  if (!isOpen) return null;
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleFiles = (files: FileList | null) => {
-    if (!files || files.length === 0) return;
+    if (!files) return;
     const newImages: string[] = [];
-    const readers: Promise<string>[] = [];
-
     Array.from(files).forEach(file => {
-      if (!file.type.startsWith('image/')) return;
-      const promise = new Promise<string>((resolve) => {
+      if (file.type.startsWith('image/')) {
         const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target?.result as string);
+        reader.onload = e => {
+          const res = e.target?.result as string;
+          if (res) setImages(prev => [...prev, res]);
+        };
         reader.readAsDataURL(file);
-      });
-      readers.push(promise);
-    });
-
-    Promise.all(readers).then(res => {
-      setImages(prev => [...prev, ...res]);
+      }
     });
   };
 
@@ -76,24 +71,23 @@ export const ImageToNoteModal: React.FC<ImageToNoteModalProps> = ({
   };
 
   const handlePaste = (e: React.ClipboardEvent) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const newImages: string[] = [];
+    const items = e.clipboardData.items;
+    const files: File[] = [];
     for (let i = 0; i < items.length; i++) {
       if (items[i].type.indexOf('image') !== -1) {
-        const file = items[i].getAsFile();
-        if (file) {
-          const reader = new FileReader();
-          reader.onload = (ev) => {
-            if (ev.target?.result) setImages(prev => [...prev, ev.target!.result as string]);
-          };
-          reader.readAsDataURL(file);
-        }
+        const blob = items[i].getAsFile();
+        if (blob) files.push(blob);
       }
+    }
+    if (files.length > 0) {
+      // Mock FileList for handleFiles
+      const dt = new DataTransfer();
+      files.forEach(f => dt.items.add(f));
+      handleFiles(dt.files);
     }
   };
 
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  if (!isOpen) return null;
 
   const handleProcessImages = async () => {
     if (images.length === 0) return;

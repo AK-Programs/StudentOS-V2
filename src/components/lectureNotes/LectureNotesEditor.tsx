@@ -28,7 +28,12 @@ import {
   Sparkles,
   Link2,
   X,
-  ChevronRight
+  ChevronRight,
+  MousePointer2,
+  Settings,
+  MoreVertical,
+  Wand2,
+  Type
 } from 'lucide-react';
 import { 
   EducationalBlock, 
@@ -87,6 +92,13 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
   const [slashQuery, setSlashQuery] = useState('');
   const [slashBlockId, setSlashBlockId] = useState<string | null>(null);
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+  const [slashMenuPosition, setSlashMenuPosition] = useState<{ top: number; left: number; flip: boolean }>({ top: 0, left: 0, flip: false });
+
+  // Selection & Multi-block State
+  const [selectedBlockIds, setSelectedBlockIds] = useState<string[]>([]);
+  const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const [isAIProcessing, setIsAIProcessing] = useState(false);
 
   // Refs for focusing inputs
   const blockInputRefs = useRef<{ [key: string]: HTMLElement | null }>({});
@@ -100,8 +112,71 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
       const parsed = markdownToBlocks(initialContent);
       setBlocks(parsed);
       lastSerializedMdRef.current = initialContent;
+      // Reset selection on note change
+      if (isNoteChanged) {
+        setSelectedBlockIds([]);
+        setIsMultiSelectMode(false);
+      }
     }
   }, [noteId, initialContent]);
+
+  // Global Keyboard Shortcuts (Ctrl+A, Delete)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Don't intercept if user is typing in a modal or something else specific
+      if (isMathModalOpen || isSketchModalOpen || slashMenuOpen) return;
+
+      // Ctrl+A / Cmd+A
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        const activeElement = document.activeElement;
+        const isInput = activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA';
+        
+        // Only trigger document-wide select if we are in the editor area or nothing is focused
+        if (!isInput || (activeElement && editorRef.current?.contains(activeElement))) {
+          e.preventDefault();
+          setSelectedBlockIds(blocks.map(b => b.id));
+          setIsMultiSelectMode(true);
+          // Blur current input to show selection clearly
+          if (activeElement instanceof HTMLElement) activeElement.blur();
+        }
+      }
+
+      // Delete / Backspace for multi-selection
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedBlockIds.length > 0 && !document.activeElement?.tagName.match(/INPUT|TEXTAREA/)) {
+        e.preventDefault();
+        handleDeleteSelectedBlocks();
+      }
+
+      // Escape to clear selection
+      if (e.key === 'Escape' && selectedBlockIds.length > 0) {
+        setSelectedBlockIds([]);
+        setIsMultiSelectMode(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [blocks, selectedBlockIds, isMathModalOpen, isSketchModalOpen, slashMenuOpen]);
+
+  const handleDeleteSelectedBlocks = () => {
+    if (selectedBlockIds.length === 0) return;
+    
+    // If all blocks selected, reset to one empty paragraph
+    if (selectedBlockIds.length === blocks.length) {
+      const resetId = 'blk_' + Date.now();
+      updateBlocks([{ id: resetId, type: 'paragraph', text: '' }], resetId);
+    } else {
+      const next = blocks.filter(b => !selectedBlockIds.includes(b.id));
+      if (next.length === 0) {
+        const resetId = 'blk_' + Date.now();
+        updateBlocks([{ id: resetId, type: 'paragraph', text: '' }], resetId);
+      } else {
+        updateBlocks(next);
+      }
+    }
+    setSelectedBlockIds([]);
+    setIsMultiSelectMode(false);
+  };
 
   // Propagate changes to parent in clean serialized Markdown
   const updateBlocks = (newBlocks: EducationalBlock[], shouldFocusId?: string) => {
@@ -272,9 +347,76 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
     }
   };
 
+  const handleEditWithAI = async (instruction?: string) => {
+    if (selectedBlockIds.length === 0 && !activeBlockId) return;
+    
+    setIsAIProcessing(true);
+    const targetIds = selectedBlockIds.length > 0 ? selectedBlockIds : [activeBlockId!];
+    const selectedBlocks = blocks.filter(b => targetIds.includes(b.id));
+    const contentToEdit = blocksToMarkdown(selectedBlocks);
+
+    try {
+      const res = await fetch('/api/ai/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'edit_note',
+          content: contentToEdit,
+          instruction: instruction || 'Refine and improve this section.',
+          subject: noteSubject
+        })
+      });
+
+      if (!res.ok) throw new Error('AI Edit failed');
+      const data = await res.json();
+      
+      if (data.success && data.content) {
+        const newBlocks = markdownToBlocks(data.content);
+        const startIdx = blocks.findIndex(b => b.id === targetIds[0]);
+        const next = [...blocks];
+        // Replace selected blocks with new AI-generated blocks
+        next.splice(startIdx, targetIds.length, ...newBlocks);
+        updateBlocks(next);
+        setSelectedBlockIds([]);
+        setIsMultiSelectMode(false);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsAIProcessing(false);
+    }
+  };
+
+  const toggleBlockSelection = (id: string, e: React.MouseEvent) => {
+    if (e.shiftKey) {
+      // Range selection
+      const lastSelected = selectedBlockIds[selectedBlockIds.length - 1];
+      if (!lastSelected) {
+        setSelectedBlockIds([id]);
+      } else {
+        const startIdx = blocks.findIndex(b => b.id === lastSelected);
+        const endIdx = blocks.findIndex(b => b.id === id);
+        const range = blocks.slice(Math.min(startIdx, endIdx), Math.max(startIdx, endIdx) + 1).map(b => b.id);
+        setSelectedBlockIds(Array.from(new Set([...selectedBlockIds, ...range])));
+      }
+      setIsMultiSelectMode(true);
+    } else if (e.ctrlKey || e.metaKey) {
+      // Toggle selection
+      setSelectedBlockIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+      setIsMultiSelectMode(true);
+    } else {
+      // Single click selection handled by activeBlockId if not in multi-select mode
+      if (isMultiSelectMode) {
+        setSelectedBlockIds([id]);
+      }
+    }
+  };
+
   // Click empty document surface to focus or create paragraph
   const handleDocumentSurfaceClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
+      setSelectedBlockIds([]);
+      setIsMultiSelectMode(false);
       if (blocks.length > 0) {
         const lastBlock = blocks[blocks.length - 1];
         if (lastBlock.type === 'paragraph' && !(lastBlock as ParagraphBlock).text.trim()) {
@@ -290,7 +432,51 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="relative space-y-4" ref={editorRef}>
+      {/* Selection Toolbar (Floating) */}
+      {selectedBlockIds.length > 0 && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 p-2 rounded-2xl bg-slate-900 border border-indigo-500/50 shadow-2xl animate-in slide-in-from-bottom-4 duration-200">
+          <div className="px-3 border-r border-slate-700 text-xs font-bold text-indigo-400">
+            {selectedBlockIds.length} Selected
+          </div>
+          <button
+            onClick={() => handleEditWithAI()}
+            disabled={isAIProcessing}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all disabled:opacity-50"
+          >
+            {isAIProcessing ? <Sparkles className="w-3.5 h-3.5 animate-pulse" /> : <Wand2 className="w-3.5 h-3.5" />}
+            <span>Edit with AI</span>
+          </button>
+          <button
+            onClick={() => {
+              const selected = blocks.filter(b => selectedBlockIds.includes(b.id));
+              const md = blocksToMarkdown(selected);
+              navigator.clipboard.writeText(md);
+            }}
+            className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white"
+            title="Copy Selection"
+          >
+            <Copy className="w-4 h-4" />
+          </button>
+          <button
+            onClick={handleDeleteSelectedBlocks}
+            className="p-1.5 rounded-xl bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-400"
+            title="Delete Selection"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => {
+              setSelectedBlockIds([]);
+              setIsMultiSelectMode(false);
+            }}
+            className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Top Floating Formatting Toolbar */}
       {!readOnly && (
         <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-2 p-2 rounded-2xl bg-slate-900/90 border border-slate-700/80 backdrop-blur-md shadow-lg">
@@ -412,9 +598,16 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
             <div 
               key={block.id}
               className={`group relative rounded-2xl transition-all ${
-                activeBlockId === block.id ? 'ring-1 ring-indigo-500/40 bg-slate-900/40 p-2' : 'p-1 hover:bg-slate-900/20'
+                selectedBlockIds.includes(block.id) 
+                  ? 'ring-2 ring-indigo-500 bg-indigo-500/10 p-2' 
+                  : activeBlockId === block.id 
+                    ? 'ring-1 ring-indigo-500/40 bg-slate-900/40 p-2' 
+                    : 'p-1 hover:bg-slate-900/20'
               }`}
-              onClick={() => setActiveBlockId(block.id)}
+              onClick={(e) => {
+                setActiveBlockId(block.id);
+                toggleBlockSelection(block.id, e);
+              }}
             >
               {/* Block Controls & Reorder handle */}
               {!readOnly && (
@@ -501,6 +694,32 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
                       } else {
                         if (slashMenuOpen) setSlashMenuOpen(false);
                       }
+                      
+                      // Calculate position for slash menu
+                      if (match && blockInputRefs.current[block.id]) {
+                        const el = blockInputRefs.current[block.id] as HTMLTextAreaElement;
+                        const rect = el.getBoundingClientRect();
+                        const cursorIdx = el.selectionStart;
+                        const textBefore = el.value.substring(0, cursorIdx);
+                        const lines = textBefore.split('\n');
+                        const lineCount = lines.length;
+                        const lastLineLen = lines[lines.length - 1].length;
+                        
+                        // Approximate cursor position (since it's a textarea)
+                        const charWidth = 7; // Average char width for text-xs
+                        const lineHeight = 16;
+                        
+                        const left = Math.min(rect.width - 280, lastLineLen * charWidth);
+                        const top = lineCount * lineHeight;
+                        
+                        // Check viewport overflow
+                        const viewportHeight = window.innerHeight;
+                        const spaceBelow = viewportHeight - (rect.top + top + 200);
+                        const flip = spaceBelow < 0;
+                        
+                        setSlashMenuPosition({ top, left, flip });
+                      }
+
                       handleBlockChange(idx, { ...block, text: val });
                     }}
                     onKeyDown={e => {
@@ -543,7 +762,15 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
 
                   {/* Compact Contextual Slash Popover Dropdown */}
                   {slashMenuOpen && slashBlockId === block.id && (
-                    <div className="absolute left-0 top-full mt-1 z-30 w-72 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-2 space-y-1 animate-in fade-in duration-100">
+                    <div 
+                      style={{ 
+                        left: `${slashMenuPosition.left}px`, 
+                        top: slashMenuPosition.flip ? 'auto' : `${slashMenuPosition.top}px`,
+                        bottom: slashMenuPosition.flip ? '100%' : 'auto',
+                        marginBottom: slashMenuPosition.flip ? '8px' : '0'
+                      }}
+                      className="absolute z-30 w-72 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-2 space-y-1 animate-in fade-in zoom-in-95 duration-100"
+                    >
                       <div className="px-2 py-1 flex items-center justify-between border-b border-slate-800 text-[10px] text-slate-400 font-bold uppercase tracking-wider">
                         <span>Insert Block</span>
                         <span className="text-indigo-400">↑↓ to navigate</span>

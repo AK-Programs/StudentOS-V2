@@ -19,7 +19,12 @@ import {
   Users2,
   Lock,
   RotateCcw,
-  FolderPlus
+  FolderPlus,
+  PanelLeft,
+  ChevronLeft,
+  ChevronRight,
+  BrainCircuit,
+  MessageSquarePlus
 } from 'lucide-react';
 import { VaultNote, Homework } from '../../types';
 import { NoteFolder, NoteVersion } from '../../lib/lectureNotes/types';
@@ -73,6 +78,10 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
   const [showOutline, setShowOutline] = useState(false);
   const [viewMode, setViewMode] = useState<'editor' | 'reader' | 'split'>('editor');
   const [autoSaveState, setAutoSaveState] = useState<'saved' | 'saving' | 'offline'>('saved');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isAIGenerating, setIsAIGenerating] = useState(false);
+  const [isAICreateModalOpen, setIsAICreateModalOpen] = useState(false);
+  const [aiCreateQuery, setAiCreateQuery] = useState('');
 
   // Custom local folders state
   const [localFolders, setLocalFolders] = useState<NoteFolder[]>(initialFolders);
@@ -235,11 +244,53 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
   const wordCount = (activeNote?.content || '').trim().split(/\s+/).filter(Boolean).length;
   const readTimeMin = Math.max(1, Math.ceil(wordCount / 200));
 
+  const handleCreateWithAI = async () => {
+    if (!aiCreateQuery.trim()) return;
+    setIsAIGenerating(true);
+    try {
+      const res = await fetch('/api/ai/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create_note',
+          topic: aiCreateQuery,
+          subject: 'Academic'
+        })
+      });
+      if (!res.ok) throw new Error('AI Generation failed');
+      const data = await res.json();
+      if (data.success && data.content) {
+        onCreateNote({
+          title: aiCreateQuery.slice(0, 40) + (aiCreateQuery.length > 40 ? '...' : ''),
+          content: data.content,
+          subject: 'AI Generated'
+        });
+        setIsAICreateModalOpen(false);
+        setAiCreateQuery('');
+        showNotification('✨ Note created with AI!');
+      }
+    } catch (err: any) {
+      showNotification(`❌ AI error: ${err.message}`);
+    } finally {
+      setIsAIGenerating(false);
+    }
+  };
+
   return (
     <div className="relative min-h-[700px] w-full flex flex-col space-y-4">
       {/* Top Workspace Header Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-slate-900/60 border border-white/5 backdrop-blur-md">
         <div className="flex items-center gap-2">
+          {/* Desktop Sidebar Toggle */}
+          <button
+            type="button"
+            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            className="hidden md:flex p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white cursor-pointer transition-all active:scale-95"
+            title={isSidebarCollapsed ? "Show Notes Panel" : "Hide Notes Panel"}
+          >
+            <PanelLeft className={`w-4 h-4 transition-transform ${isSidebarCollapsed ? '' : 'rotate-180'}`} />
+          </button>
+
           {/* Mobile Sidebar Toggle Button */}
           <button
             type="button"
@@ -342,7 +393,15 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
       {/* Main 3-Zone Workspace Grid */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-4 flex-1">
         {/* Zone 1: Navigation Sidebar (Desktop sticky / Mobile drawer) */}
-        <div className={`md:col-span-3 ${mobileSidebarOpen ? 'block fixed inset-0 z-50 bg-slate-950/95 p-4' : 'hidden md:block'}`}>
+        {/* Zone 1: Navigation Sidebar (Contextual Collapsible Panel) */}
+        <div 
+          className={`
+            ${mobileSidebarOpen ? 'block fixed inset-0 z-50 bg-slate-950/95 p-4' : 'hidden md:block'}
+            transition-all duration-300 ease-in-out
+            ${isSidebarCollapsed ? 'md:w-0 md:opacity-0 md:pointer-events-none md:col-span-0' : 'md:col-span-3'}
+            h-[calc(100vh-180px)] min-h-[500px] flex flex-col
+          `}
+        >
           {mobileSidebarOpen && (
             <div className="flex justify-end pb-2 md:hidden">
               <button onClick={() => setMobileSidebarOpen(false)} className="p-2 text-white">
@@ -350,40 +409,46 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
               </button>
             </div>
           )}
-          <LectureNotesSidebar
-            allNotes={notes}
-            notes={sortedFilteredNotes}
-            selectedNoteId={selectedNoteId}
-            folders={localFolders}
-            activeFolderId={activeFolderId}
-            currentFilter={currentFilter}
-            selectedTag={selectedTag}
-            searchQuery={searchQuery}
-            onSelectNote={id => {
-              onSelectNote(id);
-              setMobileSidebarOpen(false);
-            }}
-            onSelectFilter={f => setCurrentFilter(f)}
-            onSelectFolder={fId => setActiveFolderId(fId)}
-            onSelectTag={t => setSelectedTag(t)}
-            onSearchChange={q => setSearchQuery(q)}
-            onCreateNote={() => {
-              onCreateNote({ title: 'Untitled Note', subject: 'General' });
-              setMobileSidebarOpen(false);
-            }}
-            onCreateFolder={() => setIsCreateFolderOpen(true)}
-            onToggleStar={id => {
-              const target = notes.find(n => n.id === id);
-              if (target) {
-                onUpdateNote(id, { isStarred: !target.isStarred });
-              }
-            }}
-            onDeleteNote={onDeleteNote}
-          />
+          <div className="flex-1 overflow-hidden flex flex-col">
+            <LectureNotesSidebar
+              allNotes={notes}
+              notes={sortedFilteredNotes}
+              selectedNoteId={selectedNoteId}
+              folders={localFolders}
+              activeFolderId={activeFolderId}
+              currentFilter={currentFilter}
+              selectedTag={selectedTag}
+              searchQuery={searchQuery}
+              onSelectNote={id => {
+                onSelectNote(id);
+                setMobileSidebarOpen(false);
+              }}
+              onSelectFilter={f => setCurrentFilter(f)}
+              onSelectFolder={fId => setActiveFolderId(fId)}
+              onSelectTag={t => setSelectedTag(t)}
+              onSearchChange={q => setSearchQuery(q)}
+              onCreateNote={() => {
+                onCreateNote({ title: 'Untitled Note', subject: 'General' });
+                setMobileSidebarOpen(false);
+              }}
+              onCreateFolder={() => setIsCreateFolderOpen(true)}
+              onToggleStar={id => {
+                const target = notes.find(n => n.id === id);
+                if (target) {
+                  onUpdateNote(id, { isStarred: !target.isStarred });
+                }
+              }}
+              onDeleteNote={onDeleteNote}
+              onOpenCreateWithAI={() => setIsAICreateModalOpen(true)}
+            />
+          </div>
         </div>
 
         {/* Zone 2: Document Canvas & Writing Surface */}
-        <div className={`${showOutline ? 'md:col-span-6 lg:col-span-7' : 'md:col-span-9'} space-y-4`}>
+        <div className={`
+          ${isSidebarCollapsed ? 'md:col-span-12' : showOutline ? 'md:col-span-6 lg:col-span-7' : 'md:col-span-9'} 
+          space-y-4 transition-all duration-300
+        `}>
           {activeNote ? (
             <div className="rounded-3xl border border-white/5 bg-slate-900/50 backdrop-blur-md overflow-hidden shadow-xl p-5 sm:p-7 space-y-5">
               {/* Document Header (Editable Title & Subject) */}
@@ -468,6 +533,16 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
               >
                 + Create Note
               </button>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAICreateModalOpen(true)}
+                  className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-400 text-xs font-bold transition-all border border-indigo-500/30 flex items-center gap-2 mx-auto"
+                >
+                  <BrainCircuit className="w-4 h-4" />
+                  Create with AI
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -521,6 +596,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
           setLearningToolType('lesson');
           setIsLearningToolsOpen(true);
         }}
+        onOpenCreateWithAI={() => setIsAICreateModalOpen(true)}
         onImportMarkdown={() => {
           const input = document.createElement('input');
           input.type = 'file';
@@ -558,6 +634,87 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
           }
         }}
       />
+
+      {/* AI Create Note Modal */}
+      {isAICreateModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-3xl p-6 space-y-6 shadow-2xl relative overflow-hidden">
+            {/* Background Glow */}
+            <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-600/20 blur-[60px] -z-10" />
+            
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className="flex items-center gap-3 text-indigo-400 font-bold">
+                <div className="p-2 rounded-xl bg-indigo-600/20">
+                  <BrainCircuit className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg text-white">Create with AI</h3>
+                  <p className="text-[10px] font-normal text-slate-400 uppercase tracking-widest">Powered by APInex</p>
+                </div>
+              </div>
+              <button onClick={() => setIsAICreateModalOpen(false)} className="text-slate-400 hover:text-white p-2 hover:bg-slate-800 rounded-xl transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-300 flex items-center gap-2">
+                  <MessageSquarePlus className="w-3.5 h-3.5 text-indigo-400" />
+                  What topic should I write about?
+                </label>
+                <textarea
+                  autoFocus
+                  value={aiCreateQuery}
+                  onChange={e => setAiCreateQuery(e.target.value)}
+                  placeholder="e.g. Quantum entanglement and its applications in cryptography..."
+                  className="w-full min-h-[120px] px-4 py-3 text-sm rounded-2xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all placeholder:text-slate-600 resize-none"
+                />
+              </div>
+              
+              <div className="flex flex-wrap gap-2 pt-1">
+                {['Linear Algebra', 'Cell Biology', 'Macroeconomics', 'History of Rome'].map(tag => (
+                  <button
+                    key={tag}
+                    onClick={() => setAiCreateQuery(tag)}
+                    className="px-3 py-1 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-[10px] font-medium transition-colors border border-white/5"
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsAICreateModalOpen(false)}
+                className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!aiCreateQuery.trim() || isAIGenerating}
+                onClick={handleCreateWithAI}
+                className="flex items-center gap-2 px-6 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/20 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100"
+              >
+                {isAIGenerating ? (
+                  <>
+                    <Sparkles className="w-4 h-4 animate-spin" />
+                    <span>Generating...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    <span>Generate Note</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create Folder Modal */}
       {isCreateFolderOpen && (

@@ -14,7 +14,8 @@ import {
   ChevronRight, 
   ChevronDown,
   X,
-  Sparkles
+  Sparkles,
+  BrainCircuit
 } from 'lucide-react';
 import { VaultNote } from '../../types';
 import { NoteFolder } from '../../lib/lectureNotes/types';
@@ -37,6 +38,7 @@ interface LectureNotesSidebarProps {
   onCreateFolder: () => void;
   onToggleStar?: (noteId: string) => void;
   onDeleteNote?: (noteId: string) => void;
+  onOpenCreateWithAI?: () => void;
 }
 
 export const LectureNotesSidebar: React.FC<LectureNotesSidebarProps> = ({
@@ -56,7 +58,8 @@ export const LectureNotesSidebar: React.FC<LectureNotesSidebarProps> = ({
   onCreateNote,
   onCreateFolder,
   onToggleStar,
-  onDeleteNote
+  onDeleteNote,
+  onOpenCreateWithAI
 }) => {
   const [foldersExpanded, setFoldersExpanded] = useState(true);
   const [tagsExpanded, setTagsExpanded] = useState(false);
@@ -74,7 +77,7 @@ export const LectureNotesSidebar: React.FC<LectureNotesSidebarProps> = ({
   );
 
   return (
-    <div className="flex flex-col h-full min-h-[580px] bg-slate-950/80 rounded-3xl border border-white/5 overflow-hidden p-3.5 space-y-3.5">
+    <div className="flex flex-col h-full bg-slate-950/80 rounded-3xl border border-white/5 overflow-hidden p-3.5 space-y-3.5 shadow-2xl">
       {/* Search Input with Clear Button */}
       <div className="relative">
         <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-500" />
@@ -150,7 +153,7 @@ export const LectureNotesSidebar: React.FC<LectureNotesSidebarProps> = ({
         </div>
 
         {foldersExpanded && (
-          <div className="space-y-0.5 max-h-32 overflow-y-auto pr-1">
+          <div className="space-y-0.5 max-h-40 overflow-y-auto pr-1 scrollbar-hide">
             {folders.map(folder => (
               <button
                 key={folder.id}
@@ -334,15 +337,25 @@ export const LectureNotesSidebar: React.FC<LectureNotesSidebarProps> = ({
       </div>
 
       {/* Bottom Action: New Note Button */}
-      <div className="pt-2 border-t border-white/5 mt-auto">
+      <div className="pt-2 border-t border-white/5 mt-auto space-y-2">
         <button
           type="button"
           onClick={onCreateNote}
-          className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-md active:scale-95 cursor-pointer"
+          className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-md active:scale-95 cursor-pointer"
         >
           <Plus className="w-4 h-4" />
-          <span>New Lecture Note</span>
+          <span>New Note</span>
         </button>
+        {onOpenCreateWithAI && (
+          <button
+            type="button"
+            onClick={onOpenCreateWithAI}
+            className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-md active:scale-95 cursor-pointer"
+          >
+            <BrainCircuit className="w-4 h-4" />
+            <span>Create with AI</span>
+          </button>
+        )}
       </div>
     </div>
   );
