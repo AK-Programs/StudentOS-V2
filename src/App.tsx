@@ -15,7 +15,7 @@ import {
   Heart, Bookmark, X, Bell, Zap, Gift, Smartphone, Paperclip, History, Brain, Globe,
   LayoutDashboard, Layers, Video, HelpCircle, GraduationCap, Shield, Compass,
   PanelLeftClose, PanelLeftOpen, ClipboardList, CheckSquare, Monitor, Tv, Cpu, Trophy, Swords,
-  Key, ArrowLeft, FolderPlus, Pin, Edit2, Move, Folder, Users2, Copy, CheckCheck, Columns, ListOrdered, List, Info
+  Key, ArrowLeft, FolderPlus, Pin, Edit2, Move, Folder, Users2, Copy, CheckCheck, Columns, ListOrdered, List, Info, Menu
 } from 'lucide-react';
 import { 
   UserRole, HouseType, SectionType, UserProfile, HouseStats, 
@@ -896,25 +896,22 @@ export default function App() {
 
   const getSidebarBtnClass = (tab: string, type: 'standard' | 'faculty' | 'attendance' | 'admin' = 'standard') => {
     const isActive = isSidebarTabActive(tab);
-    let base = `group relative w-full flex items-center transition-all duration-200 rounded-xl border text-left min-w-0 cursor-pointer ${
-      sidebarOpen ? 'gap-3 px-3 py-2.5' : 'md:justify-center md:px-0 md:py-2.5 gap-3 px-3 py-2.5'
+    let base = `group relative w-full flex items-center transition-all duration-150 rounded-xl border text-left min-w-0 cursor-pointer ${
+      sidebarOpen ? 'gap-3 px-3 py-2' : 'md:justify-center md:px-0 md:py-2 gap-3 px-3 py-2'
     } `;
     if (smartBoardMode) {
-      base += `text-xs sm:text-sm font-extrabold `;
+      base += `text-xs sm:text-sm font-bold `;
     } else {
-      base += `text-xs font-semibold `;
+      base += `text-xs font-medium `;
     }
 
     if (isActive) {
-      if (type === 'faculty') base += 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20 border-emerald-500';
-      else if (type === 'attendance') base += 'bg-amber-600 text-white shadow-md shadow-amber-600/20 border-amber-500';
-      else if (type === 'admin') base += 'bg-rose-600 text-white shadow-md shadow-rose-600/20 border-rose-500';
-      else base += 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20 border-indigo-500';
+      if (type === 'faculty') base += 'bg-emerald-600 text-white shadow-sm border-emerald-500 font-semibold';
+      else if (type === 'attendance') base += 'bg-amber-600 text-white shadow-sm border-amber-500 font-semibold';
+      else if (type === 'admin') base += 'bg-rose-600 text-white shadow-sm border-rose-500 font-semibold';
+      else base += 'bg-indigo-600 text-white shadow-sm border-indigo-500 font-semibold';
     } else {
-      if (type === 'faculty') base += 'text-emerald-400 hover:text-white hover:bg-emerald-500/10 border-emerald-500/20';
-      else if (type === 'attendance') base += 'text-amber-400 hover:text-white hover:bg-amber-500/10 border-amber-500/20';
-      else if (type === 'admin') base += 'text-rose-400 hover:text-white hover:bg-rose-500/10 border-rose-500/20';
-      else base += 'text-slate-400 hover:text-slate-100 hover:bg-white/5 border-transparent hover:border-white/10';
+      base += 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/40 border-transparent';
     }
     return base;
   };
@@ -8031,12 +8028,6 @@ CRITICAL WEB GROUNDING DIRECTIVE:
 
       {currentUser && !isLocked && (
         <div className="flex min-h-screen relative">
-          {(getSavedTheme() === 'halloween' || currentUser.raw_data?.theme === 'halloween') && (
-            <>
-              <div className="halloween-fog-overlay" />
-              <div className="halloween-bat-anim">🦇</div>
-            </>
-          )}
           
           {/* Sidebar Overlay (Closes sidebar on outside click for Mobile/Tablet) */}
           {sidebarOpen && (
@@ -8205,20 +8196,20 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                   <>
                     {/* ORION COPILOT BUTTON — GLOBAL FOR ALL ROLES */}
                     {matchesFilter('Orion AI Copilot Assistant', 'orion ai copilot voice assistant 3d') && (
-                      <div className="pb-1">
+                      <div className="pb-1.5">
                         <button
                           type="button"
                           onClick={() => setIsJarvisActive(true)}
-                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider bg-gradient-to-r from-indigo-600/35 via-violet-600/35 to-teal-600/25 hover:from-indigo-600/60 hover:to-teal-600/50 text-white border border-indigo-400/40 shadow-lg shadow-indigo-500/15 transition-all cursor-pointer group"
+                          className="w-full flex items-center gap-3 px-3 py-2 rounded-xl font-medium text-xs text-slate-200 bg-slate-800/70 hover:bg-slate-800 border border-indigo-500/30 hover:border-indigo-400/60 transition-all cursor-pointer group shadow-sm"
                           title="Open Orion AI Copilot & School Assistant"
                         >
-                          <div className="w-5 h-5 rounded-lg bg-indigo-500/30 border border-indigo-300/50 flex items-center justify-center text-cyan-300 group-hover:scale-110 transition-transform shrink-0">
-                            <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                          <div className="w-5 h-5 rounded-lg bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center text-indigo-300 group-hover:text-indigo-200 transition-colors shrink-0">
+                            <Sparkles className="w-3.5 h-3.5" />
                           </div>
                           {sidebarOpen && (
                             <div className="flex items-center justify-between flex-1 min-w-0">
-                              <span className="truncate font-black tracking-wider text-white">Orion</span>
-                              <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-indigo-500/30 text-indigo-200 font-mono font-extrabold uppercase shrink-0">3D</span>
+                              <span className="truncate font-semibold text-slate-100">Orion AI</span>
+                              <span className="text-[10px] font-mono text-indigo-300/80 px-1.5 py-0.2 rounded bg-indigo-500/10 shrink-0">Copilot</span>
                             </div>
                           )}
                         </button>
@@ -8999,16 +8990,18 @@ CRITICAL WEB GROUNDING DIRECTIVE:
             <LiveBroadcastBanner currentUser={currentUser} />
 
             {/* Global Workspace Header bar */}
-            <header className="sticky top-0 z-40 px-2 sm:px-6 py-2 sm:py-4 flex items-center justify-between gap-1.5 sm:gap-3 border-b border-white/5 backdrop-blur-xl bg-slate-950/40">
-              <div className="flex items-center gap-1.5 sm:gap-4 min-w-0 flex-1">
+            <header className="sticky top-0 z-40 px-3 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between gap-3 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md">
+              <div className="flex items-center gap-2.5 sm:gap-4 min-w-0 flex-1">
                 <button 
                   onClick={() => setSidebarOpen(!sidebarOpen)}
-                  className="p-1.5 sm:p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/5 transition-all shrink-0"
+                  className="p-1.5 sm:p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors shrink-0 cursor-pointer"
+                  title="Toggle sidebar navigation"
+                  aria-label="Toggle sidebar navigation"
                 >
-                  <ChevronLeft className={`w-4 h-4 sm:w-5 sm:h-5 transition-transform duration-300 ${sidebarOpen ? '' : 'rotate-180'}`} />
+                  <ChevronLeft className={`w-4 h-4 sm:w-4.5 sm:h-4.5 transition-transform duration-200 ${sidebarOpen ? '' : 'rotate-180'}`} />
                 </button>
                 <div className="min-w-0 flex-1">
-                  <h2 className="text-xs sm:text-xl font-extrabold tracking-tight text-white font-display truncate min-w-0">
+                  <h2 className="text-sm sm:text-lg font-semibold tracking-tight text-white font-display truncate min-w-0">
                     {activeTab === 'dashboard' && 'My Dashboard'}
                     {activeTab === 'about' && 'About Veylentra'}
                     {activeTab === 'meet' && 'Veylentra Meet (Virtual Classroom)'}
@@ -9064,26 +9057,26 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                 )}
                 
                 {/* Accessibility Toolbar panel */}
-                <div className="hidden sm:flex items-center gap-1.5 p-1 rounded-xl bg-slate-900 border border-white/5 shadow-inner">
+                <div className="hidden sm:flex items-center gap-1 p-1 rounded-lg bg-slate-900 border border-slate-800 shadow-sm">
                   <button 
                     onClick={() => setFontSize(prev => prev === 'standard' ? 'large' : prev === 'large' ? 'huge' : 'standard')}
-                    className="p-1.5 hover:bg-white/10 rounded-lg text-slate-300"
+                    className="p-1.5 hover:bg-slate-800 rounded-md text-slate-300 transition-colors cursor-pointer"
                     title="Toggle Font Size"
                   >
-                    <span className="font-bold">A</span>
+                    <span className="font-bold text-xs">A</span>
                     {fontSize === 'large' && <span className="text-[9px] text-indigo-400 ml-0.5">+</span>}
                     {fontSize === 'huge' && <span className="text-[9px] text-indigo-400 ml-0.5">++</span>}
                   </button>
                   <button 
                     onClick={() => setHighContrast(!highContrast)}
-                    className={`p-1.5 rounded-lg text-slate-300 ${highContrast ? 'bg-indigo-600 text-white' : 'hover:bg-white/10'}`}
+                    className={`p-1.5 rounded-md text-slate-300 transition-colors cursor-pointer ${highContrast ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}
                     title="Toggle High Contrast Mode"
                   >
                     <Eye className="w-3.5 h-3.5" />
                   </button>
                   <button 
                     onClick={() => setTtsEnabled(!ttsEnabled)}
-                    className={`p-1.5 rounded-lg ${ttsEnabled ? 'bg-amber-500/20 text-amber-400' : 'text-slate-400 hover:bg-white/10'}`}
+                    className={`p-1.5 rounded-md transition-colors cursor-pointer ${ttsEnabled ? 'bg-amber-500/20 text-amber-400' : 'text-slate-400 hover:bg-slate-800'}`}
                     title="Toggle TTS Assistance"
                   >
                     {ttsEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
@@ -9094,28 +9087,26 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                       soundService.playButtonClick();
                       setIsSoundSettingsModalOpen(true);
                     }}
-                    className={`p-1.5 rounded-lg flex items-center gap-1 transition-colors cursor-pointer ${
+                    className={`p-1.5 rounded-md flex items-center gap-1 transition-colors cursor-pointer ${
                       soundService.getPreferences().muted 
-                        ? 'bg-rose-500/20 text-rose-400 hover:bg-rose-500/30' 
-                        : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                        ? 'bg-rose-500/15 text-rose-400 hover:bg-rose-500/25' 
+                        : 'text-slate-300 hover:bg-slate-800 hover:text-white'
                     }`}
-                    title="Sound Effects & Audio Settings (8 Pixabay FX)"
+                    title="Audio Settings"
                   >
                     {soundService.getPreferences().muted ? (
                       <VolumeX className="w-3.5 h-3.5" />
                     ) : (
                       <Volume2 className="w-3.5 h-3.5 text-indigo-400" />
                     )}
-                    <span className="hidden xl:inline text-[10px] font-bold font-mono">Audio</span>
+                    <span className="hidden xl:inline text-[10px] font-medium">Audio</span>
                   </button>
                 </div>
 
-                <div className="hidden md:flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 border border-white/5 font-mono text-indigo-400 shadow-sm">
-                  <Clock className="w-4 h-4" />
-                  <span>{clock}</span>
+                <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 font-mono text-xs text-slate-300 shadow-sm">
+                  <Clock className="w-3.5 h-3.5 text-slate-400" />
+                  <span className="tabular-nums">{clock}</span>
                 </div>
-
-
 
                 {/* Broadcast Action Button */}
                 {['super_admin', 'admin', 'teacher', 'coordinator'].includes(effectiveRole) && (
@@ -9124,7 +9115,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                       soundService.playAppearSound();
                       setIsBroadcastModalOpen(true);
                     }}
-                    className="p-1.5 sm:px-3 sm:py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-indigo-600/20 transition-all active:scale-95 min-h-[32px] sm:min-h-[38px]"
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
                     title="Send School/Class Broadcast Announcement"
                   >
                     <Send className="w-3.5 h-3.5 shrink-0" />
@@ -9139,12 +9130,12 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                       soundService.playAppearSound();
                       setShowNotifCenter(!showNotifCenter);
                     }}
-                    className="relative p-1.5 sm:p-2 rounded-xl bg-slate-900 border border-white/5 hover:bg-slate-800 hover:text-white text-slate-300 transition-all flex items-center justify-center cursor-pointer min-h-[32px] min-w-[32px] sm:min-h-[38px] sm:min-w-[38px]"
+                    className="relative p-2 rounded-lg bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors flex items-center justify-center cursor-pointer"
                     title="Academic Notification Hub"
                   >
                     <Bell className="w-4 h-4" />
                     {notifications.filter(n => !n.isRead).length > 0 && (
-                      <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5 sm:h-4 sm:w-4 items-center justify-center rounded-full bg-indigo-500 text-[8px] sm:text-[9px] font-bold text-white leading-none scale-100 animate-pulse">
+                      <span className="absolute -top-1 -right-1 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-indigo-500 text-[9px] font-bold text-white font-mono leading-none">
                         {notifications.filter(n => !n.isRead).length}
                       </span>
                     )}
@@ -9161,25 +9152,26 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                 {/* What's New Header Indicator Button */}
                 <button
                   onClick={() => handleTabSelect('whats_new')}
-                  className={`p-1.5 sm:px-3 sm:py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 relative border shadow-sm cursor-pointer min-h-[32px] sm:min-h-[38px] ${
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 relative border shadow-sm cursor-pointer ${
                     activeTab === 'whats_new' || activeTab === 'whats-new'
-                      ? 'bg-indigo-600 text-white border-indigo-500 shadow-indigo-600/30'
-                      : 'bg-slate-900 border-white/5 hover:bg-slate-800 text-slate-300 hover:text-white'
+                      ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm'
+                      : 'bg-slate-900 border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white'
                   }`}
                   title="What's New in Veylentra"
                 >
                   <Sparkles className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
                   <span className="hidden sm:inline">What's New</span>
                   {whatsNewUnreadCount > 0 && (
-                    <span className="absolute -top-1 -right-1 sm:static flex h-3.5 min-w-3.5 sm:h-4 sm:min-w-4 px-1 items-center justify-center rounded-full bg-rose-500 text-[8px] sm:text-[9px] font-black text-white leading-none animate-pulse">
+                    <span className="flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white font-mono leading-none">
                       {whatsNewUnreadCount}
                     </span>
                   )}
                 </button>
 
                 {effectiveRole === 'student' && currentUser.house && (
-                  <span className={`hidden lg:inline-flex px-3 py-1.5 rounded-full ${getHouseBadgeColor(currentUser.house)} font-bold tracking-wide uppercase text-[10px]`}>
-                    📍 {currentUser.house} House
+                  <span className="hidden lg:inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-800 bg-slate-900 text-slate-300 font-medium text-xs">
+                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
+                    <span>{currentUser.house} House</span>
                   </span>
                 )}
               </div>
@@ -9335,38 +9327,39 @@ CRITICAL WEB GROUNDING DIRECTIVE:
 
                   {/* Welcome Hero & Context Header */}
                   <motion.div
-                    initial={{ opacity: 0, y: 8 }}
+                    initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.22 }}
-                    className={`p-5 sm:p-7 rounded-3xl relative overflow-hidden backdrop-blur-md border shadow-xl ${
-                      currentUser.house === 'Ruby'
-                        ? 'bg-gradient-to-r from-red-950/40 to-slate-900 border-red-500/20'
-                        : currentUser.house === 'Emerald'
-                        ? 'bg-gradient-to-r from-emerald-950/40 to-slate-900 border-emerald-500/20'
-                        : currentUser.house === 'Sapphire'
-                        ? 'bg-gradient-to-r from-blue-950/40 to-slate-900 border-blue-500/20'
-                        : currentUser.house === 'Topaz'
-                        ? 'bg-gradient-to-r from-amber-950/40 to-slate-900 border-amber-500/20'
-                        : 'bg-gradient-to-r from-indigo-950/40 to-slate-900 border-white/10'
-                    }`}
+                    transition={{ duration: 0.2 }}
+                    className="p-5 sm:p-7 rounded-2xl relative overflow-hidden bg-slate-900 border border-slate-800 shadow-md"
                   >
-                    <BorderBeam size={220} duration={14} colorFrom="#6366f1" colorTo="#ec4899" />
                     <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-6">
-                      <div className="space-y-2">
-                        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
-                          <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 uppercase tracking-wider font-bold">
+                      <div className="space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                          <span className="font-semibold text-slate-200">
                             {(currentUser as any).schoolName || 'Veylentra International Academy'}
                           </span>
-                          <span className="px-2.5 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 capitalize font-bold">
-                            Role: {effectiveRole?.replace('_', ' ')}
+                          <span aria-hidden="true" className="text-slate-600">·</span>
+                          <span className="capitalize">
+                            {effectiveRole?.replace('_', ' ')}
                           </span>
                           {(effectiveRole === 'student' || currentUser.grade) && (
-                            <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 font-bold">
-                              Class: {currentUser.grade || 'Grade 10'} {currentUser.section ? `(${currentUser.section})` : ''}
-                            </span>
+                            <>
+                              <span aria-hidden="true" className="text-slate-600">·</span>
+                              <span>
+                                {currentUser.grade || 'Grade 10'} {currentUser.section ? `(${currentUser.section})` : ''}
+                              </span>
+                            </>
+                          )}
+                          {currentUser.house && (
+                            <>
+                              <span aria-hidden="true" className="text-slate-600">·</span>
+                              <span className="font-medium text-slate-300">
+                                {currentUser.house} House
+                              </span>
+                            </>
                           )}
                         </div>
-                        <h1 className="text-xl sm:text-3xl font-black font-display text-white tracking-tight">
+                        <h1 className="text-xl sm:text-2xl font-bold font-display text-white tracking-tight">
                           <SplitTextReveal text={`Welcome back, ${currentUser.name}`} />
                         </h1>
                       </div>
@@ -9375,21 +9368,20 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                       <button
                         type="button"
                         onClick={() => handleTabSelect('brain_battle')}
-                        className="flex items-center gap-3.5 bg-gradient-to-r from-amber-950/60 to-orange-950/60 hover:from-amber-900/80 hover:to-orange-900/80 px-4 py-3 rounded-2xl border border-amber-500/40 shrink-0 cursor-pointer transition-all shadow-lg hover:scale-105 active:scale-95 group"
+                        className="flex items-center gap-3 bg-slate-800/80 hover:bg-slate-800 px-4 py-2.5 rounded-xl border border-slate-700/80 shrink-0 cursor-pointer transition-colors shadow-sm text-left group"
                         title="View Brain Battle Arena"
                       >
-                        <div className="relative flex items-center justify-center">
-                          <Flame className="w-8 h-8 text-orange-400 group-hover:scale-110 transition-transform animate-pulse" />
-                          <span className="absolute inset-0 rounded-full bg-orange-500/20 animate-ping" />
+                        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-amber-500/10 text-amber-400 shrink-0">
+                          <Flame className="w-5 h-5 text-amber-400" />
                         </div>
-                        <div className="text-left">
+                        <div>
                           <div className="flex items-center gap-1.5">
-                            <span className="text-base sm:text-lg font-black font-mono tabular-nums text-white">
+                            <span className="text-base font-bold font-mono tabular-nums text-white">
                               <NumberTicker value={currentUser.streakDays || 5} suffix=" Days" />
                             </span>
-                            <span className="text-[10px] bg-amber-500/20 text-amber-300 font-bold px-1.5 py-0.5 rounded">Streak</span>
+                            <span className="text-[10px] text-amber-400 font-medium">Streak</span>
                           </div>
-                          <p className="text-[11px] text-amber-200/80 font-medium">Tap to open Brain Battle Arena ⚔️</p>
+                          <p className="text-[11px] text-slate-400 font-normal">Brain Battle Arena</p>
                         </div>
                       </button>
                     </div>
@@ -9408,56 +9400,66 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('attendance_manager')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">📋</span>
+                            <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
+                              <CheckCircle className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">Attendance</span>
-                              <span className="text-[10px] text-slate-400 block truncate">Check roll & stats</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">Attendance</span>
+                              <span className="text-[11px] text-slate-400 block truncate">Check roll & stats</span>
                             </div>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleTabSelect('homework')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">📓</span>
+                            <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
+                              <BookOpen className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">Homework</span>
-                              <span className="text-[10px] text-slate-400 block truncate">Tasks & due dates</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">Homework</span>
+                              <span className="text-[11px] text-slate-400 block truncate">Tasks & due dates</span>
                             </div>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleTabSelect('notes')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">📝</span>
+                            <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
+                              <FileText className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">Notes</span>
-                              <span className="text-[10px] text-slate-400 block truncate">AI lecture notes</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">Notes</span>
+                              <span className="text-[11px] text-slate-400 block truncate">Lecture notes</span>
                             </div>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleTabSelect('materials')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">📚</span>
+                            <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
+                              <Folder className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">Materials</span>
-                              <span className="text-[10px] text-slate-400 block truncate">Class resources</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">Materials</span>
+                              <span className="text-[11px] text-slate-400 block truncate">Class resources</span>
                             </div>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleTabSelect('ai_teacher')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">🤖</span>
+                            <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
+                              <Sparkles className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">Byte</span>
-                              <span className="text-[10px] text-slate-400 block truncate">AI learning assistant</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">Byte AI</span>
+                              <span className="text-[11px] text-slate-400 block truncate">Learning assistant</span>
                             </div>
                           </button>
                         </>
@@ -9468,56 +9470,66 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('attendance_manager')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">📋</span>
+                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                              <CheckCircle className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">Attendance</span>
-                              <span className="text-[10px] text-slate-400 block truncate">Mark daily roll</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">Attendance</span>
+                              <span className="text-[11px] text-slate-400 block truncate">Mark daily roll</span>
                             </div>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleTabSelect('homework')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">📓</span>
+                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                              <BookOpen className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">Homework</span>
-                              <span className="text-[10px] text-slate-400 block truncate">Assign & review</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">Homework</span>
+                              <span className="text-[11px] text-slate-400 block truncate">Assign & review</span>
                             </div>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleTabSelect('notes')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">📝</span>
+                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                              <FileText className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">Notes</span>
-                              <span className="text-[10px] text-slate-400 block truncate">Class lecture notes</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">Notes</span>
+                              <span className="text-[11px] text-slate-400 block truncate">Lecture notes</span>
                             </div>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleTabSelect('materials')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">📚</span>
+                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                              <Folder className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">Materials</span>
-                              <span className="text-[10px] text-slate-400 block truncate">Share resources</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">Materials</span>
+                              <span className="text-[11px] text-slate-400 block truncate">Share resources</span>
                             </div>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleTabSelect('faculty')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">👨‍🏫</span>
+                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                              <GraduationCap className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">Class</span>
-                              <span className="text-[10px] text-slate-400 block truncate">Students & gradebook</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">Faculty</span>
+                              <span className="text-[11px] text-slate-400 block truncate">Gradebook & roster</span>
                             </div>
                           </button>
                         </>
@@ -9528,45 +9540,53 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('parent_portal')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">👨‍👩‍👧</span>
+                            <div className="w-8 h-8 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shrink-0">
+                              <Users2 className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">My Children</span>
-                              <span className="text-[10px] text-slate-400 block truncate">Student profiles</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">My Children</span>
+                              <span className="text-[11px] text-slate-400 block truncate">Student profiles</span>
                             </div>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleTabSelect('parent_portal')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">📋</span>
+                            <div className="w-8 h-8 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shrink-0">
+                              <CheckCircle className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">Attendance</span>
-                              <span className="text-[10px] text-slate-400 block truncate">Daily log</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">Attendance</span>
+                              <span className="text-[11px] text-slate-400 block truncate">Daily register</span>
                             </div>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleTabSelect('parent_portal')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">📓</span>
+                            <div className="w-8 h-8 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shrink-0">
+                              <BookOpen className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">Homework</span>
-                              <span className="text-[10px] text-slate-400 block truncate">Track assignments</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">Homework</span>
+                              <span className="text-[11px] text-slate-400 block truncate">Track assignments</span>
                             </div>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleTabSelect('whats_new')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">📣</span>
+                            <div className="w-8 h-8 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shrink-0">
+                              <Bell className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">Notices</span>
-                              <span className="text-[10px] text-slate-400 block truncate">School announcements</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">Notices</span>
+                              <span className="text-[11px] text-slate-400 block truncate">Announcements</span>
                             </div>
                           </button>
                         </>
@@ -9577,56 +9597,68 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('attendance_manager')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">📋</span>
+                            <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
+                              <CheckCircle className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">Attendance</span>
-                              <span className="text-[10px] text-slate-400 block truncate">School attendance</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">Attendance</span>
+                              <span className="text-[11px] text-slate-400 block truncate">School register</span>
                             </div>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleTabSelect('homework')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">📓</span>
+                            <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
+                              <BookOpen className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">Homework</span>
-                              <span className="text-[10px] text-slate-400 block truncate">Overview & submissions</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">Homework</span>
+                              <span className="text-[11px] text-slate-400 block truncate">School submissions</span>
                             </div>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleTabSelect('notes')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">📝</span>
+                            <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
+                              <FileText className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">Notes</span>
-                              <span className="text-[10px] text-slate-400 block truncate">Lecture notes</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">Notes</span>
+                              <span className="text-[11px] text-slate-400 block truncate">Lecture notes</span>
                             </div>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleTabSelect('materials')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">📚</span>
+                            <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
+                              <Folder className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">Materials</span>
-                              <span className="text-[10px] text-slate-400 block truncate">Resource manager</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">Materials</span>
+                              <span className="text-[11px] text-slate-400 block truncate">Resource vault</span>
                             </div>
                           </button>
                           <button
                             type="button"
                             onClick={() => handleTabSelect(effectiveRole === 'coordinator' ? 'whats_new' : 'admin')}
-                            className="bento-card p-4 rounded-2xl flex flex-col items-start justify-between gap-3 text-left cursor-pointer active:scale-95 transition-all hover:border-indigo-500/40 group"
+                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <span className="text-2xl group-hover:scale-110 transition-transform">⚙️</span>
+                            <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
+                              <Shield className="w-4 h-4" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-xs font-black text-white block truncate">{effectiveRole === 'coordinator' ? 'Notices' : 'Control Center'}</span>
-                              <span className="text-[10px] text-slate-400 block truncate">School management</span>
+                              <span className="text-xs font-semibold text-slate-100 block truncate">
+                                {effectiveRole === 'coordinator' ? 'Notices' : 'Admin'}
+                              </span>
+                              <span className="text-[11px] text-slate-400 block truncate">Control panel</span>
                             </div>
                           </button>
                         </>
@@ -9635,63 +9667,63 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                   </div>
 
                   {/* Core Metrics Summary Strip */}
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
                     <div
                       onClick={() => { setStudyHubSubTab('tasks'); handleTabSelect('study_hub'); }}
-                      className="bento-card p-4 sm:p-5 rounded-2xl flex items-center justify-between cursor-pointer"
+                      className="p-4 sm:p-5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors flex items-center justify-between cursor-pointer shadow-sm"
                     >
                       <div className="space-y-1">
-                        <span className="text-xs font-semibold text-slate-400">Open Tasks</span>
-                        <h3 className="text-xl sm:text-2xl font-black font-mono tabular-nums text-white">
-                          {tasks.filter(t => !t.completed).length}
+                        <span className="text-xs font-medium text-slate-400">Open Tasks</span>
+                        <h3 className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-white">
+                          <NumberTicker value={tasks.filter(t => !t.completed).length} />
                         </h3>
                       </div>
-                      <div className="h-9 w-9 bg-indigo-500/15 rounded-xl flex items-center justify-center text-indigo-400">
+                      <div className="h-8 w-8 bg-indigo-500/10 border border-indigo-500/20 rounded-lg flex items-center justify-center text-indigo-400 shrink-0">
                         <CheckSquare className="w-4 h-4" />
                       </div>
                     </div>
 
                     <div
                       onClick={() => handleTabSelect('notes')}
-                      className="bento-card p-4 sm:p-5 rounded-2xl flex items-center justify-between cursor-pointer"
+                      className="p-4 sm:p-5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors flex items-center justify-between cursor-pointer shadow-sm"
                     >
                       <div className="space-y-1">
-                        <span className="text-xs font-semibold text-slate-400">Saved Notes</span>
-                        <h3 className="text-xl sm:text-2xl font-black font-mono tabular-nums text-white">
-                          {vaultNotes.length}
+                        <span className="text-xs font-medium text-slate-400">Saved Notes</span>
+                        <h3 className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-white">
+                          <NumberTicker value={vaultNotes.length} />
                         </h3>
                       </div>
-                      <div className="h-9 w-9 bg-amber-500/15 rounded-xl flex items-center justify-center text-amber-400">
+                      <div className="h-8 w-8 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-center justify-center text-amber-400 shrink-0">
                         <FileText className="w-4 h-4" />
                       </div>
                     </div>
 
                     <div
                       onClick={() => handleTabSelect('brain_battle')}
-                      className="bento-card p-4 sm:p-5 rounded-2xl flex items-center justify-between cursor-pointer"
+                      className="p-4 sm:p-5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors flex items-center justify-between cursor-pointer shadow-sm"
                     >
                       <div className="space-y-1">
-                        <span className="text-xs font-semibold text-slate-400">Brain Battles</span>
-                        <h3 className="text-xl sm:text-2xl font-black font-mono tabular-nums text-white">
-                          {currentUser.quizzesTaken || 3}
+                        <span className="text-xs font-medium text-slate-400">Brain Battles</span>
+                        <h3 className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-white">
+                          <NumberTicker value={currentUser.quizzesTaken || 3} />
                         </h3>
                       </div>
-                      <div className="h-9 w-9 bg-emerald-500/15 rounded-xl flex items-center justify-center text-emerald-400">
+                      <div className="h-8 w-8 bg-emerald-500/10 border border-emerald-500/20 rounded-lg flex items-center justify-center text-emerald-400 shrink-0">
                         <Trophy className="w-4 h-4" />
                       </div>
                     </div>
 
                     <div
                       onClick={() => handleTabSelect('pomodoro')}
-                      className="bento-card p-4 sm:p-5 rounded-2xl flex items-center justify-between cursor-pointer"
+                      className="p-4 sm:p-5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors flex items-center justify-between cursor-pointer shadow-sm"
                     >
                       <div className="space-y-1">
-                        <span className="text-xs font-semibold text-slate-400">Study Hours</span>
-                        <h3 className="text-xl sm:text-2xl font-black font-mono tabular-nums text-white">
-                          {currentUser.studyHours || 12}h
+                        <span className="text-xs font-medium text-slate-400">Study Hours</span>
+                        <h3 className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-white">
+                          <NumberTicker value={currentUser.studyHours || 12} suffix="h" />
                         </h3>
                       </div>
-                      <div className="h-9 w-9 bg-rose-500/15 rounded-xl flex items-center justify-center text-rose-400">
+                      <div className="h-8 w-8 bg-rose-500/10 border border-rose-500/20 rounded-lg flex items-center justify-center text-rose-400 shrink-0">
                         <Clock className="w-4 h-4" />
                       </div>
                     </div>
@@ -9701,42 +9733,40 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                   <DashboardGamificationCard currentUser={currentUser} />
 
                   {/* StudentOS Life — Role-Aware Dashboard Community Hub Card (Visible to All Authenticated Roles) */}
-                  <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-indigo-950/80 via-purple-950/60 to-slate-900 border border-indigo-500/30 shadow-xl relative overflow-hidden uiverse-card-hover">
-                    <div className="absolute -right-12 -top-12 w-48 h-48 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+                  <div className="p-5 sm:p-6 rounded-xl bg-slate-900 border border-slate-800 shadow-sm relative overflow-hidden">
                     <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                      <div className="space-y-1.5 min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 text-[10px] font-black uppercase tracking-widest">
-                            🚀 Veylentra Life
-                          </span>
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[10px] font-bold uppercase">
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex items-center gap-2 text-xs text-slate-400">
+                          <span className="font-semibold text-indigo-400">Campus Community</span>
+                          <span aria-hidden="true" className="text-slate-600">·</span>
+                          <span>
                             {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '')
                               ? `${(effectiveRole || 'faculty').replace('_', ' ')} Access`
-                              : 'Student Community'}
+                              : 'Student Life'}
                           </span>
                         </div>
-                        <h3 className="text-base sm:text-lg font-black font-display text-white">
+                        <h3 className="text-base font-bold text-white tracking-tight">
                           {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '')
-                            ? 'Campus Community, Competitions & Merit Badges'
+                            ? 'Campus Activities, Competitions & Merit Badges'
                             : 'Competitions, Student Clubs, Live Polls & House Spirit'}
                         </h3>
-                        <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
+                        <p className="text-xs text-slate-400 max-w-2xl leading-relaxed">
                           {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '')
-                            ? 'Organize school-wide competitions, supervise student clubs, publish campus polls, and award official merit badges.'
-                            : 'Register for inter-house hackathons and Olympiads, join student clubs, vote in live school polls, and earn merit badges.'}
+                            ? 'Supervise student clubs, publish campus polls, coordinate school competitions, and award merit badges.'
+                            : 'Register for inter-house Olympiads, join student clubs, vote in live school polls, and earn academic merit badges.'}
                         </p>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <div className="flex items-center gap-2 shrink-0">
                         <button
                           type="button"
                           onClick={() => handleTabSelect('life')}
-                          className="uiverse-btn-primary px-4 py-2.5 rounded-xl text-xs font-bold text-white flex items-center gap-2 cursor-pointer"
+                          className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs flex items-center gap-2 cursor-pointer transition-colors shadow-sm"
                         >
-                          <span>🚀</span>
+                          <Compass className="w-4 h-4" />
                           <span>
                             {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '')
-                              ? 'Manage Veylentra Life'
-                              : 'Explore Veylentra Life'}
+                              ? 'Manage Campus Life'
+                              : 'Explore Campus Life'}
                           </span>
                         </button>
                       </div>
@@ -14563,12 +14593,12 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
 
             {/* Mobile Bottom Navigation Bar (Phones < 768px & Installed Mobile PWA) */}
             {!presentationMode && activeTab !== 'whiteboard' && (
-              <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-slate-950/95 backdrop-blur-xl border-t border-white/10 px-1 pt-1.5 pb-2 safe-area-pb flex items-center justify-around gap-0.5">
+              <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-slate-950/90 backdrop-blur-md border-t border-slate-800/80 px-2 pt-1.5 pb-2 safe-area-pb flex items-center justify-around gap-1">
                 {[
-                  { id: 'dashboard', label: 'Home', icon: '🏠' },
-                  { id: 'study_hub', label: 'Study', icon: '🎯', badge: dueCardsCount > 0 ? dueCardsCount : 0 },
-                  { id: 'peer_chat', label: 'Chat', icon: '🌍' },
-                  { id: 'ai_teacher', label: 'Byte', icon: '🤖' },
+                  { id: 'dashboard', label: 'Home', icon: <LayoutDashboard className="w-4 h-4" /> },
+                  { id: 'study_hub', label: 'Study', icon: <Layers className="w-4 h-4" />, badge: dueCardsCount > 0 ? dueCardsCount : 0 },
+                  { id: 'peer_chat', label: 'Chat', icon: <MessageSquare className="w-4 h-4" /> },
+                  { id: 'ai_teacher', label: 'Byte', icon: <Sparkles className="w-4 h-4" /> },
                 ].map((item) => {
                   const isActive = item.id === 'study_hub'
                     ? ['study_hub', 'tasks', 'planner', 'flashcards'].includes(activeTab)
@@ -14578,16 +14608,16 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                       key={item.id}
                       type="button"
                       onClick={() => handleTabSelect(item.id)}
-                      className={`relative flex flex-col items-center justify-center py-1 px-1 sm:px-2.5 rounded-xl flex-1 min-w-0 min-h-[42px] sm:min-h-[44px] transition-all cursor-pointer ${
+                      className={`relative flex flex-col items-center justify-center py-1.5 px-2 rounded-lg flex-1 min-w-0 min-h-[44px] transition-colors cursor-pointer ${
                         isActive
-                          ? 'text-indigo-400 bg-indigo-500/15 font-extrabold'
-                          : 'text-slate-400 hover:text-slate-200 font-semibold'
+                          ? 'text-white bg-indigo-600 font-semibold shadow-xs'
+                          : 'text-slate-400 hover:text-slate-200 font-medium'
                       }`}
                     >
-                      <span className="text-sm sm:text-base leading-none">{item.icon}</span>
-                      <span className="text-[9px] sm:text-[10px] mt-1 leading-none tracking-tight truncate max-w-full">{item.label}</span>
+                      <span className="shrink-0">{item.icon}</span>
+                      <span className="text-[10px] mt-1 leading-none tracking-tight truncate max-w-full">{item.label}</span>
                       {item.badge ? (
-                        <span className="absolute top-0.5 right-1 px-1 min-w-[14px] h-[14px] rounded-full bg-rose-500 text-white text-[8px] font-black flex items-center justify-center leading-none">
+                        <span className="absolute top-1 right-2 px-1 min-w-[14px] h-[14px] rounded-full bg-rose-500 text-white text-[8px] font-bold font-mono flex items-center justify-center leading-none">
                           {item.badge}
                         </span>
                       ) : null}
@@ -14597,12 +14627,12 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                 <button
                   type="button"
                   onClick={() => setSidebarOpen(true)}
-                  className={`flex flex-col items-center justify-center py-1 px-1 sm:px-2.5 rounded-xl flex-1 min-w-0 min-h-[42px] sm:min-h-[44px] transition-all cursor-pointer ${
-                    sidebarOpen ? 'text-indigo-400 bg-indigo-500/15 font-extrabold' : 'text-slate-400 hover:text-slate-200 font-semibold'
+                  className={`flex flex-col items-center justify-center py-1.5 px-2 rounded-lg flex-1 min-w-0 min-h-[44px] transition-colors cursor-pointer ${
+                    sidebarOpen ? 'text-white bg-indigo-600 font-semibold' : 'text-slate-400 hover:text-slate-200 font-medium'
                   }`}
                 >
-                  <span className="text-sm sm:text-base leading-none">☰</span>
-                  <span className="text-[9px] sm:text-[10px] mt-1 leading-none tracking-tight truncate max-w-full">Menu</span>
+                  <Menu className="w-4 h-4 shrink-0" />
+                  <span className="text-[10px] mt-1 leading-none tracking-tight truncate max-w-full">Menu</span>
                 </button>
               </nav>
             )}

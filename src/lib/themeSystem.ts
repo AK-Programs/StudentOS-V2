@@ -236,24 +236,24 @@ export const STUDENTOS_THEMES: Record<ThemeId, ThemeDefinition> = {
   },
   halloween: {
     id: 'halloween',
-    name: 'Halloween Spook',
-    tagline: 'Midnight Pumpkin & Cursed Purple',
+    name: 'Obsidian & Amber',
+    tagline: 'Deep Obsidian & Warm Amber',
     isDark: true,
     colors: {
-      background: '#0c0211',
-      surface: 'rgba(28, 10, 42, 0.75)',
-      surfaceSecondary: '#160822',
-      surfaceTertiary: '#240d36',
-      text: '#f8fafc',
-      textMuted: '#d8b4fe',
-      textSubtle: '#a855f7',
-      primary: '#f97316',
-      primaryHover: '#ea580c',
-      border: 'rgba(249, 115, 22, 0.15)',
-      accent: '#9333ea',
-      themeColor: '#0c0211'
+      background: '#09090b',
+      surface: 'rgba(18, 18, 22, 0.85)',
+      surfaceSecondary: '#18181b',
+      surfaceTertiary: '#27272a',
+      text: '#fafafa',
+      textMuted: '#a1a1aa',
+      textSubtle: '#71717a',
+      primary: '#f59e0b',
+      primaryHover: '#d97706',
+      border: 'rgba(245, 158, 11, 0.2)',
+      accent: '#fbbf24',
+      themeColor: '#09090b'
     },
-    previewGradient: 'from-orange-950 via-purple-950 to-black'
+    previewGradient: 'from-amber-950 via-zinc-950 to-black'
   }
 };
 
@@ -301,9 +301,13 @@ export function applyTheme(themeId: ThemeId, accent: ThemeAccent = 'indigo') {
   if (!theme.isDark) {
     root.classList.add('light-theme');
     document.body?.classList.add('light-theme');
+    root.classList.remove('dark');
+    document.body?.classList.remove('dark');
   } else {
     root.classList.remove('light-theme');
     document.body?.classList.remove('light-theme');
+    root.classList.add('dark');
+    document.body?.classList.add('dark');
   }
 
   root.style.setProperty('--background', theme.colors.background);
