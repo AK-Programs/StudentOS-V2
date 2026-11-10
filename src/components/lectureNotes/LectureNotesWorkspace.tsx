@@ -24,7 +24,8 @@ import {
   ChevronLeft,
   ChevronRight,
   BrainCircuit,
-  MessageSquarePlus
+  MessageSquarePlus,
+  Wand2
 } from 'lucide-react';
 import { VaultNote, Homework } from '../../types';
 import { NoteFolder, NoteVersion } from '../../lib/lectureNotes/types';
@@ -82,6 +83,9 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
   const [isAIGenerating, setIsAIGenerating] = useState(false);
   const [isAICreateModalOpen, setIsAICreateModalOpen] = useState(false);
   const [aiCreateQuery, setAiCreateQuery] = useState('');
+  const [isAIEditModalOpen, setIsAIEditModalOpen] = useState(false);
+  const [aiEditInstruction, setAiEditInstruction] = useState('');
+  const [isAIEditing, setIsAIEditing] = useState(false);
 
   // Custom local folders state
   const [localFolders, setLocalFolders] = useState<NoteFolder[]>(initialFolders);
@@ -257,22 +261,59 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
           subject: 'Academic'
         })
       });
-      if (!res.ok) throw new Error('AI Generation failed');
       const data = await res.json();
-      if (data.success && data.content) {
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'AI note creation failed');
+      }
+      if (data.text) {
         onCreateNote({
           title: aiCreateQuery.slice(0, 40) + (aiCreateQuery.length > 40 ? '...' : ''),
-          content: data.content,
+          content: data.text,
           subject: 'AI Generated'
         });
         setIsAICreateModalOpen(false);
         setAiCreateQuery('');
         showNotification('✨ Note created with AI!');
+      } else {
+        throw new Error(data.error || 'No content returned from AI');
       }
     } catch (err: any) {
       showNotification(`❌ AI error: ${err.message}`);
     } finally {
       setIsAIGenerating(false);
+    }
+  };
+
+  const handleEditWithAI = async () => {
+    if (!activeNote || !aiEditInstruction.trim()) return;
+    setIsAIEditing(true);
+    try {
+      const res = await fetch('/api/ai/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'edit_note',
+          content: activeNote.content || '',
+          instruction: aiEditInstruction.trim(),
+          subject: activeNote.subject || 'Academic'
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'AI edit failed');
+      }
+      if (data.text) {
+        await onUpdateNote(activeNote.id, { content: data.text });
+        setIsAIEditModalOpen(false);
+        setAiEditInstruction('');
+        showNotification('✨ Note updated with AI!');
+      } else {
+        throw new Error(data.error || 'No updated text returned from AI');
+      }
+    } catch (err: any) {
+      showNotification(`❌ AI error: ${err.message}`);
+    } finally {
+      setIsAIEditing(false);
     }
   };
 
@@ -377,6 +418,19 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
             <History className="w-4 h-4" />
           </button>
 
+          {/* Edit with AI (For Open Note) */}
+          {activeNote && (
+            <button
+              type="button"
+              onClick={() => setIsAIEditModalOpen(true)}
+              className="px-3 py-1.5 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md active:scale-95 cursor-pointer"
+              title="Edit Note with AI"
+            >
+              <Wand2 className="w-3.5 h-3.5 text-purple-300" />
+              <span className="hidden sm:inline">Edit with AI</span>
+            </button>
+          )}
+
           {/* Export PDF (Fixed Vector Exporter) */}
           <button
             type="button"
@@ -461,13 +515,24 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                     placeholder="Note Title..."
                     className="w-full text-2xl sm:text-3xl font-black font-display text-white bg-transparent border-b border-transparent focus:border-indigo-500/50 pb-1 focus:outline-none transition-colors"
                   />
-                  <input
-                    type="text"
-                    value={activeNote.subject}
-                    onChange={e => onUpdateNote(activeNote.id, { subject: e.target.value })}
-                    placeholder="Subject..."
-                    className="text-xs font-bold text-slate-300 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 focus:outline-none shrink-0"
-                  />
+                  <div className="flex items-center gap-2 shrink-0">
+                    <input
+                      type="text"
+                      value={activeNote.subject}
+                      onChange={e => onUpdateNote(activeNote.id, { subject: e.target.value })}
+                      placeholder="Subject..."
+                      className="text-xs font-bold text-slate-300 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 focus:outline-none shrink-0"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setIsAIEditModalOpen(true)}
+                      className="px-2.5 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                      title="Edit open note with AI"
+                    >
+                      <Wand2 className="w-3.5 h-3.5 text-purple-400" />
+                      <span>Edit with AI</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -708,6 +773,105 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                   <>
                     <Sparkles className="w-4 h-4" />
                     <span>Generate Note</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Edit Note Modal (For Open Note) */}
+      {isAIEditModalOpen && activeNote && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-3xl p-6 space-y-6 shadow-2xl relative overflow-hidden">
+            {/* Background Glow */}
+            <div className="absolute top-0 right-0 w-32 h-32 bg-purple-600/20 blur-[60px] -z-10" />
+            
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className="flex items-center gap-3 text-purple-400 font-bold">
+                <div className="p-2 rounded-xl bg-purple-600/20">
+                  <Wand2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg text-white">Edit Note with AI</h3>
+                  <p className="text-[10px] font-normal text-slate-400 uppercase tracking-widest truncate max-w-xs">
+                    Editing: {activeNote.title || 'Untitled Note'}
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => {
+                  setIsAIEditModalOpen(false);
+                  setAiEditInstruction('');
+                }} 
+                className="text-slate-400 hover:text-white p-2 hover:bg-slate-800 rounded-xl transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-300 flex items-center gap-2">
+                  <MessageSquarePlus className="w-3.5 h-3.5 text-purple-400" />
+                  What changes or improvements would you like?
+                </label>
+                <textarea
+                  autoFocus
+                  value={aiEditInstruction}
+                  onChange={e => setAiEditInstruction(e.target.value)}
+                  placeholder="e.g. Add more detail to the derivation, simplify the language, add practical examples..."
+                  className="w-full min-h-[110px] px-4 py-3 text-sm rounded-2xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all placeholder:text-slate-600 resize-none"
+                />
+              </div>
+              
+              <div className="flex flex-wrap gap-2 pt-1">
+                {[
+                  'Improve clarity and formatting',
+                  'Add worked examples',
+                  'Simplify for quick revision',
+                  'Fix grammar and flow',
+                  'Add active recall questions'
+                ].map(preset => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setAiEditInstruction(preset)}
+                    className="px-3 py-1 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-[10px] font-medium transition-colors border border-white/5"
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAIEditModalOpen(false);
+                  setAiEditInstruction('');
+                }}
+                className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!aiEditInstruction.trim() || isAIEditing}
+                onClick={handleEditWithAI}
+                className="flex items-center gap-2 px-6 py-2.5 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-600/20 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 cursor-pointer"
+              >
+                {isAIEditing ? (
+                  <>
+                    <Sparkles className="w-4 h-4 animate-spin" />
+                    <span>Applying Changes...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    <span>Apply AI Edits</span>
                   </>
                 )}
               </button>

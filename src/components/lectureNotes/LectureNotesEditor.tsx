@@ -409,8 +409,9 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
       if (!res.ok) throw new Error('AI Edit failed');
       const data = await res.json();
       
-      if (data.success && data.content) {
-        const newBlocks = markdownToBlocks(data.content);
+      const returnedText = data.text || data.content;
+      if (data.success && returnedText) {
+        const newBlocks = markdownToBlocks(returnedText);
         const startIdx = blocks.findIndex(b => b.id === targetIds[0]);
         const next = [...blocks];
 
