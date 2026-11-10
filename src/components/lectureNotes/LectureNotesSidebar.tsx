@@ -77,7 +77,7 @@ export const LectureNotesSidebar: React.FC<LectureNotesSidebarProps> = ({
   );
 
   return (
-    <div className="flex flex-col h-full bg-slate-950/80 rounded-3xl border border-white/5 overflow-hidden p-3.5 space-y-3.5 shadow-2xl">
+    <div className="flex flex-col h-full bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden p-3 space-y-3">
       {/* Search Input with Clear Button */}
       <div className="relative">
         <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-500" />
@@ -85,8 +85,8 @@ export const LectureNotesSidebar: React.FC<LectureNotesSidebarProps> = ({
           type="text"
           value={searchQuery}
           onChange={e => onSearchChange(e.target.value)}
-          placeholder="Search title, content, formulas..."
-          className="w-full pl-8 pr-7 py-1.5 text-xs rounded-xl bg-slate-900 border border-slate-800 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          placeholder="Search notes, formulas, topics..."
+          className="w-full pl-8 pr-7 py-1.5 text-xs rounded-lg bg-slate-900 border border-slate-800 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
         />
         {searchQuery && (
           <button

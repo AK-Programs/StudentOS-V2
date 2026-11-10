@@ -1,54 +1,77 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Bold, 
-  Italic, 
-  Highlighter, 
-  List, 
-  ListOrdered, 
-  CheckSquare, 
-  Heading1, 
   Heading2, 
-  Heading3, 
   Calculator, 
   Table as TableIcon, 
   Lightbulb, 
-  BookOpen, 
   GraduationCap, 
-  AlertTriangle, 
   HelpCircle, 
-  Code2, 
-  Quote, 
-  Plus, 
-  Trash2, 
   Copy, 
   ArrowUp, 
   ArrowDown, 
   PenTool,
-  Search,
   Sparkles,
   Link2,
   X,
-  ChevronRight,
-  MousePointer2,
-  Settings,
-  MoreVertical,
-  Wand2,
-  Type
+  Trash2,
+  Plus,
+  Wand2
 } from 'lucide-react';
 import { 
   EducationalBlock, 
   HeadingBlock, 
   ParagraphBlock, 
   ListBlock, 
-  TableBlock, 
   FormulaBlock 
 } from '../../lib/lectureNotes/types';
 import { markdownToBlocks, blocksToMarkdown } from '../../lib/lectureNotes/documentBridge';
-import { EducationalBlockRenderer } from './blocks/EducationalBlockRenderer';
+import { EducationalBlockRenderer, isEducationalBlockEmpty } from './blocks/EducationalBlockRenderer';
 import { VisualMathEditorModal } from './VisualMathEditorModal';
-import { VisualTableEditor } from './VisualTableEditor';
 import { SketchCanvasModal } from './SketchCanvasModal';
 import { VaultNote } from '../../types';
+
+// Robust caret coordinate measurement helper for textarea
+function getCaretCoordinates(element: HTMLTextAreaElement, position: number) {
+  const div = document.createElement('div');
+  const style = window.getComputedStyle(element);
+
+  const properties = [
+    'direction', 'boxSizing', 'width', 'height', 'overflowX', 'overflowY',
+    'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderStyle',
+    'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+    'fontStyle', 'fontVariant', 'fontWeight', 'fontStretch', 'fontSize',
+    'lineHeight', 'fontFamily', 'textAlign', 'textTransform', 'textIndent',
+    'textDecoration', 'letterSpacing', 'wordSpacing', 'tabSize'
+  ];
+
+  properties.forEach(prop => {
+    (div.style as any)[prop] = (style as any)[prop];
+  });
+
+  div.style.position = 'absolute';
+  div.style.top = '0px';
+  div.style.left = '-9999px';
+  div.style.visibility = 'hidden';
+  div.style.whiteSpace = 'pre-wrap';
+  div.style.wordWrap = 'break-word';
+
+  div.textContent = element.value.substring(0, position);
+
+  const span = document.createElement('span');
+  span.textContent = element.value.substring(position) || '.';
+  div.appendChild(span);
+
+  document.body.appendChild(div);
+
+  const coordinates = {
+    top: span.offsetTop + parseInt(style.borderTopWidth || '0', 10),
+    left: span.offsetLeft + parseInt(style.borderLeftWidth || '0', 10),
+    height: parseInt(style.lineHeight || '18', 10) || 18
+  };
+
+  document.body.removeChild(div);
+  return coordinates;
+}
 
 interface LectureNotesEditorProps {
   noteId?: string;
@@ -84,10 +107,10 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
   
   // Modals state
   const [isMathModalOpen, setIsMathModalOpen] = useState(false);
-  const [mathModalData, setMathModalData] = useState<{ latex: string; name?: string; targetBlockId?: string }>({ latex: 'E = mc^2' });
+  const [mathModalData, setMathModalData] = useState<{ latex: string; name?: string; targetBlockId?: string }>({ latex: 'F_c = \\frac{m v^2}{r}' });
   const [isSketchModalOpen, setIsSketchModalOpen] = useState(false);
 
-  // Compact Inline Slash Menu State
+  // Caret-anchored Slash Menu State
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState('');
   const [slashBlockId, setSlashBlockId] = useState<string | null>(null);
@@ -117,7 +140,6 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
       const parsed = markdownToBlocks(initialContent);
       setBlocks(parsed);
       lastSerializedMdRef.current = initialContent;
-      // Reset selection on note change
       if (isNoteChanged) {
         setSelectedBlockIds([]);
         setIsMultiSelectMode(false);
@@ -125,18 +147,18 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
     }
   }, [noteId, initialContent]);
 
-  // Global Keyboard Shortcuts (Ctrl+A, Ctrl+C, Ctrl+X, Delete, Typing Replacement)
+  // Global Keyboard Shortcuts (Ctrl+A / Cmd+A scoped to editor, Delete, Copy, Cut, Typing replacement)
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      // Don't intercept if user is typing in a modal or something else specific
+      // Don't intercept if user is typing in a modal or slash menu
       if (isMathModalOpen || isSketchModalOpen || slashMenuOpen || isAIEditModalOpen) return;
 
       const activeElement = document.activeElement;
-      const isInputFocused = activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA';
+      const isInsideEditor = editorRef.current?.contains(activeElement as Node);
 
-      // Ctrl+A / Cmd+A - Select All Blocks
-      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
-        if (!isInputFocused || (activeElement && editorRef.current?.contains(activeElement))) {
+      // Ctrl+A / Cmd+A - Select Entire Note (Scoped strictly to this note editor)
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+        if (isInsideEditor || document.activeElement === document.body) {
           e.preventDefault();
           setSelectedBlockIds(blocks.map(b => b.id));
           setIsMultiSelectMode(true);
@@ -144,49 +166,55 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
         }
       }
 
-      // Ctrl+C / Cmd+C - Copy Selected Blocks
-      if ((e.ctrlKey || e.metaKey) && e.key === 'c' && selectedBlockIds.length > 0 && !isInputFocused) {
-        e.preventDefault();
-        const selected = blocks.filter(b => selectedBlockIds.includes(b.id));
-        const md = blocksToMarkdown(selected);
-        navigator.clipboard.writeText(md);
-      }
+      // If blocks are selected across the document:
+      if (selectedBlockIds.length > 0) {
+        // Ctrl+C / Cmd+C - Copy Entire Selected Note
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+          e.preventDefault();
+          const selected = blocks.filter(b => selectedBlockIds.includes(b.id));
+          const md = blocksToMarkdown(selected);
+          navigator.clipboard.writeText(md);
+        }
 
-      // Ctrl+X / Cmd+X - Cut Selected Blocks
-      if ((e.ctrlKey || e.metaKey) && e.key === 'x' && selectedBlockIds.length > 0 && !isInputFocused) {
-        e.preventDefault();
-        const selected = blocks.filter(b => selectedBlockIds.includes(b.id));
-        const md = blocksToMarkdown(selected);
-        navigator.clipboard.writeText(md);
-        handleDeleteSelectedBlocks();
-      }
+        // Ctrl+X / Cmd+X - Cut Entire Selected Note
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'X')) {
+          e.preventDefault();
+          const selected = blocks.filter(b => selectedBlockIds.includes(b.id));
+          const md = blocksToMarkdown(selected);
+          navigator.clipboard.writeText(md);
+          handleDeleteSelectedBlocks();
+        }
 
-      // Delete / Backspace for multi-selection
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedBlockIds.length > 0 && !isInputFocused) {
-        e.preventDefault();
-        handleDeleteSelectedBlocks();
-      }
+        // Delete / Backspace when blocks are selected
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault();
+          handleDeleteSelectedBlocks();
+        }
 
-      // Typing over selected blocks replaces selection
-      if (selectedBlockIds.length > 0 && !isInputFocused && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        e.preventDefault();
-        const newId = 'blk_' + Date.now();
-        const newBlock: ParagraphBlock = { id: newId, type: 'paragraph', text: e.key };
-        
-        const firstIdx = blocks.findIndex(b => b.id === selectedBlockIds[0]);
-        const next = blocks.filter(b => !selectedBlockIds.includes(b.id));
-        const insertIdx = firstIdx >= 0 ? Math.min(firstIdx, next.length) : 0;
-        
-        next.splice(insertIdx, 0, newBlock);
-        updateBlocks(next, newId);
-        setSelectedBlockIds([]);
-        setIsMultiSelectMode(false);
-      }
+        // Typing replacement: typing any printable character replaces all selected content
+        if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault();
+          const newId = 'blk_' + Date.now();
+          const newBlock: ParagraphBlock = { id: newId, type: 'paragraph', text: e.key };
+          
+          if (selectedBlockIds.length === blocks.length) {
+            updateBlocks([newBlock], newId, 1);
+          } else {
+            const firstIdx = blocks.findIndex(b => b.id === selectedBlockIds[0]);
+            const remaining = blocks.filter(b => !selectedBlockIds.includes(b.id));
+            const insertIdx = firstIdx >= 0 ? Math.min(firstIdx, remaining.length) : 0;
+            remaining.splice(insertIdx, 0, newBlock);
+            updateBlocks(remaining, newId, 1);
+          }
+          setSelectedBlockIds([]);
+          setIsMultiSelectMode(false);
+        }
 
-      // Escape to clear selection
-      if (e.key === 'Escape' && selectedBlockIds.length > 0) {
-        setSelectedBlockIds([]);
-        setIsMultiSelectMode(false);
+        // Escape clears selection
+        if (e.key === 'Escape') {
+          setSelectedBlockIds([]);
+          setIsMultiSelectMode(false);
+        }
       }
     };
 
@@ -194,20 +222,22 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [blocks, selectedBlockIds, isMathModalOpen, isSketchModalOpen, slashMenuOpen, isAIEditModalOpen]);
 
+  // Delete selected blocks. If all blocks selected, leave 1 valid empty paragraph and focus it.
   const handleDeleteSelectedBlocks = () => {
     if (selectedBlockIds.length === 0) return;
     
-    // If all blocks selected, reset to one empty paragraph
     if (selectedBlockIds.length === blocks.length) {
       const resetId = 'blk_' + Date.now();
-      updateBlocks([{ id: resetId, type: 'paragraph', text: '' }], resetId);
+      updateBlocks([{ id: resetId, type: 'paragraph', text: '' }], resetId, 0);
     } else {
       const next = blocks.filter(b => !selectedBlockIds.includes(b.id));
       if (next.length === 0) {
         const resetId = 'blk_' + Date.now();
-        updateBlocks([{ id: resetId, type: 'paragraph', text: '' }], resetId);
+        updateBlocks([{ id: resetId, type: 'paragraph', text: '' }], resetId, 0);
       } else {
-        updateBlocks(next);
+        const firstIdx = blocks.findIndex(b => b.id === selectedBlockIds[0]);
+        const focusId = next[Math.max(0, Math.min(firstIdx, next.length - 1))]?.id;
+        updateBlocks(next, focusId);
       }
     }
     setSelectedBlockIds([]);
@@ -215,7 +245,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
   };
 
   // Propagate changes to parent in clean serialized Markdown
-  const updateBlocks = (newBlocks: EducationalBlock[], shouldFocusId?: string) => {
+  const updateBlocks = (newBlocks: EducationalBlock[], shouldFocusId?: string, cursorOffset?: number) => {
     setBlocks(newBlocks);
     const md = blocksToMarkdown(newBlocks);
     lastSerializedMdRef.current = md;
@@ -227,9 +257,11 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
         const el = blockInputRefs.current[shouldFocusId];
         if (el) {
           el.focus();
-          el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          if (cursorOffset !== undefined && (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement)) {
+            el.setSelectionRange(cursorOffset, cursorOffset);
+          }
         }
-      }, 50);
+      }, 30);
     }
   };
 
@@ -255,10 +287,10 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
         newBlock = { id, type: 'heading', level: 2, text: '' };
         break;
       case 'concept':
-        newBlock = { id, type: 'concept', title: 'New Concept', explanation: '', keyTakeaway: '' };
+        newBlock = { id, type: 'concept', title: '', explanation: '', keyTakeaway: '' };
         break;
       case 'formula':
-        newBlock = { id, type: 'formula', name: 'Formula', latex: 'F_c = \\frac{m v^2}{r}', variables: [] };
+        newBlock = { id, type: 'formula', name: '', latex: 'F_c = \\frac{m v^2}{r}', variables: [] };
         break;
       case 'worked_example':
         newBlock = { id, type: 'worked_example', problem: '', steps: [''], finalAnswer: '' };
@@ -267,7 +299,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
         newBlock = { id, type: 'definition', term: '', definition: '' };
         break;
       case 'callout':
-        newBlock = { id, type: 'callout', variant: 'info', title: 'Important Note', text: '' };
+        newBlock = { id, type: 'callout', variant: 'info', title: '', text: '' };
         break;
       case 'recall_question':
         newBlock = { id, type: 'recall_question', question: '', answer: '', isRevealed: false };
@@ -291,12 +323,14 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
   const handleDeleteBlock = (idx: number) => {
     if (blocks.length <= 1) {
       const resetId = 'blk_' + Date.now();
-      updateBlocks([{ id: resetId, type: 'paragraph', text: '' }], resetId);
+      updateBlocks([{ id: resetId, type: 'paragraph', text: '' }], resetId, 0);
       return;
     }
     const next = blocks.filter((_, i) => i !== idx);
-    const prevId = next[Math.max(0, idx - 1)]?.id;
-    updateBlocks(next, prevId);
+    const prevBlock = next[Math.max(0, idx - 1)];
+    const prevId = prevBlock?.id;
+    const cursorOffset = (prevBlock && 'text' in prevBlock) ? (prevBlock as any).text.length : undefined;
+    updateBlocks(next, prevId, cursorOffset);
   };
 
   const handleMoveBlock = (idx: number, direction: 'up' | 'down') => {
@@ -317,22 +351,104 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
     updateBlocks(next, clone.id);
   };
 
+  // Backspace at position 0 merge logic
+  const handleBackspaceAtStart = (idx: number) => {
+    if (idx === 0) {
+      // First block: if empty and there are other blocks, remove it
+      if (blocks[0].type === 'paragraph' && !(blocks[0] as ParagraphBlock).text && blocks.length > 1) {
+        handleDeleteBlock(0);
+      }
+      return;
+    }
+
+    const currentBlock = blocks[idx];
+    const prevBlock = blocks[idx - 1];
+
+    // If current block is empty, delete it and focus previous block at end
+    if (
+      (currentBlock.type === 'paragraph' && !(currentBlock as ParagraphBlock).text) ||
+      (currentBlock.type === 'heading' && !(currentBlock as HeadingBlock).text)
+    ) {
+      handleDeleteBlock(idx);
+      return;
+    }
+
+    // If both current and previous blocks are text (paragraph or heading): merge!
+    if (
+      (currentBlock.type === 'paragraph' || currentBlock.type === 'heading') &&
+      (prevBlock.type === 'paragraph' || prevBlock.type === 'heading')
+    ) {
+      const prevText = (prevBlock as ParagraphBlock | HeadingBlock).text || '';
+      const currentText = (currentBlock as ParagraphBlock | HeadingBlock).text || '';
+      const mergedText = prevText + currentText;
+
+      const next = blocks.filter((_, i) => i !== idx);
+      next[idx - 1] = {
+        ...prevBlock,
+        text: mergedText
+      };
+
+      updateBlocks(next, prevBlock.id, prevText.length);
+      return;
+    }
+
+    // If previous block is non-text, move focus to it
+    setActiveBlockId(prevBlock.id);
+  };
+
+  // Delete at end of block merge logic
+  const handleDeleteAtEnd = (idx: number) => {
+    if (idx >= blocks.length - 1) return;
+
+    const currentBlock = blocks[idx];
+    const nextBlock = blocks[idx + 1];
+
+    // If next block is empty, remove it
+    if (
+      (nextBlock.type === 'paragraph' && !(nextBlock as ParagraphBlock).text) ||
+      (nextBlock.type === 'heading' && !(nextBlock as HeadingBlock).text) ||
+      isEducationalBlockEmpty(nextBlock)
+    ) {
+      const next = blocks.filter((_, i) => i !== idx + 1);
+      updateBlocks(next, currentBlock.id);
+      return;
+    }
+
+    // If both current and next blocks are text: merge next into current!
+    if (
+      (currentBlock.type === 'paragraph' || currentBlock.type === 'heading') &&
+      (nextBlock.type === 'paragraph' || nextBlock.type === 'heading')
+    ) {
+      const currentText = (currentBlock as ParagraphBlock | HeadingBlock).text || '';
+      const nextText = (nextBlock as ParagraphBlock | HeadingBlock).text || '';
+      const mergedText = currentText + nextText;
+
+      const next = blocks.filter((_, i) => i !== idx + 1);
+      next[idx] = {
+        ...currentBlock,
+        text: mergedText
+      };
+
+      updateBlocks(next, currentBlock.id, currentText.length);
+    }
+  };
+
   // Slash commands options
   const slashOptions = [
-    { label: 'Paragraph', desc: 'Normal body text', type: 'paragraph', icon: '¶' },
-    { label: 'Heading 1', desc: 'Main chapter heading', type: 'h1', icon: 'H1' },
+    { label: 'Paragraph', desc: 'Standard body text', type: 'paragraph', icon: '¶' },
+    { label: 'Heading 1', desc: 'Large chapter title', type: 'h1', icon: 'H1' },
     { label: 'Heading 2', desc: 'Section heading', type: 'h2', icon: 'H2' },
     { label: 'Heading 3', desc: 'Sub-section heading', type: 'h3', icon: 'H3' },
-    { label: 'Bullet List', desc: 'Bulleted list points', type: 'bullet', icon: '•' },
-    { label: 'Numbered List', desc: 'Step-by-step numbers', type: 'number', icon: '1.' },
+    { label: 'Bullet List', desc: 'Unordered bullet list', type: 'bullet', icon: '•' },
+    { label: 'Numbered List', desc: 'Ordered numbered list', type: 'number', icon: '1.' },
     { label: 'Checklist', desc: 'Interactive task checklist', type: 'checklist', icon: '☑' },
-    { label: 'Math Formula', desc: 'Vector LaTeX equation', type: 'formula', icon: '∑' },
-    { label: 'Table', desc: 'Visual editable table grid', type: 'table', icon: '▦' },
-    { label: 'Concept Block', desc: 'Core principle & takeaway card', type: 'concept', icon: '💡' },
+    { label: 'Math Equation', desc: 'Visual formula builder', type: 'formula', icon: '∑' },
+    { label: 'Table', desc: 'Grid data table', type: 'table', icon: '▦' },
+    { label: 'Concept Block', desc: 'Core principle card', type: 'concept', icon: '💡' },
     { label: 'Worked Example', desc: 'Step-by-step problem solver', type: 'worked_example', icon: '🎓' },
-    { label: 'Definition Block', desc: 'Academic definition with context', type: 'definition', icon: '📖' },
-    { label: 'Recall Question', desc: 'Self-testing with hidden answer', type: 'recall_question', icon: '❓' },
-    { label: 'Warning / Exam Tip', desc: 'Important exam note or common mistake', type: 'callout', icon: '⚠️' },
+    { label: 'Definition', desc: 'Formal academic term', type: 'definition', icon: '📖' },
+    { label: 'Recall Question', desc: 'Active recall self-test', type: 'recall_question', icon: '❓' },
+    { label: 'Warning / Exam Tip', desc: 'Exam tip or common mistake', type: 'callout', icon: '⚠️' },
     { label: 'Sketch / Diagram', desc: 'Handwritten diagram canvas', type: 'sketch', icon: '✏️' }
   ];
 
@@ -374,7 +490,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
       });
       setActiveBlockId(listId);
     } else if (opt.type === 'formula') {
-      setMathModalData({ latex: 'F_c = \\frac{m v^2}{r}', name: 'Formula', targetBlockId: slashBlockId || undefined });
+      setMathModalData({ latex: 'F_c = \\frac{m v^2}{r}', name: 'Equation', targetBlockId: slashBlockId || undefined });
       setIsMathModalOpen(true);
     } else if (opt.type === 'sketch') {
       setIsSketchModalOpen(true);
@@ -416,14 +532,11 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
         const next = [...blocks];
 
         if (aiActionMode === 'replace') {
-          // Replace selected blocks with new AI-generated blocks
           next.splice(startIdx >= 0 ? startIdx : 0, targetIds.length, ...newBlocks);
         } else if (aiActionMode === 'insert_below') {
-          // Insert below selected blocks
           const lastIdx = blocks.findIndex(b => b.id === targetIds[targetIds.length - 1]);
           next.splice((lastIdx >= 0 ? lastIdx : blocks.length) + 1, 0, ...newBlocks);
         } else {
-          // Append to end of note
           next.push(...newBlocks);
         }
 
@@ -450,7 +563,6 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
 
   const toggleBlockSelection = (id: string, e: React.MouseEvent) => {
     if (e.shiftKey) {
-      // Range selection
       const lastSelected = selectedBlockIds[selectedBlockIds.length - 1];
       if (!lastSelected) {
         setSelectedBlockIds([id]);
@@ -462,18 +574,15 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
       }
       setIsMultiSelectMode(true);
     } else if (e.ctrlKey || e.metaKey) {
-      // Toggle selection
       setSelectedBlockIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
       setIsMultiSelectMode(true);
     } else {
-      // Single click selection handled by activeBlockId if not in multi-select mode
       if (isMultiSelectMode) {
         setSelectedBlockIds([id]);
       }
     }
   };
 
-  // Click empty document surface to focus or create paragraph
   const handleDocumentSurfaceClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
       setSelectedBlockIds([]);
@@ -493,18 +602,18 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
   };
 
   return (
-    <div className="relative space-y-4" ref={editorRef}>
-      {/* Selection Toolbar (Floating) */}
+    <div className="relative space-y-3" ref={editorRef}>
+      {/* Floating Selection Toolbar */}
       {selectedBlockIds.length > 0 && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 p-2 rounded-2xl bg-slate-900 border border-indigo-500/50 shadow-2xl animate-in slide-in-from-bottom-4 duration-200">
-          <div className="px-3 border-r border-slate-700 text-xs font-bold text-indigo-400">
-            {selectedBlockIds.length} Selected
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 p-1.5 rounded-xl bg-slate-900 border border-slate-700 shadow-xl animate-in slide-in-from-bottom-2 duration-150">
+          <div className="px-2.5 border-r border-slate-700 text-xs font-medium text-slate-300">
+            {selectedBlockIds.length} selected
           </div>
           <button
             onClick={() => setIsAIEditModalOpen(true)}
             disabled={isAIProcessing}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all disabled:opacity-50 cursor-pointer shadow-md"
-            title="Transform selected blocks with AI"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
+            title="Edit selection with AI"
           >
             {isAIProcessing ? <Sparkles className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
             <span>Edit with AI</span>
@@ -515,38 +624,39 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
               const md = blocksToMarkdown(selected);
               navigator.clipboard.writeText(md);
             }}
-            className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white"
-            title="Copy Selection"
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
+            title="Copy selection"
           >
-            <Copy className="w-4 h-4" />
+            <Copy className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={handleDeleteSelectedBlocks}
-            className="p-1.5 rounded-xl bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-400"
-            title="Delete Selection"
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-300 transition-colors cursor-pointer"
+            title="Delete selection"
           >
-            <Trash2 className="w-4 h-4" />
+            <Trash2 className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => {
               setSelectedBlockIds([]);
               setIsMultiSelectMode(false);
             }}
-            className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white"
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
+            title="Clear selection"
           >
-            <X className="w-4 h-4" />
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
 
-      {/* Top Floating Formatting Toolbar */}
+      {/* Top Document Formatting Toolbar */}
       {!readOnly && (
-        <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-2 p-2 rounded-2xl bg-slate-900/90 border border-slate-700/80 backdrop-blur-md shadow-lg">
-          <div className="flex flex-wrap items-center gap-1">
+        <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-1.5 p-2 rounded-xl bg-slate-900/95 border border-slate-800 backdrop-blur-md shadow-sm">
+          <div className="flex flex-wrap items-center gap-1 text-xs">
             <button
               type="button"
               onClick={() => handleAddBlockBelow(undefined, 'heading')}
-              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer text-xs font-bold"
+              className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer font-bold"
               title="Add Heading"
             >
               <Heading2 className="w-3.5 h-3.5" />
@@ -554,67 +664,67 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
             <button
               type="button"
               onClick={() => handleAddBlockBelow(undefined, 'paragraph')}
-              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer text-xs"
+              className="px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer font-serif font-bold text-xs"
               title="Add Paragraph"
             >
               ¶
             </button>
-            <div className="w-px h-4 bg-slate-700 mx-0.5" />
+            <div className="w-px h-3.5 bg-slate-800 mx-0.5" />
             <button
               type="button"
               onClick={() => {
-                setMathModalData({ latex: 'F_c = \\frac{m v^2}{r}', name: 'Formula' });
+                setMathModalData({ latex: 'F_c = \\frac{m v^2}{r}', name: 'Equation' });
                 setIsMathModalOpen(true);
               }}
-              className="px-2.5 py-1 rounded-lg bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+              className="px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/50 text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
               title="Visual Equation Builder"
             >
-              <Calculator className="w-3.5 h-3.5" />
-              <span>+ Equation</span>
+              <Calculator className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Equation</span>
             </button>
             <button
               type="button"
               onClick={() => handleAddBlockBelow(undefined, 'table')}
-              className="px-2.5 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+              className="px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/50 text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
               title="Insert Table"
             >
-              <TableIcon className="w-3.5 h-3.5" />
-              <span>+ Table</span>
+              <TableIcon className="w-3.5 h-3.5 text-blue-400" />
+              <span>Table</span>
             </button>
             <button
               type="button"
               onClick={() => handleAddBlockBelow(undefined, 'concept')}
-              className="px-2 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+              className="px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/50 text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
               title="Insert Concept Block"
             >
-              <Lightbulb className="w-3.5 h-3.5" />
+              <Lightbulb className="w-3.5 h-3.5 text-amber-400" />
               <span>Concept</span>
             </button>
             <button
               type="button"
               onClick={() => handleAddBlockBelow(undefined, 'worked_example')}
-              className="px-2 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+              className="px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/50 text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
               title="Insert Worked Example"
             >
-              <GraduationCap className="w-3.5 h-3.5" />
+              <GraduationCap className="w-3.5 h-3.5 text-emerald-400" />
               <span>Example</span>
             </button>
             <button
               type="button"
               onClick={() => handleAddBlockBelow(undefined, 'recall_question')}
-              className="px-2 py-1 rounded-lg bg-violet-600/20 hover:bg-violet-600/30 text-violet-300 border border-violet-500/30 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+              className="px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/50 text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
               title="Insert Recall Question"
             >
-              <HelpCircle className="w-3.5 h-3.5" />
+              <HelpCircle className="w-3.5 h-3.5 text-violet-400" />
               <span>Recall</span>
             </button>
             <button
               type="button"
               onClick={() => setIsSketchModalOpen(true)}
-              className="px-2 py-1 rounded-lg bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/30 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-              title="Draw Diagram"
+              className="px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/50 text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
+              title="Draw Diagram / Sketch"
             >
-              <PenTool className="w-3.5 h-3.5" />
+              <PenTool className="w-3.5 h-3.5 text-sky-400" />
               <span>Sketch</span>
             </button>
           </div>
@@ -625,17 +735,17 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
               <button
                 type="button"
                 onClick={handleUndoAIEdit}
-                className="px-2.5 py-1 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
                 title="Undo last AI edit"
               >
-                <span>↩ Undo AI Edit</span>
+                <span>↩ Undo AI</span>
               </button>
             )}
             {onOpenHomeworkLinking && (
               <button
                 type="button"
                 onClick={onOpenHomeworkLinking}
-                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
                 title="Link Homework to Note"
               >
                 <Link2 className="w-3.5 h-3.5 text-indigo-400" />
@@ -646,34 +756,35 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
               <button
                 type="button"
                 onClick={() => onOpenLearningTools('flashcards')}
-                className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer shadow-sm"
+                className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer shadow-sm"
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>To Flashcards</span>
+                <span>To Tools</span>
               </button>
             )}
           </div>
         </div>
       )}
 
-      {/* Main Document Block List (Writing Surface) */}
+      {/* Main Continuous Document Writing Surface */}
       <div 
-        className="space-y-3 min-h-[420px] pb-16 cursor-text"
+        className="space-y-2 min-h-[440px] pb-16 cursor-text"
         onClick={handleDocumentSurfaceClick}
       >
         {blocks.map((block, idx) => {
           const isHeading = block.type === 'heading';
           const isParagraph = block.type === 'paragraph';
           const isList = block.type === 'list';
+          const isSelected = selectedBlockIds.includes(block.id);
 
           return (
             <div 
               key={block.id}
-              className={`group relative rounded-2xl transition-all ${
-                selectedBlockIds.includes(block.id) 
-                  ? 'ring-2 ring-indigo-500 bg-indigo-500/10 p-2' 
+              className={`group relative rounded-xl transition-colors ${
+                isSelected 
+                  ? 'ring-1 ring-indigo-500/80 bg-indigo-500/10 p-2' 
                   : activeBlockId === block.id 
-                    ? 'ring-1 ring-indigo-500/40 bg-slate-900/40 p-2' 
+                    ? 'ring-1 ring-slate-700/60 bg-slate-900/30 p-1.5' 
                     : 'p-1 hover:bg-slate-900/20'
               }`}
               onClick={(e) => {
@@ -683,12 +794,12 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
             >
               {/* Block Controls & Reorder handle */}
               {!readOnly && (
-                <div className="absolute -left-8 top-2 hidden group-hover:flex md:flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                <div className="absolute -left-7 top-1.5 hidden group-hover:flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                   <button
                     type="button"
                     onClick={() => handleMoveBlock(idx, 'up')}
                     disabled={idx === 0}
-                    className="p-1 rounded text-slate-500 hover:text-white disabled:opacity-20 cursor-pointer"
+                    className="p-0.5 rounded text-slate-500 hover:text-white disabled:opacity-20 cursor-pointer"
                     title="Move up"
                   >
                     <ArrowUp className="w-3 h-3" />
@@ -697,7 +808,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
                     type="button"
                     onClick={() => handleMoveBlock(idx, 'down')}
                     disabled={idx === blocks.length - 1}
-                    className="p-1 rounded text-slate-500 hover:text-white disabled:opacity-20 cursor-pointer"
+                    className="p-0.5 rounded text-slate-500 hover:text-white disabled:opacity-20 cursor-pointer"
                     title="Move down"
                   >
                     <ArrowDown className="w-3 h-3" />
@@ -705,7 +816,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
                   <button
                     type="button"
                     onClick={() => handleDuplicateBlock(idx)}
-                    className="p-1 rounded text-slate-500 hover:text-white cursor-pointer"
+                    className="p-0.5 rounded text-slate-500 hover:text-white cursor-pointer"
                     title="Duplicate block"
                   >
                     <Copy className="w-3 h-3" />
@@ -713,7 +824,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
                   <button
                     type="button"
                     onClick={() => handleDeleteBlock(idx)}
-                    className="p-1 rounded text-slate-500 hover:text-rose-400 cursor-pointer"
+                    className="p-0.5 rounded text-slate-500 hover:text-rose-400 cursor-pointer"
                     title="Delete block"
                   >
                     <Trash2 className="w-3 h-3" />
@@ -737,11 +848,17 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
                       if (e.key === 'Enter') {
                         e.preventDefault();
                         handleAddBlockBelow(idx, 'paragraph');
+                      } else if (e.key === 'Backspace' && e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0) {
+                        e.preventDefault();
+                        handleBackspaceAtStart(idx);
+                      } else if (e.key === 'Delete' && e.currentTarget.selectionStart === e.currentTarget.value.length && e.currentTarget.selectionEnd === e.currentTarget.value.length) {
+                        e.preventDefault();
+                        handleDeleteAtEnd(idx);
                       }
                     }}
                     placeholder="Heading..."
                     className={`w-full bg-transparent border-b border-transparent focus:border-indigo-500/50 focus:outline-none font-bold text-white transition-colors ${
-                      (block as HeadingBlock).level === 1 ? 'text-2xl font-display' : (block as HeadingBlock).level === 2 ? 'text-xl font-display' : 'text-base'
+                      (block as HeadingBlock).level === 1 ? 'text-2xl' : (block as HeadingBlock).level === 2 ? 'text-xl' : 'text-base'
                     }`}
                   />
                 </div>
@@ -763,33 +880,32 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
                         setSlashQuery(match[1]);
                         setSlashMenuOpen(true);
                         setSlashSelectedIndex(0);
+
+                        // Exact Caret-Anchored Viewport Positioning
+                        const el = e.currentTarget;
+                        const caretCoords = getCaretCoordinates(el, el.selectionStart);
+                        const rect = el.getBoundingClientRect();
+                        const menuWidth = 288;
+                        const menuHeight = 250;
+
+                        const caretViewportX = rect.left + caretCoords.left - el.scrollLeft;
+                        const caretViewportY = rect.top + caretCoords.top - el.scrollTop;
+
+                        const spaceBelow = window.innerHeight - (caretViewportY + caretCoords.height + menuHeight + 16);
+                        const flip = spaceBelow < 0;
+
+                        const clampedX = Math.max(16, Math.min(window.innerWidth - menuWidth - 16, caretViewportX));
+                        const finalTop = flip 
+                          ? Math.max(16, caretViewportY - menuHeight - 8)
+                          : caretViewportY + caretCoords.height + 6;
+
+                        setSlashMenuPosition({
+                          top: finalTop,
+                          left: clampedX,
+                          flip
+                        });
                       } else {
                         if (slashMenuOpen) setSlashMenuOpen(false);
-                      }
-                      
-                      // Calculate position for slash menu
-                      if (match && blockInputRefs.current[block.id]) {
-                        const el = blockInputRefs.current[block.id] as HTMLTextAreaElement;
-                        const rect = el.getBoundingClientRect();
-                        const cursorIdx = el.selectionStart;
-                        const textBefore = el.value.substring(0, cursorIdx);
-                        const lines = textBefore.split('\n');
-                        const lineCount = lines.length;
-                        const lastLineLen = lines[lines.length - 1].length;
-                        
-                        // Approximate cursor position (since it's a textarea)
-                        const charWidth = 7; // Average char width for text-xs
-                        const lineHeight = 16;
-                        
-                        const left = Math.min(rect.width - 280, lastLineLen * charWidth);
-                        const top = lineCount * lineHeight;
-                        
-                        // Check viewport overflow
-                        const viewportHeight = window.innerHeight;
-                        const spaceBelow = viewportHeight - (rect.top + top + 200);
-                        const flip = spaceBelow < 0;
-                        
-                        setSlashMenuPosition({ top, left, flip });
                       }
 
                       handleBlockChange(idx, { ...block, text: val });
@@ -823,62 +939,23 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
                         handleAddBlockBelow(idx, 'paragraph');
-                      } else if (e.key === 'Backspace' && !(block as ParagraphBlock).text && blocks.length > 1) {
+                      } else if (e.key === 'Backspace' && e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0) {
                         e.preventDefault();
-                        handleDeleteBlock(idx);
+                        handleBackspaceAtStart(idx);
+                      } else if (e.key === 'Delete' && e.currentTarget.selectionStart === e.currentTarget.value.length && e.currentTarget.selectionEnd === e.currentTarget.value.length) {
+                        e.preventDefault();
+                        handleDeleteAtEnd(idx);
                       }
                     }}
-                    placeholder="Click to write... (Type / for options)"
+                    placeholder="Type notes here... (Type / for commands)"
                     className="w-full bg-transparent text-xs text-slate-200 leading-relaxed focus:outline-none resize-none font-sans"
                   />
-
-                  {/* Compact Contextual Slash Popover Dropdown */}
-                  {slashMenuOpen && slashBlockId === block.id && (
-                    <div 
-                      style={{ 
-                        left: `${slashMenuPosition.left}px`, 
-                        top: slashMenuPosition.flip ? 'auto' : `${slashMenuPosition.top}px`,
-                        bottom: slashMenuPosition.flip ? '100%' : 'auto',
-                        marginBottom: slashMenuPosition.flip ? '8px' : '0'
-                      }}
-                      className="absolute z-30 w-72 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-2 space-y-1 animate-in fade-in zoom-in-95 duration-100"
-                    >
-                      <div className="px-2 py-1 flex items-center justify-between border-b border-slate-800 text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-                        <span>Insert Block</span>
-                        <span className="text-indigo-400">↑↓ to navigate</span>
-                      </div>
-                      <div className="max-h-48 overflow-y-auto space-y-0.5">
-                        {filteredSlashOptions.length === 0 ? (
-                          <p className="p-2 text-xs text-slate-500 italic">No commands matching "{slashQuery}"</p>
-                        ) : (
-                          filteredSlashOptions.map((opt, oIdx) => (
-                            <button
-                              key={oIdx}
-                              type="button"
-                              onClick={() => handleSelectSlash(opt)}
-                              className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-left transition-colors cursor-pointer ${
-                                slashSelectedIndex === oIdx ? 'bg-indigo-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800'
-                              }`}
-                            >
-                              <span className="w-5 h-5 rounded bg-slate-950 flex items-center justify-center text-xs font-bold text-indigo-400 shrink-0">
-                                {opt.icon}
-                              </span>
-                              <div className="min-w-0 flex-1">
-                                <p className="text-xs truncate">{opt.label}</p>
-                                <p className="text-[9px] text-slate-400 truncate opacity-80">{opt.desc}</p>
-                              </div>
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
 
               {/* List Block */}
               {isList && (
-                <div className="space-y-1.5 pl-2">
+                <div className="space-y-1 pl-2">
                   {(block as ListBlock).items.map((item, itIdx) => (
                     <div key={item.id} className="flex items-center gap-2 text-xs text-slate-200">
                       {(block as ListBlock).listType === 'checklist' ? (
@@ -913,7 +990,6 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
                           if (e.key === 'Enter') {
                             e.preventDefault();
                             if (!item.text.trim()) {
-                              // Exit list if current item is empty
                               const newItems = (block as ListBlock).items.filter((_, i) => i !== itIdx);
                               if (newItems.length === 0) {
                                 handleBlockChange(idx, { id: block.id, type: 'paragraph', text: '' });
@@ -922,11 +998,20 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
                                 handleAddBlockBelow(idx, 'paragraph');
                               }
                             } else {
-                              // Add new list item with unique ID
                               const newItemId = 'it_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
                               const newItems = [...(block as ListBlock).items];
                               newItems.splice(itIdx + 1, 0, { id: newItemId, text: '', checked: false });
                               handleBlockChange(idx, { ...block, items: newItems });
+                            }
+                          } else if (e.key === 'Backspace' && e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0) {
+                            if (!item.text) {
+                              e.preventDefault();
+                              const newItems = (block as ListBlock).items.filter((_, i) => i !== itIdx);
+                              if (newItems.length === 0) {
+                                handleDeleteBlock(idx);
+                              } else {
+                                handleBlockChange(idx, { ...block, items: newItems });
+                              }
                             }
                           }
                         }}
@@ -943,7 +1028,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
                         const newItems = [...(block as ListBlock).items, { id: newItemId, text: '', checked: false }];
                         handleBlockChange(idx, { ...block, items: newItems });
                       }}
-                      className="text-[11px] text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1 pt-1 cursor-pointer"
+                      className="text-[11px] text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1 pt-0.5 cursor-pointer"
                     >
                       <Plus className="w-3 h-3" /> Add item
                     </button>
@@ -968,6 +1053,48 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
           );
         })}
       </div>
+
+      {/* Fixed Caret-Anchored Slash Popover Dropdown */}
+      {slashMenuOpen && (
+        <div 
+          style={{ 
+            position: 'fixed',
+            left: `${slashMenuPosition.left}px`, 
+            top: `${slashMenuPosition.top}px`,
+            zIndex: 9999
+          }}
+          className="w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-1.5 space-y-1 animate-in fade-in zoom-in-95 duration-100"
+        >
+          <div className="px-2 py-1 flex items-center justify-between border-b border-slate-800 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+            <span>Insert Block</span>
+            <span className="text-slate-500">↑↓ to navigate</span>
+          </div>
+          <div className="max-h-48 overflow-y-auto space-y-0.5">
+            {filteredSlashOptions.length === 0 ? (
+              <p className="p-2 text-xs text-slate-500 italic">No commands matching "{slashQuery}"</p>
+            ) : (
+              filteredSlashOptions.map((opt, oIdx) => (
+                <button
+                  key={oIdx}
+                  type="button"
+                  onClick={() => handleSelectSlash(opt)}
+                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
+                    slashSelectedIndex === oIdx ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  <span className="w-5 h-5 rounded bg-slate-950 flex items-center justify-center text-xs font-bold text-indigo-400 shrink-0">
+                    {opt.icon}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs truncate">{opt.label}</p>
+                    <p className="text-[10px] text-slate-400 truncate">{opt.desc}</p>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Visual Math Builder Modal */}
       <VisualMathEditorModal
@@ -1006,46 +1133,39 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
 
       {/* AI Edit Modal Dialog */}
       {isAIEditModalOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
           <div 
-            className="w-full max-w-lg bg-slate-900 border border-slate-700/80 rounded-3xl p-6 space-y-5 shadow-2xl relative overflow-hidden"
+            className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4 shadow-2xl relative"
             onClick={e => e.stopPropagation()}
           >
             {/* Top Bar */}
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div className="flex items-center gap-2.5 text-indigo-400 font-bold text-sm">
-                <div className="p-2 rounded-xl bg-indigo-600/20">
-                  <Wand2 className="w-5 h-5 text-indigo-400" />
-                </div>
-                <div>
-                  <h3 className="text-white text-base">Edit with AI</h3>
-                  <p className="text-[10px] text-slate-400 font-normal">
-                    {selectedBlockIds.length > 0 ? `${selectedBlockIds.length} blocks selected` : 'Active block selected'}
-                  </p>
-                </div>
+              <div className="flex items-center gap-2 text-indigo-400 font-semibold text-sm">
+                <Wand2 className="w-4 h-4 text-indigo-400" />
+                <h3 className="text-white text-sm font-semibold">Edit Selection with AI</h3>
               </div>
-              <button onClick={() => setIsAIEditModalOpen(false)} className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition-colors">
+              <button onClick={() => setIsAIEditModalOpen(false)} className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {/* Quick Action Presets */}
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-300">Quick AI Actions</label>
-              <div className="flex flex-wrap gap-1.5">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-slate-300">Quick Actions</label>
+              <div className="flex flex-wrap gap-1">
                 {[
-                  { label: '✨ Improve Clarity', prompt: 'Improve clarity, flow, and academic tone while preserving all formulas and formatting' },
-                  { label: '📝 Fix Grammar', prompt: 'Proofread and fix grammar, spelling, and sentence structure' },
-                  { label: '💡 Simplify', prompt: 'Simplify the explanation so it is easy for a high school student to master' },
-                  { label: '🎓 Convert to Example', prompt: 'Transform this text into a structured Worked Example block with step-by-step solution' },
-                  { label: '❓ Recall Questions', prompt: 'Generate 2 Active Recall self-test questions based on this text' },
-                  { label: '🎯 Summarize', prompt: 'Summarize key takeaways into a concise bullet list' }
+                  { label: 'Improve Clarity', prompt: 'Improve clarity, flow, and academic tone while preserving all formulas and formatting' },
+                  { label: 'Fix Grammar', prompt: 'Proofread and fix grammar, spelling, and sentence structure' },
+                  { label: 'Simplify', prompt: 'Simplify the explanation so it is easy for a student to understand' },
+                  { label: 'Convert to Example', prompt: 'Transform this text into a structured Worked Example block with step-by-step solution' },
+                  { label: 'Recall Questions', prompt: 'Generate 2 Active Recall self-test questions based on this text' },
+                  { label: 'Summarize', prompt: 'Summarize key takeaways into a concise bullet list' }
                 ].map((preset, pIdx) => (
                   <button
                     key={pIdx}
                     type="button"
                     onClick={() => setAiInstruction(preset.prompt)}
-                    className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-indigo-600/30 text-slate-300 hover:text-indigo-200 text-[11px] font-semibold border border-white/5 transition-colors cursor-pointer"
+                    className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[11px] font-medium border border-slate-700/50 transition-colors cursor-pointer"
                   >
                     {preset.label}
                   </button>
@@ -1054,20 +1174,20 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
             </div>
 
             {/* Custom Instruction Input */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-300">Custom AI Instruction</label>
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-300">Instruction</label>
               <textarea
                 rows={3}
                 value={aiInstruction}
                 onChange={e => setAiInstruction(e.target.value)}
                 placeholder="Describe what edits or transformation you want..."
-                className="w-full p-3 text-xs rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-none font-sans"
+                className="w-full p-2.5 text-xs rounded-lg bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-indigo-500 resize-none font-sans"
               />
             </div>
 
             {/* Action Mode Selection */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-300">Apply Mode</label>
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-300">Apply Mode</label>
               <div className="grid grid-cols-3 gap-2 text-xs">
                 {[
                   { id: 'replace', label: 'Replace Selection' },
@@ -1078,10 +1198,10 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
                     key={mode.id}
                     type="button"
                     onClick={() => setAiActionMode(mode.id as any)}
-                    className={`py-2 px-2 rounded-xl text-[11px] font-bold border transition-colors cursor-pointer text-center ${
+                    className={`py-1.5 px-2 rounded-lg text-xs font-medium border transition-colors cursor-pointer text-center ${
                       aiActionMode === mode.id
                         ? 'bg-indigo-600/30 text-indigo-200 border-indigo-500/50'
-                        : 'bg-slate-950/60 text-slate-400 border-slate-800 hover:text-slate-200'
+                        : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200'
                     }`}
                   >
                     {mode.label}
@@ -1095,7 +1215,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
               <button
                 type="button"
                 onClick={() => setIsAIEditModalOpen(false)}
-                className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-white transition-colors cursor-pointer"
+                className="px-3.5 py-1.5 text-xs font-medium text-slate-400 hover:text-white transition-colors cursor-pointer"
               >
                 Cancel
               </button>
@@ -1103,17 +1223,17 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
                 type="button"
                 disabled={!aiInstruction.trim() || isAIProcessing}
                 onClick={handleExecuteAIEdit}
-                className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium shadow-sm transition-colors disabled:opacity-50 cursor-pointer"
               >
                 {isAIProcessing ? (
                   <>
                     <Sparkles className="w-3.5 h-3.5 animate-spin" />
-                    <span>Processing Edits...</span>
+                    <span>Processing...</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-3.5 h-3.5" />
-                    <span>Apply AI Edits</span>
+                    <span>Apply Edits</span>
                   </>
                 )}
               </button>

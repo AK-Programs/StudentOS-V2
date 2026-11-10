@@ -2,13 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, 
   Check, 
-  HelpCircle, 
   Code2, 
   Sparkles, 
   Calculator, 
   ChevronRight,
-  BookOpen,
-  ArrowRight
+  ChevronDown,
+  RotateCcw,
+  BookOpen
 } from 'lucide-react';
 import katex from 'katex';
 
@@ -20,87 +20,92 @@ interface VisualMathEditorModalProps {
   onSave: (latex: string, name?: string) => void;
 }
 
-interface MathSymbolButton {
+interface MathItem {
   label: string;
   latexSnippet: string;
-  cursorOffset?: number; // offset to position cursor inside braces
   desc?: string;
+  cursorOffset?: number;
 }
 
-const CATEGORIES: { id: string; name: string; items: MathSymbolButton[] }[] = [
+// Visual Structure Templates
+const STRUCTURE_TEMPLATES: MathItem[] = [
+  { label: 'Fraction', latexSnippet: '\\frac{a}{b}', desc: 'Fraction (a/b)', cursorOffset: 6 },
+  { label: 'Power xⁿ', latexSnippet: 'x^{2}', desc: 'Superscript / Power', cursorOffset: 3 },
+  { label: 'Subscript xᵢ', latexSnippet: 'x_{i}', desc: 'Subscript index', cursorOffset: 3 },
+  { label: 'Super+Sub xᵢⁿ', latexSnippet: 'x_{i}^{2}', desc: 'Subscript & Superscript', cursorOffset: 3 },
+  { label: 'Square Root √x', latexSnippet: '\\sqrt{x}', desc: 'Square Root', cursorOffset: 7 },
+  { label: 'N-th Root ⁿ√x', latexSnippet: '\\sqrt[n]{x}', desc: 'N-th Root', cursorOffset: 7 },
+  { label: 'Parentheses (x)', latexSnippet: '\\left( x \\right)', desc: 'Scaled Parentheses', cursorOffset: 7 },
+  { label: 'Brackets [x]', latexSnippet: '\\left[ x \\right]', desc: 'Scaled Square Brackets', cursorOffset: 7 },
+  { label: 'Absolute |x|', latexSnippet: '\\left| x \\right|', desc: 'Absolute Value', cursorOffset: 7 },
+];
+
+// Presets for rapid educational note taking
+const EQUATION_PRESETS: { name: string; latex: string }[] = [
+  { name: 'Centripetal Force', latex: 'F_c = \\frac{m v^2}{r}' },
+  { name: 'Newton\'s Gravity', latex: 'F = G \\frac{m_1 m_2}{r^2}' },
+  { name: 'Kinetic Energy', latex: 'E_k = \\frac{1}{2} m v^2' },
+  { name: 'Einstein Mass-Energy', latex: 'E = m c^2' },
+  { name: 'Quadratic Formula', latex: 'x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}' },
+  { name: 'Wave Speed', latex: 'v = f \\lambda' },
+  { name: 'Ohm\'s Law', latex: 'V = I \\cdot R' },
+];
+
+const SYMBOL_CATEGORIES: { id: string; name: string; items: MathItem[] }[] = [
   {
-    id: 'common',
-    name: 'Basic & Powers',
+    id: 'arithmetic',
+    name: 'Arithmetic & Relations',
     items: [
-      { label: 'a/b', latexSnippet: '\\frac{a}{b}', cursorOffset: 6, desc: 'Fraction' },
-      { label: 'xⁿ', latexSnippet: 'x^{2}', cursorOffset: 3, desc: 'Superscript / Power' },
-      { label: 'xᵢ', latexSnippet: 'x_{i}', cursorOffset: 3, desc: 'Subscript' },
-      { label: '√x', latexSnippet: '\\sqrt{x}', cursorOffset: 7, desc: 'Square Root' },
-      { label: 'ⁿ√x', latexSnippet: '\\sqrt[n]{x}', cursorOffset: 7, desc: 'N-th Root' },
-      { label: '( ... )', latexSnippet: '\\left( x \\right)', cursorOffset: 7, desc: 'Scaled Parentheses' },
-      { label: '[ ... ]', latexSnippet: '\\left[ x \\right]', cursorOffset: 7, desc: 'Scaled Brackets' },
-      { label: '| x |', latexSnippet: '\\left| x \\right|', cursorOffset: 7, desc: 'Absolute Value' },
-      { label: '±', latexSnippet: '\\pm ', desc: 'Plus-Minus' },
-      { label: '×', latexSnippet: '\\times ', desc: 'Multiplication' },
-      { label: '·', latexSnippet: '\\cdot ', desc: 'Dot Product' },
-      { label: '÷', latexSnippet: '\\div ', desc: 'Division' },
-      { label: '≠', latexSnippet: '\\neq ', desc: 'Not Equal' },
+      { label: '±', latexSnippet: '\\pm ', desc: 'Plus-minus' },
+      { label: '×', latexSnippet: '\\times ', desc: 'Multiply' },
+      { label: '·', latexSnippet: '\\cdot ', desc: 'Dot product' },
+      { label: '÷', latexSnippet: '\\div ', desc: 'Divide' },
+      { label: '=', latexSnippet: ' = ', desc: 'Equals' },
+      { label: '≠', latexSnippet: '\\neq ', desc: 'Not equal' },
       { label: '≈', latexSnippet: '\\approx ', desc: 'Approximately' },
-      { label: '≤', latexSnippet: '\\le ', desc: 'Less or Equal' },
-      { label: '≥', latexSnippet: '\\ge ', desc: 'Greater or Equal' },
-      { label: '∞', latexSnippet: '\\infty ', desc: 'Infinity' }
-    ]
-  },
-  {
-    id: 'calculus',
-    name: 'Calculus & Series',
-    items: [
-      { label: '∫ dx', latexSnippet: '\\int_{a}^{b} f(x)\\,dx', cursorOffset: 12, desc: 'Definite Integral' },
-      { label: '∬', latexSnippet: '\\iint_{D} f(x,y)\\,dA', desc: 'Double Integral' },
-      { label: '∑', latexSnippet: '\\sum_{i=1}^{n} a_i', cursorOffset: 7, desc: 'Summation' },
-      { label: '∏', latexSnippet: '\\prod_{i=1}^{n} x_i', desc: 'Product' },
-      { label: 'lim', latexSnippet: '\\lim_{x \\to 0} f(x)', cursorOffset: 7, desc: 'Limit' },
-      { label: 'df/dx', latexSnippet: '\\frac{df}{dx}', desc: 'Derivative' },
-      { label: '∂f/∂x', latexSnippet: '\\frac{\\partial f}{\\partial x}', desc: 'Partial Derivative' },
-      { label: '∇', latexSnippet: '\\nabla ', desc: 'Nabla / Del' },
-      { label: 'Δx', latexSnippet: '\\Delta x', desc: 'Delta / Change' }
+      { label: '≤', latexSnippet: '\\le ', desc: 'Less than or equal' },
+      { label: '≥', latexSnippet: '\\ge ', desc: 'Greater than or equal' },
+      { label: '<', latexSnippet: ' < ', desc: 'Less than' },
+      { label: '>', latexSnippet: ' > ', desc: 'Greater than' },
+      { label: '∝', latexSnippet: '\\propto ', desc: 'Proportional to' },
+      { label: '∞', latexSnippet: '\\infty ', desc: 'Infinity' },
+      { label: '%', latexSnippet: '\\% ', desc: 'Percent' },
     ]
   },
   {
     id: 'greek',
-    name: 'Greek Symbols',
+    name: 'Greek Letters',
     items: [
-      { label: 'α', latexSnippet: '\\alpha ', desc: 'alpha' },
-      { label: 'β', latexSnippet: '\\beta ', desc: 'beta' },
-      { label: 'γ', latexSnippet: '\\gamma ', desc: 'gamma' },
-      { label: 'θ', latexSnippet: '\\theta ', desc: 'theta' },
-      { label: 'λ', latexSnippet: '\\lambda ', desc: 'lambda' },
-      { label: 'μ', latexSnippet: '\\mu ', desc: 'mu' },
-      { label: 'π', latexSnippet: '\\pi ', desc: 'pi' },
-      { label: 'ρ', latexSnippet: '\\rho ', desc: 'rho' },
-      { label: 'σ', latexSnippet: '\\sigma ', desc: 'sigma' },
-      { label: 'τ', latexSnippet: '\\tau ', desc: 'tau' },
-      { label: 'φ', latexSnippet: '\\phi ', desc: 'phi' },
-      { label: 'ω', latexSnippet: '\\omega ', desc: 'omega' },
+      { label: 'α', latexSnippet: '\\alpha ', desc: 'Alpha' },
+      { label: 'β', latexSnippet: '\\beta ', desc: 'Beta' },
+      { label: 'γ', latexSnippet: '\\gamma ', desc: 'Gamma' },
+      { label: 'δ', latexSnippet: '\\delta ', desc: 'Delta' },
+      { label: 'θ', latexSnippet: '\\theta ', desc: 'Theta' },
+      { label: 'λ', latexSnippet: '\\lambda ', desc: 'Lambda' },
+      { label: 'μ', latexSnippet: '\\mu ', desc: 'Mu' },
+      { label: 'π', latexSnippet: '\\pi ', desc: 'Pi' },
+      { label: 'ρ', latexSnippet: '\\rho ', desc: 'Rho' },
+      { label: 'σ', latexSnippet: '\\sigma ', desc: 'Sigma' },
+      { label: 'τ', latexSnippet: '\\tau ', desc: 'Tau' },
+      { label: 'φ', latexSnippet: '\\phi ', desc: 'Phi' },
+      { label: 'ω', latexSnippet: '\\omega ', desc: 'Omega' },
+      { label: 'Δ', latexSnippet: '\\Delta ', desc: 'Capital Delta' },
       { label: 'Ω', latexSnippet: '\\Omega ', desc: 'Capital Omega' },
-      { label: 'Δ', latexSnippet: '\\Delta ', desc: 'Capital Delta' }
     ]
   },
   {
-    id: 'algebra',
-    name: 'Matrices & Vectors',
+    id: 'calculus',
+    name: 'Calculus & Physics',
     items: [
-      { label: '2×2 Mat', latexSnippet: '\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}', desc: '2x2 Matrix' },
-      { label: '3×3 Mat', latexSnippet: '\\begin{pmatrix} a & b & c \\\\ d & e & f \\\\ g & h & i \\end{pmatrix}', desc: '3x3 Matrix' },
-      { label: 'v⃗', latexSnippet: '\\vec{v}', cursorOffset: 5, desc: 'Vector' },
-      { label: 'Aᵀ', latexSnippet: 'A^{T}', desc: 'Transpose' },
-      { label: 'A⁻¹', latexSnippet: 'A^{-1}', desc: 'Inverse Matrix' },
-      { label: 'det(A)', latexSnippet: '\\det(A)', desc: 'Determinant' },
-      { label: 'log(x)', latexSnippet: '\\log_{10}(x)', desc: 'Logarithm' },
-      { label: 'ln(x)', latexSnippet: '\\ln(x)', desc: 'Natural Logarithm' },
-      { label: 'sin', latexSnippet: '\\sin(\\theta)', desc: 'Sine' },
-      { label: 'cos', latexSnippet: '\\cos(\\theta)', desc: 'Cosine' },
-      { label: 'tan', latexSnippet: '\\tan(\\theta)', desc: 'Tangent' }
+      { label: '∫ dx', latexSnippet: '\\int_{a}^{b} f(x)\\,dx', desc: 'Definite integral', cursorOffset: 12 },
+      { label: '∑', latexSnippet: '\\sum_{i=1}^{n} a_i', desc: 'Summation', cursorOffset: 7 },
+      { label: '∏', latexSnippet: '\\prod_{i=1}^{n} x_i', desc: 'Product', cursorOffset: 7 },
+      { label: 'lim', latexSnippet: '\\lim_{x \\to 0} f(x)', desc: 'Limit', cursorOffset: 7 },
+      { label: 'df/dx', latexSnippet: '\\frac{df}{dx}', desc: 'Derivative' },
+      { label: '∂f/∂x', latexSnippet: '\\frac{\\partial f}{\\partial x}', desc: 'Partial derivative' },
+      { label: '∇', latexSnippet: '\\nabla ', desc: 'Nabla / Del' },
+      { label: 'Δx', latexSnippet: '\\Delta x', desc: 'Change in x' },
+      { label: 'v⃗', latexSnippet: '\\vec{v}', desc: 'Vector', cursorOffset: 5 },
     ]
   }
 ];
@@ -114,9 +119,9 @@ export const VisualMathEditorModal: React.FC<VisualMathEditorModalProps> = ({
 }) => {
   const [latex, setLatex] = useState(initialLatex || 'F_c = \\frac{m v^2}{r}');
   const [equationName, setEquationName] = useState(initialName || '');
-  const [activeCategory, setActiveCategory] = useState<string>('common');
+  const [activeCategory, setActiveCategory] = useState<string>('arithmetic');
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [showLatexSource, setShowLatexSource] = useState(false);
+  const [showAdvancedLatex, setShowAdvancedLatex] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
 
@@ -124,10 +129,11 @@ export const VisualMathEditorModal: React.FC<VisualMathEditorModalProps> = ({
     if (isOpen) {
       setLatex(initialLatex || 'F_c = \\frac{m v^2}{r}');
       setEquationName(initialName || '');
+      setShowAdvancedLatex(false);
     }
   }, [isOpen, initialLatex, initialName]);
 
-  // Live KaTeX rendering effect
+  // Live KaTeX rendering
   useEffect(() => {
     if (!previewRef.current) return;
     try {
@@ -137,7 +143,7 @@ export const VisualMathEditorModal: React.FC<VisualMathEditorModalProps> = ({
       });
       setPreviewError(null);
     } catch (err: any) {
-      setPreviewError(err?.message || 'Invalid equation syntax');
+      setPreviewError(err?.message || 'Syntax error in equation');
       if (previewRef.current) {
         previewRef.current.innerHTML = `<span class="text-rose-400 font-mono text-xs">${latex}</span>`;
       }
@@ -149,7 +155,7 @@ export const VisualMathEditorModal: React.FC<VisualMathEditorModalProps> = ({
   const handleInsertSnippet = (snippet: string, cursorOffset?: number) => {
     const textarea = textareaRef.current;
     if (!textarea) {
-      setLatex(prev => prev + ' ' + snippet);
+      setLatex(prev => (prev.trim() ? prev + ' ' + snippet : snippet));
       return;
     }
 
@@ -173,73 +179,121 @@ export const VisualMathEditorModal: React.FC<VisualMathEditorModalProps> = ({
     onClose();
   };
 
+  const handleClear = () => {
+    setLatex('');
+    if (textareaRef.current) textareaRef.current.focus();
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
       <div 
-        className="w-full max-w-2xl bg-slate-900 border border-slate-700/60 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/40">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-800 bg-slate-950/40">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center text-sm font-bold">
+            <div className="w-7 h-7 rounded-lg bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center text-sm font-bold">
               ∑
             </div>
             <div>
-              <h3 className="text-sm font-bold text-slate-100">Visual Mathematical Equation Editor</h3>
-              <p className="text-[11px] text-slate-400">Click mathematical symbols to build or edit formulas visually</p>
+              <h3 className="text-sm font-semibold text-slate-100">Visual Equation Editor</h3>
+              <p className="text-[11px] text-slate-400">Click structures and symbols to build formulas visually</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 overflow-y-auto space-y-5 flex-1">
+        <div className="p-5 overflow-y-auto space-y-4 flex-1">
           {/* Equation Title (Optional) */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
-              Equation Name / Label (Optional)
-            </label>
-            <input
-              type="text"
-              value={equationName}
-              onChange={e => setEquationName(e.target.value)}
-              placeholder="e.g. Centripetal Force, Quadratic Formula, Ohm's Law"
-              className="w-full px-3.5 py-2 text-xs rounded-xl bg-slate-950 border border-slate-800 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-colors"
-            />
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <div className="flex-1">
+              <input
+                type="text"
+                value={equationName}
+                onChange={e => setEquationName(e.target.value)}
+                placeholder="Formula Name (e.g. Centripetal Force, Ohm's Law)..."
+                className="w-full px-3 py-1.5 text-xs rounded-lg bg-slate-950 border border-slate-800 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+              />
+            </div>
+            {/* Quick Preset Selector */}
+            <select
+              onChange={e => {
+                const found = EQUATION_PRESETS.find(p => p.name === e.target.value);
+                if (found) {
+                  setLatex(found.latex);
+                  setEquationName(found.name);
+                }
+              }}
+              defaultValue=""
+              className="px-2.5 py-1.5 text-xs rounded-lg bg-slate-950 border border-slate-800 text-slate-300 focus:outline-none focus:border-indigo-500 cursor-pointer"
+            >
+              <option value="" disabled>Load standard formula...</option>
+              {EQUATION_PRESETS.map((p, idx) => (
+                <option key={idx} value={p.name}>{p.name}</option>
+              ))}
+            </select>
           </div>
 
           {/* Live KaTeX Rendered Preview Card */}
           <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                Live Formula Preview (Vector)
-              </span>
-              {previewError && (
-                <span className="text-[10px] text-rose-400 font-medium">Syntax error in expression</span>
+            <div className="flex items-center justify-between mb-1 text-[11px] text-slate-400 font-medium">
+              <span>Preview</span>
+              {previewError ? (
+                <span className="text-rose-400">Check formula syntax</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleClear}
+                  className="hover:text-slate-200 text-slate-500 flex items-center gap-1 cursor-pointer"
+                >
+                  <RotateCcw className="w-3 h-3" /> Clear
+                </button>
               )}
             </div>
-            <div className="p-6 rounded-2xl bg-slate-950/80 border border-slate-800/80 flex items-center justify-center min-h-[96px] overflow-x-auto shadow-inner text-slate-100">
+            <div className="p-5 rounded-xl bg-slate-950 border border-slate-800/80 flex items-center justify-center min-h-[85px] overflow-x-auto shadow-inner text-slate-100">
               <div ref={previewRef} className="text-xl sm:text-2xl" />
             </div>
           </div>
 
-          {/* Visual Palette Categories */}
-          <div>
-            <div className="flex items-center gap-1.5 border-b border-slate-800 pb-2 mb-3 overflow-x-auto">
-              {CATEGORIES.map(cat => (
+          {/* Section 1: Visual Structure Templates */}
+          <div className="space-y-1.5">
+            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">
+              Insert Structure Template
+            </span>
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
+              {STRUCTURE_TEMPLATES.map((item, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => handleInsertSnippet(item.latexSnippet, item.cursorOffset)}
+                  title={item.desc}
+                  className="py-2 px-2 rounded-lg bg-slate-800/90 hover:bg-indigo-600/25 border border-slate-700/60 hover:border-indigo-500/50 text-slate-200 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <span className="font-serif font-bold text-indigo-300 text-xs">{item.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Section 2: Symbol Categories */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-1 border-b border-slate-800 pb-1.5">
+              {SYMBOL_CATEGORIES.map(cat => (
                 <button
                   key={cat.id}
+                  type="button"
                   onClick={() => setActiveCategory(cat.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                  className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
                     activeCategory === cat.id
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                      ? 'bg-slate-800 text-white font-semibold'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
                   }`}
                 >
                   {cat.name}
@@ -247,15 +301,15 @@ export const VisualMathEditorModal: React.FC<VisualMathEditorModalProps> = ({
               ))}
             </div>
 
-            {/* Symbol Buttons Grid */}
-            <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2 max-h-44 overflow-y-auto p-1">
-              {CATEGORIES.find(c => c.id === activeCategory)?.items.map((item, idx) => (
+            {/* Symbols Buttons Grid */}
+            <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-9 gap-1.5 max-h-36 overflow-y-auto p-0.5">
+              {SYMBOL_CATEGORIES.find(c => c.id === activeCategory)?.items.map((item, idx) => (
                 <button
                   key={idx}
                   type="button"
                   onClick={() => handleInsertSnippet(item.latexSnippet, item.cursorOffset)}
                   title={item.desc || item.label}
-                  className="h-10 px-2 rounded-xl bg-slate-800/80 hover:bg-indigo-600/30 border border-slate-700/60 hover:border-indigo-500/40 text-slate-200 font-serif text-sm flex items-center justify-center transition-all active:scale-95 cursor-pointer shadow-sm"
+                  className="h-8 rounded-lg bg-slate-800/60 hover:bg-indigo-600/20 border border-slate-800 hover:border-indigo-500/40 text-slate-200 font-serif text-sm flex items-center justify-center transition-colors cursor-pointer"
                 >
                   {item.label}
                 </button>
@@ -263,46 +317,41 @@ export const VisualMathEditorModal: React.FC<VisualMathEditorModalProps> = ({
             </div>
           </div>
 
-          {/* Underlying LaTeX Input / Editor */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                LaTeX Formula Source
-              </label>
-              <button
-                type="button"
-                onClick={() => setShowLatexSource(!showLatexSource)}
-                className="text-[10px] text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1 cursor-pointer"
-              >
-                <Code2 className="w-3 h-3" />
-                <span>{showLatexSource ? 'Hide Source Help' : 'LaTeX Help'}</span>
-              </button>
-            </div>
-            <textarea
-              ref={textareaRef}
-              rows={3}
-              value={latex}
-              onChange={e => setLatex(e.target.value)}
-              placeholder="e.g. F = G \frac{m_1 m_2}{r^2}"
-              className="w-full px-3.5 py-2.5 text-xs font-mono rounded-xl bg-slate-950 border border-slate-800 text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-none transition-colors"
-            />
-            {showLatexSource && (
-              <div className="mt-2 p-3 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-400 space-y-1">
-                <p className="font-semibold text-slate-300">Quick Tips:</p>
-                <p>• Fractions: <code className="text-indigo-300 font-mono">\frac{`{numerator}`}{`{denominator}`}</code></p>
-                <p>• Powers / Subscripts: <code className="text-indigo-300 font-mono">x^{`{2}`}</code>, <code className="text-indigo-300 font-mono">F_{`{c}`}</code></p>
-                <p>• Greek: <code className="text-indigo-300 font-mono">\alpha, \beta, \omega, \theta, \Delta</code></p>
+          {/* Section 3: Advanced LaTeX Toggle (Hidden by default for simplicity) */}
+          <div className="pt-2 border-t border-slate-800">
+            <button
+              type="button"
+              onClick={() => setShowAdvancedLatex(!showAdvancedLatex)}
+              className="text-xs text-slate-400 hover:text-slate-200 font-medium flex items-center gap-1.5 cursor-pointer"
+            >
+              {showAdvancedLatex ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+              <span>Advanced: View & Edit LaTeX Code</span>
+            </button>
+
+            {showAdvancedLatex && (
+              <div className="mt-2 space-y-1.5 animate-in fade-in duration-100">
+                <textarea
+                  ref={textareaRef}
+                  rows={2}
+                  value={latex}
+                  onChange={e => setLatex(e.target.value)}
+                  placeholder="e.g. F_c = \frac{m v^2}{r}"
+                  className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-slate-950 border border-slate-800 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 resize-none"
+                />
+                <p className="text-[10px] text-slate-500">
+                  Tip: Fractions use <code className="text-slate-400 font-mono">\frac{`{num}`}{`{den}`}</code>, powers use <code className="text-slate-400 font-mono">x^{`{2}`}</code>, subscripts use <code className="text-slate-400 font-mono">F_{`{c}`}</code>.
+                </p>
               </div>
             )}
           </div>
         </div>
 
-        {/* Modal Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-slate-800 bg-slate-950/60">
+        {/* Footer */}
+        <div className="flex items-center justify-between px-5 py-3 border-t border-slate-800 bg-slate-950/40">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 text-xs font-medium text-slate-400 hover:text-white transition-colors cursor-pointer"
+            className="px-3.5 py-1.5 text-xs font-medium text-slate-400 hover:text-white transition-colors cursor-pointer"
           >
             Cancel
           </button>
@@ -310,7 +359,7 @@ export const VisualMathEditorModal: React.FC<VisualMathEditorModalProps> = ({
             type="button"
             onClick={handleSave}
             disabled={!latex.trim()}
-            className="px-5 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-1.5"
+            className="px-4 py-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors disabled:opacity-50 cursor-pointer flex items-center gap-1.5 shadow-sm"
           >
             <Check className="w-3.5 h-3.5" />
             <span>Insert Equation</span>

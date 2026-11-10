@@ -75,11 +75,10 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [isNotesPanelOpen, setIsNotesPanelOpen] = useState(false);
   const [showOutline, setShowOutline] = useState(false);
   const [viewMode, setViewMode] = useState<'editor' | 'reader' | 'split'>('editor');
   const [autoSaveState, setAutoSaveState] = useState<'saved' | 'saving' | 'offline'>('saved');
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isAIGenerating, setIsAIGenerating] = useState(false);
   const [isAICreateModalOpen, setIsAICreateModalOpen] = useState(false);
   const [aiCreateQuery, setAiCreateQuery] = useState('');
@@ -322,23 +321,20 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
       {/* Top Workspace Header Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-slate-900/60 border border-white/5 backdrop-blur-md">
         <div className="flex items-center gap-2">
-          {/* Desktop Sidebar Toggle */}
+          {/* Accessible Notes Panel Toggle Button */}
           <button
             type="button"
-            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-            className="hidden md:flex p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white cursor-pointer transition-all active:scale-95"
-            title={isSidebarCollapsed ? "Show Notes Panel" : "Hide Notes Panel"}
+            onClick={() => setIsNotesPanelOpen(!isNotesPanelOpen)}
+            title={isNotesPanelOpen ? "Close Notes Panel" : "Open Notes Panel"}
+            aria-label={isNotesPanelOpen ? "Close Notes Panel" : "Open Notes Panel"}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold cursor-pointer transition-colors ${
+              isNotesPanelOpen 
+                ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm' 
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border-slate-700/60'
+            }`}
           >
-            <PanelLeft className={`w-4 h-4 transition-transform ${isSidebarCollapsed ? '' : 'rotate-180'}`} />
-          </button>
-
-          {/* Mobile Sidebar Toggle Button */}
-          <button
-            type="button"
-            onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
-            className="md:hidden p-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white cursor-pointer"
-          >
-            <Menu className="w-4 h-4" />
+            <PanelLeft className="w-4 h-4 text-indigo-400" />
+            <span>{isNotesPanelOpen ? 'Close Panel' : 'Notes Panel'}</span>
           </button>
 
           <div className="flex items-center gap-2">
@@ -444,76 +440,91 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
         </div>
       </div>
 
-      {/* Main 3-Zone Workspace Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 flex-1">
-        {/* Zone 1: Navigation Sidebar (Desktop sticky / Mobile drawer) */}
-        {/* Zone 1: Navigation Sidebar (Contextual Collapsible Panel) */}
-        <div 
-          className={`
-            ${mobileSidebarOpen ? 'block fixed inset-0 z-50 bg-slate-950/95 p-4' : 'hidden md:block'}
-            transition-all duration-300 ease-in-out
-            ${isSidebarCollapsed ? 'md:w-0 md:opacity-0 md:pointer-events-none md:col-span-0' : 'md:col-span-3'}
-            h-[calc(100vh-180px)] min-h-[500px] flex flex-col
-          `}
-        >
-          {mobileSidebarOpen && (
-            <div className="flex justify-end pb-2 md:hidden">
-              <button onClick={() => setMobileSidebarOpen(false)} className="p-2 text-white">
-                <X className="w-6 h-6" />
+      {/* Contextual Notes Panel Drawer & Backdrop */}
+      {isNotesPanelOpen && (
+        <>
+          {/* Backdrop */}
+          <div 
+            className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-150"
+            onClick={() => setIsNotesPanelOpen(false)}
+          />
+          {/* Drawer Panel */}
+          <div 
+            className="fixed inset-y-0 left-0 z-50 w-full max-w-sm sm:w-88 bg-slate-950 border-r border-slate-800 shadow-2xl p-4 flex flex-col space-y-3 animate-in slide-in-from-left duration-200"
+          >
+            {/* Drawer Top Header */}
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <PanelLeft className="w-4 h-4 text-indigo-400" />
+                <h3 className="text-sm font-semibold text-slate-100">Notes & Navigation</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsNotesPanelOpen(false)}
+                title="Close Notes Panel"
+                aria-label="Close Notes Panel"
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
               </button>
             </div>
-          )}
-          <div className="flex-1 overflow-hidden flex flex-col">
-            <LectureNotesSidebar
-              allNotes={notes}
-              notes={sortedFilteredNotes}
-              selectedNoteId={selectedNoteId}
-              folders={localFolders}
-              activeFolderId={activeFolderId}
-              currentFilter={currentFilter}
-              selectedTag={selectedTag}
-              searchQuery={searchQuery}
-              onSelectNote={id => {
-                onSelectNote(id);
-                setMobileSidebarOpen(false);
-              }}
-              onSelectFilter={f => setCurrentFilter(f)}
-              onSelectFolder={fId => setActiveFolderId(fId)}
-              onSelectTag={t => setSelectedTag(t)}
-              onSearchChange={q => setSearchQuery(q)}
-              onCreateNote={() => {
-                onCreateNote({ title: 'Untitled Note', subject: 'General' });
-                setMobileSidebarOpen(false);
-              }}
-              onCreateFolder={() => setIsCreateFolderOpen(true)}
-              onToggleStar={id => {
-                const target = notes.find(n => n.id === id);
-                if (target) {
-                  onUpdateNote(id, { isStarred: !target.isStarred });
-                }
-              }}
-              onDeleteNote={onDeleteNote}
-              onOpenCreateWithAI={() => setIsAICreateModalOpen(true)}
-            />
-          </div>
-        </div>
 
-        {/* Zone 2: Document Canvas & Writing Surface */}
-        <div className={`
-          ${isSidebarCollapsed ? 'md:col-span-12' : showOutline ? 'md:col-span-6 lg:col-span-7' : 'md:col-span-9'} 
-          space-y-4 transition-all duration-300
-        `}>
+            {/* Drawer Sidebar Content */}
+            <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+              <LectureNotesSidebar
+                allNotes={notes}
+                notes={sortedFilteredNotes}
+                selectedNoteId={selectedNoteId}
+                folders={localFolders}
+                activeFolderId={activeFolderId}
+                currentFilter={currentFilter}
+                selectedTag={selectedTag}
+                searchQuery={searchQuery}
+                onSelectNote={id => {
+                  onSelectNote(id);
+                  setIsNotesPanelOpen(false);
+                }}
+                onSelectFilter={f => setCurrentFilter(f)}
+                onSelectFolder={fId => setActiveFolderId(fId)}
+                onSelectTag={t => setSelectedTag(t)}
+                onSearchChange={q => setSearchQuery(q)}
+                onCreateNote={() => {
+                  onCreateNote({ title: 'Untitled Note', subject: 'General' });
+                  setIsNotesPanelOpen(false);
+                }}
+                onCreateFolder={() => setIsCreateFolderOpen(true)}
+                onToggleStar={id => {
+                  const target = notes.find(n => n.id === id);
+                  if (target) {
+                    onUpdateNote(id, { isStarred: !target.isStarred });
+                  }
+                }}
+                onDeleteNote={onDeleteNote}
+                onOpenCreateWithAI={() => {
+                  setIsNotesPanelOpen(false);
+                  setIsAICreateModalOpen(true);
+                }}
+              />
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Main Document Workspace */}
+      <div className={`w-full ${showOutline ? 'grid grid-cols-1 lg:grid-cols-12 gap-4' : 'max-w-4xl mx-auto'} flex-1`}>
+        {/* Document Canvas & Writing Surface */}
+        <div className={`${showOutline ? 'lg:col-span-9' : 'w-full'} space-y-4`}>
           {activeNote ? (
-            <div className="rounded-3xl border border-white/5 bg-slate-900/50 backdrop-blur-md overflow-hidden shadow-xl p-5 sm:p-7 space-y-5">
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/90 shadow-sm p-5 sm:p-7 space-y-4">
               {/* Document Header (Editable Title & Subject) */}
-              <div className="space-y-3 pb-3 border-b border-white/5">
+              <div className="space-y-3 pb-3 border-b border-slate-800">
                 <div className="flex items-center justify-between gap-3">
                   <input
                     type="text"
                     value={activeNote.title}
                     onChange={e => onUpdateNote(activeNote.id, { title: e.target.value })}
                     placeholder="Note Title..."
-                    className="w-full text-2xl sm:text-3xl font-black font-display text-white bg-transparent border-b border-transparent focus:border-indigo-500/50 pb-1 focus:outline-none transition-colors"
+                    className="w-full text-2xl sm:text-3xl font-bold text-white bg-transparent border-b border-transparent focus:border-indigo-500/50 pb-1 focus:outline-none transition-colors"
                   />
                   <div className="flex items-center gap-2 shrink-0">
                     <input
@@ -521,13 +532,13 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                       value={activeNote.subject}
                       onChange={e => onUpdateNote(activeNote.id, { subject: e.target.value })}
                       placeholder="Subject..."
-                      className="text-xs font-bold text-slate-300 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 focus:outline-none shrink-0"
+                      className="text-xs font-semibold text-slate-300 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 focus:outline-none shrink-0"
                     />
                     <button
                       type="button"
                       onClick={() => setIsAIEditModalOpen(true)}
-                      className="px-2.5 py-1.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                      title="Edit open note with AI"
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-500/30 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                      title="Edit note with AI"
                     >
                       <Wand2 className="w-3.5 h-3.5 text-purple-400" />
                       <span>Edit with AI</span>
@@ -539,13 +550,13 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
               {/* View Modes Rendering */}
               {viewMode === 'reader' ? (
                 /* Reader View: Clean formatted reading mode */
-                <div className="p-6 rounded-2xl bg-slate-950/40 border border-white/5 min-h-[440px] leading-relaxed select-text space-y-3">
+                <div className="p-6 rounded-xl bg-slate-950 border border-slate-800/80 min-h-[440px] leading-relaxed select-text space-y-3">
                   {renderMarkdown(activeNote.content || '')}
                 </div>
               ) : viewMode === 'split' ? (
                 /* Split View: Editor + Live Preview */
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <div className="p-2 rounded-2xl bg-slate-950/40 border border-white/5">
+                  <div className="p-2 rounded-xl bg-slate-950/60 border border-slate-800">
                     <LectureNotesEditor
                       noteId={activeNote.id}
                       initialContent={activeNote.content || ''}
@@ -560,15 +571,15 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                       onOpenHomeworkLinking={() => setIsHomeworkLinkOpen(true)}
                     />
                   </div>
-                  <div className="p-5 rounded-2xl bg-slate-950/60 border border-white/5 max-h-[600px] overflow-y-auto leading-relaxed select-text space-y-3">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block pb-2 border-b border-white/5">
+                  <div className="p-5 rounded-xl bg-slate-950 border border-slate-800 max-h-[600px] overflow-y-auto leading-relaxed select-text space-y-3">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block pb-2 border-b border-slate-800">
                       Live Reader Preview
                     </span>
                     {renderMarkdown(activeNote.content || '')}
                   </div>
                 </div>
               ) : (
-                /* Full Hybrid Editor */
+                /* Full Clean Editor */
                 <LectureNotesEditor
                   noteId={activeNote.id}
                   initialContent={activeNote.content || ''}
@@ -585,53 +596,53 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
               )}
             </div>
           ) : (
-            <div className="p-12 rounded-3xl bg-slate-900/40 border border-dashed border-white/10 text-center space-y-4">
-              <span className="text-5xl block">📝</span>
-              <h3 className="text-base font-bold text-white">Select or Initialize a Lecture Note</h3>
+            <div className="p-12 rounded-2xl bg-slate-900 border border-dashed border-slate-800 text-center space-y-3">
+              <span className="text-4xl block">📝</span>
+              <h3 className="text-base font-semibold text-white">Select or Create a Lecture Note</h3>
               <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                Start writing rich educational documents with equations, tables, and study flashcard integration.
+                Write rich educational documents with equations, tables, and study flashcards.
               </p>
-              <button
-                type="button"
-                onClick={() => onCreateNote({ title: 'New Lecture Note', subject: 'Physics' })}
-                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer"
-              >
-                + Create Note
-              </button>
-              <div className="pt-2">
+              <div className="flex items-center justify-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => onCreateNote({ title: 'New Lecture Note', subject: 'General' })}
+                  className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  + Create Note
+                </button>
                 <button
                   type="button"
                   onClick={() => setIsAICreateModalOpen(true)}
-                  className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-400 text-xs font-bold transition-all border border-indigo-500/30 flex items-center gap-2 mx-auto"
+                  className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-colors border border-slate-700 flex items-center gap-1.5 cursor-pointer"
                 >
-                  <BrainCircuit className="w-4 h-4" />
-                  Create with AI
+                  <BrainCircuit className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Create with AI</span>
                 </button>
               </div>
             </div>
           )}
         </div>
 
-        {/* Zone 3: Optional Contextual Outline / Table of Contents */}
+        {/* Optional Contextual Outline / Table of Contents */}
         {showOutline && (
-          <div className="md:col-span-3 lg:col-span-2 p-4 rounded-3xl bg-slate-950/60 border border-white/5 space-y-3 max-h-[600px] overflow-y-auto">
-            <div className="flex items-center justify-between pb-2 border-b border-white/5">
-              <span className="text-[11px] font-bold uppercase text-slate-400 tracking-wider">
+          <div className="lg:col-span-3 p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-3 max-h-[600px] overflow-y-auto">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+              <span className="text-[11px] font-semibold uppercase text-slate-400 tracking-wider">
                 Document Outline
               </span>
-              <button onClick={() => setShowOutline(false)} className="text-slate-500 hover:text-white p-1">
+              <button onClick={() => setShowOutline(false)} className="text-slate-500 hover:text-white p-1 cursor-pointer">
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
             {headings.length === 0 ? (
               <p className="text-[11px] text-slate-500 italic">No headings yet. Insert H1 or H2 headings to build an outline.</p>
             ) : (
-              <div className="space-y-1.5 text-xs">
+              <div className="space-y-1 text-xs">
                 {headings.map((h, hIdx) => (
                   <div 
                     key={hIdx}
                     className={`text-slate-400 hover:text-indigo-300 transition-colors cursor-pointer truncate ${
-                      h.level === 1 ? 'font-bold text-slate-200' : h.level === 2 ? 'pl-2 text-slate-300' : 'pl-4 text-slate-400 text-[11px]'
+                      h.level === 1 ? 'font-semibold text-slate-200' : h.level === 2 ? 'pl-2 text-slate-300' : 'pl-4 text-slate-400 text-[11px]'
                     }`}
                   >
                     {h.text}
