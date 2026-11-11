@@ -419,10 +419,10 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
             <button
               type="button"
               onClick={() => setIsAIEditModalOpen(true)}
-              className="px-3 py-1.5 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md active:scale-95 cursor-pointer"
+              className="px-3 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-200 border border-blue-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm active:scale-95 cursor-pointer"
               title="Edit Note with AI"
             >
-              <Wand2 className="w-3.5 h-3.5 text-purple-300" />
+              <Wand2 className="w-3.5 h-3.5 text-blue-400" />
               <span className="hidden sm:inline">Edit with AI</span>
             </button>
           )}
@@ -431,7 +431,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
           <button
             type="button"
             onClick={handleExportPdf}
-            className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-md active:scale-95 cursor-pointer"
+            className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm active:scale-95 cursor-pointer"
             title="Export Vector PDF"
           >
             <Printer className="w-3.5 h-3.5" />
@@ -797,11 +797,11 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md animate-in fade-in duration-200">
           <div className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-3xl p-6 space-y-6 shadow-2xl relative overflow-hidden">
             {/* Background Glow */}
-            <div className="absolute top-0 right-0 w-32 h-32 bg-purple-600/20 blur-[60px] -z-10" />
+            <div className="absolute top-0 right-0 w-32 h-32 bg-blue-600/15 blur-[60px] -z-10" />
             
             <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-              <div className="flex items-center gap-3 text-purple-400 font-bold">
-                <div className="p-2 rounded-xl bg-purple-600/20">
+              <div className="flex items-center gap-3 text-blue-400 font-bold">
+                <div className="p-2 rounded-xl bg-blue-600/20">
                   <Wand2 className="w-5 h-5" />
                 </div>
                 <div>
@@ -825,7 +825,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
             <div className="space-y-4">
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-300 flex items-center gap-2">
-                  <MessageSquarePlus className="w-3.5 h-3.5 text-purple-400" />
+                  <MessageSquarePlus className="w-3.5 h-3.5 text-blue-400" />
                   What changes or improvements would you like?
                 </label>
                 <textarea
@@ -833,7 +833,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                   value={aiEditInstruction}
                   onChange={e => setAiEditInstruction(e.target.value)}
                   placeholder="e.g. Add more detail to the derivation, simplify the language, add practical examples..."
-                  className="w-full min-h-[110px] px-4 py-3 text-sm rounded-2xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all placeholder:text-slate-600 resize-none"
+                  className="w-full min-h-[110px] px-4 py-3 text-sm rounded-2xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all placeholder:text-slate-600 resize-none"
                 />
               </div>
               
@@ -872,7 +872,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                 type="button"
                 disabled={!aiEditInstruction.trim() || isAIEditing}
                 onClick={handleEditWithAI}
-                className="flex items-center gap-2 px-6 py-2.5 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-600/20 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 cursor-pointer"
+                className="flex items-center gap-2 px-6 py-2.5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-lg shadow-blue-600/20 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 cursor-pointer"
               >
                 {isAIEditing ? (
                   <>

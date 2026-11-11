@@ -78,7 +78,7 @@ body {
   border-color: rgba(245, 158, 11, 0.4);
 }
 .glow-indigo {
-  border-color: rgba(99, 102, 241, 0.4);
+  border-color: rgba(37, 99, 235, 0.4);
 }
 
 /* Custom drawing canvas background */
@@ -97,11 +97,11 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(99, 102, 241, 0.3);
+  background: rgba(37, 99, 235, 0.3);
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(99, 102, 241, 0.5);
+  background: rgba(37, 99, 235, 0.5);
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -509,20 +509,20 @@ button, a, [role="button"], input, select, textarea {
    (Responsive-safe from 240px/283px to 1920px+)
    ========================================== */
 
-/* Tactile 3D-depth gradient CTA button inspired by UIverse.io */
+/* Tactile 3D-depth gradient CTA button - Dignified Academic Royal Cobalt */
 .uiverse-btn-primary {
   position: relative;
   overflow: hidden;
-  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #4f46e5 100%);
+  background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 50%, #1e40af 100%);
   background-size: 200% auto;
   color: #ffffff;
-  border: 1px solid rgba(165, 180, 252, 0.35);
-  box-shadow: 0 4px 15px -3px rgba(79, 70, 229, 0.45), inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(147, 197, 253, 0.35);
+  box-shadow: 0 4px 14px -3px rgba(37, 99, 235, 0.45), inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .uiverse-btn-primary:hover:not(:disabled) {
   background-position: right center;
-  box-shadow: 0 6px 22px -2px rgba(124, 58, 237, 0.6), inset 0 1px 0 0 rgba(255, 255, 255, 0.3);
+  box-shadow: 0 6px 20px -2px rgba(37, 99, 235, 0.55), inset 0 1px 0 0 rgba(255, 255, 255, 0.3);
   transform: translateY(-1px);
 }
 .uiverse-btn-primary:active:not(:disabled) {
@@ -536,8 +536,8 @@ button, a, [role="button"], input, select, textarea {
 }
 .uiverse-card-hover:hover {
   transform: translateY(-2px);
-  border-color: rgba(99, 102, 241, 0.4);
-  box-shadow: 0 12px 30px -8px rgba(79, 70, 229, 0.22);
+  border-color: rgba(37, 99, 235, 0.4);
+  box-shadow: 0 12px 28px -8px rgba(15, 23, 42, 0.45);
 }
 
 /* UIverse-style tactile pill switch */
@@ -553,8 +553,8 @@ button, a, [role="button"], input, select, textarea {
   transition: background-color 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s ease;
 }
 .uiverse-switch[aria-checked="true"] {
-  background: linear-gradient(135deg, #4f46e5, #7c3aed);
-  box-shadow: 0 0 14px rgba(99, 102, 241, 0.45);
+  background: linear-gradient(135deg, #1d4ed8, #2563eb);
+  box-shadow: 0 0 14px rgba(37, 99, 235, 0.45);
 }
 .uiverse-switch[aria-checked="false"] {
   background-color: #1e293b;

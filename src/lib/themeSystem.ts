@@ -28,12 +28,12 @@ export interface ThemeAccentConfig {
 export const THEME_ACCENTS: Record<ThemeAccent, ThemeAccentConfig> = {
   indigo: {
     id: 'indigo',
-    name: 'Indigo & Sky',
-    primary: '#6366f1',
-    primaryHover: '#4f46e5',
-    accent: '#38bdf8',
-    badgeBg: 'rgba(99, 102, 241, 0.2)',
-    badgeText: '#818cf8'
+    name: 'Royal Cobalt',
+    primary: '#2563eb',
+    primaryHover: '#1d4ed8',
+    accent: '#0284c7',
+    badgeBg: 'rgba(37, 99, 235, 0.18)',
+    badgeText: '#93c5fd'
   },
   emerald: {
     id: 'emerald',
@@ -90,7 +90,7 @@ export const STUDENTOS_THEMES: Record<ThemeId, ThemeDefinition> = {
   default: {
     id: 'default',
     name: 'StudentOS Default',
-    tagline: 'Cyber Slate & Deep Indigo',
+    tagline: 'Cyber Slate & Royal Cobalt',
     isDark: true,
     colors: {
       background: '#030712',
@@ -100,13 +100,13 @@ export const STUDENTOS_THEMES: Record<ThemeId, ThemeDefinition> = {
       text: '#f8fafc',
       textMuted: '#94a3b8',
       textSubtle: '#64748b',
-      primary: '#6366f1',
-      primaryHover: '#4f46e5',
+      primary: '#2563eb',
+      primaryHover: '#1d4ed8',
       border: 'rgba(255, 255, 255, 0.08)',
-      accent: '#38bdf8',
+      accent: '#0284c7',
       themeColor: '#030712'
     },
-    previewGradient: 'from-slate-950 via-slate-900 to-indigo-950'
+    previewGradient: 'from-slate-950 via-slate-900 to-blue-950'
   },
   midnight: {
     id: 'midnight',

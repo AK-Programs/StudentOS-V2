@@ -77,7 +77,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     // Graceful SVG Monogram Fallback if both image files fail
     return (
       <div
-        className={`flex items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-purple-600 to-indigo-800 text-white font-black shadow-md ${imageClassName}`}
+        className={`flex items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 via-blue-700 to-slate-900 text-white font-black shadow-md border border-blue-400/30 ${imageClassName}`}
         style={{ width: `${dim}px`, height: `${dim}px`, fontSize: `${Math.round(dim * 0.55)}px` }}
         aria-label={BRAND_CONFIG.name}
       >

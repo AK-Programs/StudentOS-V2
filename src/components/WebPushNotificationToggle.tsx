@@ -162,11 +162,11 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
     <div className={`rounded-2xl border transition-all uiverse-card-hover ${
       variant === 'compact'
         ? 'p-4 bg-slate-900/80 border-white/10'
-        : 'p-4 sm:p-5 bg-gradient-to-r from-indigo-950/70 via-slate-900 to-purple-950/70 border-indigo-500/30 shadow-xl'
+        : 'p-4 sm:p-5 bg-gradient-to-r from-slate-900 via-slate-900 to-blue-950/40 border-blue-500/20 shadow-xl'
     }`}>
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-start gap-3.5 min-w-0">
-          <div className="p-2.5 rounded-xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 shrink-0 mt-0.5">
+          <div className="p-2.5 rounded-xl bg-blue-600/15 text-blue-400 border border-blue-500/20 shrink-0 mt-0.5">
             <BellRing className="w-5 h-5" />
           </div>
           <div className="space-y-1 min-w-0">
@@ -174,7 +174,7 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
               <h4 className="text-sm font-black text-white tracking-tight">
                 Enable Web Push Notifications
               </h4>
-              <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-mono text-[9px] font-black uppercase">
+              <span className="px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/25 font-mono text-[9px] font-black uppercase">
                 Firebase FCM
               </span>
               {isEnabled && fcmStatus.permission === 'granted' ? (
@@ -201,7 +201,7 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
         {/* UIverse-inspired Toggle Switch */}
         <div className="flex items-center gap-2.5 shrink-0 self-start sm:self-center">
           {loading && (
-            <RefreshCw className="w-4 h-4 text-indigo-400 animate-spin" />
+            <RefreshCw className="w-4 h-4 text-blue-400 animate-spin" />
           )}
           <button
             type="button"
@@ -210,7 +210,7 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
             disabled={loading}
             onClick={() => handleToggle(!isEnabled)}
             className={`uiverse-switch relative inline-flex h-7 w-13 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-all duration-200 ease-in-out focus:outline-none disabled:opacity-50 ${
-              isEnabled ? 'bg-indigo-600 shadow-[0_0_14px_rgba(99,102,241,0.55)]' : 'bg-slate-800'
+              isEnabled ? 'bg-blue-600 shadow-[0_0_14px_rgba(37,99,235,0.55)]' : 'bg-slate-800'
             }`}
           >
             <span
@@ -230,7 +230,7 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
             ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
             : notice.type === 'error'
               ? 'bg-rose-500/10 border-rose-500/20 text-rose-300'
-              : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-300'
+              : 'bg-blue-500/10 border-blue-500/20 text-blue-300'
         }`}>
           <span>{notice.text}</span>
           <button
@@ -246,7 +246,7 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
       <div className="mt-3 pt-3 border-t border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[10px] font-black uppercase text-slate-400 font-mono">FCM Targeting:</span>
-          <span className="px-2 py-0.5 rounded bg-black/30 border border-white/10 text-indigo-300 font-mono text-[10px] font-bold">
+          <span className="px-2 py-0.5 rounded bg-black/30 border border-white/10 text-blue-300 font-mono text-[10px] font-bold">
             role: {currentUser?.role || 'student'}
           </span>
           {currentUser?.grade && (
@@ -270,7 +270,7 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
           <button
             type="button"
             onClick={handleSendTestPush}
-            className="uiverse-btn-primary px-3 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-500/40 text-indigo-200 hover:text-white text-[11px] font-bold transition-all flex items-center gap-1.5 self-start sm:self-auto shrink-0 cursor-pointer"
+            className="uiverse-btn-primary px-3 py-1 rounded-lg text-blue-100 hover:text-white text-[11px] font-bold transition-all flex items-center gap-1.5 self-start sm:self-auto shrink-0 cursor-pointer"
           >
             <Send className="w-3 h-3" />
             <span>Send FCM Test Alert</span>

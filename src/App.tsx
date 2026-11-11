@@ -149,6 +149,7 @@ import { StudentOSOnboardingModal } from './components/onboarding/StudentOSOnboa
 import { GuidedProductTour } from './components/onboarding/GuidedProductTour';
 import { shouldShowOnboarding } from './lib/onboardingService';
 import { BottomSheet } from './components/ui/BottomSheet';
+import { VeylentraIcon } from './components/ui/VeylentraIcon';
 
 // Stub Integrations
 import {
@@ -909,7 +910,7 @@ export default function App() {
       if (type === 'faculty') base += 'bg-emerald-600 text-white shadow-sm border-emerald-500 font-semibold';
       else if (type === 'attendance') base += 'bg-amber-600 text-white shadow-sm border-amber-500 font-semibold';
       else if (type === 'admin') base += 'bg-rose-600 text-white shadow-sm border-rose-500 font-semibold';
-      else base += 'bg-indigo-600 text-white shadow-sm border-indigo-500 font-semibold';
+      else base += 'bg-blue-600 text-white shadow-sm border-blue-500 font-semibold';
     } else {
       base += 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/40 border-transparent';
     }
@@ -8242,7 +8243,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                               className={getSidebarBtnClass('dashboard')}
                               title="Dashboard Overview"
                             >
-                              <LayoutDashboard className="w-4 h-4 shrink-0" />
+                              <VeylentraIcon name="dashboard" size="sm" />
                               {sidebarOpen && <span className="truncate">Dashboard</span>}
                             </button>
                           )}
@@ -8256,7 +8257,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                   className={getSidebarBtnClass('study_hub')}
                                   title="Study Hub: Flashcards, Tasks & Study Planner"
                                 >
-                                  <Layers className="w-4 h-4 shrink-0" />
+                                  <VeylentraIcon name="study_hub" size="sm" />
                                   {sidebarOpen && (
                                     <div className="flex items-center justify-between flex-1 min-w-0">
                                       <span className="truncate">Study Hub</span>
@@ -8285,7 +8286,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                         }}
                                         className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors cursor-pointer ${
                                           ['study_hub', 'dashboard'].includes(activeTab) && studyHubSubTab === 'dashboard'
-                                            ? 'bg-indigo-500/20 text-indigo-200 font-semibold'
+                                            ? 'bg-blue-600/20 text-blue-200 font-semibold'
                                             : 'text-slate-400 hover:text-white hover:bg-white/5'
                                         }`}
                                       >
@@ -8300,7 +8301,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                         }}
                                         className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors cursor-pointer ${
                                           ['study_hub', 'flashcards'].includes(activeTab) && studyHubSubTab === 'flashcards'
-                                            ? 'bg-indigo-500/20 text-indigo-200 font-semibold'
+                                            ? 'bg-blue-600/20 text-blue-200 font-semibold'
                                             : 'text-slate-400 hover:text-white hover:bg-white/5'
                                         }`}
                                       >
@@ -8319,7 +8320,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                         }}
                                         className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors cursor-pointer ${
                                           ['study_hub', 'tasks'].includes(activeTab) && studyHubSubTab === 'tasks'
-                                            ? 'bg-indigo-500/20 text-indigo-200 font-semibold'
+                                            ? 'bg-blue-600/20 text-blue-200 font-semibold'
                                             : 'text-slate-400 hover:text-white hover:bg-white/5'
                                         }`}
                                       >
@@ -8333,7 +8334,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                         }}
                                         className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors cursor-pointer ${
                                           ['study_hub', 'planner'].includes(activeTab) && studyHubSubTab === 'planner'
-                                            ? 'bg-indigo-500/20 text-indigo-200 font-semibold'
+                                            ? 'bg-blue-600/20 text-blue-200 font-semibold'
                                             : 'text-slate-400 hover:text-white hover:bg-white/5'
                                         }`}
                                       >
@@ -8351,7 +8352,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                               className={getSidebarBtnClass('notes')}
                               title="Lecture Notes"
                             >
-                              <FileText className="w-4 h-4 shrink-0" />
+                              <VeylentraIcon name="notes" size="sm" />
                               {sidebarOpen && <span className="truncate">Lecture Notes</span>}
                             </button>
                           )}
@@ -8364,7 +8365,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('calendar')}
                                 title="Academic Calendar"
                               >
-                                <Calendar className="w-4 h-4 shrink-0" />
+                                <VeylentraIcon name="calendar" size="sm" />
                                 {sidebarOpen && <span className="truncate">Academic Calendar</span>}
                               </button>
                             )}
@@ -8377,7 +8378,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('pomodoro')}
                                 title="Focus Timer"
                               >
-                                <Clock className="w-4 h-4 shrink-0" />
+                                <VeylentraIcon name="target" size="sm" />
                                 {sidebarOpen && <span className="truncate">Focus Timer</span>}
                               </button>
                             )}
@@ -8413,7 +8414,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('whiteboard')}
                                 title="Class Whiteboard"
                               >
-                                <PenTool className="w-4 h-4 shrink-0" />
+                                <PenTool className="w-4 h-4 shrink-0 text-sky-400" />
                                 {sidebarOpen && <span className="truncate">Class Whiteboard</span>}
                               </button>
                             )}
@@ -8423,7 +8424,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                               <button
                                 type="button"
                                 onClick={handleOpenPanelBoard}
-                                className={isPanelBoardOpen ? 'group relative w-full flex items-center transition-all duration-200 rounded-xl border text-left min-w-0 cursor-pointer bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 border-indigo-500/50 gap-3 px-3 py-2.5' : getSidebarBtnClass('panel_board')}
+                                className={isPanelBoardOpen ? 'group relative w-full flex items-center transition-all duration-200 rounded-xl border text-left min-w-0 cursor-pointer bg-blue-600 text-white shadow-lg shadow-blue-600/30 border-blue-500/50 gap-3 px-3 py-2.5' : getSidebarBtnClass('panel_board')}
                                 title="Panel Board Mode"
                               >
                                 <Tv className="w-4 h-4 shrink-0 text-cyan-400" />
@@ -8439,7 +8440,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('ai_teacher')}
                                 title="Byte Chat"
                               >
-                                <Brain className="w-4 h-4 shrink-0" />
+                                <VeylentraIcon name="byte" size="sm" />
                                 {sidebarOpen && <span className="truncate">Byte Chat</span>}
                               </button>
                             )}
@@ -8452,7 +8453,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('materials')}
                                 title="Materials Hub"
                               >
-                                <BookOpen className="w-4 h-4 shrink-0" />
+                                <VeylentraIcon name="materials" size="sm" />
                                 {sidebarOpen && <span className="truncate">Materials Hub</span>}
                               </button>
                             )}
@@ -8465,7 +8466,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('assignments')}
                                 title="Assignment Center"
                               >
-                                <CheckSquare className="w-4 h-4 shrink-0" />
+                                <VeylentraIcon name="check" size="sm" />
                                 {sidebarOpen && <span className="truncate">Assignment Center</span>}
                               </button>
                             )}
@@ -8479,7 +8480,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('homework')}
                                 title="Class Homework"
                               >
-                                <ClipboardList className="w-4 h-4 shrink-0" />
+                                <VeylentraIcon name="homework" size="sm" />
                                 {sidebarOpen && <span className="truncate">Class Homework</span>}
                               </button>
                             )}
@@ -8491,7 +8492,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                               className={getSidebarBtnClass('brain_battle')}
                               title="Brain Battle"
                             >
-                              <Trophy className="w-4 h-4 shrink-0 text-amber-400" />
+                              <VeylentraIcon name="trophy" size="sm" />
                               {sidebarOpen && <span className="truncate">Brain Battle</span>}
                             </button>
                           )}
@@ -8504,7 +8505,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('meet')}
                                 title="Veylentra Meet"
                               >
-                                <Video className="w-4 h-4 shrink-0" />
+                                <VeylentraIcon name="chat" size="sm" />
                                 {sidebarOpen && <span className="truncate">Veylentra Meet</span>}
                               </button>
                             )}
@@ -8539,7 +8540,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('peer_chat')}
                                 title="Global Chat"
                               >
-                                <MessageSquare className="w-4 h-4 shrink-0" />
+                                <VeylentraIcon name="peer_chat" size="sm" />
                                 {sidebarOpen && <span className="truncate">Global Chat</span>}
                               </button>
                             )}
@@ -8551,7 +8552,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('houses')}
                                 title="House Standings"
                               >
-                                <Award className="w-4 h-4 shrink-0" />
+                                <VeylentraIcon name="merit" size="sm" />
                                 {sidebarOpen && <span className="truncate">House Standings</span>}
                               </button>
                             )}
@@ -8563,7 +8564,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('life')}
                                 title="Veylentra Life: Competitions, Clubs, Events & Polls"
                               >
-                                <Compass className="w-4 h-4 shrink-0" />
+                                <VeylentraIcon name="clover" size="sm" />
                                 {sidebarOpen && <span className="truncate">Veylentra Life</span>}
                               </button>
                             )}
@@ -8575,7 +8576,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('sports_activities')}
                                 title="Sports & Activities"
                               >
-                                <Activity className="w-4 h-4 shrink-0" />
+                                <Activity className="w-4 h-4 shrink-0 text-emerald-400" />
                                 {sidebarOpen && <span className="truncate">Sports & Activities</span>}
                               </button>
                             )}
@@ -8587,7 +8588,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('blogs')}
                                 title="Educational Blogs"
                               >
-                                <Globe className="w-4 h-4 shrink-0" />
+                                <Globe className="w-4 h-4 shrink-0 text-blue-400" />
                                 {sidebarOpen && <span className="truncate">Blogs</span>}
                               </button>
                             )}
@@ -8599,7 +8600,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('feedback')}
                                 title="Feedback Board"
                               >
-                                <Send className="w-4 h-4 shrink-0" />
+                                <VeylentraIcon name="send" size="sm" />
                                 {sidebarOpen && <span className="truncate">Feedback Board</span>}
                               </button>
                             )}
@@ -8635,7 +8636,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('analytics')}
                                 title="Performance Analytics"
                               >
-                                <BarChart2 className="w-4 h-4 shrink-0" />
+                                <VeylentraIcon name="analytics" size="sm" />
                                 {sidebarOpen && <span className="truncate">Analytics</span>}
                               </button>
                             )}
@@ -8647,7 +8648,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('substitutes')}
                                 title="Substitute Board"
                               >
-                                <RefreshCw className="w-4 h-4 shrink-0" />
+                                <RefreshCw className="w-4 h-4 shrink-0 text-amber-400" />
                                 {sidebarOpen && <span className="truncate">Substitute Board</span>}
                               </button>
                             )}
@@ -8659,7 +8660,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('profile')}
                                 title="My Profile & Preferences"
                               >
-                                <User className="w-4 h-4 shrink-0" />
+                                <VeylentraIcon name="user" size="sm" />
                                 {sidebarOpen && (
                                   <span className="truncate">
                                     {(effectiveRole || 'student')
@@ -8679,7 +8680,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('parent_portal')}
                                 title="Parental Portal"
                               >
-                                <Shield className="w-4 h-4 shrink-0 text-violet-400" />
+                                <VeylentraIcon name="lock" size="sm" />
                                 {sidebarOpen && <span className="truncate font-semibold">Parental Portal</span>}
                               </button>
                             )}
@@ -8691,7 +8692,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                 className={getSidebarBtnClass('whats_new')}
                                 title="What's New in Veylentra"
                               >
-                                <Zap className="w-4 h-4 shrink-0" />
+                                <VeylentraIcon name="whats_new" size="sm" />
                                 {sidebarOpen && (
                                   <div className="flex items-center justify-between flex-1 min-w-0">
                                     <span className="truncate">What's New</span>
@@ -8728,7 +8729,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                   className={getSidebarBtnClass('attendance_manager', 'attendance')}
                                   title="Attendance Manager"
                                 >
-                                  <CheckCircle className="w-4 h-4 shrink-0" />
+                                  <VeylentraIcon name="attendance" size="sm" />
                                   {sidebarOpen && <span className="truncate">Attendance Manager</span>}
                                 </button>
                               )}
@@ -8741,7 +8742,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                   className={getSidebarBtnClass('admin', 'admin')}
                                   title="Admin Center"
                                 >
-                                  <Shield className="w-4 h-4 shrink-0" />
+                                  <VeylentraIcon name="admin" size="sm" />
                                   {sidebarOpen && <span className="truncate">Admin Center</span>}
                                 </button>
                               )}
@@ -9400,10 +9401,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('attendance_manager')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
-                              <CheckCircle className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="attendance" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">Attendance</span>
@@ -9413,10 +9414,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('homework')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
-                              <BookOpen className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="homework" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">Homework</span>
@@ -9426,10 +9427,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('notes')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
-                              <FileText className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="notes" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">Notes</span>
@@ -9439,10 +9440,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('materials')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
-                              <Folder className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="materials" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">Materials</span>
@@ -9452,10 +9453,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('ai_teacher')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 shrink-0">
-                              <Sparkles className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="byte" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">Byte AI</span>
@@ -14593,12 +14594,12 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
 
             {/* Mobile Bottom Navigation Bar (Phones < 768px & Installed Mobile PWA) */}
             {!presentationMode && activeTab !== 'whiteboard' && (
-              <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-slate-950/90 backdrop-blur-md border-t border-slate-800/80 px-2 pt-1.5 pb-2 safe-area-pb flex items-center justify-around gap-1">
+              <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-slate-950/95 backdrop-blur-md border-t border-slate-800/80 px-2 pt-1.5 pb-2 safe-area-pb flex items-center justify-around gap-1">
                 {[
-                  { id: 'dashboard', label: 'Home', icon: <LayoutDashboard className="w-4 h-4" /> },
-                  { id: 'study_hub', label: 'Study', icon: <Layers className="w-4 h-4" />, badge: dueCardsCount > 0 ? dueCardsCount : 0 },
-                  { id: 'peer_chat', label: 'Chat', icon: <MessageSquare className="w-4 h-4" /> },
-                  { id: 'ai_teacher', label: 'Byte', icon: <Sparkles className="w-4 h-4" /> },
+                  { id: 'dashboard', label: 'Home', icon: <VeylentraIcon name="dashboard" size="sm" /> },
+                  { id: 'study_hub', label: 'Study', icon: <VeylentraIcon name="study_hub" size="sm" />, badge: dueCardsCount > 0 ? dueCardsCount : 0 },
+                  { id: 'peer_chat', label: 'Chat', icon: <VeylentraIcon name="peer_chat" size="sm" /> },
+                  { id: 'ai_teacher', label: 'Byte', icon: <VeylentraIcon name="byte" size="sm" /> },
                 ].map((item) => {
                   const isActive = item.id === 'study_hub'
                     ? ['study_hub', 'tasks', 'planner', 'flashcards'].includes(activeTab)
@@ -14610,7 +14611,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                       onClick={() => handleTabSelect(item.id)}
                       className={`relative flex flex-col items-center justify-center py-1.5 px-2 rounded-lg flex-1 min-w-0 min-h-[44px] transition-colors cursor-pointer ${
                         isActive
-                          ? 'text-white bg-indigo-600 font-semibold shadow-xs'
+                          ? 'text-white bg-blue-600 font-semibold shadow-xs'
                           : 'text-slate-400 hover:text-slate-200 font-medium'
                       }`}
                     >
@@ -14628,7 +14629,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                   type="button"
                   onClick={() => setSidebarOpen(true)}
                   className={`flex flex-col items-center justify-center py-1.5 px-2 rounded-lg flex-1 min-w-0 min-h-[44px] transition-colors cursor-pointer ${
-                    sidebarOpen ? 'text-white bg-indigo-600 font-semibold' : 'text-slate-400 hover:text-slate-200 font-medium'
+                    sidebarOpen ? 'text-white bg-blue-600 font-semibold' : 'text-slate-400 hover:text-slate-200 font-medium'
                   }`}
                 >
                   <Menu className="w-4 h-4 shrink-0" />
