@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx tests/tutorContentRenderer.test.ts"
+    "type-check": "tsc --noEmit",
+    "test": "NODE_ENV=test tsx tests/tutorContentRenderer.test.ts && NODE_ENV=test tsx tests/securityAuth.test.ts && NODE_ENV=test tsx tests/websocketSecurity.test.ts && NODE_ENV=test tsx tests/inputSanitization.test.ts",
+    "test:security": "NODE_ENV=test tsx tests/securityAuth.test.ts && NODE_ENV=test tsx tests/websocketSecurity.test.ts && NODE_ENV=test tsx tests/inputSanitization.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

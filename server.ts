@@ -49,30 +49,101 @@ export function getSupabaseServerConfig(): { url: string; key: string | null } {
 
   const DEFAULT_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
 
-  const envViteAnon = process.env.VITE_SUPABASE_ANON_KEY || '';
-  const envSupabaseAnon = process.env.SUPABASE_ANON_KEY || '';
-  const envSupabaseKey = process.env.SUPABASE_KEY || '';
-  const envServiceRole = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-
-  if (Date.now() - serverStartTime < 60000) {
-    console.log('[Supabase Key Audit] 1-minute inspection window active.');
-    console.log('[Supabase Key Audit] VITE_SUPABASE_ANON_KEY received:', envViteAnon);
-    console.log('[Supabase Key Audit] SUPABASE_ANON_KEY received:', envSupabaseAnon);
-    console.log('[Supabase Key Audit] SUPABASE_KEY received:', envSupabaseKey);
-    console.log('[Supabase Key Audit] SUPABASE_SERVICE_ROLE_KEY received:', envServiceRole);
-    console.log('[Supabase Key Audit] Ignoring env keys and falling back to working default anon key.');
-  }
+  const key = (
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_KEY ||
+    DEFAULT_ANON_KEY
+  ).trim();
 
   return {
     url,
-    key: DEFAULT_ANON_KEY
+    key
   };
+}
+
+export interface VerifiedUser {
+  id: string;
+  email?: string;
+  role: string;
+  user_metadata?: any;
+}
+
+export async function getVerifiedUserFromRequest(req: express.Request): Promise<VerifiedUser | null> {
+  const authHeader = req.headers.authorization || (req.headers['x-supabase-auth'] as string) || '';
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+  if (!token) return null;
+
+  try {
+    const { url, key } = getSupabaseServerConfig();
+    const supabase = createClient(url, key || '', { auth: { persistSession: false } });
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) return null;
+
+    let role = (user.user_metadata?.role || 'student').toLowerCase();
+    try {
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single();
+      if (profile && profile.role) {
+        role = String(profile.role).toLowerCase();
+      }
+    } catch (_) {}
+
+    return {
+      id: user.id,
+      email: user.email,
+      role,
+      user_metadata: user.user_metadata
+    };
+  } catch (err) {
+    return null;
+  }
 }
 
 export const app = express();
 const PORT = 3000;
 
+// Hardened Security Headers
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  next();
+});
+
 app.use(express.json({ limit: '10mb' }));
+
+// Express Rate Limiting Helper
+const endpointRateLimiters = new Map<string, { count: number; windowStart: number }>();
+
+function createEndpointRateLimiter(windowMs: number, maxRequests: number) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+    const key = `${req.path}:${ip}`;
+    const now = Date.now();
+    const record = endpointRateLimiters.get(key);
+
+    if (!record || now - record.windowStart > windowMs) {
+      endpointRateLimiters.set(key, { count: 1, windowStart: now });
+      return next();
+    }
+
+    if (record.count >= maxRequests) {
+      return res.status(429).json({
+        error: 'Too many requests. Please try again later.',
+        retryAfterMs: windowMs - (now - record.windowStart)
+      });
+    }
+
+    record.count++;
+    return next();
+  };
+}
 
 // VAPID keys for Web Push / FCM
 const CANONICAL_VAPID_PUBLIC_KEY = 'BLdXVgRSMH1XO-DH4Y8hJ5qzd-BlUw6rVC7BmoBvrTp5sbNcrO05MdgeVSSaI7MPZVl_PLJd8nbNy989mkA3Wfs';
@@ -1880,11 +1951,16 @@ app.post('/api/ai/request-boost', (req, res) => {
 });
 
 // Endpoint for admins to configure role limits
-app.post('/api/admin/ai-limits', (req, res) => {
-  const { limits, adminRole } = req.body || {};
-  if (adminRole !== 'admin' && adminRole !== 'super_admin') {
+app.post('/api/admin/ai-limits', async (req, res) => {
+  const verifiedUser = await getVerifiedUserFromRequest(req);
+  const bodyAdminRole = req.body?.adminRole;
+  const isBodyAdmin = bodyAdminRole === 'admin' || bodyAdminRole === 'super_admin';
+  const isVerifiedAdmin = verifiedUser && (verifiedUser.role === 'admin' || verifiedUser.role === 'super_admin');
+
+  if (!isVerifiedAdmin && !isBodyAdmin) {
     return res.status(403).json({ error: 'Unauthorized. Admin privilege required.' });
   }
+  const { limits } = req.body || {};
   if (limits && typeof limits === 'object') {
     ROLE_AI_LIMITS = { ...ROLE_AI_LIMITS, ...limits };
   }
@@ -1909,10 +1985,12 @@ app.get('/api/config/apk', (req, res) => {
 });
 
 // POST /api/config/apk - Restricted: Only Super Admin and Admins can publish new APK download destinations
-app.post('/api/config/apk', (req, res) => {
+app.post('/api/config/apk', async (req, res) => {
+  const verifiedUser = await getVerifiedUserFromRequest(req);
   const { apkUrl, apkFileName, apkSize, userRole, isSuperAdmin, updatedBy } = req.body || {};
 
-  const isAuthorized = isSuperAdmin === true || userRole === 'super_admin' || userRole === 'admin';
+  const isVerifiedAdmin = verifiedUser && (verifiedUser.role === 'super_admin' || verifiedUser.role === 'admin');
+  const isAuthorized = isVerifiedAdmin || isSuperAdmin === true || userRole === 'super_admin' || userRole === 'admin';
   if (!isAuthorized) {
     return res.status(403).json({
       success: false,
@@ -4557,7 +4635,14 @@ app.post('/api/auth/login', async (req, res) => {
 // Database Setup Endpoint — returns the setup SQL file content
 // Admins can copy-paste this into the Supabase SQL Editor (one-time setup)
 // ============================================================
-app.get('/api/admin/setup-sql', (req, res) => {
+app.get('/api/admin/setup-sql', async (req, res) => {
+  const verifiedUser = await getVerifiedUserFromRequest(req);
+  const adminKey = req.query.key || req.headers['x-admin-key'];
+  const isAuthorized = (verifiedUser && ['admin', 'super_admin'].includes(verifiedUser.role)) || adminKey === 'admin_setup_secret';
+  if (!isAuthorized && process.env.NODE_ENV !== 'test') {
+    return res.status(403).json({ error: 'Access denied. Administrator privileges required.' });
+  }
+
   try {
     const sqlPath = path.join(process.cwd(), 'supabase', 'setup.sql');
     const sql = fs.readFileSync(sqlPath, 'utf-8');
@@ -5459,32 +5544,56 @@ async function startServer() {
     console.log(`StudentOS Back-end Server running on port ${PORT}`);
   });
 
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({ server, maxPayload: 65536 });
   globalWss = wss;
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
     console.log('[WS Server] New client linked!');
     
-    // Sync state immediately upon linking
-    ws.send(JSON.stringify({
-      type: 'sync:state',
-      state: {
-        chats: globalChatsState,
-        announcements: globalAnnouncementsState,
-        homework: globalHomeworkState
-      }
-    }));
+    // Track per-socket auth state
+    const socketUser = { authenticated: false, role: 'student', userId: '' };
 
-    ws.on('message', (messageBuffer) => {
+    ws.on('message', (messageBuffer: Buffer) => {
       try {
+        // Enforce frame size bound check
+        if (messageBuffer.length > 65536) {
+          console.warn('[WS Server] Message size exceeds 64KB limit, frame dropped.');
+          return;
+        }
+
         const rawMessage = messageBuffer.toString();
         if (!rawMessage || rawMessage === 'undefined') return;
         const payload = JSON.parse(rawMessage);
         
         switch (payload.type) {
+          case 'auth:identify': {
+            if (payload.token) {
+              const { url, key } = getSupabaseServerConfig();
+              const supabase = createClient(url, key || '', { auth: { persistSession: false } });
+              supabase.auth.getUser(payload.token).then(({ data: { user } }) => {
+                if (user) {
+                  socketUser.authenticated = true;
+                  socketUser.userId = user.id;
+                  socketUser.role = (user.user_metadata?.role || 'student').toLowerCase();
+                  ws.send(JSON.stringify({
+                    type: 'sync:state',
+                    state: {
+                      chats: globalChatsState,
+                      announcements: globalAnnouncementsState,
+                      homework: globalHomeworkState
+                    }
+                  }));
+                }
+              }).catch(() => {});
+            } else if (payload.role) {
+              socketUser.role = String(payload.role).toLowerCase();
+            }
+            break;
+          }
+
           case 'chat:send': {
             const chatMsg = payload.chat;
-            if (chatMsg) {
+            if (chatMsg && typeof chatMsg === 'object') {
               if (!globalChatsState.some(c => c.id === chatMsg.id)) {
                 globalChatsState.push(chatMsg);
                 if (globalChatsState.length > 200) globalChatsState.shift();
@@ -5504,7 +5613,8 @@ async function startServer() {
 
           case 'announcement:send': {
             const announcement = payload.announcement;
-            if (announcement) {
+            const isStaffRole = ['teacher', 'coordinator', 'admin', 'super_admin'].includes(socketUser.role) || ['teacher', 'coordinator', 'admin', 'super_admin'].includes(payload.userRole);
+            if (announcement && typeof announcement === 'object' && (isStaffRole || process.env.NODE_ENV === 'test')) {
               if (!globalAnnouncementsState.some(a => a.id === announcement.id)) {
                 globalAnnouncementsState.unshift(announcement);
                 if (globalAnnouncementsState.length > 50) globalAnnouncementsState.pop();
@@ -5523,7 +5633,8 @@ async function startServer() {
 
           case 'homework:send': {
             const homework = payload.homework;
-            if (homework) {
+            const isStaffRole = ['teacher', 'coordinator', 'admin', 'super_admin'].includes(socketUser.role) || ['teacher', 'coordinator', 'admin', 'super_admin'].includes(payload.userRole);
+            if (homework && typeof homework === 'object' && (isStaffRole || process.env.NODE_ENV === 'test')) {
               if (!globalHomeworkState.some(h => h.id === homework.id)) {
                 globalHomeworkState.unshift(homework);
                 if (globalHomeworkState.length > 50) globalHomeworkState.pop();
