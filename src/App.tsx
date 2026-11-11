@@ -9131,12 +9131,12 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                       soundService.playAppearSound();
                       setShowNotifCenter(!showNotifCenter);
                     }}
-                    className="relative p-2 rounded-lg bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors flex items-center justify-center cursor-pointer"
+                    className="relative p-2 rounded-lg bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors flex items-center justify-center cursor-pointer shadow-sm"
                     title="Academic Notification Hub"
                   >
-                    <Bell className="w-4 h-4" />
+                    <VeylentraIcon name="notification" size={18} />
                     {notifications.filter(n => !n.isRead).length > 0 && (
-                      <span className="absolute -top-1 -right-1 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-indigo-500 text-[9px] font-bold text-white font-mono leading-none">
+                      <span className="absolute -top-1 -right-1 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-blue-600 text-[9px] font-bold text-white font-mono leading-none shadow-sm">
                         {notifications.filter(n => !n.isRead).length}
                       </span>
                     )}
@@ -9471,10 +9471,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('attendance_manager')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-                              <CheckCircle className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="attendance" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">Attendance</span>
@@ -9484,10 +9484,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('homework')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-                              <BookOpen className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="homework" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">Homework</span>
@@ -9497,10 +9497,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('notes')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-                              <FileText className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="notes" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">Notes</span>
@@ -9510,10 +9510,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('materials')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-                              <Folder className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="materials" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">Materials</span>
@@ -9523,10 +9523,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('faculty')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-                              <GraduationCap className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="study_suite" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">Faculty</span>
@@ -9541,10 +9541,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('parent_portal')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shrink-0">
-                              <Users2 className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="user" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">My Children</span>
@@ -9554,10 +9554,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('parent_portal')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shrink-0">
-                              <CheckCircle className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="attendance" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">Attendance</span>
@@ -9567,10 +9567,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('parent_portal')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shrink-0">
-                              <BookOpen className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="homework" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">Homework</span>
@@ -9580,10 +9580,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('whats_new')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shrink-0">
-                              <Bell className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="notification" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">Notices</span>
@@ -9598,10 +9598,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('attendance_manager')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
-                              <CheckCircle className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="attendance" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">Attendance</span>
@@ -9611,10 +9611,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('homework')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
-                              <BookOpen className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="homework" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">Homework</span>
@@ -9624,10 +9624,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('notes')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
-                              <FileText className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="notes" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">Notes</span>
@@ -9637,10 +9637,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect('materials')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
-                              <Folder className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="materials" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">Materials</span>
@@ -9650,10 +9650,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <button
                             type="button"
                             onClick={() => handleTabSelect(effectiveRole === 'coordinator' ? 'whats_new' : 'admin')}
-                            className="p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
+                            className="p-3.5 sm:p-4 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 hover:bg-slate-800/50 transition-colors flex flex-col items-start justify-between gap-3 text-left cursor-pointer group shadow-sm"
                           >
-                            <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
-                              <Shield className="w-4 h-4" />
+                            <div className="w-9 h-9 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center shrink-0">
+                              <VeylentraIcon name="settings" size="sm" />
                             </div>
                             <div className="min-w-0">
                               <span className="text-xs font-semibold text-slate-100 block truncate">

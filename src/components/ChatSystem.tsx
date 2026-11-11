@@ -27,6 +27,7 @@ import { presenceService, UserPresence } from '../lib/presenceService';
 import { soundService } from '../lib/soundService';
 import { PublicProfileModal } from './PublicProfileModal';
 import { getVerificationStatus } from '../lib/verification';
+import { VeylentraIcon } from './ui/VeylentraIcon';
 
 interface ChatSystemProps {
   currentUser: UserProfile | null;
@@ -2260,20 +2261,20 @@ export const ChatSystem: React.FC<ChatSystemProps> = ({
           <div className="flex items-center gap-2">
             {/* Call Buttons for Direct Messages */}
             {isDirectMessage && dmOtherUser && (
-              <div className="flex items-center gap-1.5 bg-slate-950/50 p-1 rounded-2xl border border-white/5 mr-1">
+              <div className="flex items-center gap-1.5 bg-slate-950/60 p-1 rounded-2xl border border-white/10 mr-1 shadow-sm">
                 <button
                   onClick={() => handleStartCall(dmOtherUser!, 'audio')}
                   title="Voice Call"
-                  className="p-2 hover:bg-emerald-600/20 text-emerald-400 rounded-xl transition-all active:scale-90"
+                  className="p-1.5 hover:bg-emerald-600/20 text-emerald-400 rounded-xl transition-all active:scale-95 flex items-center justify-center cursor-pointer"
                 >
-                  <Phone className="w-4 h-4" />
+                  <VeylentraIcon name="call" size={18} />
                 </button>
                 <button
                   onClick={() => handleStartCall(dmOtherUser!, 'video')}
                   title="Video Call"
-                  className="p-2 hover:bg-indigo-600/20 text-indigo-400 rounded-xl transition-all active:scale-90"
+                  className="p-1.5 hover:bg-blue-600/20 text-blue-400 rounded-xl transition-all active:scale-95 flex items-center justify-center cursor-pointer"
                 >
-                  <Video className="w-4 h-4" />
+                  <VeylentraIcon name="video_call" size={18} />
                 </button>
               </div>
             )}
