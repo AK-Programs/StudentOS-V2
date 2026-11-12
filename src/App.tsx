@@ -120,6 +120,9 @@ import { SyllabusStudyPlanner } from './components/SyllabusStudyPlanner';
 import { StudyHubDashboard } from './components/StudyHubDashboard';
 import { StudyHubTaskManager } from './components/StudyHubTaskManager';
 import { OfficialTimetableViewer } from './components/OfficialTimetableViewer';
+import { StudentExperienceWorkspace } from './components/StudentExperienceWorkspace';
+import { FacultyExperienceWorkspace } from './components/FacultyExperienceWorkspace';
+import { ByteOrionAssistantModal, ByteReminderItem } from './components/ByteOrionAssistantModal';
 import { ReminderService } from './lib/reminderService';
 import { ProfessionalTabDropdown } from './components/ProfessionalTabDropdown';
 import { getStoredCards } from './lib/flashcardStorage';
@@ -1775,6 +1778,10 @@ export default function App() {
   // Interactive Quiz States
   const [quizSubject, setQuizSubject] = useState<string>('Physics');
   const [quizStarted, setQuizStarted] = useState<boolean>(false);
+
+  // Byte & Orion Assistant Selector Modal
+  const [isByteOrionModalOpen, setIsByteOrionModalOpen] = useState<boolean>(false);
+  const [byteOrionModalMode, setByteOrionModalMode] = useState<'select' | 'byte' | 'orion'>('select');
   const [quizCurrentIndex, setQuizCurrentIndex] = useState<number>(0);
   const [quizSelectedOption, setQuizSelectedOption] = useState<number | null>(null);
   const [quizSubmitted, setQuizSubmitted] = useState<boolean>(false);
@@ -9284,8 +9291,24 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                 </div>
               )}
 
-              {/* Tab 1: Dashboard View */}
-              {activeTab === 'dashboard' && (
+              {/* Tab 1: Dashboard View / Modern Student Experience 2.0 */}
+              {activeTab === 'dashboard' && effectiveRole === 'student' && (
+                <StudentExperienceWorkspace
+                  currentUser={currentUser}
+                  effectiveRole={effectiveRole}
+                  homeworkList={homeworkList}
+                  tasks={tasks}
+                  announcements={announcements}
+                  onNavigateTab={handleTabSelect}
+                  onOpenOrionFull={(query) => {
+                    setIsJarvisActive(true);
+                  }}
+                  showNotification={showNotification}
+                />
+              )}
+
+              {/* General / Faculty / Admin Dashboard View */}
+              {activeTab === 'dashboard' && effectiveRole !== 'student' && (
                 <div className="space-y-6 animate-fadeIn">
                   
                   {/* Status Banner for Pending Requests */}
@@ -9343,7 +9366,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <span className="capitalize">
                             {effectiveRole?.replace('_', ' ')}
                           </span>
-                          {(effectiveRole === 'student' || currentUser.grade) && (
+                          {((effectiveRole as string) === 'student' || Boolean(currentUser.grade)) && (
                             <>
                               <span aria-hidden="true" className="text-slate-600">·</span>
                               <span>
@@ -9396,7 +9419,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                       </h2>
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3.5">
-                      {effectiveRole === 'student' && (
+                      {(effectiveRole as string) === 'student' && (
                         <>
                           <button
                             type="button"
@@ -14268,8 +14291,21 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                 activeTab={activeTab}
               />
 
-              {/* Tab 9: Faculty Center — Teacher Interface */}
-              {activeTab === 'faculty' && effectiveRole === 'teacher' && (() => {
+              {/* Tab 9: Modern Faculty Center 2.0 (Teacher & Coordinator Workspaces) */}
+              {activeTab === 'faculty' && ['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole) && (
+                <FacultyExperienceWorkspace
+                  currentUser={currentUser}
+                  effectiveRole={effectiveRole}
+                  homeworkList={homeworkList}
+                  announcements={announcements}
+                  onNavigateTab={handleTabSelect}
+                  onOpenOrionFull={(query) => {
+                    setIsJarvisActive(true);
+                  }}
+                  showNotification={showNotification}
+                />
+              )}
+              {false && activeTab === 'faculty' && effectiveRole === 'teacher' && (() => {
                 const assignedGradesList = currentUser.assignedGrades && currentUser.assignedGrades.length > 0
                   ? currentUser.assignedGrades
                   : [currentUser.grade || 'Grade 10'];
@@ -15121,6 +15157,65 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
           announcements={announcements}
           dueCardsCount={dueCardsCount}
           onNavigateTab={handleTabSelect}
+          onOpenByteOrionModal={(mode) => {
+            setByteOrionModalMode(mode || 'select');
+            setIsByteOrionModalOpen(true);
+          }}
+        />
+      )}
+
+      {/* 3-Second Long Press Byte / Orion Assistant Modal */}
+      {isByteOrionModalOpen && currentUser && (
+        <ByteOrionAssistantModal
+          isOpen={isByteOrionModalOpen}
+          onClose={() => setIsByteOrionModalOpen(false)}
+          initialMode={byteOrionModalMode}
+          currentUser={currentUser}
+          effectiveRole={effectiveRole}
+          onNavigateTab={handleTabSelect}
+          onOpenOrionFull={(query) => {
+            setIsJarvisActive(true);
+          }}
+          showNotification={showNotification}
+          reminders={(() => {
+            const list: ByteReminderItem[] = [];
+            const userIdentifier = currentUser.uid || currentUser.email || '';
+            const pendingHw = homeworkList.filter(h => !(h.completedList || []).includes(userIdentifier));
+            pendingHw.slice(0, 3).forEach(h => {
+              list.push({
+                id: `hw-${h.id}`,
+                title: `${h.subject || 'Class'}: ${h.title}`,
+                subtitle: `Due: ${h.dueDate || 'Soon'}`,
+                type: 'assignment',
+                actionLabel: 'View Assignment',
+                actionTab: 'homework'
+              });
+            });
+
+            if (tasks.some(t => !t.completed)) {
+              list.push({
+                id: 'tasks-reminder',
+                title: 'Pending study planner tasks',
+                subtitle: 'Scheduled in your planner',
+                type: 'task',
+                actionLabel: 'Open Planner',
+                actionTab: 'study_hub'
+              });
+            }
+
+            announcements.slice(0, 2).forEach(a => {
+              list.push({
+                id: `ann-${a.id}`,
+                title: a.title,
+                subtitle: 'School Circular',
+                type: 'announcement',
+                actionLabel: 'Open Circular',
+                actionTab: 'whats_new'
+              });
+            });
+
+            return list;
+          })()}
         />
       )}
 

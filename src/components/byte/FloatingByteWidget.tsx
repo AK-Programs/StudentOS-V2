@@ -35,6 +35,7 @@ interface FloatingByteWidgetProps {
   announcements?: any[];
   dueCardsCount?: number;
   onNavigateTab: (tabId: string) => void;
+  onOpenByteOrionModal?: (initialMode?: 'select' | 'byte' | 'orion') => void;
 }
 
 interface ByteNudge {
@@ -64,7 +65,8 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
   homeworkList = [],
   announcements = [],
   dueCardsCount = 0,
-  onNavigateTab
+  onNavigateTab,
+  onOpenByteOrionModal
 }) => {
   if (!currentUser) {
     return null;
@@ -144,7 +146,52 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
   // Completed tasks count tracker to trigger celebratory nod
   const prevCompletedTasksCount = useRef<number>(tasks.filter(t => t.completed).length);
 
-  // Check if current tab is one of the allowed tabs
+  // Long press timer (approx 3 seconds) for Byte/Orion selection modal
+  const longPressTimerRef = useRef<any>(null);
+  const [isPressing, setIsPressing] = useState<boolean>(false);
+  const [pressProgress, setPressProgress] = useState<number>(0);
+  const pressIntervalRef = useRef<any>(null);
+  const isLongPressTriggeredRef = useRef<boolean>(false);
+
+  const startPressTimer = () => {
+    isLongPressTriggeredRef.current = false;
+    setIsPressing(true);
+    setPressProgress(0);
+    const startTime = Date.now();
+    const duration = 2800; // ~3 seconds
+
+    pressIntervalRef.current = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(100, Math.round((elapsed / duration) * 100));
+      setPressProgress(progress);
+    }, 50);
+
+    longPressTimerRef.current = setTimeout(() => {
+      isLongPressTriggeredRef.current = true;
+      setIsPressing(false);
+      setPressProgress(0);
+      clearInterval(pressIntervalRef.current);
+      soundService.playButtonClick();
+      if (onOpenByteOrionModal) {
+        onOpenByteOrionModal('select');
+      }
+    }, duration);
+  };
+
+  const cancelPressTimer = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (pressIntervalRef.current) {
+      clearInterval(pressIntervalRef.current);
+      pressIntervalRef.current = null;
+    }
+    setIsPressing(false);
+    setPressProgress(0);
+  };
+
+  // Check if current tab is one of the allowed tabs (supports student, study, and faculty)
   const isAllowedTab = useMemo(() => {
     const allowed = [
       'dashboard',
@@ -156,7 +203,12 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
       'homework',
       'assignment_center',
       'whats_new',
-      'whats-new'
+      'whats-new',
+      'faculty',
+      'academics',
+      'attendance_manager',
+      'gradebook',
+      'classes'
     ];
     return allowed.includes(activeTab);
   }, [activeTab]);
@@ -224,10 +276,64 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
     });
   };
 
-  // --- RETENTION ENGINE: Pick the single highest-priority short update ---
+  // --- RETENTION ENGINE: Pick the single highest-priority short update based on role ---
   useEffect(() => {
     const today = getTodayString();
     const studentName = currentUser?.name?.split(' ')[0] || 'Friend';
+    const role = (currentUser?.role || 'student').toLowerCase();
+
+    // =========================================================================
+    // FACULTY / TEACHER SPECIFIC NUDGES
+    // =========================================================================
+    if (role === 'teacher') {
+      const assignedGrades = currentUser?.assignedGrades || [currentUser?.grade || 'Grade 10'];
+      const teacherHw = homeworkList.filter(h => assignedGrades.includes(h.classGrade) || h.givenBy === currentUser?.name);
+      const pendingSubmissions = teacherHw.reduce((acc, h) => acc + (h.completedList ? h.completedList.length : 0), 0);
+
+      if (pendingSubmissions > 0 && !shownSessionIds.has(`teacher-sub-${pendingSubmissions}`)) {
+        const nudge: ByteNudge = {
+          id: `teacher-sub-${pendingSubmissions}`,
+          type: 'task',
+          text: `${pendingSubmissions} student submission${pendingSubmissions > 1 ? 's are' : ' is'} awaiting review.`,
+          actionLabel: 'Review submissions',
+          actionTab: 'assignments',
+          mood: 'wave'
+        };
+        setActiveNudge(nudge);
+        return;
+      }
+
+      if (!shownSessionIds.has('teacher-attendance-check')) {
+        const nudge: ByteNudge = {
+          id: 'teacher-attendance-check',
+          type: 'task',
+          text: "Record today's classroom attendance for your cohort.",
+          actionLabel: 'Take attendance',
+          actionTab: 'attendance_manager',
+          mood: 'idle'
+        };
+        setActiveNudge(nudge);
+        return;
+      }
+    }
+
+    // =========================================================================
+    // COORDINATOR SPECIFIC NUDGES
+    // =========================================================================
+    if (role === 'coordinator') {
+      if (!shownSessionIds.has('coord-schedule-review')) {
+        const nudge: ByteNudge = {
+          id: 'coord-schedule-review',
+          type: 'task',
+          text: 'Academic timetable & classroom coverage review active.',
+          actionLabel: 'Open timetable',
+          actionTab: 'timetable',
+          mood: 'wave'
+        };
+        setActiveNudge(nudge);
+        return;
+      }
+    }
 
     // 1. Priority A: Homework due today (Unfinished)
     const dueTodayHw = homeworkList.find(h => {
@@ -502,37 +608,85 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
           )}
 
           {/* =========================================================
-              MINIMIZED MODE: Cute Compact 3D Floating Bubble
+              MINIMIZED MODE: Cute Compact 3D Floating Bubble with Long-Press Selector
           ========================================================== */}
           {isMinimized && (
-            <motion.button
-              key="minimized"
-              initial={{ scale: 0.8, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.8, opacity: 0 }}
-              whileHover={{ scale: 1.06 }}
-              whileTap={{ scale: 0.94 }}
-              onClick={() => handleToggleMinimize(false)}
-              className="pointer-events-auto relative w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-slate-950/90 backdrop-blur-xl border border-cyan-500/30 p-0 flex items-center justify-center shadow-[0_8px_30px_rgb(6,182,212,0.25)] hover:border-cyan-400 transition-colors cursor-pointer group"
-              title="Open Byte · 3D Study Buddy"
-            >
-              {/* Subtle ambient pulse ring */}
-              <div className="absolute inset-0 rounded-full bg-cyan-500/10 group-hover:bg-cyan-500/20 transition-colors" />
-
-              {/* 3D Byte Head Canvas */}
-              <div className="relative w-full h-full flex items-center justify-center">
-                <Byte3DCanvas
-                  size={58}
-                  mood={currentMood}
-                  interactiveGaze={true}
-                />
-              </div>
-
-              {/* Notification Badge if urgent homework or due card */}
-              {(dueCardsCount > 0 || homeworkList.some(h => h.dueDate?.toLowerCase().includes('today'))) && (
-                <span className="absolute top-0 right-0 w-3.5 h-3.5 rounded-full bg-rose-500 border-2 border-slate-950" />
+            <div className="relative">
+              {/* Press & Hold 3-second progress indicator ring */}
+              {isPressing && (
+                <div className="absolute -inset-1.5 rounded-full pointer-events-none z-10 flex items-center justify-center">
+                  <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
+                    <circle
+                      cx="50"
+                      cy="50"
+                      r="46"
+                      fill="none"
+                      stroke="rgba(6, 182, 212, 0.2)"
+                      strokeWidth="6"
+                    />
+                    <circle
+                      cx="50"
+                      cy="50"
+                      r="46"
+                      fill="none"
+                      stroke="#06b6d4"
+                      strokeWidth="6"
+                      strokeDasharray="289"
+                      strokeDashoffset={289 - (289 * pressProgress) / 100}
+                      strokeLinecap="round"
+                      className="transition-all duration-75"
+                    />
+                  </svg>
+                  <span className="absolute -top-6 text-[10px] font-bold text-cyan-300 bg-slate-950/90 px-2 py-0.5 rounded-full border border-cyan-500/30 whitespace-nowrap">
+                    Hold for Orion/Byte...
+                  </span>
+                </div>
               )}
-            </motion.button>
+
+              <motion.button
+                key="minimized"
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: isPressing ? 1.1 : 1, opacity: 1 }}
+                exit={{ scale: 0.8, opacity: 0 }}
+                whileHover={{ scale: 1.06 }}
+                whileTap={{ scale: 0.94 }}
+                onMouseDown={startPressTimer}
+                onMouseUp={() => {
+                  cancelPressTimer();
+                  if (!isLongPressTriggeredRef.current) {
+                    handleToggleMinimize(false);
+                  }
+                }}
+                onMouseLeave={cancelPressTimer}
+                onTouchStart={startPressTimer}
+                onTouchEnd={() => {
+                  cancelPressTimer();
+                  if (!isLongPressTriggeredRef.current) {
+                    handleToggleMinimize(false);
+                  }
+                }}
+                onTouchCancel={cancelPressTimer}
+                className="pointer-events-auto relative w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-slate-950/90 backdrop-blur-xl border border-cyan-500/30 p-0 flex items-center justify-center shadow-[0_8px_30px_rgb(6,182,212,0.25)] hover:border-cyan-400 transition-colors cursor-pointer group"
+                title="Click to open Byte · Hold 3s for Byte / Orion selection"
+              >
+                {/* Subtle ambient pulse ring */}
+                <div className="absolute inset-0 rounded-full bg-cyan-500/10 group-hover:bg-cyan-500/20 transition-colors" />
+
+                {/* 3D Byte Head Canvas */}
+                <div className="relative w-full h-full flex items-center justify-center">
+                  <Byte3DCanvas
+                    size={58}
+                    mood={currentMood}
+                    interactiveGaze={true}
+                  />
+                </div>
+
+                {/* Notification Badge if urgent homework or due card */}
+                {(dueCardsCount > 0 || homeworkList.some(h => h.dueDate?.toLowerCase().includes('today'))) && (
+                  <span className="absolute top-0 right-0 w-3.5 h-3.5 rounded-full bg-rose-500 border-2 border-slate-950" />
+                )}
+              </motion.button>
+            </div>
           )}
         </AnimatePresence>
       </div>
