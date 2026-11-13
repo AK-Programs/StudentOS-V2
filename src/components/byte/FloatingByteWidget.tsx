@@ -39,6 +39,8 @@ interface FloatingByteWidgetProps {
   effectiveRole?: string;
   tasks?: Task[];
   homeworkList?: Homework[];
+  submissions?: any[];
+  assessments?: any[];
   announcements?: any[];
   dueCardsCount?: number;
   onNavigateTab: (tabId: string) => void;
@@ -62,6 +64,8 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
   effectiveRole,
   tasks = [],
   homeworkList = [],
+  submissions = [],
+  assessments = [],
   announcements = [],
   dueCardsCount = 0,
   onNavigateTab,
@@ -221,11 +225,13 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
         currentUser,
         effectiveRole: activeRole,
         homeworkList,
+        submissions,
+        assessments,
         tasks,
         announcements,
         dueCardsCount
       }),
-    [currentUser, activeRole, homeworkList, tasks, announcements, dueCardsCount, reminderVersion]
+    [currentUser, activeRole, homeworkList, submissions, assessments, tasks, announcements, dueCardsCount, reminderVersion]
   );
 
   const topReminder = activeReminders[0] || null;

@@ -47,8 +47,13 @@ export function isUserEligibleForNotification(
   }
 
   // 3. Class/Grade matching
-  if (targetClass && targetClass !== 'all' && userGrade) {
-    const normTargetC = targetClass.toString().toLowerCase().replace(/class|grade|\s+/g, '');
+  const rawTargetClass = String(targetClass || 'all').trim().toLowerCase();
+  const isAllGrades = !rawTargetClass || rawTargetClass === 'all' || rawTargetClass === 'all grades';
+  if (!isAllGrades) {
+    if (!userGrade) {
+      return false;
+    }
+    const normTargetC = rawTargetClass.replace(/class|grade|\s+/g, '');
     const normUserC = userGrade.toString().toLowerCase().replace(/class|grade|\s+/g, '');
     if (!normUserC.includes(normTargetC) && !normTargetC.includes(normUserC)) {
       return false;
@@ -56,10 +61,14 @@ export function isUserEligibleForNotification(
   }
 
   // 4. Section matching
-  if (targetSection && targetSection !== 'all' && targetSection !== 'All Sections' && userSection) {
-    const normTargetS = targetSection.toString().toLowerCase().trim();
+  const rawTargetSec = String(targetSection || 'all').trim().toLowerCase();
+  const isAllSections = !rawTargetSec || rawTargetSec === 'all' || rawTargetSec === 'all sections';
+  if (!isAllSections) {
+    if (!userSection) {
+      return false;
+    }
     const normUserS = userSection.toString().toLowerCase().trim();
-    if (normUserS !== normTargetS && !normUserS.includes(normTargetS)) {
+    if (normUserS !== rawTargetSec && !normUserS.includes(rawTargetSec)) {
       return false;
     }
   }
@@ -298,23 +307,39 @@ export async function triggerBrowserPushNotification(
   }
 }
 
+const recentDedupeKeys = new Map<string, number>();
+
 /**
  * Save notification to Supabase and broadcast in realtime
  */
 export async function saveAppNotification(notif: AppNotification): Promise<{ success: boolean; error?: string }> {
+  // Deduplicate rapid repeated triggers sharing a dedupeKey within 15 minutes
+  if (notif.dedupeKey) {
+    const prevTs = recentDedupeKeys.get(notif.dedupeKey);
+    if (prevTs && Date.now() - prevTs < 15 * 60 * 1000) {
+      return { success: true };
+    }
+    recentDedupeKeys.set(notif.dedupeKey, Date.now());
+  }
+
   console.log('[SUPABASE-NOTIFS] Saving notification:', notif.title);
 
   const finalId = isValidUUID(notif.id) ? notif.id : generateUUID();
   const targetUser = notif.targetUserId || 'all';
   const deterministicTag = `studentos-notif-${finalId}`;
 
-  // Check if the current active browser user is eligible for this notification before triggering local chime/toast
+  // Check if the current active browser user is eligible and has preferences enabled before triggering local chime/toast
   let localUserEligible = true;
   if (typeof window !== 'undefined') {
     try {
       const cachedUser = JSON.parse(localStorage.getItem('s_os_user') || '{}');
       if (cachedUser && (cachedUser.uid || cachedUser.id || cachedUser.role)) {
         localUserEligible = isUserEligibleForNotification(notif, cachedUser);
+        const prefs = cachedUser?.raw_data?.notificationPreferences || {};
+        if (prefs.muteAll === true) localUserEligible = false;
+        if ((notif.type === 'homework' || notif.type === 'assignment') && prefs.homeworkAlerts === false) localUserEligible = false;
+        if (notif.type === 'announcement' && prefs.announcements === false) localUserEligible = false;
+        if (notif.type === 'attendance' && prefs.attendanceAlerts === false) localUserEligible = false;
       }
     } catch (_) {}
   }
@@ -332,7 +357,7 @@ export async function saveAppNotification(notif: AppNotification): Promise<{ suc
     });
   }
 
-  // Call server push endpoint (FCM + targeted Web Push)
+  // Call server push endpoint (FCM + targeted Web Push) cleanly; push errors must not fail DB save
   try {
     fetch('/api/push/send', {
       method: 'POST',
@@ -389,8 +414,11 @@ export async function saveAppNotification(notif: AppNotification): Promise<{ suc
       createdAt: notif.createdAt || new Date().toISOString(),
       isRead: notif.isRead || false,
       targetUserId: targetUser,
+      targetRole: notif.targetRole || 'all',
       targetClass: notif.targetClass || null,
-      linkTab: notif.linkTab || 'notice_viewer'
+      targetSection: notif.targetSection || 'all',
+      linkTab: notif.linkTab || 'notice_viewer',
+      dedupeKey: notif.dedupeKey || null
     }
   };
 

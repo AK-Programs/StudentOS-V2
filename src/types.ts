@@ -115,6 +115,8 @@ export type AssessmentType =
   | 'Final Exam'
   | 'Other';
 
+export type AssessmentStatus = 'draft' | 'published' | 'cancelled';
+
 export interface GradebookAssessment {
   id: string;
   title: string;
@@ -127,7 +129,13 @@ export interface GradebookAssessment {
   date: string;
   teacherId: string;
   teacherName?: string;
+  status?: AssessmentStatus;
+  syllabusCoverage?: string;
+  instructions?: string;
+  resources?: Array<{ id?: string; name: string; url: string; type?: string }>;
+  resultsPublished?: boolean;
   createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface GradebookEntry {
@@ -270,6 +278,25 @@ export interface VaultNote {
   version?: number;
 }
 
+export type AssignmentLifecycleStatus = 'draft' | 'published' | 'archived';
+
+export type AssignmentSubmissionStatus =
+  | 'upcoming'
+  | 'pending'
+  | 'submitted'
+  | 'late'
+  | 'under_evaluation'
+  | 'evaluated'
+  | 'returned_for_revision'
+  | 'completed';
+
+export interface AssignmentAttachment {
+  id?: string;
+  name: string;
+  url: string;
+  type?: 'link' | 'file' | 'material' | 'note';
+}
+
 export interface Homework {
   id: string;
   classGrade: string; // e.g. "Grade 1" to "Grade 12"
@@ -279,8 +306,78 @@ export interface Homework {
   content: string; // supports Markdown instructions
   dueDate: string;
   givenBy: string;
+  teacherId?: string;
+  status?: AssignmentLifecycleStatus;
+  attachments?: AssignmentAttachment[];
+  submissionRequirements?: 'text' | 'link' | 'file' | 'text_or_link' | 'none';
+  maxScore?: number;
+  allowLate?: boolean;
   createdAt: string;
-  completedList: string[]; // array of student emails who checked this homework
+  updatedAt?: string;
+  completedList: string[]; // array of student emails/uids who completed
+}
+
+export interface AssignmentSubmission {
+  id: string;
+  assignmentId: string;
+  studentId: string;
+  studentName: string;
+  studentEmail?: string;
+  classGrade?: string;
+  classSection?: string;
+  status: 'submitted' | 'late' | 'under_evaluation' | 'evaluated' | 'returned_for_revision';
+  submissionText: string;
+  attachmentUrl?: string;
+  attachmentName?: string;
+  isLate: boolean;
+  submittedAt: string;
+  score?: number | null;
+  maxScore?: number;
+  feedback?: string;
+  evaluatedBy?: string;
+  evaluatedAt?: string;
+  resultsReleased?: boolean;
+  updatedAt?: string;
+}
+
+export interface AttendanceAuditLog {
+  id: string;
+  attendanceId?: string;
+  studentId: string;
+  studentName?: string;
+  date: string;
+  subject?: string;
+  grade?: string;
+  section?: string;
+  previousStatus?: string | null;
+  newStatus: AttendanceStatus;
+  reason?: string;
+  actorId: string;
+  actorName: string;
+  actorRole: string;
+  createdAt: string;
+}
+
+export interface TargetedAnnouncement {
+  id: string;
+  title: string;
+  content: string;
+  tag?: string;
+  tagColor?: string;
+  priority?: 'normal' | 'important' | 'urgent';
+  targetRole?: 'all' | 'student' | 'parent' | 'teacher' | 'coordinator';
+  targetGrade?: string;
+  targetSection?: string;
+  targetSubject?: string;
+  attachments?: AssignmentAttachment[];
+  status?: 'draft' | 'published' | 'archived';
+  authorId?: string;
+  authorName?: string;
+  authorRole?: string;
+  date?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  isRead?: boolean;
 }
 
 export interface Lesson {
@@ -500,6 +597,7 @@ export interface AppNotification {
   targetSection?: string;
   targetRole?: string;
   linkTab?: string;
+  dedupeKey?: string;
 }
 
 export interface AITeacherPersona {

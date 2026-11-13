@@ -12,9 +12,10 @@
  * - Respects user notification preferences.
  */
 
-import { Homework, Task, UserProfile, UserRole } from '../types';
+import { AssignmentSubmission, GradebookAssessment, Homework, Task, UserProfile, UserRole } from '../types';
 import { OfficialClassTimetable, ExamPreparationPlan } from '../types/syllabusTimetable';
 import { getAuthorizedGrades, isFacultyRole } from '../config/facultyPermissions';
+import { isAnnouncementEligibleForUser, isStudentMatchedToCohort } from './academicWorkflowService';
 
 export interface AnnouncementItem {
   id?: string;
@@ -157,6 +158,8 @@ export interface BuildByteRemindersInput {
   currentUser: UserProfile;
   effectiveRole: UserRole | string;
   homeworkList?: Homework[];
+  submissions?: AssignmentSubmission[];
+  assessments?: GradebookAssessment[];
   tasks?: Task[];
   announcements?: AnnouncementItem[];
   dueCardsCount?: number;
@@ -184,6 +187,8 @@ export function buildByteReminders(input: BuildByteRemindersInput): ByteReminder
     currentUser,
     effectiveRole,
     homeworkList = [],
+    submissions = [],
+    assessments = [],
     tasks = [],
     announcements = [],
     dueCardsCount = 0,
@@ -271,13 +276,44 @@ export function buildByteReminders(input: BuildByteRemindersInput): ByteReminder
       });
     }
 
-    // Overdue & Due-Soon Homework
-    const studentGrade = (currentUser?.grade || '').toLowerCase();
+    // Connected Submissions: Evaluated marks released or Returned for Revision
+    const studentSubs = submissions.filter(
+      s => s.studentId === userId || (currentUser?.email && s.studentEmail === currentUser.email)
+    );
+    const hwById = new Map<string, Homework>(homeworkList.map(h => [h.id, h]));
+
+    studentSubs
+      .filter(s => s.status === 'returned_for_revision' || (s.status === 'evaluated' && s.resultsReleased))
+      .slice(0, 3)
+      .forEach(sub => {
+        const parentHw = hwById.get(sub.assignmentId);
+        const isRevision = sub.status === 'returned_for_revision';
+        pushUnique({
+          id: `hw-eval-${sub.assignmentId}-${sub.status}`,
+          title: isRevision
+            ? `Revision Requested: ${parentHw?.title || 'Assignment'}`
+            : `Evaluated: ${parentHw?.title || 'Assignment'} (${sub.score !== null && sub.score !== undefined ? `${sub.score}/${sub.maxScore}` : 'Graded'})`,
+          subtitle: sub.feedback ? `Feedback: ${sub.feedback.slice(0, 80)}` : `Reviewed by ${sub.evaluatedBy || 'Teacher'}`,
+          reason: isRevision
+            ? 'Your teacher returned this submission for revision — review feedback and resubmit.'
+            : 'Teacher evaluation & marks have been released for your submission.',
+          type: 'assignment',
+          priority: isRevision ? 'urgent' : 'high',
+          actionLabel: isRevision ? 'Revise & Resubmit' : 'View Feedback',
+          actionTab: 'homework'
+        });
+      });
+
+    // Overdue & Due-Soon Homework (respecting published status & grade/section targeting)
     const relevantHw = homeworkList.filter(hw => {
+      if ((hw.status || 'published') !== 'published') return false;
+      const sub =
+        studentSubs.find(s => s.assignmentId === hw.id) ||
+        ((hw as any).mySubmission as AssignmentSubmission | undefined);
+      if (sub && sub.status !== 'returned_for_revision') return false;
       const done = (hw.completedList || []).includes(userId);
-      if (done) return false;
-      if (!studentGrade || !hw.classGrade) return true;
-      return hw.classGrade.toLowerCase() === studentGrade;
+      if (done && (!sub || sub.status !== 'returned_for_revision')) return false;
+      return isStudentMatchedToCohort(currentUser?.grade, currentUser?.section, hw.classGrade, hw.classSection);
     });
 
     relevantHw
@@ -292,10 +328,10 @@ export function buildByteReminders(input: BuildByteRemindersInput): ByteReminder
           title: `${hw.subject || 'Assignment'}: ${hw.title}`,
           subtitle: hw.dueDate ? `Due ${hw.dueDate}` : 'Assigned homework',
           reason: isOverdue
-            ? `Due date passed ${Math.abs(daysLeft)} day(s) ago and is not marked completed.`
+            ? `Due date passed ${Math.abs(daysLeft)} day(s) ago and no submission is recorded.`
             : isDueSoon
             ? daysLeft === 0
-              ? 'Due today — complete and mark finished to keep on track.'
+              ? 'Due today — complete and submit your work to stay on track.'
               : `Due in ${daysLeft} day(s).`
             : 'Pending assignment assigned to your class.',
           type: 'assignment',
@@ -305,7 +341,42 @@ export function buildByteReminders(input: BuildByteRemindersInput): ByteReminder
         });
       });
 
-    // Upcoming exams within 10 days
+    // Upcoming published Gradebook Assessments + Released Exam Results (never leaks draft/cancelled)
+    assessments
+      .filter(a => a.status !== 'draft' && isStudentMatchedToCohort(currentUser?.grade, currentUser?.section, a.classGrade, a.classSection))
+      .forEach(ass => {
+        if (ass.status === 'published') {
+          const daysLeft = daysBetweenToday(ass.date);
+          if (daysLeft !== null && daysLeft >= 0 && daysLeft <= 10) {
+            pushUnique({
+              id: `ass-upcoming-${ass.id}`,
+              title: `${ass.subject}: ${ass.title}`,
+              subtitle: `${ass.date} (${daysLeft === 0 ? 'Today' : `in ${daysLeft}d`}) · ${ass.type}`,
+              reason: ass.syllabusCoverage
+                ? `Published assessment covering: ${ass.syllabusCoverage.slice(0, 90)}.`
+                : `Published assessment scheduled ${daysLeft === 0 ? 'today' : `in ${daysLeft} day(s)`}.`,
+              type: 'exam',
+              priority: daysLeft <= 3 ? 'urgent' : 'high',
+              actionLabel: 'Prep Exam',
+              actionTab: 'dashboard'
+            });
+          }
+          if (ass.resultsPublished) {
+            pushUnique({
+              id: `ass-res-${ass.id}`,
+              title: `Results Published: ${ass.title}`,
+              subtitle: `${ass.subject} (${ass.type})`,
+              reason: 'Official assessment results have been released by your teacher.',
+              type: 'exam',
+              priority: 'normal',
+              actionLabel: 'View Gradebook',
+              actionTab: 'performance'
+            });
+          }
+        }
+      });
+
+    // Upcoming exams within 10 days (ExamPreparationPlan schedule)
     upcomingExams
       .filter(ex => ex.status !== 'completed')
       .map(ex => ({ ex, daysLeft: daysBetweenToday(ex.examDate) }))
@@ -362,27 +433,67 @@ export function buildByteReminders(input: BuildByteRemindersInput): ByteReminder
       });
     }
 
-    // Assignments created by this faculty or in authorized grades with completions to inspect
+    // Connected Submissions waiting for evaluation + legacy completion fallback
     const scopedHomework = homeworkList.filter(hw => {
+      if (hw.status === 'archived') return false;
       const byTeacher = hw.givenBy && currentUser?.name && hw.givenBy.toLowerCase() === currentUser.name.toLowerCase();
       const inGrade = hw.classGrade && authorizedGrades.includes(hw.classGrade.toLowerCase());
       return byTeacher || inGrade;
     });
 
-    const withSubmissions = scopedHomework.filter(hw => (hw.completedList?.length || 0) > 0);
-    if (withSubmissions.length > 0) {
-      const totalCompletions = withSubmissions.reduce((acc, hw) => acc + (hw.completedList?.length || 0), 0);
+    const pendingEvalSubs = submissions.filter(
+      s => s.status === 'submitted' || s.status === 'late' || s.status === 'under_evaluation'
+    );
+    const pendingFromStats = scopedHomework.reduce((acc, hw: any) => acc + Number(hw?.stats?.pendingEvaluationCount || 0), 0);
+    const totalPendingEvaluations = pendingEvalSubs.length > 0 ? pendingEvalSubs.length : pendingFromStats;
+
+    if (totalPendingEvaluations > 0) {
+      const lateCount = pendingEvalSubs.filter(s => s.isLate || s.status === 'late').length;
       pushUnique({
-        id: `faculty-grading-${withSubmissions[0].id}`,
-        title: `${totalCompletions} homework submission${totalCompletions === 1 ? '' : 's'} ready to review`,
-        subtitle: `Across ${withSubmissions.length} active assignment${withSubmissions.length === 1 ? '' : 's'}`,
-        reason: 'Students have marked assigned homework complete; review submissions or update gradebook marks.',
+        id: `faculty-pending-eval-${scopedHomework[0]?.id || 'queue'}`,
+        title: `${totalPendingEvaluations} submission${totalPendingEvaluations === 1 ? '' : 's'} awaiting evaluation`,
+        subtitle: lateCount > 0 ? `Includes ${lateCount} late submission(s)` : 'Ready for review & feedback release',
+        reason: 'Students have submitted work that still needs teacher marks or feedback.',
         type: 'faculty_grading',
-        priority: 'high',
-        actionLabel: 'Review Work',
+        priority: lateCount > 0 ? 'urgent' : 'high',
+        actionLabel: 'Evaluate Submissions',
         actionTab: 'faculty'
       });
+    } else {
+      const withSubmissions = scopedHomework.filter(hw => (hw.completedList?.length || 0) > 0);
+      if (withSubmissions.length > 0) {
+        const totalCompletions = withSubmissions.reduce((acc, hw) => acc + (hw.completedList?.length || 0), 0);
+        pushUnique({
+          id: `faculty-grading-${withSubmissions[0].id}`,
+          title: `${totalCompletions} homework submission${totalCompletions === 1 ? '' : 's'} ready to review`,
+          subtitle: `Across ${withSubmissions.length} active assignment${withSubmissions.length === 1 ? '' : 's'}`,
+          reason: 'Students have submitted assigned homework; review submissions or update gradebook marks.',
+          type: 'faculty_grading',
+          priority: 'high',
+          actionLabel: 'Review Work',
+          actionTab: 'faculty'
+        });
+      }
     }
+
+    // Upcoming faculty assessments that still have unpublished results after exam date
+    assessments
+      .filter(a => a.status === 'published' && !a.resultsPublished)
+      .forEach(ass => {
+        const daysLeft = daysBetweenToday(ass.date);
+        if (daysLeft !== null && daysLeft < 0) {
+          pushUnique({
+            id: `faculty-ass-pub-${ass.id}`,
+            title: `Results Pending Release: ${ass.title}`,
+            subtitle: `${ass.classGrade} · Exam date ${ass.date}`,
+            reason: 'Assessment date has passed and marks have not yet been published to students.',
+            type: 'faculty_grading',
+            priority: 'high',
+            actionLabel: 'Open Gradebook',
+            actionTab: 'gradebook'
+          });
+        }
+      });
 
     if (role === 'coordinator') {
       pushUnique({
@@ -415,14 +526,17 @@ export function buildByteReminders(input: BuildByteRemindersInput): ByteReminder
     });
   }
 
-  // 4. Latest unread / high-priority circular (max 1 to avoid noise)
-  if (announcements.length > 0) {
-    const urgentAnn = announcements.find(a => a.priority === 'urgent') || announcements[0];
+  // 4. Latest eligible unread / high-priority circular (strictly scoped & published)
+  const eligibleAnnouncements = announcements.filter(
+    a => !a.isRead && isAnnouncementEligibleForUser(a, currentUser)
+  );
+  if (eligibleAnnouncements.length > 0) {
+    const urgentAnn = eligibleAnnouncements.find(a => a.priority === 'urgent') || eligibleAnnouncements[0];
     pushUnique({
       id: `ann-${urgentAnn.id}`,
-      title: urgentAnn.title,
-      subtitle: `${urgentAnn.senderName || 'School Circular'}${urgentAnn.targetGrade && urgentAnn.targetGrade !== 'all' ? ` · ${urgentAnn.targetGrade}` : ''}`,
-      reason: urgentAnn.priority === 'urgent' ? 'Marked urgent notice for your academic cohort.' : 'Recent school circular posted to notice board.',
+      title: urgentAnn.title || 'School Notice',
+      subtitle: `${urgentAnn.authorName || urgentAnn.senderName || 'School Circular'}${urgentAnn.targetGrade && urgentAnn.targetGrade !== 'all' ? ` · ${urgentAnn.targetGrade}` : ''}`,
+      reason: urgentAnn.priority === 'urgent' ? 'Marked urgent notice for your academic cohort.' : 'Unread targeted circular posted to your cohort.',
       type: 'announcement',
       priority: urgentAnn.priority === 'urgent' ? 'high' : 'normal',
       actionLabel: 'Read Notice',

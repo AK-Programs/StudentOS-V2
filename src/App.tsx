@@ -28,6 +28,14 @@ import { getVaultNotes, saveVaultNoteToSupabase, deleteVaultNoteFromSupabase, ge
 import { generateFormattedPdf } from './lib/pdfGenerator';
 import { getSupabaseUserProfile, saveSupabaseUserProfile, getDefaultProfileForAccount, saveLocalProfileBackup } from './lib/supabaseUsers';
 import { getSupabaseHomework, saveSupabaseHomework, deleteSupabaseHomework } from './lib/supabaseHomework';
+import {
+  fetchAssignments,
+  fetchAssessments,
+  fetchTargetedAnnouncements,
+  isAnnouncementEligibleForUser,
+  isStudentMatchedToCohort,
+  saveAssignment
+} from './lib/academicWorkflowService';
 import { getPersonalTasks, savePersonalTask, updateTaskOrder as saveTaskOrderToSupabase, deletePersonalTask } from './lib/supabaseTasks';
 import { getAppNotifications, saveAppNotification, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification, generateUUID, registerPushSubscription, getDeviceId, triggerBrowserPushNotification, isUserEligibleForNotification, triggerNotificationSound } from './lib/notifications';
 import { requestFCMPermission, setupFCMForegroundListener } from './lib/fcmNotifications';
@@ -1094,6 +1102,7 @@ export default function App() {
   const [notesAiSelectedText, setNotesAiSelectedText] = useState<string>('');
 
   const [homeworkList, setHomeworkList] = useState<Homework[]>([]);
+  const [connectedAssessments, setConnectedAssessments] = useState<any[]>([]);
 
   const [vaultFolders, setVaultFolders] = useState<FolderType[]>([]);
   const [activeVaultFolderId, setActiveVaultFolderId] = useState<string | null>(null);
@@ -2889,19 +2898,37 @@ export default function App() {
       isHomeworkLoaded.current = false;
       return;
     }
-    const timer = setTimeout(() => {
-      getSupabaseHomework().then(list => {
-        if (list && list.length > 0) {
-          setHomeworkList(list);
+    const timer = setTimeout(async () => {
+      try {
+        const apiRes = await fetchAssignments(currentUser);
+        if (apiRes.ok && apiRes.data && apiRes.data.length > 0) {
+          setHomeworkList(apiRes.data);
+          isHomeworkLoaded.current = true;
         } else {
-          // Fallback to default class homework on initial session
-          setHomeworkList([
-            { id: 'hw-1', title: 'Physics Worksheets Chapter 4', subject: 'Physics', content: 'Solve problems 1-15 regarding circular friction.', dueDate: 'Tomorrow', classGrade: 'Grade 10', classSection: 'All Sections', givenBy: 'Prof. Elara', createdAt: new Date().toISOString(), completedList: [] },
-            { id: 'hw-2', title: 'C++ BST balancing questions', subject: 'Computer Science', content: 'Design pseudo-code for rotation of tree node structures.', dueDate: 'Friday', classGrade: 'Grade 10', classSection: 'All Sections', givenBy: 'Prof. Elara', createdAt: new Date().toISOString(), completedList: ['naitik.kashyap0015@gmail.com'] }
-          ]);
+          const list = await getSupabaseHomework();
+          if (list && list.length > 0) {
+            setHomeworkList(list);
+          } else {
+            setHomeworkList([
+              { id: 'hw-1', title: 'Physics Worksheets Chapter 4', subject: 'Physics', content: 'Solve problems 1-15 regarding circular friction.', dueDate: 'Tomorrow', classGrade: 'Grade 10', classSection: 'All Sections', givenBy: 'Prof. Elara', createdAt: new Date().toISOString(), completedList: [] },
+              { id: 'hw-2', title: 'C++ BST balancing questions', subject: 'Computer Science', content: 'Design pseudo-code for rotation of tree node structures.', dueDate: 'Friday', classGrade: 'Grade 10', classSection: 'All Sections', givenBy: 'Prof. Elara', createdAt: new Date().toISOString(), completedList: ['naitik.kashyap0015@gmail.com'] }
+            ]);
+          }
+          isHomeworkLoaded.current = true;
         }
+      } catch (_) {
+        const list = await getSupabaseHomework();
+        if (list && list.length > 0) setHomeworkList(list);
         isHomeworkLoaded.current = true;
-      });
+      }
+
+      fetchAssessments(currentUser)
+        .then(res => {
+          if (res.ok && res.data) {
+            setConnectedAssessments(res.data);
+          }
+        })
+        .catch(() => {});
     }, 500);
 
     return () => clearTimeout(timer);
@@ -2931,10 +2958,28 @@ export default function App() {
 
     const handleDbUpdate = (e: any) => {
       const { table } = e.detail || {};
-      if (table === 'homework' || !table) {
-        getSupabaseHomework().then(list => {
-          if (list && list.length > 0) setHomeworkList(list);
+      if (table === 'homework' || table === 'assignment_submissions' || !table) {
+        fetchAssignments(currentUser).then(res => {
+          if (res.ok && res.data && res.data.length > 0) {
+            setHomeworkList(res.data);
+          } else {
+            getSupabaseHomework().then(list => {
+              if (list && list.length > 0) setHomeworkList(list);
+            });
+          }
         });
+      }
+      if (table === 'gradebook_assessments' || !table) {
+        fetchAssessments(currentUser).then(res => {
+          if (res.ok && res.data) setConnectedAssessments(res.data);
+        }).catch(() => {});
+      }
+      if (table === 'announcements' || !table) {
+        fetchTargetedAnnouncements(currentUser).then(res => {
+          if (res.ok && res.data) {
+            setAnnouncements(res.data.filter(a => isAnnouncementEligibleForUser(a, currentUser)));
+          }
+        }).catch(() => {});
       }
       if (table === 'notifications' || table === 'notices' || !table) {
         refreshNotifications();
@@ -3119,14 +3164,20 @@ What can I clarify today?` }
     loadFeedbacks();
   }, [currentUser, activeTab]);
 
-  // Announcements Sync
+  // Announcements Sync (prefers targeted cohort-scoped announcements with global fallback)
   useEffect(() => {
     if (!currentUser || activeTab !== 'dashboard') return;
     const loadAnnouncements = async () => {
       try {
+        const apiRes = await fetchTargetedAnnouncements(currentUser);
+        if (apiRes.ok && apiRes.data && apiRes.data.length > 0) {
+          setAnnouncements(apiRes.data.filter(a => isAnnouncementEligibleForUser(a, currentUser)));
+          return;
+        }
         const { data } = await supabase.from('global_data').select('*').eq('id', '__global_announcements__').maybeSingle();
         if (data && data.content) {
-          setAnnouncements(JSON.parse(data.content));
+          const parsed = JSON.parse(data.content);
+          setAnnouncements(Array.isArray(parsed) ? parsed.filter(a => isAnnouncementEligibleForUser(a, currentUser)) : []);
         } else {
           setAnnouncements(INITIAL_ANNOUNCEMENTS);
         }
@@ -3217,6 +3268,7 @@ What can I clarify today?` }
             break;
 
           case 'announcement:received':
+            if (!isAnnouncementEligibleForUser(data.announcement, currentUser)) break;
             setAnnouncements(prev => {
               if (prev.some(a => a.id === data.announcement.id)) return prev;
               return [data.announcement, ...prev];
@@ -3225,6 +3277,10 @@ What can I clarify today?` }
             break;
 
           case 'homework:received':
+            if (effectiveRole === 'student') {
+              if (data.homework?.status === 'draft' || data.homework?.status === 'archived') break;
+              if (!isStudentMatchedToCohort(currentUser?.grade, currentUser?.section, data.homework?.classGrade, data.homework?.classSection)) break;
+            }
             setHomeworkList(prev => {
               if (prev.some(h => h.id === data.homework.id)) return prev;
               return [data.homework, ...prev];
@@ -3233,6 +3289,10 @@ What can I clarify today?` }
             break;
 
           case 'homework:updated':
+            if (effectiveRole === 'student' && (data.homework?.status === 'draft' || data.homework?.status === 'archived')) {
+              setHomeworkList(prev => prev.filter(h => h.id !== data.homework.id));
+              break;
+            }
             setHomeworkList(prev => prev.map(h => h.id === data.homework.id ? data.homework : h));
             break;
 
@@ -11479,6 +11539,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                             return [newHw, ...prev];
                           });
                           saveSupabaseHomework(newHw);
+                          saveAssignment(currentUser, { ...newHw, status: 'published' }, !hwEditId).catch(() => {});
 
                           if (!hwEditId) {
                             sendNotificationToUsers({
@@ -15201,6 +15262,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
           effectiveRole={effectiveRole}
           tasks={tasks}
           homeworkList={homeworkList}
+          assessments={connectedAssessments}
           announcements={announcements}
           dueCardsCount={dueCardsCount}
           onNavigateTab={handleTabSelect}
@@ -15229,6 +15291,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
             currentUser,
             effectiveRole,
             homeworkList,
+            assessments: connectedAssessments,
             tasks,
             announcements,
             dueCardsCount

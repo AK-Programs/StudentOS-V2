@@ -34,9 +34,19 @@ import {
   Users,
   Check,
   ShieldCheck,
-  SlidersHorizontal
+  SlidersHorizontal,
+  FileText,
+  ExternalLink,
+  Megaphone
 } from 'lucide-react';
-import { UserProfile, Homework } from '../types';
+import {
+  UserProfile,
+  Homework,
+  AssignmentSubmission,
+  AssignmentAttachment,
+  AssignmentLifecycleStatus,
+  TargetedAnnouncement
+} from '../types';
 import { OfficialClassTimetable } from '../types/syllabusTimetable';
 import { soundService } from '../lib/soundService';
 import { VeylentraIcon } from './ui/VeylentraIcon';
@@ -53,11 +63,20 @@ import {
   markByteReminderHandled,
   snoozeByteReminder
 } from '../lib/byteReminderEngine';
+import {
+  fetchAssignments,
+  saveAssignment,
+  fetchAssignmentSubmissions,
+  evaluateAssignmentSubmission,
+  fetchTargetedAnnouncements,
+  createTargetedAnnouncement,
+  updateTargetedAnnouncement,
+  isStudentMatchedToCohort
+} from '../lib/academicWorkflowService';
 import { SyllabusTimetableService } from '../lib/syllabusTimetableService';
 import { fetchAllSupabaseUsers } from '../lib/supabaseUsers';
 import { saveSupabaseHomework } from '../lib/supabaseHomework';
 import { saveVaultNoteToSupabase } from '../lib/supabaseNotes';
-import { saveAppNotification, generateUUID } from '../lib/notifications';
 import { supabase } from '../lib/supabase';
 import StudentMarksCenter from './StudentMarksCenter';
 import AttendanceManager from './AttendanceManager';
@@ -89,6 +108,9 @@ type OrionFacultyIntent =
   | 'draft_quiz'
   | 'draft_announcement'
   | 'draft_feedback'
+  | 'draft_assessment_outline'
+  | 'summarize_submission_progress'
+  | 'summarize_cohort_coordination'
   | 'summarize_class_insights';
 
 interface PendingOrionDraft {
@@ -122,6 +144,8 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
 
   // Real data states
   const [scopedStudents, setScopedStudents] = useState<UserProfile[]>([]);
+  const [backendAssignments, setBackendAssignments] = useState<Array<Homework & { stats?: any }>>([]);
+  const [targetedAnnouncements, setTargetedAnnouncements] = useState<TargetedAnnouncement[]>([]);
   const [todayAttCount, setTodayAttCount] = useState<number>(0);
   const [lowAttendanceStudents, setLowAttendanceStudents] = useState<
     Array<{ uid: string; name: string; grade: string; section: string; pct: number; total: number }>
@@ -132,7 +156,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
   const [cohortGradeFilter, setCohortGradeFilter] = useState<string>('All');
   const [reminderVersion, setReminderVersion] = useState<number>(0);
 
-  // Assignment creation state
+  // Assignment creation + lifecycle + evaluation state
   const [showCreateAssignment, setShowCreateAssignment] = useState<boolean>(false);
   const [newHwTitle, setNewHwTitle] = useState<string>('');
   const [newHwSubject, setNewHwSubject] = useState<string>(currentUser.department || 'Mathematics');
@@ -144,7 +168,32 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
     return d.toISOString().split('T')[0];
   });
   const [newHwContent, setNewHwContent] = useState<string>('');
+  const [newHwStatus, setNewHwStatus] = useState<AssignmentLifecycleStatus>('published');
+  const [newHwMaxScore, setNewHwMaxScore] = useState<number>(100);
+  const [newHwAttachName, setNewHwAttachName] = useState<string>('');
+  const [newHwAttachUrl, setNewHwAttachUrl] = useState<string>('');
   const [savingAssignment, setSavingAssignment] = useState<boolean>(false);
+
+  // Connected Submission Inspection & Evaluation state
+  const [expandedSubmissionHwId, setExpandedSubmissionHwId] = useState<string | null>(null);
+  const [submissionsByHw, setSubmissionsByHw] = useState<Record<string, AssignmentSubmission[]>>({});
+  const [loadingSubsHwId, setLoadingSubsHwId] = useState<string | null>(null);
+  const [evalDrafts, setEvalDrafts] = useState<
+    Record<string, { score: string; feedback: string; saving?: boolean; error?: string; orionLoading?: boolean }>
+  >({});
+
+  // Targeted Announcement Composer state
+  const [showAnnComposer, setShowAnnComposer] = useState<boolean>(false);
+  const [annTitle, setAnnTitle] = useState<string>('');
+  const [annContent, setAnnContent] = useState<string>('');
+  const [annPriority, setAnnPriority] = useState<'normal' | 'important' | 'urgent'>('normal');
+  const [annTargetRole, setAnnTargetRole] = useState<'all' | 'student' | 'teacher' | 'parent'>('student');
+  const [annTargetGrade, setAnnTargetGrade] = useState<string>(authorizedGrades[0] || 'all');
+  const [annTargetSection, setAnnTargetSection] = useState<string>(authorizedSections[0] || 'all');
+  const [annStatus, setAnnStatus] = useState<'published' | 'draft'>('published');
+  const [annAttachUrl, setAnnAttachUrl] = useState<string>('');
+  const [savingAnn, setSavingAnn] = useState<boolean>(false);
+
   const [reviewedHwIds, setReviewedHwIds] = useState<Set<string>>(() => {
     try {
       const raw = localStorage.getItem(`veylentra_reviewed_hw_${currentUser.uid || 'faculty'}`);
@@ -175,17 +224,26 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
         const primarySection = authorizedSections[0] || 'Solara';
         const todayStr = new Date().toISOString().split('T')[0];
 
-        const [allUsers, tt, attRes] = await Promise.all([
+        const [allUsers, tt, attRes, apiHwRes, apiAnnRes] = await Promise.all([
           fetchAllSupabaseUsers().catch(() => [] as UserProfile[]),
           SyllabusTimetableService.getOfficialTimetable('default_school', primaryGrade).catch(() => null),
           supabase
             .from('attendance')
             .select('user_id, date, status, grade, section')
             .order('date', { ascending: false })
-            .limit(800)
+            .limit(800),
+          fetchAssignments(currentUser),
+          fetchTargetedAnnouncements(currentUser)
         ]);
 
         if (!mounted) return;
+
+        if (apiHwRes.ok && apiHwRes.data) {
+          setBackendAssignments(apiHwRes.data);
+        }
+        if (apiAnnRes.ok && apiAnnRes.data) {
+          setTargetedAnnouncements(apiAnnRes.data);
+        }
 
         const studentsInScope = allUsers.filter(
           u => u.role === 'student' && isStudentInFacultyScope(u, currentUser, effectiveRole)
@@ -238,26 +296,55 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
     }
 
     loadFacultyWorkspaceData();
+
+    const handleSyncUpdate = async (e: any) => {
+      const tbl = e?.detail?.table;
+      if (tbl === 'homework' || tbl === 'assignment_submissions') {
+        const res = await fetchAssignments(currentUser);
+        if (mounted && res.ok && res.data) setBackendAssignments(res.data);
+      }
+      if (tbl === 'announcements') {
+        const res = await fetchTargetedAnnouncements(currentUser);
+        if (mounted && res.ok && res.data) setTargetedAnnouncements(res.data);
+      }
+    };
+    window.addEventListener('studentos-db-update', handleSyncUpdate);
+
     return () => {
       mounted = false;
+      window.removeEventListener('studentos-db-update', handleSyncUpdate);
     };
   }, [currentUser, effectiveRole, authorizedGrades, authorizedSections]);
+
+  // Merge backend authoritative assignments with legacy homework prop
+  const mergedHomeworkList = useMemo(() => {
+    const map = new Map<string, Homework & { stats?: any }>();
+    homeworkList.forEach(h => map.set(h.id, h));
+    backendAssignments.forEach(h => {
+      const prev = map.get(h.id);
+      map.set(h.id, { ...prev, ...h });
+    });
+    return Array.from(map.values());
+  }, [homeworkList, backendAssignments]);
 
   // Assignments scoped to authorized grades OR created by current faculty user
   const teacherHomework = useMemo(() => {
     const authSet = new Set(authorizedGrades.map(g => g.toLowerCase()));
-    return homeworkList.filter(hw => {
+    return mergedHomeworkList.filter(hw => {
       const byMe = hw.givenBy && currentUser.name && hw.givenBy.toLowerCase() === currentUser.name.toLowerCase();
       const inGrade = hw.classGrade && authSet.has(hw.classGrade.toLowerCase());
       return byMe || inGrade;
     });
-  }, [homeworkList, authorizedGrades, currentUser.name]);
+  }, [mergedHomeworkList, authorizedGrades, currentUser.name]);
 
   const pendingSubmissionsToReview = useMemo(
     () =>
-      teacherHomework
-        .filter(hw => !reviewedHwIds.has(hw.id))
-        .reduce((acc, hw) => acc + (hw.completedList ? hw.completedList.length : 0), 0),
+      teacherHomework.reduce((acc, hw: any) => {
+        if (typeof hw?.stats?.pendingEvaluationCount === 'number') {
+          return acc + hw.stats.pendingEvaluationCount;
+        }
+        return !reviewedHwIds.has(hw.id) ? acc + (hw.completedList ? hw.completedList.length : 0) : acc;
+      }, 0),
     [teacherHomework, reviewedHwIds]
   );
 
@@ -293,18 +380,24 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
   }, [teacherHomework, scopedStudents.length]);
 
   // Deterministic Byte Faculty Reminders (Zero AI)
+  const flattenedSubmissions = useMemo(
+    () => Object.values(submissionsByHw).flat(),
+    [submissionsByHw]
+  );
+
   const facultyByteReminders = useMemo(
     () =>
       buildByteReminders({
         currentUser,
         effectiveRole,
         homeworkList: teacherHomework,
+        submissions: flattenedSubmissions,
         announcements,
         timetable,
         todayAttendanceMarkedCount: todayAttCount,
         totalCohortStudentsCount: scopedStudents.length
       }),
-    [currentUser, effectiveRole, teacherHomework, announcements, timetable, todayAttCount, scopedStudents.length, reminderVersion]
+    [currentUser, effectiveRole, teacherHomework, flattenedSubmissions, announcements, timetable, todayAttCount, scopedStudents.length, reminderVersion]
   );
 
   const filteredRoster = useMemo(() => {
@@ -347,6 +440,14 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
     setSavingAssignment(true);
     soundService.playButtonClick();
     try {
+      const attachments: AssignmentAttachment[] = [];
+      if (newHwAttachUrl.trim()) {
+        attachments.push({
+          id: `att-${Date.now()}`,
+          name: newHwAttachName.trim() || 'Assignment Resource',
+          url: newHwAttachUrl.trim()
+        });
+      }
       const newHw: Homework = {
         id: `hw-${Date.now()}`,
         classGrade: newHwGrade,
@@ -356,18 +457,214 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
         content: newHwContent.trim(),
         dueDate: newHwDueDate,
         givenBy: currentUser.name || 'Faculty',
+        teacherId: userId,
+        status: newHwStatus,
+        maxScore: Math.max(1, Number(newHwMaxScore) || 100),
+        attachments,
+        allowLate: true,
         createdAt: new Date().toISOString(),
         completedList: []
       };
-      await saveSupabaseHomework(newHw);
+      const apiRes = await saveAssignment(currentUser, newHw, true);
+      if (!apiRes.ok) {
+        throw new Error(apiRes.error || 'Could not save assignment.');
+      }
+      await saveSupabaseHomework(apiRes.data || newHw).catch(() => {});
+      if (apiRes.data) {
+        setBackendAssignments(prev => [apiRes.data!, ...prev.filter(x => x.id !== apiRes.data!.id)]);
+      }
       setShowCreateAssignment(false);
       setNewHwTitle('');
       setNewHwContent('');
-      showNotification(`✓ Assignment "${newHw.title}" published to ${newHwGrade} (${newHwSection}).`);
+      setNewHwAttachName('');
+      setNewHwAttachUrl('');
+      showNotification(
+        newHwStatus === 'draft'
+          ? `✓ Saved draft "${newHw.title}" (hidden from students until published).`
+          : `✓ Assignment "${newHw.title}" published to ${newHwGrade} (${newHwSection}).`
+      );
     } catch (err: any) {
       showNotification(err?.message || 'Could not save assignment.');
     } finally {
       setSavingAssignment(false);
+    }
+  };
+
+  const handleToggleAssignmentLifecycle = async (hw: Homework, nextStatus: AssignmentLifecycleStatus) => {
+    soundService.playButtonClick();
+    const res = await saveAssignment(currentUser, { id: hw.id, status: nextStatus }, false);
+    if (!res.ok) {
+      showNotification(res.error || 'Failed updating assignment status.');
+      return;
+    }
+    if (res.data) {
+      setBackendAssignments(prev => prev.map(x => (x.id === hw.id ? { ...x, ...res.data! } : x)));
+    }
+    showNotification(`Assignment updated to ${nextStatus.toUpperCase()}.`);
+  };
+
+  const handleToggleSubmissionsPanel = async (hwId: string) => {
+    soundService.playButtonClick();
+    if (expandedSubmissionHwId === hwId) {
+      setExpandedSubmissionHwId(null);
+      return;
+    }
+    setExpandedSubmissionHwId(hwId);
+    setLoadingSubsHwId(hwId);
+    const res = await fetchAssignmentSubmissions(currentUser, hwId);
+    setLoadingSubsHwId(null);
+    if (!res.ok) {
+      showNotification(res.error || 'Could not load submissions.');
+      return;
+    }
+    const subs = res.data || [];
+    setSubmissionsByHw(prev => ({ ...prev, [hwId]: subs }));
+    setEvalDrafts(prev => {
+      const next = { ...prev };
+      subs.forEach(s => {
+        const key = `${hwId}::${s.studentId}`;
+        if (!next[key]) {
+          next[key] = {
+            score: s.score !== null && s.score !== undefined ? String(s.score) : '',
+            feedback: s.feedback || ''
+          };
+        }
+      });
+      return next;
+    });
+  };
+
+  const handleSaveEvaluation = async (
+    hw: Homework,
+    sub: AssignmentSubmission,
+    action: 'evaluate' | 'return_for_revision'
+  ) => {
+    const key = `${hw.id}::${sub.studentId}`;
+    const draft = evalDrafts[key] || { score: '', feedback: '' };
+    const maxScore = hw.maxScore || 100;
+    let parsedScore: number | null = null;
+    if (draft.score.trim() !== '') {
+      parsedScore = Number(draft.score);
+      if (Number.isNaN(parsedScore) || parsedScore < 0 || parsedScore > maxScore) {
+        setEvalDrafts(prev => ({ ...prev, [key]: { ...draft, error: `Score must be between 0 and ${maxScore}.` } }));
+        return;
+      }
+    }
+    if (action === 'return_for_revision' && !draft.feedback.trim()) {
+      setEvalDrafts(prev => ({ ...prev, [key]: { ...draft, error: 'Please include feedback explaining what to revise.' } }));
+      return;
+    }
+
+    setEvalDrafts(prev => ({ ...prev, [key]: { ...draft, saving: true, error: undefined } }));
+    soundService.playButtonClick();
+
+    const res = await evaluateAssignmentSubmission(currentUser, hw.id, {
+      studentId: sub.studentId,
+      studentName: sub.studentName,
+      score: parsedScore,
+      maxScore,
+      feedback: draft.feedback.trim(),
+      action,
+      resultsReleased: true
+    });
+
+    if (!res.ok || !res.data) {
+      setEvalDrafts(prev => ({ ...prev, [key]: { ...draft, saving: false, error: res.error || 'Evaluation save failed.' } }));
+      return;
+    }
+
+    setEvalDrafts(prev => ({ ...prev, [key]: { ...draft, saving: false, error: undefined } }));
+    setSubmissionsByHw(prev => ({
+      ...prev,
+      [hw.id]: (prev[hw.id] || []).map(item => (item.studentId === sub.studentId ? res.data! : item))
+    }));
+    const refreshHw = await fetchAssignments(currentUser);
+    if (refreshHw.ok && refreshHw.data) setBackendAssignments(refreshHw.data);
+    showNotification(
+      action === 'return_for_revision'
+        ? `Returned ${sub.studentName}'s work for revision.`
+        : `✓ Evaluated & released marks for ${sub.studentName}.`
+    );
+  };
+
+  const handleDraftSubmissionFeedbackWithOrion = async (hw: Homework, sub: AssignmentSubmission) => {
+    const key = `${hw.id}::${sub.studentId}`;
+    const currentDraft = evalDrafts[key] || { score: '', feedback: '' };
+    setEvalDrafts(prev => ({ ...prev, [key]: { ...currentDraft, orionLoading: true, error: undefined } }));
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      const resp = await fetch('/api/ai/orion-assist', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+        },
+        body: JSON.stringify({
+          userId,
+          userRole: effectiveRole,
+          intent: 'draft_feedback',
+          subject: hw.subject,
+          grade: hw.classGrade,
+          topic: `Draft concise evaluation feedback for ${sub.studentName} on "${hw.title}"`,
+          contextData: `Assignment max score: ${hw.maxScore || 100}. Proposed score: ${currentDraft.score || 'Pending'}. Student response: ${(sub.submissionText || '').slice(0, 1200)}`
+        })
+      });
+      const json = await resp.json();
+      if (!resp.ok || !json.success || !json.text) {
+        throw new Error(json.error || `Orion returned status ${resp.status}`);
+      }
+      setEvalDrafts(prev => ({
+        ...prev,
+        [key]: { ...currentDraft, feedback: json.text.trim(), orionLoading: false, error: undefined }
+      }));
+    } catch (err: any) {
+      setEvalDrafts(prev => ({
+        ...prev,
+        [key]: { ...currentDraft, orionLoading: false, error: err?.message || 'Could not draft feedback.' }
+      }));
+    }
+  };
+
+  const handleSaveTargetedAnnouncement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!annTitle.trim() || !annContent.trim()) {
+      showNotification('Announcement title and content are required.');
+      return;
+    }
+    setSavingAnn(true);
+    soundService.playButtonClick();
+    try {
+      const attachments: AssignmentAttachment[] = annAttachUrl.trim()
+        ? [{ id: `ann-att-${Date.now()}`, name: 'Attachment', url: annAttachUrl.trim() }]
+        : [];
+      const res = await createTargetedAnnouncement(currentUser, {
+        title: annTitle.trim(),
+        content: annContent.trim(),
+        priority: annPriority,
+        targetRole: annTargetRole,
+        targetGrade: annTargetGrade,
+        targetSection: annTargetSection,
+        status: annStatus,
+        attachments
+      });
+      if (!res.ok || !res.data) {
+        throw new Error(res.error || 'Failed to save announcement.');
+      }
+      setTargetedAnnouncements(prev => [res.data!, ...prev.filter(a => a.id !== res.data!.id)]);
+      setShowAnnComposer(false);
+      setAnnTitle('');
+      setAnnContent('');
+      setAnnAttachUrl('');
+      showNotification(
+        annStatus === 'draft'
+          ? `Saved circular draft "${res.data.title}".`
+          : `✓ Targeted circular published to ${annTargetGrade} (${annTargetSection}).`
+      );
+    } catch (err: any) {
+      showNotification(err?.message || 'Failed posting circular.');
+    } finally {
+      setSavingAnn(false);
     }
   };
 
@@ -377,6 +674,10 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
       (customTopic || orionTopic).trim() ||
       (intent === 'summarize_class_insights'
         ? `Cohort engagement & attendance summary for ${orionGrade}`
+        : intent === 'summarize_submission_progress'
+        ? `Assignment submission & late work summary for ${orionGrade}`
+        : intent === 'summarize_cohort_coordination'
+        ? `Academic coordination & assessment pacing briefing for ${authorizedGrades.join(', ')}`
         : `${orionSubject} classroom resource for ${orionGrade}`);
 
     setOrionLoading(true);
@@ -384,9 +685,15 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
     setPendingDraft(null);
     soundService.playButtonClick();
 
+    const totalSubmitted = teacherHomework.reduce((a, h: any) => a + Number(h?.stats?.submittedCount ?? (h.completedList?.length || 0)), 0);
+    const totalLate = teacherHomework.reduce((a, h: any) => a + Number(h?.stats?.lateCount || 0), 0);
+    const totalEvaluated = teacherHomework.reduce((a, h: any) => a + Number(h?.stats?.evaluatedCount || 0), 0);
+
     const cohortContext =
-      intent === 'summarize_class_insights'
-        ? `Authorized students: ${scopedStudents.length}. Marked today attendance: ${todayAttCount}. Below 75% attendance count: ${lowAttendanceStudents.length}. Active assignments: ${teacherHomework.length}. Pending reviews: ${pendingSubmissionsToReview}.`
+      intent === 'summarize_submission_progress'
+        ? `Assignments active: ${teacherHomework.length}. Total submissions: ${totalSubmitted}. Pending evaluation: ${pendingSubmissionsToReview}. Late submissions: ${totalLate}. Evaluated: ${totalEvaluated}. Scoped cohort size: ${scopedStudents.length}.`
+        : intent === 'summarize_class_insights' || intent === 'summarize_cohort_coordination'
+        ? `Authorized students: ${scopedStudents.length}. Marked today attendance: ${todayAttCount}. Below 75% attendance count: ${lowAttendanceStudents.length}. Active assignments: ${teacherHomework.length}. Pending evaluations: ${pendingSubmissionsToReview}.`
         : `Faculty role: ${effectiveRole}. Authorized grades: ${authorizedGrades.join(', ')}. Cohort size: ${scopedStudents.length}.`;
 
     try {
@@ -411,7 +718,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
       });
 
       const data = await resp.json();
-      if (!resp.ok || !data.success) {
+      if (!resp.ok || !data.success || !data.text) {
         throw new Error(data.error || `Orion returned status ${resp.status}`);
       }
 
@@ -421,6 +728,9 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
         draft_quiz: `Formative Quiz — ${orionSubject}`,
         draft_announcement: `${orionGrade} Academic Update`,
         draft_feedback: `Evaluation Feedback — ${orionSubject}`,
+        draft_assessment_outline: `Assessment Outline — ${orionSubject} (${orionGrade})`,
+        summarize_submission_progress: `Submission Progress Summary — ${orionGrade}`,
+        summarize_cohort_coordination: `Cohort Coordination Brief`,
         summarize_class_insights: `Cohort Insights — ${orionGrade}`
       };
 
@@ -440,7 +750,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
     }
   };
 
-  // Explicit Confirmation Action before committing Orion output to Supabase
+  // Explicit Confirmation Action before committing Orion output to Supabase / Backend
   const handleConfirmCommitDraft = async () => {
     if (!pendingDraft) return;
     setCommittingDraft(true);
@@ -450,7 +760,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
       if (pendingDraft.intent === 'draft_assignment' || pendingDraft.intent === 'draft_quiz') {
         const due = new Date();
         due.setDate(due.getDate() + 4);
-        await saveSupabaseHomework({
+        const hwPayload: Homework = {
           id: `hw-orion-${Date.now()}`,
           classGrade: pendingDraft.grade,
           classSection: (pendingDraft.section || 'All Sections') as any,
@@ -459,25 +769,31 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
           content: pendingDraft.content,
           dueDate: due.toISOString().split('T')[0],
           givenBy: currentUser.name || 'Faculty',
+          teacherId: userId,
+          status: 'published',
+          maxScore: 100,
           createdAt: new Date().toISOString(),
           completedList: []
-        });
+        };
+        const apiRes = await saveAssignment(currentUser, hwPayload, true);
+        if (!apiRes.ok) throw new Error(apiRes.error || 'Failed to publish assignment.');
+        await saveSupabaseHomework(apiRes.data || hwPayload).catch(() => {});
         showNotification(`✓ Confirmed & published assignment "${pendingDraft.title}" to ${pendingDraft.grade}.`);
       } else if (pendingDraft.intent === 'draft_announcement') {
-        await saveAppNotification({
-          id: generateUUID(),
+        const annRes = await createTargetedAnnouncement(currentUser, {
           title: pendingDraft.title,
-          message: pendingDraft.content,
-          type: 'announcement',
-          createdAt: new Date().toISOString(),
-          isRead: false,
-          targetUserId: 'all',
+          content: pendingDraft.content,
+          priority: 'normal',
           targetRole: 'student',
-          targetClass: pendingDraft.grade,
+          targetGrade: pendingDraft.grade,
           targetSection: pendingDraft.section || 'all',
-          linkTab: 'whats_new'
+          status: 'published'
         });
-        showNotification(`✓ Confirmed & dispatched notice to ${pendingDraft.grade}.`);
+        if (!annRes.ok) throw new Error(annRes.error || 'Failed to publish announcement.');
+        if (annRes.data) {
+          setTargetedAnnouncements(prev => [annRes.data!, ...prev]);
+        }
+        showNotification(`✓ Confirmed & dispatched targeted notice to ${pendingDraft.grade}.`);
       } else {
         await saveVaultNoteToSupabase(
           {
@@ -938,7 +1254,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
                 />
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 <button
                   type="button"
                   disabled={orionLoading}
@@ -956,6 +1272,15 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
                 >
                   <p className="text-xs font-bold text-white">Draft Lesson Plan</p>
                   <p className="text-[10px] text-slate-400 mt-0.5">45-min flow</p>
+                </button>
+                <button
+                  type="button"
+                  disabled={orionLoading}
+                  onClick={() => handleRunOrionDraft('draft_assessment_outline')}
+                  className="p-3 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-sky-500/40 text-left transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <p className="text-xs font-bold text-white">Assessment Outline</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">Blueprint + marks</p>
                 </button>
                 <button
                   type="button"
@@ -978,12 +1303,32 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
                 <button
                   type="button"
                   disabled={orionLoading}
+                  onClick={() => handleRunOrionDraft('summarize_submission_progress')}
+                  className="p-3 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/40 text-left transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <p className="text-xs font-bold text-amber-300">Submission Summary</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">Pending &amp; late brief</p>
+                </button>
+                <button
+                  type="button"
+                  disabled={orionLoading}
                   onClick={() => handleRunOrionDraft('summarize_class_insights')}
                   className="p-3 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-emerald-500/40 text-left transition-colors cursor-pointer disabled:opacity-50"
                 >
                   <p className="text-xs font-bold text-emerald-300">Cohort Insights</p>
                   <p className="text-[10px] text-slate-400 mt-0.5">Real data brief</p>
                 </button>
+                {isCoordinatorPlus && (
+                  <button
+                    type="button"
+                    disabled={orionLoading}
+                    onClick={() => handleRunOrionDraft('summarize_cohort_coordination')}
+                    className="p-3 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-sky-500/40 text-left transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <p className="text-xs font-bold text-sky-300">Coord. Oversight Brief</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Attendance &amp; pacing</p>
+                  </button>
+                )}
               </div>
 
               {orionLoading && (
@@ -1085,6 +1430,195 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
               )}
             </div>
           )}
+
+          {/* Targeted Circulars & Announcements Panel */}
+          <div className="bento-card p-5 bg-slate-900 border border-slate-800 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <Megaphone className="w-4 h-4 text-sky-400" />
+                <div>
+                  <h3 className="text-sm font-bold text-white">Targeted Circulars &amp; Announcements</h3>
+                  <p className="text-[11px] text-slate-400">
+                    Publish grade/section-scoped circulars with draft/archive control and read tracking
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  soundService.playButtonClick();
+                  setShowAnnComposer(v => !v);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{showAnnComposer ? 'Close Composer' : 'New Circular'}</span>
+              </button>
+            </div>
+
+            {showAnnComposer && (
+              <form
+                onSubmit={handleSaveTargetedAnnouncement}
+                className="p-4 rounded-xl bg-slate-950 border border-sky-500/30 space-y-3"
+              >
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+                  <input
+                    type="text"
+                    required
+                    value={annTitle}
+                    onChange={e => setAnnTitle(e.target.value)}
+                    placeholder="Circular title"
+                    className="sm:col-span-2 px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500"
+                  />
+                  <select
+                    value={annTargetRole}
+                    onChange={e => setAnnTargetRole(e.target.value as any)}
+                    className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white"
+                  >
+                    <option value="student">Students</option>
+                    <option value="all">All Roles</option>
+                    <option value="parent">Parents</option>
+                    <option value="teacher">Faculty Only</option>
+                  </select>
+                  <select
+                    value={annTargetGrade}
+                    onChange={e => setAnnTargetGrade(e.target.value)}
+                    className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white"
+                  >
+                    <option value="all">All Authorized Grades</option>
+                    {authorizedGrades.map(g => (
+                      <option key={g} value={g}>{g}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={annTargetSection}
+                    onChange={e => setAnnTargetSection(e.target.value)}
+                    className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white"
+                  >
+                    <option value="all">All Sections</option>
+                    {(annTargetGrade !== 'all' ? getSectionsForGrade(annTargetGrade) : authorizedSections).map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <textarea
+                  rows={3}
+                  required
+                  value={annContent}
+                  onChange={e => setAnnContent(e.target.value)}
+                  placeholder="Write the circular details for your target cohort..."
+                  className="w-full p-3 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500"
+                />
+
+                <div className="flex flex-wrap items-center justify-between gap-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={annPriority}
+                      onChange={e => setAnnPriority(e.target.value as any)}
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white"
+                    >
+                      <option value="normal">Priority: Normal</option>
+                      <option value="important">Priority: Important</option>
+                      <option value="urgent">Priority: Urgent</option>
+                    </select>
+                    <select
+                      value={annStatus}
+                      onChange={e => setAnnStatus(e.target.value as any)}
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white"
+                    >
+                      <option value="published">Publish Immediately</option>
+                      <option value="draft">Save as Draft</option>
+                    </select>
+                    <input
+                      type="url"
+                      value={annAttachUrl}
+                      onChange={e => setAnnAttachUrl(e.target.value)}
+                      placeholder="Optional resource URL (https://...)"
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white w-56"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={savingAnn}
+                    className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                  >
+                    {savingAnn ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                    <span>{annStatus === 'draft' ? 'Save Draft' : 'Publish Circular'}</span>
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {targetedAnnouncements.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {targetedAnnouncements.slice(0, 4).map(ann => (
+                  <div
+                    key={ann.id}
+                    className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 flex flex-col justify-between gap-2"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-bold uppercase text-sky-400">
+                          {ann.targetGrade === 'all' ? 'All Grades' : ann.targetGrade} · {ann.targetSection === 'all' ? 'All Sections' : ann.targetSection}
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                            ann.status === 'draft'
+                              ? 'bg-slate-800 text-slate-300'
+                              : ann.status === 'archived'
+                              ? 'bg-slate-900 text-slate-500'
+                              : ann.priority === 'urgent'
+                              ? 'bg-rose-500/20 text-rose-300'
+                              : 'bg-emerald-500/15 text-emerald-300'
+                          }`}
+                        >
+                          {ann.status}
+                        </span>
+                      </div>
+                      <p className="text-xs font-bold text-white mt-1">{ann.title}</p>
+                      <p className="text-[11px] text-slate-400 line-clamp-2 mt-0.5">{ann.content}</p>
+                    </div>
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 text-[10px] text-slate-400">
+                      <span>{ann.authorName} · {ann.targetRole}</span>
+                      <div className="flex items-center gap-2">
+                        {ann.status === 'draft' && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const res = await updateTargetedAnnouncement(currentUser, ann.id, { status: 'published' });
+                              if (res.ok && res.data) {
+                                setTargetedAnnouncements(prev => prev.map(x => (x.id === ann.id ? res.data! : x)));
+                                showNotification('Circular published.');
+                              }
+                            }}
+                            className="text-emerald-400 font-bold hover:underline cursor-pointer"
+                          >
+                            Publish
+                          </button>
+                        )}
+                        {ann.status === 'published' && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const res = await updateTargetedAnnouncement(currentUser, ann.id, { status: 'archived' });
+                              if (res.ok && res.data) {
+                                setTargetedAnnouncements(prev => prev.map(x => (x.id === ann.id ? res.data! : x)));
+                                showNotification('Circular archived.');
+                              }
+                            }}
+                            className="text-slate-400 hover:text-white cursor-pointer"
+                          >
+                            Archive
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -1207,7 +1741,17 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
               onSubmit={handleCreateAssignment}
               className="bento-card p-5 bg-slate-900 border border-sky-500/30 space-y-4"
             >
-              <h3 className="text-sm font-bold text-white">Create Scoped Class Assignment</h3>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-bold text-white">Create Scoped Class Assignment</h3>
+                <select
+                  value={newHwStatus}
+                  onChange={e => setNewHwStatus(e.target.value as AssignmentLifecycleStatus)}
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs font-semibold text-white"
+                >
+                  <option value="published">Status: Publish Now</option>
+                  <option value="draft">Status: Save as Draft</option>
+                </select>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 <input
                   type="text"
@@ -1269,6 +1813,39 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
                 placeholder="Instructions, problems, and submission expectations..."
                 className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500"
               />
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 mb-1">Max Marks</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={1000}
+                    value={newHwMaxScore}
+                    onChange={e => setNewHwMaxScore(Number(e.target.value) || 100)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 mb-1">Attachment Label (optional)</label>
+                  <input
+                    type="text"
+                    value={newHwAttachName}
+                    onChange={e => setNewHwAttachName(e.target.value)}
+                    placeholder="e.g. Lab Worksheet PDF"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-semibold text-slate-400 mb-1">Resource Link (optional)</label>
+                  <input
+                    type="url"
+                    value={newHwAttachUrl}
+                    onChange={e => setNewHwAttachUrl(e.target.value)}
+                    placeholder="https://..."
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white"
+                  />
+                </div>
+              </div>
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
@@ -1283,7 +1860,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
                   className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 >
                   {savingAssignment ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                  <span>Publish Assignment</span>
+                  <span>{newHwStatus === 'draft' ? 'Save Draft Assignment' : 'Publish Assignment'}</span>
                 </button>
               </div>
             </form>
@@ -1294,66 +1871,301 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
               No assignments recorded for your authorized classes yet.
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {teacherHomework.map(hw => {
-                const completedCount = hw.completedList?.length || 0;
-                const isReviewed = reviewedHwIds.has(hw.id);
+            <div className="space-y-4">
+              {teacherHomework.map((hw: any) => {
+                const cohortEligibleStudents = scopedStudents.filter(st =>
+                  isStudentMatchedToCohort(st.grade, st.section, hw.classGrade, hw.classSection)
+                );
+                const submittedCount = Number(hw?.stats?.submittedCount ?? (hw.completedList?.length || 0));
+                const evaluatedCount = Number(hw?.stats?.evaluatedCount || 0);
+                const lateCount = Number(hw?.stats?.lateCount || 0);
+                const pendingCount = Math.max(0, cohortEligibleStudents.length - submittedCount);
+                const isExpanded = expandedSubmissionHwId === hw.id;
+                const subsList = submissionsByHw[hw.id] || [];
+                const submittedStudentIds = new Set(subsList.map(s => s.studentId));
+                const notSubmittedStudents = cohortEligibleStudents.filter(st => !submittedStudentIds.has(st.uid));
+                const statusBadge = (hw.status || 'published').toLowerCase();
+
                 return (
                   <div
                     key={hw.id}
-                    className="bento-card p-4 bg-slate-900 border border-slate-800 flex flex-col justify-between gap-3"
+                    className="bento-card p-5 bg-slate-900 border border-slate-800 space-y-4"
                   >
-                    <div className="space-y-1.5">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
+                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="text-[11px] font-semibold text-sky-400">
                             {hw.subject} · {hw.classGrade} ({hw.classSection})
                           </span>
-                          <h4 className="text-sm font-bold text-white mt-0.5">{hw.title}</h4>
+                          <span
+                            className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
+                              statusBadge === 'draft'
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                : statusBadge === 'archived'
+                                ? 'bg-slate-800 text-slate-400'
+                                : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                            }`}
+                          >
+                            {statusBadge}
+                          </span>
+                          <span className="text-[11px] text-slate-400 tabular-nums">
+                            Max {hw.maxScore || 100} pts · Due {hw.dueDate}
+                          </span>
                         </div>
-                        <span className="text-[11px] text-slate-400 shrink-0 tabular-nums">
-                          Due {hw.dueDate}
-                        </span>
+                        <h4 className="text-base font-bold text-white">{hw.title}</h4>
+                        <p className="text-xs text-slate-300 whitespace-pre-line">{hw.content}</p>
+                        {Array.isArray(hw.attachments) && hw.attachments.length > 0 && (
+                          <div className="flex flex-wrap gap-2 pt-1">
+                            {hw.attachments.map((att: AssignmentAttachment) => (
+                              <a
+                                key={att.id}
+                                href={att.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-sky-300 hover:border-sky-500/40"
+                              >
+                                <FileText className="w-3 h-3" />
+                                <span>{att.name}</span>
+                                <ExternalLink className="w-2.5 h-2.5" />
+                              </a>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      <p className="text-xs text-slate-300 line-clamp-3 whitespace-pre-line">
-                        {hw.content}
-                      </p>
+
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        {statusBadge === 'draft' && (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleAssignmentLifecycle(hw, 'published')}
+                            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer"
+                          >
+                            Publish to Students
+                          </button>
+                        )}
+                        {statusBadge === 'published' && (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleAssignmentLifecycle(hw, 'archived')}
+                            className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+                          >
+                            Archive
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleSubmissionsPanel(hw.id)}
+                          className="px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold cursor-pointer"
+                        >
+                          {isExpanded ? 'Hide Submissions' : `Inspect Submissions (${submittedCount})`}
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-xs font-semibold text-emerald-400 tabular-nums">
-                        {completedCount} completion{completedCount === 1 ? '' : 's'}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setOrionSubject(hw.subject || 'Academics');
-                            setOrionGrade(hw.classGrade || authorizedGrades[0]);
-                            setOrionTopic(`Constructive grading rubric & feedback template for assignment "${hw.title}"`);
-                            setSubSection('overview');
-                            handleRunOrionDraft(
-                              'draft_feedback',
-                              `Constructive grading rubric & feedback template for assignment "${hw.title}"`
-                            );
-                          }}
-                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-sky-300 cursor-pointer"
-                        >
-                          Orion Feedback
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleMarkAssignmentReviewed(hw.id)}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${
-                            isReviewed
-                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                              : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                          }`}
-                        >
-                          {isReviewed ? 'Reviewed' : 'Mark Reviewed'}
-                        </button>
+                    {/* Real-time Assignment Progress Strip */}
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-3 border-t border-slate-800 text-center">
+                      <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800">
+                        <p className="text-[10px] text-slate-400">Assigned Cohort</p>
+                        <p className="text-sm font-bold text-white tabular-nums">{cohortEligibleStudents.length}</p>
+                      </div>
+                      <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800">
+                        <p className="text-[10px] text-slate-400">Submitted</p>
+                        <p className="text-sm font-bold text-sky-400 tabular-nums">{submittedCount}</p>
+                      </div>
+                      <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800">
+                        <p className="text-[10px] text-slate-400">Pending</p>
+                        <p className="text-sm font-bold text-amber-400 tabular-nums">{pendingCount}</p>
+                      </div>
+                      <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800">
+                        <p className="text-[10px] text-slate-400">Late</p>
+                        <p className="text-sm font-bold text-rose-400 tabular-nums">{lateCount}</p>
+                      </div>
+                      <div className="p-2 rounded-lg bg-slate-950/70 border border-slate-800">
+                        <p className="text-[10px] text-slate-400">Evaluated</p>
+                        <p className="text-sm font-bold text-emerald-400 tabular-nums">{evaluatedCount}</p>
                       </div>
                     </div>
+
+                    {/* Expandable Submissions & Evaluation Panel */}
+                    {isExpanded && (
+                      <div className="pt-3 border-t border-slate-800 space-y-4">
+                        {loadingSubsHwId === hw.id ? (
+                          <div className="p-4 text-xs text-sky-300 flex items-center gap-2">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>Loading student submissions...</span>
+                          </div>
+                        ) : (
+                          <>
+                            {subsList.length === 0 ? (
+                              <p className="text-xs text-slate-400 p-3 rounded-xl bg-slate-950 border border-slate-800">
+                                No student submissions received for this assignment yet.
+                              </p>
+                            ) : (
+                              <div className="space-y-3">
+                                <h5 className="text-xs font-bold text-slate-300 uppercase tracking-wide">
+                                  Submitted Work ({subsList.length})
+                                </h5>
+                                {subsList.map(sub => {
+                                  const key = `${hw.id}::${sub.studentId}`;
+                                  const draft = evalDrafts[key] || {
+                                    score: sub.score !== null && sub.score !== undefined ? String(sub.score) : '',
+                                    feedback: sub.feedback || ''
+                                  };
+                                  return (
+                                    <div
+                                      key={sub.id}
+                                      className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3"
+                                    >
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <div>
+                                          <span className="text-xs font-bold text-white">{sub.studentName}</span>
+                                          <span className="text-[11px] text-slate-400 ml-2">
+                                            {sub.classGrade} · {sub.classSection} · {new Date(sub.submittedAt).toLocaleString()}
+                                          </span>
+                                        </div>
+                                        <span
+                                          className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
+                                            sub.status === 'evaluated'
+                                              ? 'bg-emerald-500/20 text-emerald-300'
+                                              : sub.status === 'returned_for_revision'
+                                              ? 'bg-amber-500/20 text-amber-300'
+                                              : sub.isLate
+                                              ? 'bg-rose-500/20 text-rose-300'
+                                              : 'bg-sky-500/20 text-sky-300'
+                                          }`}
+                                        >
+                                          {sub.status.replace(/_/g, ' ')}
+                                        </span>
+                                      </div>
+
+                                      {sub.submissionText && (
+                                        <p className="text-xs text-slate-200 bg-slate-900/90 p-3 rounded-lg border border-slate-800 whitespace-pre-wrap">
+                                          {sub.submissionText}
+                                        </p>
+                                      )}
+
+                                      {sub.attachmentUrl && (
+                                        <a
+                                          href={sub.attachmentUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="inline-flex items-center gap-1.5 text-xs text-sky-400 hover:underline"
+                                        >
+                                          <FileText className="w-3.5 h-3.5" />
+                                          <span>{sub.attachmentName || sub.attachmentUrl}</span>
+                                          <ExternalLink className="w-3 h-3" />
+                                        </a>
+                                      )}
+
+                                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 items-start">
+                                        <div>
+                                          <label className="block text-[10px] text-slate-400 mb-1">
+                                            Score (0–{hw.maxScore || 100})
+                                          </label>
+                                          <input
+                                            type="number"
+                                            min={0}
+                                            max={hw.maxScore || 100}
+                                            value={draft.score}
+                                            onChange={e =>
+                                              setEvalDrafts(prev => ({
+                                                ...prev,
+                                                [key]: { ...draft, score: e.target.value, error: undefined }
+                                              }))
+                                            }
+                                            placeholder={`/${hw.maxScore || 100}`}
+                                            className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white tabular-nums"
+                                          />
+                                        </div>
+                                        <div className="sm:col-span-3">
+                                          <label className="block text-[10px] text-slate-400 mb-1">
+                                            Teacher Feedback (released to student on save)
+                                          </label>
+                                          <textarea
+                                            rows={2}
+                                            value={draft.feedback}
+                                            onChange={e =>
+                                              setEvalDrafts(prev => ({
+                                                ...prev,
+                                                [key]: { ...draft, feedback: e.target.value, error: undefined }
+                                              }))
+                                            }
+                                            placeholder="Constructive evaluation notes..."
+                                            className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white"
+                                          />
+                                        </div>
+                                      </div>
+
+                                      {draft.error && (
+                                        <p className="text-[11px] text-rose-400 font-semibold">{draft.error}</p>
+                                      )}
+
+                                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                                        <button
+                                          type="button"
+                                          disabled={draft.orionLoading}
+                                          onClick={() => handleDraftSubmissionFeedbackWithOrion(hw, sub)}
+                                          className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-sky-500/30 text-[11px] font-semibold text-sky-300 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                        >
+                                          {draft.orionLoading ? (
+                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                          ) : (
+                                            <VeylentraIcon name="orion" size="sm" />
+                                          )}
+                                          <span>Draft Feedback with Orion</span>
+                                        </button>
+
+                                        <div className="flex items-center gap-2">
+                                          <button
+                                            type="button"
+                                            disabled={draft.saving}
+                                            onClick={() => handleSaveEvaluation(hw, sub, 'return_for_revision')}
+                                            className="px-3 py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/40 text-amber-200 text-xs font-bold cursor-pointer disabled:opacity-50"
+                                          >
+                                            Return for Revision
+                                          </button>
+                                          <button
+                                            type="button"
+                                            disabled={draft.saving}
+                                            onClick={() => handleSaveEvaluation(hw, sub, 'evaluate')}
+                                            className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                          >
+                                            {draft.saving ? (
+                                              <Loader2 className="w-3 h-3 animate-spin" />
+                                            ) : (
+                                              <Check className="w-3.5 h-3.5" />
+                                            )}
+                                            <span>Save &amp; Release Evaluation</span>
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            {notSubmittedStudents.length > 0 && (
+                              <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-1.5">
+                                <p className="text-[11px] font-bold text-amber-300">
+                                  Not Yet Submitted ({notSubmittedStudents.length})
+                                </p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {notSubmittedStudents.slice(0, 20).map(st => (
+                                    <span
+                                      key={st.uid || st.email}
+                                      className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-[11px] text-slate-300"
+                                    >
+                                      {st.name}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}

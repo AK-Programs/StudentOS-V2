@@ -5,6 +5,12 @@ import {
   Calendar as CalendarIcon, Clock, ChevronLeft, ChevronRight, Plus, 
   Filter, Search, AlertCircle, BookOpen, Award, Users, Video, Tag, Check, Trash2, Edit3
 } from 'lucide-react';
+import {
+  fetchAssignments,
+  fetchAssessments,
+  isStudentMatchedToCohort
+} from '../lib/academicWorkflowService';
+import { SyllabusTimetableService } from '../lib/syllabusTimetableService';
 
 interface AcademicCalendarProps {
   currentUser: UserProfile;
@@ -128,41 +134,43 @@ export default function AcademicCalendar({ currentUser, effectiveRole }: Academi
         .select('*');
 
       if (data && data.length > 0) {
-        mapped = data.map((r: any) => {
-          const rawStart = r.start_date || r.start_time || '';
-          const rawEnd = r.end_date || r.end_time || rawStart;
-          const rawCat = (r.category || r.event_type || 'Academic').toUpperCase();
-          const validTypes: CalendarEventType[] = ['EXAM', 'TEST', 'ASSIGNMENT', 'HOLIDAY', 'SCHOOL_EVENT', 'COMPETITION', 'MEETING', 'OTHER'];
-          
-          let eventType: CalendarEventType = 'OTHER';
-          if (rawCat.includes('EXAM')) eventType = 'EXAM';
-          else if (rawCat.includes('TEST') || rawCat.includes('QUIZ')) eventType = 'TEST';
-          else if (rawCat.includes('ASSIGN')) eventType = 'ASSIGNMENT';
-          else if (rawCat.includes('HOLIDAY') || rawCat.includes('VACATION') || rawCat.includes('BREAK')) eventType = 'HOLIDAY';
-          else if (rawCat.includes('EVENT') || rawCat.includes('ACADEMIC') || rawCat.includes('EXHIBITION')) eventType = 'SCHOOL_EVENT';
-          else if (rawCat.includes('COMPET')) eventType = 'COMPETITION';
-          else if (rawCat.includes('MEET') || rawCat.includes('CONFERENCE')) eventType = 'MEETING';
-          else if (validTypes.includes(rawCat as any)) eventType = rawCat as any;
+        mapped = data
+          .filter((r: any) => String(r.status || '').toLowerCase() !== 'cancelled')
+          .map((r: any) => {
+            const rawStart = r.start_date || r.start_time || '';
+            const rawEnd = r.end_date || r.end_time || rawStart;
+            const rawCat = (r.category || r.event_type || 'Academic').toUpperCase();
+            const validTypes: CalendarEventType[] = ['EXAM', 'TEST', 'ASSIGNMENT', 'HOLIDAY', 'SCHOOL_EVENT', 'COMPETITION', 'MEETING', 'OTHER'];
+            
+            let eventType: CalendarEventType = 'OTHER';
+            if (rawCat.includes('EXAM')) eventType = 'EXAM';
+            else if (rawCat.includes('TEST') || rawCat.includes('QUIZ')) eventType = 'TEST';
+            else if (rawCat.includes('ASSIGN')) eventType = 'ASSIGNMENT';
+            else if (rawCat.includes('HOLIDAY') || rawCat.includes('VACATION') || rawCat.includes('BREAK')) eventType = 'HOLIDAY';
+            else if (rawCat.includes('EVENT') || rawCat.includes('ACADEMIC') || rawCat.includes('EXHIBITION')) eventType = 'SCHOOL_EVENT';
+            else if (rawCat.includes('COMPET')) eventType = 'COMPETITION';
+            else if (rawCat.includes('MEET') || rawCat.includes('CONFERENCE')) eventType = 'MEETING';
+            else if (validTypes.includes(rawCat as any)) eventType = rawCat as any;
 
-          const aud = (r.target_audience || r.audience || 'all').toLowerCase();
+            const aud = (r.target_audience || r.audience || 'all').toLowerCase();
 
-          return {
-            id: r.id,
-            title: r.title || 'Untitled Event',
-            description: r.description || '',
-            startTime: rawStart,
-            endTime: rawEnd,
-            eventType,
-            category: r.category || eventType,
-            color: r.color,
-            audience: aud as any,
-            classGrade: (Array.isArray(r.target_grades) && r.target_grades.length > 0) ? r.target_grades[0] : (r.class_grade || null),
-            classSection: (Array.isArray(r.target_sections) && r.target_sections.length > 0) ? r.target_sections[0] : (r.class_section || null),
-            createdBy: r.created_by,
-            createdByName: r.created_by_name || 'Administration / Faculty',
-            createdAt: r.created_at
-          };
-        });
+            return {
+              id: r.id,
+              title: r.title || 'Untitled Event',
+              description: r.description || '',
+              startTime: rawStart,
+              endTime: rawEnd,
+              eventType,
+              category: r.category || eventType,
+              color: r.color,
+              audience: aud as any,
+              classGrade: (Array.isArray(r.target_grades) && r.target_grades.length > 0) ? r.target_grades[0] : (r.class_grade || null),
+              classSection: (Array.isArray(r.target_sections) && r.target_sections.length > 0) ? r.target_sections[0] : (r.class_section || null),
+              createdBy: r.created_by,
+              createdByName: r.created_by_name || 'Administration / Faculty',
+              createdAt: r.created_at
+            };
+          });
 
         try {
           localStorage.setItem('s_os_calendar_events', JSON.stringify(mapped));
@@ -184,49 +192,129 @@ export default function AcademicCalendar({ currentUser, effectiveRole }: Academi
         } catch (_) {}
       }
 
-      // Also pull homework assignments to populate calendar deadlines automatically
+      // 2. Pull published assignments via connected academic workflow service (fallback to Supabase homework)
       try {
-        const { data: hwData } = await supabase.from('homework').select('*');
-        if (hwData && Array.isArray(hwData)) {
-          hwData.forEach((hw: any) => {
-            if (hw.due_date) {
+        const hwApi = await fetchAssignments(currentUser);
+        if (hwApi.ok && hwApi.data) {
+          hwApi.data.forEach(hw => {
+            if (hw.status === 'draft' || hw.status === 'archived') return;
+            const dateStr = extractLocalDateString(hw.dueDate);
+            if (dateStr) {
               mapped.push({
                 id: `hw_${hw.id}`,
                 title: `Due: ${hw.title || hw.subject}`,
-                description: `Subject: ${hw.subject}. ${hw.description || ''}`,
-                startTime: `${hw.due_date}T23:59:00`,
-                endTime: `${hw.due_date}T23:59:00`,
+                description: `Subject: ${hw.subject}. ${hw.content || ''}`,
+                startTime: `${dateStr}T23:59:00`,
+                endTime: `${dateStr}T23:59:00`,
                 eventType: 'ASSIGNMENT',
                 audience: 'students',
-                classGrade: hw.grade,
-                classSection: hw.section,
-                createdBy: hw.teacher_id,
-                createdByName: hw.teacher_name
+                classGrade: hw.classGrade,
+                classSection: hw.classSection,
+                createdByName: hw.givenBy
+              });
+            }
+          });
+        } else {
+          const { data: hwData } = await supabase.from('homework').select('*');
+          if (hwData && Array.isArray(hwData)) {
+            hwData.forEach((hw: any) => {
+              if (hw.status === 'draft' || hw.status === 'archived') return;
+              const dateStr = extractLocalDateString(hw.due_date);
+              if (dateStr) {
+                mapped.push({
+                  id: `hw_${hw.id}`,
+                  title: `Due: ${hw.title || hw.subject}`,
+                  description: `Subject: ${hw.subject}. ${hw.description || hw.content || ''}`,
+                  startTime: `${dateStr}T23:59:00`,
+                  endTime: `${dateStr}T23:59:00`,
+                  eventType: 'ASSIGNMENT',
+                  audience: 'students',
+                  classGrade: hw.class_grade || hw.grade,
+                  classSection: hw.class_section || hw.section,
+                  createdBy: hw.teacher_id,
+                  createdByName: hw.given_by || hw.teacher_name
+                });
+              }
+            });
+          }
+        }
+      } catch (_) {}
+
+      // 3. Pull published, non-cancelled assessments
+      try {
+        const assessApi = await fetchAssessments(currentUser);
+        if (assessApi.ok && assessApi.data) {
+          assessApi.data.forEach(a => {
+            if (a.status === 'draft' || a.status === 'cancelled') return;
+            const dateStr = extractLocalDateString(a.date);
+            if (dateStr) {
+              mapped.push({
+                id: `assess_${a.id}`,
+                title: `${a.subject}: ${a.title}`,
+                description: [a.type, a.syllabusCoverage ? `Syllabus: ${a.syllabusCoverage}` : '', a.instructions || ''].filter(Boolean).join(' • '),
+                startTime: `${dateStr}T09:00:00`,
+                endTime: `${dateStr}T10:30:00`,
+                eventType: a.type === 'Midterm' || a.type === 'Final Exam' ? 'EXAM' : 'TEST',
+                audience: 'students',
+                classGrade: a.classGrade,
+                classSection: a.classSection,
+                createdBy: a.teacherId,
+                createdByName: a.teacherName
               });
             }
           });
         }
       } catch (_) {}
 
-      // Deduplicate events by id
+      // 4. Pull Official Exam Plans
+      try {
+        const officialExams = await SyllabusTimetableService.getOfficialExams('default_school');
+        officialExams.forEach(ex => {
+          if ((ex as any).status === 'cancelled') return;
+          const dateStr = extractLocalDateString(ex.examDate);
+          if (dateStr) {
+            mapped.push({
+              id: `official_exam_${ex.id}`,
+              title: `${ex.subject}: ${ex.examName}`,
+              description: ex.syllabusNotes || (ex.isOfficialSchoolExam ? 'Official School Exam' : 'Exam Prep Plan'),
+              startTime: `${dateStr}T09:00:00`,
+              endTime: `${dateStr}T12:00:00`,
+              eventType: 'EXAM',
+              audience: 'students',
+              classGrade: ex.grade,
+              classSection: 'All Sections',
+              createdByName: 'Examination Cell'
+            });
+          }
+        });
+      } catch (_) {}
+
+      // Deduplicate events by id and normalized (title + local date)
       const uniqueMap = new Map<string, CalendarEvent>();
+      const seenSignatures = new Set<string>();
       mapped.forEach(e => {
-        if (!uniqueMap.has(e.id)) {
+        const sig = `${String(e.title || '').trim().toLowerCase()}__${extractLocalDateString(e.startTime)}`;
+        if (!uniqueMap.has(e.id) && !seenSignatures.has(sig)) {
           uniqueMap.set(e.id, e);
+          seenSignatures.add(sig);
         }
       });
       mapped = Array.from(uniqueMap.values());
 
-      // Filter based on Student role and class
+      // Filter based on Student role and strict grade+section cohort matching
       if (effectiveRole === 'student') {
         mapped = mapped.filter(e => {
-          // School-wide events ('all', 'school', 'students') are ALWAYS visible to students
           const aud = e.audience as string | undefined;
-          const isSchoolWide = !aud || aud === 'all' || aud === 'school' || aud === 'students';
-          if (isSchoolWide) return true;
           if (aud === 'teachers' || aud === 'coordinators') return false;
-          if (e.classGrade && e.classGrade !== 'all' && currentUser.grade && e.classGrade !== currentUser.grade) return false;
-          return true;
+          if (e.classGrade || e.classSection) {
+            return isStudentMatchedToCohort(
+              currentUser.grade,
+              currentUser.section,
+              e.classGrade || 'All Grades',
+              e.classSection || 'All Sections'
+            );
+          }
+          return !aud || aud === 'all' || aud === 'school' || aud === 'students';
         });
       }
 
@@ -250,6 +338,14 @@ export default function AcademicCalendar({ currentUser, effectiveRole }: Academi
 
   useEffect(() => {
     fetchCalendarEvents();
+    const handleSync = (e: any) => {
+      const table = e?.detail?.table;
+      if (!table || table === 'homework' || table === 'gradebook_assessments' || table === 'calendar_events') {
+        void fetchCalendarEvents();
+      }
+    };
+    window.addEventListener('studentos-db-update', handleSync);
+    return () => window.removeEventListener('studentos-db-update', handleSync);
   }, [currentUser, effectiveRole]);
 
   const handleOpenCreateModal = () => {
@@ -795,7 +891,7 @@ export default function AcademicCalendar({ currentUser, effectiveRole }: Academi
               )}
             </div>
 
-            {canCreateEvents && !selectedEvent.id.startsWith('hw_') && (
+            {canCreateEvents && !selectedEvent.id.startsWith('hw_') && !selectedEvent.id.startsWith('assess_') && !selectedEvent.id.startsWith('official_exam_') && (
               <div className="pt-2 flex justify-end gap-2">
                 <button
                   type="button"

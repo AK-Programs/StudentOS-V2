@@ -1,12 +1,20 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { UserProfile, GradebookAssessment, GradebookEntry, AssessmentType, UserRole } from '../types';
+import { UserProfile, GradebookAssessment, GradebookEntry, AssessmentType, AssessmentStatus, UserRole } from '../types';
 import { fetchAllSupabaseUsers } from '../lib/supabaseUsers';
 import { supabase } from '../lib/supabase';
 import { 
   Award, BookOpen, Plus, Save, Check, Filter, Search, 
-  BarChart2, TrendingUp, AlertCircle, FileText, Download, CheckCircle2, FileSpreadsheet
+  BarChart2, TrendingUp, AlertCircle, FileText, Download, CheckCircle2, FileSpreadsheet,
+  Eye, EyeOff, Ban, Calendar
 } from 'lucide-react';
 import { exportMarksToExcel, canUserExport } from '../lib/excelExportService';
+import {
+  fetchAssessments,
+  createAssessment,
+  updateAssessment,
+  saveAssessmentEntries,
+  fetchGradebookEntries
+} from '../lib/academicWorkflowService';
 
 interface DigitalGradebookProps {
   currentUser: UserProfile;
@@ -63,6 +71,11 @@ export default function DigitalGradebook({ currentUser, effectiveRole }: Digital
   const [newType, setNewType] = useState<AssessmentType>('Unit Test');
   const [newMaxScore, setNewMaxScore] = useState<number>(100);
   const [newDate, setNewDate] = useState(new Date().toISOString().split('T')[0]);
+  const [newStatus, setNewStatus] = useState<AssessmentStatus>('published');
+  const [newSyllabusCoverage, setNewSyllabusCoverage] = useState('');
+  const [newInstructions, setNewInstructions] = useState('');
+  const [newResultsPublished, setNewResultsPublished] = useState(false);
+  const [statusUpdating, setStatusUpdating] = useState(false);
 
   // Student specific view
   const [myEntries, setMyEntries] = useState<GradebookEntry[]>([]);
@@ -90,6 +103,25 @@ export default function DigitalGradebook({ currentUser, effectiveRole }: Digital
   const loadAssessments = async () => {
     setLoading(true);
     try {
+      const apiRes = await fetchAssessments(currentUser);
+      if (apiRes.ok && apiRes.data) {
+        const filteredApi = isStudent
+          ? apiRes.data.filter(a => (a.status || 'published') !== 'draft')
+          : apiRes.data.filter(a =>
+              (!selectedGrade || a.classGrade === selectedGrade) &&
+              (!selectedSubject || a.subject === selectedSubject) &&
+              (!selectedPeriod || a.period === selectedPeriod)
+            );
+        if (filteredApi.length > 0 || isStudent) {
+          setAssessments(filteredApi);
+          if (filteredApi.length > 0 && (!selectedAssessmentId || !filteredApi.some(a => a.id === selectedAssessmentId))) {
+            setSelectedAssessmentId(filteredApi[0].id);
+          }
+          setLoading(false);
+          return;
+        }
+      }
+
       let query = supabase.from('gradebook_assessments').select('*');
       if (!isStudent) {
         query = query
@@ -101,23 +133,29 @@ export default function DigitalGradebook({ currentUser, effectiveRole }: Digital
       const { data, error } = await query.order('date', { ascending: false });
       if (error && error.code !== '42P01') throw error;
 
-      const mapped: GradebookAssessment[] = (data || []).map((a: any) => ({
-        id: a.id,
-        title: a.title,
-        classGrade: a.class_grade,
-        classSection: a.class_section,
-        subject: a.subject,
-        period: a.period,
-        type: a.type as AssessmentType,
-        maxScore: a.max_score,
-        date: a.date,
-        teacherId: a.teacher_id,
-        teacherName: a.teacher_name,
-        createdAt: a.created_at
-      }));
+      const mapped: GradebookAssessment[] = (data || [])
+        .map((a: any) => ({
+          id: a.id,
+          title: a.title,
+          classGrade: a.class_grade,
+          classSection: a.class_section,
+          subject: a.subject,
+          period: a.period,
+          type: a.type as AssessmentType,
+          maxScore: a.max_score,
+          date: a.date,
+          teacherId: a.teacher_id,
+          teacherName: a.teacher_name,
+          status: (a.status || 'published') as AssessmentStatus,
+          syllabusCoverage: a.syllabus_coverage || undefined,
+          instructions: a.instructions || undefined,
+          resultsPublished: Boolean(a.results_published),
+          createdAt: a.created_at
+        }))
+        .filter(a => !isStudent || a.status !== 'draft');
 
       setAssessments(mapped);
-      if (mapped.length > 0 && !selectedAssessmentId) {
+      if (mapped.length > 0 && (!selectedAssessmentId || !mapped.some(a => a.id === selectedAssessmentId))) {
         setSelectedAssessmentId(mapped[0].id);
       }
     } catch (err) {
@@ -132,75 +170,115 @@ export default function DigitalGradebook({ currentUser, effectiveRole }: Digital
   }, [selectedGrade, selectedSection, selectedSubject, selectedPeriod, isStudent]);
 
   // 3. Fetch Entries for selected assessment (or student's own entries)
-  useEffect(() => {
-    const loadEntries = async () => {
-      if (isStudent && currentUser.uid) {
-        setLoading(true);
-        try {
-          const { data, error } = await supabase
-            .from('gradebook_entries')
-            .select('*')
-            .eq('student_id', currentUser.uid);
-
-          if (error && error.code !== '42P01') throw error;
-
-          const mapped: GradebookEntry[] = (data || []).map((e: any) => ({
-            id: e.id,
-            assessmentId: e.assessment_id,
-            studentId: e.student_id,
-            studentName: e.student_name,
-            subject: e.subject,
-            score: e.score,
-            maxScore: e.max_score,
-            percentage: e.percentage,
-            letterGrade: e.letter_grade,
-            comment: e.comment,
-            updatedAt: e.updated_at
-          }));
-
-          setMyEntries(mapped);
-        } catch (err) {
-          console.error('Failed to load student entries:', err);
-        } finally {
-          setLoading(false);
-        }
-        return;
-      }
-
-      if (!selectedAssessmentId) return;
-
+  const loadEntries = async () => {
+    if (isStudent && currentUser.uid) {
+      setLoading(true);
       try {
+        const apiRes = await fetchGradebookEntries(currentUser);
+        if (apiRes.ok && apiRes.data) {
+          setMyEntries(apiRes.data);
+          setLoading(false);
+          return;
+        }
+
         const { data, error } = await supabase
           .from('gradebook_entries')
           .select('*')
-          .eq('assessment_id', selectedAssessmentId);
+          .eq('student_id', currentUser.uid);
 
         if (error && error.code !== '42P01') throw error;
 
-        const map: Record<string, GradebookEntry> = {};
-        (data || []).forEach((e: any) => {
-          map[e.student_id] = {
-            id: e.id,
-            assessmentId: e.assessment_id,
-            studentId: e.student_id,
-            studentName: e.student_name,
-            subject: e.subject,
-            score: e.score,
-            maxScore: e.max_score,
-            percentage: e.percentage,
-            letterGrade: e.letter_grade,
-            comment: e.comment,
-            updatedAt: e.updated_at
-          };
-        });
-        setEntries(map);
-      } catch (err) {
-        console.error('Failed to load entries:', err);
-      }
-    };
+        const mapped: GradebookEntry[] = (data || []).map((e: any) => ({
+          id: e.id,
+          assessmentId: e.assessment_id,
+          studentId: e.student_id,
+          studentName: e.student_name,
+          subject: e.subject,
+          score: e.score,
+          maxScore: e.max_score,
+          percentage: e.percentage,
+          letterGrade: e.letter_grade,
+          comment: e.comment,
+          updatedAt: e.updated_at
+        }));
 
+        // Gate fallback entries by resultsPublished when assessments are known
+        const gated = assessments.length > 0
+          ? mapped.filter(m => {
+              const parent = assessments.find(a => a.id === m.assessmentId);
+              return !parent || Boolean(parent.resultsPublished);
+            })
+          : mapped;
+        setMyEntries(gated);
+      } catch (err) {
+        console.error('Failed to load student entries:', err);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (!selectedAssessmentId) return;
+
+    try {
+      const apiRes = await fetchGradebookEntries(currentUser);
+      if (apiRes.ok && apiRes.data) {
+        const map: Record<string, GradebookEntry> = {};
+        apiRes.data
+          .filter(e => e.assessmentId === selectedAssessmentId)
+          .forEach(e => {
+            map[e.studentId] = e;
+          });
+        if (Object.keys(map).length > 0) {
+          setEntries(map);
+          return;
+        }
+      }
+
+      const { data, error } = await supabase
+        .from('gradebook_entries')
+        .select('*')
+        .eq('assessment_id', selectedAssessmentId);
+
+      if (error && error.code !== '42P01') throw error;
+
+      const map: Record<string, GradebookEntry> = {};
+      (data || []).forEach((e: any) => {
+        map[e.student_id] = {
+          id: e.id,
+          assessmentId: e.assessment_id,
+          studentId: e.student_id,
+          studentName: e.student_name,
+          subject: e.subject,
+          score: e.score,
+          maxScore: e.max_score,
+          percentage: e.percentage,
+          letterGrade: e.letter_grade,
+          comment: e.comment,
+          updatedAt: e.updated_at
+        };
+      });
+      setEntries(map);
+    } catch (err) {
+      console.error('Failed to load entries:', err);
+    }
+  };
+
+  useEffect(() => {
     loadEntries();
   }, [selectedAssessmentId, isStudent, currentUser]);
+
+  useEffect(() => {
+    const handleSync = (e: any) => {
+      const table = e?.detail?.table;
+      if (!table || table === 'gradebook_assessments' || table === 'gradebook_entries') {
+        void loadAssessments();
+        void loadEntries();
+      }
+    };
+    window.addEventListener('studentos-db-update', handleSync);
+    return () => window.removeEventListener('studentos-db-update', handleSync);
+  }, [selectedAssessmentId, selectedGrade, selectedSubject, selectedPeriod, isStudent]);
 
   // Active Assessment
   const currentAssessment = assessments.find(a => a.id === selectedAssessmentId);
@@ -263,45 +341,71 @@ export default function DigitalGradebook({ currentUser, effectiveRole }: Digital
     }));
   };
 
-  // Save Grades to Supabase
+  // Save Grades via Connected Workflow API + Supabase Fallback
   const handleSaveGrades = async () => {
     if (!currentAssessment) return;
     setSaving(true);
     setValidationError(null);
 
     try {
-      const recordsToUpsert = students.map(s => {
+      const apiEntries = students.map(s => {
         const entry = entries[s.uid!];
         const score = entry ? entry.score : 0;
         const max = currentAssessment.maxScore;
         const pct = Math.round((score / max) * 100);
-
         return {
-          assessment_id: currentAssessment.id,
-          student_id: s.uid,
-          student_name: s.name,
+          studentId: s.uid!,
+          studentName: s.name,
           subject: currentAssessment.subject,
-          score: score,
-          max_score: max,
+          score,
+          maxScore: max,
           percentage: pct,
-          letter_grade: computeLetterGrade(pct),
-          comment: entry?.comment || null,
-          updated_at: new Date().toISOString(),
-          updated_by: currentUser.name || currentUser.email
+          letterGrade: computeLetterGrade(pct),
+          comment: entry?.comment || ''
         };
       });
 
-      const { error } = await supabase
-        .from('gradebook_entries')
-        .upsert(recordsToUpsert, { onConflict: 'assessment_id, student_id' });
+      const apiRes = await saveAssessmentEntries(
+        currentUser,
+        currentAssessment.id,
+        apiEntries,
+        currentAssessment.maxScore
+      );
 
-      if (error && error.code !== '42P01') throw error;
+      if (!apiRes.ok) {
+        const recordsToUpsert = students.map(s => {
+          const entry = entries[s.uid!];
+          const score = entry ? entry.score : 0;
+          const max = currentAssessment.maxScore;
+          const pct = Math.round((score / max) * 100);
+
+          return {
+            assessment_id: currentAssessment.id,
+            student_id: s.uid,
+            student_name: s.name,
+            subject: currentAssessment.subject,
+            score: score,
+            max_score: max,
+            percentage: pct,
+            letter_grade: computeLetterGrade(pct),
+            comment: entry?.comment || null,
+            updated_at: new Date().toISOString(),
+            updated_by: currentUser.name || currentUser.email
+          };
+        });
+
+        const { error } = await supabase
+          .from('gradebook_entries')
+          .upsert(recordsToUpsert, { onConflict: 'assessment_id, student_id' });
+
+        if (error && error.code !== '42P01') throw error;
+      }
 
       setSavedSuccess(true);
       setTimeout(() => setSavedSuccess(false), 2500);
     } catch (err: any) {
       console.error('Failed to save grade entries:', err);
-      setValidationError('Failed to save entries to database.');
+      setValidationError(err?.message || 'Failed to save entries to database.');
     } finally {
       setSaving(false);
     }
@@ -343,37 +447,81 @@ export default function DigitalGradebook({ currentUser, effectiveRole }: Digital
     }
   };
 
+  // Lifecycle Actions: Publish, Cancel, Toggle Results Publication
+  const handleAssessmentLifecyclePatch = async (patch: Partial<GradebookAssessment>) => {
+    if (!currentAssessment) return;
+    setStatusUpdating(true);
+    setValidationError(null);
+    try {
+      const res = await updateAssessment(currentUser, currentAssessment.id, patch);
+      if (!res.ok) {
+        setValidationError(res.error || 'Failed to update assessment lifecycle status.');
+      } else if (res.data) {
+        setAssessments(prev => prev.map(a => a.id === currentAssessment.id ? { ...a, ...res.data } : a));
+        setSavedSuccess(true);
+        setTimeout(() => setSavedSuccess(false), 2500);
+      }
+    } catch (err: any) {
+      setValidationError(err?.message || 'Failed to update assessment status.');
+    } finally {
+      setStatusUpdating(false);
+    }
+  };
+
   // Create New Assessment
   const handleCreateAssessment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim() || newMaxScore <= 0) return;
 
     try {
-      const payload = {
+      const apiRes = await createAssessment(currentUser, {
         title: newTitle.trim(),
-        class_grade: selectedGrade,
-        class_section: selectedSection,
+        classGrade: selectedGrade,
+        classSection: selectedSection,
         subject: selectedSubject,
         period: selectedPeriod,
         type: newType,
-        max_score: newMaxScore,
+        maxScore: newMaxScore,
         date: newDate,
-        teacher_id: currentUser.uid,
-        teacher_name: currentUser.name || currentUser.email
-      };
+        status: newStatus,
+        syllabusCoverage: newSyllabusCoverage.trim() || undefined,
+        instructions: newInstructions.trim() || undefined,
+        resultsPublished: newResultsPublished
+      });
 
-      const { data, error } = await supabase
-        .from('gradebook_assessments')
-        .insert([payload])
-        .select()
-        .single();
+      let createdId = apiRes.data?.id;
+      if (!apiRes.ok) {
+        const payload = {
+          title: newTitle.trim(),
+          class_grade: selectedGrade,
+          class_section: selectedSection,
+          subject: selectedSubject,
+          period: selectedPeriod,
+          type: newType,
+          max_score: newMaxScore,
+          date: newDate,
+          teacher_id: currentUser.uid,
+          teacher_name: currentUser.name || currentUser.email
+        };
 
-      if (error && error.code !== '42P01') throw error;
+        const { data, error } = await supabase
+          .from('gradebook_assessments')
+          .insert([payload])
+          .select()
+          .single();
+
+        if (error && error.code !== '42P01') throw error;
+        createdId = data?.id;
+      }
 
       setShowAddModal(false);
       setNewTitle('');
+      setNewSyllabusCoverage('');
+      setNewInstructions('');
+      setNewStatus('published');
+      setNewResultsPublished(false);
       await loadAssessments();
-      if (data?.id) setSelectedAssessmentId(data.id);
+      if (createdId) setSelectedAssessmentId(createdId);
     } catch (err) {
       console.error('Failed to create assessment:', err);
     }
@@ -434,12 +582,67 @@ export default function DigitalGradebook({ currentUser, effectiveRole }: Digital
           </div>
         </div>
 
+        {assessments.length > 0 && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-black uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-indigo-400" />
+                Scheduled Assessments & Syllabus Coverage
+              </h4>
+              <span className="text-[10px] font-mono text-slate-400">{assessments.length} published</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {assessments.map(a => {
+                const isCancelled = a.status === 'cancelled';
+                const releasedEntry = myEntries.find(e => e.assessmentId === a.id);
+                return (
+                  <div key={a.id} className={`p-4 rounded-2xl border space-y-2 ${isCancelled ? 'bg-rose-500/5 border-rose-500/20' : 'bg-slate-950/70 border-white/10'}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">{a.subject} &bull; {a.type}</span>
+                        <h5 className="text-sm font-bold text-white">{a.title}</h5>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                        isCancelled
+                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                          : a.resultsPublished
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                      }`}>
+                        {isCancelled ? 'Cancelled' : a.resultsPublished ? 'Results Released' : 'Scheduled / Pending'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3 text-[11px] text-slate-400 font-mono">
+                      <span>Date: {a.date}</span>
+                      <span>Max Score: {a.maxScore}</span>
+                    </div>
+                    {a.syllabusCoverage && (
+                      <p className="text-xs text-slate-300 bg-slate-900/70 p-2.5 rounded-xl border border-white/5">
+                        <strong className="text-slate-200">Syllabus:</strong> {a.syllabusCoverage}
+                      </p>
+                    )}
+                    {a.instructions && (
+                      <p className="text-[11px] text-slate-400">{a.instructions}</p>
+                    )}
+                    {releasedEntry && a.resultsPublished && (
+                      <div className="pt-1 flex items-center justify-between text-xs border-t border-white/5">
+                        <span className="text-emerald-300 font-bold">Your Score: {releasedEntry.score} / {releasedEntry.maxScore} ({releasedEntry.percentage}%)</span>
+                        <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">{releasedEntry.letterGrade}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {myEntries.length === 0 ? (
           <div className="p-8 sm:p-12 text-center bg-slate-950/60 border border-white/5 rounded-2xl space-y-2">
             <Award className="w-8 h-8 text-slate-600 mx-auto" />
-            <p className="text-sm font-bold text-slate-300">No grades recorded yet</p>
+            <p className="text-sm font-bold text-slate-300">No released grades yet</p>
             <p className="text-xs text-slate-500 max-w-sm mx-auto">
-              Your teachers have not entered formal assessment scores for your profile yet. Once graded, results appear here automatically.
+              Grades remain hidden until your teacher finishes evaluation and publishes the official results.
             </p>
           </div>
         ) : (
@@ -611,24 +814,89 @@ export default function DigitalGradebook({ currentUser, effectiveRole }: Digital
           </div>
         </div>
 
-        <div className="pt-2 border-t border-white/5">
-          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Active Assessment</label>
-          <select
-            value={selectedAssessmentId}
-            onChange={e => setSelectedAssessmentId(e.target.value)}
-            disabled={assessments.length === 0}
-            className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-white text-xs focus:outline-none focus:border-indigo-500 disabled:opacity-50"
-          >
-            {assessments.length === 0 ? (
-              <option value="">No assessments created for this period</option>
-            ) : (
-              assessments.map(a => (
-                <option key={a.id} value={a.id}>
-                  {a.title} ({a.type} &bull; Max {a.maxScore} pts &bull; {a.date})
-                </option>
-              ))
-            )}
-          </select>
+        <div className="pt-2 border-t border-white/5 space-y-3">
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Active Assessment</label>
+            <select
+              value={selectedAssessmentId}
+              onChange={e => setSelectedAssessmentId(e.target.value)}
+              disabled={assessments.length === 0}
+              className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-white text-xs focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+            >
+              {assessments.length === 0 ? (
+                <option value="">No assessments created for this period</option>
+              ) : (
+                assessments.map(a => (
+                  <option key={a.id} value={a.id}>
+                    {a.title} ({a.type} &bull; Max {a.maxScore} pts &bull; {a.date} &bull; {(a.status || 'published').toUpperCase()})
+                  </option>
+                ))
+              )}
+            </select>
+          </div>
+
+          {currentAssessment && (
+            <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-900/70 border border-white/5">
+              <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                <span className={`px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider border ${
+                  currentAssessment.status === 'cancelled'
+                    ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                    : currentAssessment.status === 'draft'
+                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                    : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                }`}>
+                  Status: {currentAssessment.status || 'published'}
+                </span>
+                <span className={`px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider border ${
+                  currentAssessment.resultsPublished
+                    ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+                    : 'bg-slate-800 text-slate-400 border-white/10'
+                }`}>
+                  {currentAssessment.resultsPublished ? 'Results Visible to Students' : 'Results Hidden (Draft Marks)'}
+                </span>
+                {currentAssessment.syllabusCoverage && (
+                  <span className="text-slate-400 truncate max-w-md">
+                    Syllabus: <strong className="text-slate-200">{currentAssessment.syllabusCoverage}</strong>
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {currentAssessment.status === 'draft' && (
+                  <button
+                    type="button"
+                    disabled={statusUpdating}
+                    onClick={() => handleAssessmentLifecyclePatch({ status: 'published' })}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold cursor-pointer disabled:opacity-50"
+                  >
+                    Publish Exam
+                  </button>
+                )}
+                {currentAssessment.status !== 'cancelled' && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={statusUpdating}
+                      onClick={() => handleAssessmentLifecyclePatch({ resultsPublished: !currentAssessment.resultsPublished })}
+                      className="px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-[11px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                    >
+                      {currentAssessment.resultsPublished ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      <span>{currentAssessment.resultsPublished ? 'Hide Student Results' : 'Publish Results to Students'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={statusUpdating}
+                      onClick={() => handleAssessmentLifecyclePatch({ status: 'cancelled' })}
+                      className="px-3 py-1.5 rounded-lg bg-rose-600/15 hover:bg-rose-600/25 text-rose-300 border border-rose-500/30 text-[11px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                    >
+                      <Ban className="w-3.5 h-3.5" />
+                      <span>Cancel Assessment</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -884,16 +1152,61 @@ export default function DigitalGradebook({ currentUser, effectiveRole }: Digital
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Date Conducted</label>
+                  <input
+                    type="date"
+                    required
+                    value={newDate}
+                    onChange={e => setNewDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Visibility Status</label>
+                  <select
+                    value={newStatus}
+                    onChange={e => setNewStatus(e.target.value as AssessmentStatus)}
+                    className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-white focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="published">Published (Visible to Cohort)</option>
+                    <option value="draft">Draft (Faculty Only)</option>
+                  </select>
+                </div>
+              </div>
+
               <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Date Conducted</label>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Syllabus Coverage</label>
                 <input
-                  type="date"
-                  required
-                  value={newDate}
-                  onChange={e => setNewDate(e.target.value)}
+                  type="text"
+                  value={newSyllabusCoverage}
+                  onChange={e => setNewSyllabusCoverage(e.target.value)}
+                  placeholder="e.g. Chapters 1-3: Limits, Continuity & Derivatives"
                   className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-white focus:outline-none focus:border-indigo-500"
                 />
               </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Instructions / Format Notes</label>
+                <textarea
+                  rows={2}
+                  value={newInstructions}
+                  onChange={e => setNewInstructions(e.target.value)}
+                  placeholder="Optional guidelines or materials allowed..."
+                  className="w-full px-3 py-2 bg-slate-950 border border-white/10 rounded-xl text-white focus:outline-none focus:border-indigo-500 resize-none"
+                />
+              </div>
+
+              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer pt-1">
+                <input
+                  type="checkbox"
+                  checked={newResultsPublished}
+                  onChange={e => setNewResultsPublished(e.target.checked)}
+                  className="rounded border-white/20 bg-slate-950 text-indigo-500"
+                />
+                <span>Immediately publish results to students once marks are saved</span>
+              </label>
 
               <div className="pt-3 flex justify-end gap-2">
                 <button

@@ -32,7 +32,10 @@ import {
   X,
   Calendar,
   BookOpen,
-  SlidersHorizontal
+  SlidersHorizontal,
+  FileText,
+  ExternalLink,
+  Send
 } from 'lucide-react';
 import {
   UserProfile,
@@ -41,7 +44,10 @@ import {
   Task,
   VaultNote,
   FlashcardDeck,
-  GradebookEntry
+  GradebookEntry,
+  GradebookAssessment,
+  AssignmentSubmission,
+  AssignmentAttachment
 } from '../types';
 import {
   OfficialSubjectSyllabus,
@@ -55,6 +61,7 @@ import { getVaultNotes } from '../lib/supabaseNotes';
 import { fetchSupabaseDecks, getCanonicalUserId } from '../lib/flashcardStorage';
 import { getSupabaseMaterials } from '../lib/supabaseResources';
 import { saveSupabaseHomework } from '../lib/supabaseHomework';
+import { savePersonalTask } from '../lib/supabaseTasks';
 import { supabase } from '../lib/supabase';
 import { computeAttendanceSummary, calculateAttendanceProjection } from '../lib/attendanceCalculator';
 import {
@@ -63,6 +70,18 @@ import {
   markByteReminderHandled,
   snoozeByteReminder
 } from '../lib/byteReminderEngine';
+import {
+  fetchAssignments,
+  submitAssignmentWork,
+  fetchAssessments,
+  fetchGradebookEntries,
+  fetchTargetedAnnouncements,
+  markTargetedAnnouncementRead,
+  isAnnouncementEligibleForUser,
+  deriveAssignmentDisplayStatus,
+  isStudentMatchedToCohort,
+  dispatchAcademicSyncEvent
+} from '../lib/academicWorkflowService';
 import { VeylentraIcon } from './ui/VeylentraIcon';
 import { soundService } from '../lib/soundService';
 
@@ -123,12 +142,21 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
   const [progressMap, setProgressMap] = useState<Record<string, StudentChapterProgress>>({});
   const [timetable, setTimetable] = useState<OfficialClassTimetable | null>(null);
   const [exams, setExams] = useState<ExamPreparationPlan[]>([]);
+  const [connectedAssignments, setConnectedAssignments] = useState<Array<Homework & { mySubmission?: AssignmentSubmission | null }>>([]);
+  const [publishedAssessments, setPublishedAssessments] = useState<GradebookAssessment[]>([]);
   const [notes, setNotes] = useState<VaultNote[]>([]);
   const [materials, setMaterials] = useState<any[]>([]);
   const [decks, setDecks] = useState<FlashcardDeck[]>([]);
   const [attendanceRows, setAttendanceRows] = useState<any[]>([]);
   const [gradeEntries, setGradeEntries] = useState<GradebookEntry[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
+  const [targetedAnnouncements, setTargetedAnnouncements] = useState<any[]>([]);
+
+  // Inline Assignment Submission Drawer state
+  const [activeSubmitHwId, setActiveSubmitHwId] = useState<string | null>(null);
+  const [subDrafts, setSubDrafts] = useState<
+    Record<string, { text: string; url: string; attachmentName: string; submitting?: boolean; error?: string }>
+  >({});
 
   // UI Filter & Interactive State
   const [selectedSubject, setSelectedSubject] = useState<string>('');
@@ -148,44 +176,51 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
       setLoading(true);
       try {
         const canonicalId = getCanonicalUserId(userId);
-        const [syls, prog, tt, officialExams, vaultNotes, allMaterials, userDecks, attRes, gradesRes, eventsRes] =
-          await Promise.all([
-            SyllabusTimetableService.getOfficialSyllabuses(schoolId, grade),
-            SyllabusTimetableService.getStudentProgress(userId),
-            SyllabusTimetableService.getOfficialTimetable(schoolId, grade),
-            SyllabusTimetableService.getOfficialExams(schoolId),
-            getVaultNotes(userId).catch(() => []),
-            getSupabaseMaterials().catch(() => []),
-            fetchSupabaseDecks(canonicalId).catch(() => []),
-            supabase.from('attendance').select('*').eq('user_id', userId).order('date', { ascending: true }),
-            supabase.from('gradebook_entries').select('*').eq('student_id', userId).order('updated_at', { ascending: false }),
-            supabase.from('calendar_events').select('*').order('event_date', { ascending: true }).limit(20)
-          ]);
+        const [
+          syls,
+          prog,
+          tt,
+          officialExams,
+          vaultNotes,
+          allMaterials,
+          userDecks,
+          attRes,
+          apiGradesRes,
+          eventsRes,
+          apiHwRes,
+          apiAssRes,
+          apiAnnRes
+        ] = await Promise.all([
+          SyllabusTimetableService.getOfficialSyllabuses(schoolId, grade),
+          SyllabusTimetableService.getStudentProgress(userId),
+          SyllabusTimetableService.getOfficialTimetable(schoolId, grade),
+          SyllabusTimetableService.getOfficialExams(schoolId),
+          getVaultNotes(userId).catch(() => []),
+          getSupabaseMaterials().catch(() => []),
+          fetchSupabaseDecks(canonicalId).catch(() => []),
+          supabase.from('attendance').select('*').eq('user_id', userId).order('date', { ascending: true }),
+          fetchGradebookEntries(currentUser),
+          supabase.from('calendar_events').select('*').order('event_date', { ascending: true }).limit(20),
+          fetchAssignments(currentUser),
+          fetchAssessments(currentUser),
+          fetchTargetedAnnouncements(currentUser)
+        ]);
 
         if (!mounted) return;
         setSyllabuses(syls);
         setProgressMap(prog);
         setTimetable(tt);
         setExams(officialExams);
+        if (apiHwRes.ok && apiHwRes.data) setConnectedAssignments(apiHwRes.data);
+        if (apiAssRes.ok && apiAssRes.data) setPublishedAssessments(apiAssRes.data);
+        if (apiAnnRes.ok && apiAnnRes.data) setTargetedAnnouncements(apiAnnRes.data);
         setNotes(vaultNotes || []);
         setMaterials(allMaterials || []);
         setDecks(userDecks || []);
         setAttendanceRows(attRes?.data || []);
-        setGradeEntries(
-          (gradesRes?.data || []).map((e: any) => ({
-            id: e.id,
-            assessmentId: e.assessment_id,
-            studentId: e.student_id,
-            studentName: e.student_name,
-            subject: e.subject,
-            score: e.score,
-            maxScore: e.max_score,
-            percentage: e.percentage,
-            letterGrade: e.letter_grade,
-            comment: e.comment,
-            updatedAt: e.updated_at
-          }))
-        );
+        if (apiGradesRes.ok && apiGradesRes.data) {
+          setGradeEntries(apiGradesRes.data);
+        }
         setCalendarEvents(eventsRes?.data || []);
         if (syls.length > 0 && !selectedSubject) {
           setSelectedSubject(syls[0].subject);
@@ -197,10 +232,37 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
       }
     }
     loadWorkspaceData();
+
+    const handleSyncUpdate = async (e: any) => {
+      const tbl = e?.detail?.table;
+      if (tbl === 'homework' || tbl === 'assignment_submissions') {
+        const res = await fetchAssignments(currentUser);
+        if (mounted && res.ok && res.data) setConnectedAssignments(res.data);
+      }
+      if (tbl === 'gradebook_assessments' || tbl === 'gradebook_entries') {
+        const [assRes, entRes] = await Promise.all([
+          fetchAssessments(currentUser),
+          fetchGradebookEntries(currentUser)
+        ]);
+        if (mounted && assRes.ok && assRes.data) setPublishedAssessments(assRes.data);
+        if (mounted && entRes.ok && entRes.data) setGradeEntries(entRes.data);
+      }
+      if (tbl === 'announcements') {
+        const annRes = await fetchTargetedAnnouncements(currentUser);
+        if (mounted && annRes.ok && annRes.data) setTargetedAnnouncements(annRes.data);
+      }
+      if (tbl === 'attendance') {
+        const { data } = await supabase.from('attendance').select('*').eq('user_id', userId).order('date', { ascending: true });
+        if (mounted && data) setAttendanceRows(data);
+      }
+    };
+    window.addEventListener('studentos-db-update', handleSyncUpdate);
+
     return () => {
       mounted = false;
+      window.removeEventListener('studentos-db-update', handleSyncUpdate);
     };
-  }, [userId, grade]);
+  }, [userId, grade, currentUser]);
 
   // Subject Summaries from Syllabus Service
   const subjectSummaries = useMemo(
@@ -208,14 +270,35 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
     [syllabuses, progressMap]
   );
 
-  // Scoped Homework for Student
+  // Scoped Published Homework merged with live submission & evaluation state
   const studentHomework = useMemo(() => {
-    const gradeLow = grade.toLowerCase();
-    return homeworkList.filter(hw => !hw.classGrade || hw.classGrade.toLowerCase() === gradeLow);
-  }, [homeworkList, grade]);
+    const mergedMap = new Map<string, Homework & { mySubmission?: AssignmentSubmission | null }>();
+    homeworkList.forEach(hw => {
+      if ((hw.status || 'published') !== 'published') return;
+      if (!isStudentMatchedToCohort(currentUser?.grade, currentUser?.section, hw.classGrade, hw.classSection)) return;
+      mergedMap.set(hw.id, hw);
+    });
+    connectedAssignments.forEach(hw => {
+      if ((hw.status || 'published') !== 'published') return;
+      if (!isStudentMatchedToCohort(currentUser?.grade, currentUser?.section, hw.classGrade, hw.classSection)) return;
+      const prev = mergedMap.get(hw.id);
+      mergedMap.set(hw.id, { ...prev, ...hw });
+    });
+    return Array.from(mergedMap.values());
+  }, [homeworkList, connectedAssignments, currentUser?.grade, currentUser?.section]);
 
-  const isHwCompleted = (hw: Homework) =>
-    localCompletedHwIds.includes(hw.id) || (hw.completedList || []).includes(userId);
+  const studentSubmissionsList = useMemo(
+    () => studentHomework.map(hw => hw.mySubmission).filter(Boolean) as AssignmentSubmission[],
+    [studentHomework]
+  );
+
+  const isHwCompleted = (hw: Homework & { mySubmission?: AssignmentSubmission | null }) => {
+    if (hw.mySubmission) {
+      if (hw.mySubmission.status === 'returned_for_revision') return false;
+      return true;
+    }
+    return localCompletedHwIds.includes(hw.id) || (hw.completedList || []).includes(userId);
+  };
 
   const pendingHomework = useMemo(
     () => studentHomework.filter(hw => !isHwCompleted(hw)),
@@ -306,15 +389,27 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
     };
   }, [timetable]);
 
-  // Deterministic Byte Reminders
+  const eligibleAnnouncements = useMemo(() => {
+    const map = new Map<string, any>();
+    [...targetedAnnouncements, ...(announcements || [])].forEach(a => {
+      if (a && a.id && isAnnouncementEligibleForUser(a, currentUser)) {
+        if (!map.has(a.id)) map.set(a.id, a);
+      }
+    });
+    return Array.from(map.values());
+  }, [targetedAnnouncements, announcements, currentUser]);
+
+  // Deterministic Byte Reminders (connected with real submissions & published assessments)
   const byteReminders = useMemo(
     () =>
       buildByteReminders({
         currentUser,
         effectiveRole: 'student',
         homeworkList: studentHomework,
+        submissions: studentSubmissionsList,
+        assessments: publishedAssessments,
         tasks,
-        announcements,
+        announcements: eligibleAnnouncements,
         dueCardsCount,
         attendancePercentage: attendanceStats.percentage,
         attendanceTotalConducted: attendanceStats.totalConducted,
@@ -324,8 +419,10 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
     [
       currentUser,
       studentHomework,
+      studentSubmissionsList,
+      publishedAssessments,
       tasks,
-      announcements,
+      eligibleAnnouncements,
       dueCardsCount,
       attendanceStats.percentage,
       attendanceStats.totalConducted,
@@ -420,6 +517,76 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
     }
   };
 
+  const handleSubmitAssignmentWork = async (hw: Homework) => {
+    const draft = subDrafts[hw.id] || { text: '', url: '', attachmentName: '' };
+    if (draft.submitting) return; // Prevent duplicate rapid submission
+    if (!draft.text.trim() && !draft.url.trim()) {
+      setSubDrafts(prev => ({
+        ...prev,
+        [hw.id]: { ...draft, error: 'Please write response notes or attach a link before submitting.' }
+      }));
+      return;
+    }
+
+    setSubDrafts(prev => ({ ...prev, [hw.id]: { ...draft, submitting: true, error: undefined } }));
+    soundService.playButtonClick();
+
+    const res = await submitAssignmentWork(currentUser, hw.id, {
+      submissionText: draft.text.trim(),
+      attachmentUrl: draft.url.trim(),
+      attachmentName: draft.attachmentName.trim() || (draft.url.trim() ? 'Submitted Link' : '')
+    });
+
+    if (!res.ok || !res.data) {
+      setSubDrafts(prev => ({
+        ...prev,
+        [hw.id]: { ...draft, submitting: false, error: res.error || 'Submission failed. Please retry.' }
+      }));
+      return;
+    }
+
+    setConnectedAssignments(prev => {
+      const idx = prev.findIndex(item => item.id === hw.id);
+      const updatedItem = { ...hw, mySubmission: res.data! };
+      if (idx >= 0) {
+        const clone = [...prev];
+        clone[idx] = { ...clone[idx], mySubmission: res.data! };
+        return clone;
+      }
+      return [updatedItem, ...prev];
+    });
+    setLocalCompletedHwIds(prev => Array.from(new Set([...prev, hw.id])));
+    setSubDrafts(prev => ({
+      ...prev,
+      [hw.id]: { ...draft, submitting: false, error: undefined }
+    }));
+    setActiveSubmitHwId(null);
+    showNotification(
+      res.data.isLate
+        ? `✓ Late work submitted for "${hw.title}". Your teacher has been notified.`
+        : `✓ Assignment "${hw.title}" submitted successfully!`
+    );
+  };
+
+  const handleCreateExamStudyTask = async (title: string, subject: string) => {
+    soundService.playButtonClick();
+    const task: Task = {
+      id: `task-exam-${Date.now()}`,
+      title: `Prep ${subject}: ${title}`,
+      completed: false,
+      priority: 'high',
+      dueDate: new Date().toISOString().split('T')[0],
+      category: 'Study'
+    };
+    try {
+      await savePersonalTask(task, userId);
+      dispatchAcademicSyncEvent('tasks', 'INSERT', task);
+      showNotification(`✓ Added "${task.title}" to your Study Planner tasks.`);
+    } catch {
+      showNotification('Could not save task right now.');
+    }
+  };
+
   const handleToggleChapterDone = async (chapterId: string, subject: string) => {
     soundService.playButtonClick();
     const existing = progressMap[chapterId];
@@ -433,7 +600,13 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
   };
 
   const handleAskOrionInline = async (
-    intent: 'student_explain' | 'student_summarize' | 'student_study_plan',
+    intent:
+      | 'student_explain'
+      | 'student_summarize'
+      | 'student_study_plan'
+      | 'student_breakdown_assignment'
+      | 'student_understand_feedback'
+      | 'student_prep_assessment',
     subject: string,
     topic: string,
     contextData?: string
@@ -443,9 +616,14 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
     setOrionError(null);
     setOrionInlineAnswer(null);
     try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
       const resp = await fetch('/api/ai/orion-assist', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+        },
         body: JSON.stringify({
           userId,
           userRole: 'student',
@@ -457,7 +635,7 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
         })
       });
       const data = await resp.json();
-      if (!resp.ok || !data.success) {
+      if (!resp.ok || !data.success || !data.text) {
         throw new Error(data.error || 'Orion is temporarily unavailable.');
       }
       setOrionInlineAnswer({
@@ -465,6 +643,7 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
         content: data.text,
         provider: data.providerUsed ? `${data.providerUsed} (${data.modelUsed || ''})` : undefined
       });
+      setSubTab('home');
     } catch (err: any) {
       setOrionError(err?.message || 'Could not reach Orion right now.');
     } finally {
@@ -1017,6 +1196,45 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
                     ))}
                 </div>
               </div>
+
+              {/* Scoped Academic Circulars & Announcements */}
+              <div className="bento-card rounded-2xl p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-white">Academic Circulars</h3>
+                  <span className="text-[11px] font-mono text-slate-400">{eligibleAnnouncements.length}</span>
+                </div>
+                {eligibleAnnouncements.length === 0 ? (
+                  <p className="text-xs text-slate-400">No active circulars for your cohort.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {eligibleAnnouncements.slice(0, 3).map(ann => (
+                      <div key={ann.id} className="p-3 rounded-xl bg-slate-950/75 border border-white/10 space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-bold uppercase text-teal-300">
+                            {ann.targetSubject || ann.tag || 'Circular'}
+                          </span>
+                          <span className="text-[10px] text-slate-500">{ann.date || 'Active'}</span>
+                        </div>
+                        <p className="text-xs font-bold text-white leading-snug">{ann.title}</p>
+                        <p className="text-[11px] text-slate-400 line-clamp-2">{ann.content}</p>
+                        {!ann.isRead && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await markTargetedAnnouncementRead(currentUser, ann.id);
+                              setTargetedAnnouncements(prev => prev.map(x => x.id === ann.id ? { ...x, isRead: true } : x));
+                              setReminderVersion(v => v + 1);
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-teal-600/20 hover:bg-teal-600/30 text-teal-300 text-[10px] font-semibold cursor-pointer"
+                          >
+                            Mark as Read
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1257,25 +1475,54 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
               ))}
             </div>
 
-            <div className="space-y-2.5">
+            <div className="space-y-3">
               {filteredAssignments.map(hw => {
+                const sub = hw.mySubmission || null;
+                const status = deriveAssignmentDisplayStatus(hw, sub, userId);
                 const done = isHwCompleted(hw);
                 const daysLeft = getDaysDiff(hw.dueDate);
                 const overdue = !done && daysLeft !== null && daysLeft < 0;
+                const isDrawerOpen = activeSubmitHwId === hw.id;
+                const draft = subDrafts[hw.id] || {
+                  text: sub?.submissionText || '',
+                  url: sub?.attachmentUrl || '',
+                  attachmentName: sub?.attachmentName || ''
+                };
+                const isLockedEvaluated = sub?.status === 'evaluated';
+
                 return (
                   <div
                     key={hw.id}
-                    className={`p-4 rounded-xl border space-y-2.5 ${
-                      overdue
+                    className={`p-4 rounded-xl border space-y-3 ${
+                      status === 'returned_for_revision'
+                        ? 'bg-amber-950/20 border-amber-500/40'
+                        : overdue
                         ? 'bg-rose-950/20 border-rose-500/30'
                         : 'bg-slate-950/75 border-white/10'
                     }`}
                   >
                     <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
-                      <div className="space-y-0.5 min-w-0">
+                      <div className="space-y-1 min-w-0">
                         <div className="flex flex-wrap items-center gap-2 text-[11px]">
                           <span className="font-semibold text-blue-400">{hw.subject || 'Coursework'}</span>
                           <span className="text-slate-500">·</span>
+                          <span
+                            className={`px-2 py-0.5 rounded font-bold uppercase text-[10px] ${
+                              status === 'evaluated'
+                                ? 'bg-emerald-500/20 text-emerald-300'
+                                : status === 'returned_for_revision'
+                                ? 'bg-amber-500/20 text-amber-300'
+                                : status === 'late'
+                                ? 'bg-rose-500/20 text-rose-300'
+                                : status === 'submitted' || status === 'under_evaluation'
+                                ? 'bg-sky-500/20 text-sky-300'
+                                : overdue
+                                ? 'bg-rose-500/20 text-rose-300'
+                                : 'bg-slate-800 text-slate-300'
+                            }`}
+                          >
+                            {status.replace(/_/g, ' ')}
+                          </span>
                           <span className={overdue ? 'text-rose-400 font-semibold' : 'text-slate-400'}>
                             {hw.dueDate ? `Due ${hw.dueDate}` : 'No due date'}
                             {daysLeft !== null && !done && (
@@ -1286,35 +1533,156 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
                         <h3 className="text-sm font-bold text-white">{hw.title}</h3>
                       </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
                         <button
                           type="button"
                           onClick={() =>
                             handleAskOrionInline(
-                              'student_explain',
+                              'student_breakdown_assignment',
                               hw.subject || 'Assignment',
-                              hw.title,
-                              hw.content || 'Explain approach and key steps for this assignment.'
+                              `Break down "${hw.title}"`,
+                              hw.content || 'Break down key steps and deliverables for this assignment.'
                             )
                           }
                           className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-white/10 text-[11px] font-semibold text-teal-300 cursor-pointer"
                         >
-                          Ask Orion
+                          Break Down Steps
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => handleToggleHomeworkDone(hw)}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer ${
-                            done
-                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                              : 'bg-blue-600 text-white hover:bg-blue-500'
-                          }`}
-                        >
-                          {done ? 'Completed' : 'Mark Complete'}
-                        </button>
+
+                        {!isLockedEvaluated && (
+                          <button
+                            type="button"
+                            onClick={() => setActiveSubmitHwId(isDrawerOpen ? null : hw.id)}
+                            className="px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold cursor-pointer"
+                          >
+                            {isDrawerOpen
+                              ? 'Close'
+                              : status === 'returned_for_revision'
+                              ? 'Revise & Resubmit'
+                              : sub
+                              ? 'Edit Submission'
+                              : 'Submit Work'}
+                          </button>
+                        )}
                       </div>
                     </div>
-                    {hw.content && <p className="text-xs text-slate-300 leading-relaxed">{hw.content}</p>}
+
+                    {hw.content && <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">{hw.content}</p>}
+
+                    {Array.isArray(hw.attachments) && hw.attachments.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {hw.attachments.map((att: AssignmentAttachment) => (
+                          <a
+                            key={att.id}
+                            href={att.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900 border border-white/10 text-[11px] text-blue-300 hover:border-blue-400/50"
+                          >
+                            <FileText className="w-3 h-3" />
+                            <span>{att.name}</span>
+                            <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Released Score & Teacher Evaluation Feedback */}
+                    {sub && (sub.resultsReleased || sub.status === 'returned_for_revision') && (sub.score !== null || sub.feedback) && (
+                      <div className="p-3 rounded-xl bg-slate-900/90 border border-emerald-500/30 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-xs font-bold text-emerald-300">
+                            {sub.status === 'returned_for_revision' ? 'Revision Feedback' : 'Teacher Evaluation'}
+                            {sub.evaluatedBy ? ` · ${sub.evaluatedBy}` : ''}
+                          </span>
+                          {sub.score !== null && sub.score !== undefined && (
+                            <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono text-xs font-bold tabular-nums">
+                              {sub.score} / {sub.maxScore || hw.maxScore || 100}
+                            </span>
+                          )}
+                        </div>
+                        {sub.feedback && <p className="text-xs text-slate-200 whitespace-pre-line">{sub.feedback}</p>}
+                        {sub.feedback && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleAskOrionInline(
+                                'student_understand_feedback',
+                                hw.subject || 'Assignment',
+                                `Understand Feedback on "${hw.title}"`,
+                                `Score: ${sub.score ?? 'Unscored'}/${sub.maxScore || hw.maxScore || 100}. Teacher feedback: "${sub.feedback}"`
+                              )
+                            }
+                            className="text-[11px] font-semibold text-teal-300 hover:underline cursor-pointer"
+                          >
+                            Ask Orion to explain improvement steps →
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Inline Submission Composer */}
+                    {isDrawerOpen && !isLockedEvaluated && (
+                      <div className="p-3.5 rounded-xl bg-slate-900 border border-blue-500/30 space-y-2.5">
+                        <textarea
+                          rows={3}
+                          value={draft.text}
+                          onChange={e =>
+                            setSubDrafts(prev => ({
+                              ...prev,
+                              [hw.id]: { ...draft, text: e.target.value, error: undefined }
+                            }))
+                          }
+                          placeholder="Write your answer, summary, or solution notes..."
+                          className="w-full p-2.5 rounded-lg bg-slate-950 border border-white/10 text-xs text-white focus:outline-none focus:border-blue-500"
+                        />
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <input
+                            type="text"
+                            value={draft.attachmentName}
+                            onChange={e =>
+                              setSubDrafts(prev => ({
+                                ...prev,
+                                [hw.id]: { ...draft, attachmentName: e.target.value }
+                              }))
+                            }
+                            placeholder="Attachment label (e.g. Lab Report)"
+                            className="px-2.5 py-1.5 rounded-lg bg-slate-950 border border-white/10 text-xs text-white"
+                          />
+                          <input
+                            type="url"
+                            value={draft.url}
+                            onChange={e =>
+                              setSubDrafts(prev => ({
+                                ...prev,
+                                [hw.id]: { ...draft, url: e.target.value, error: undefined }
+                              }))
+                            }
+                            placeholder="Document/Drive link URL (https://...)"
+                            className="px-2.5 py-1.5 rounded-lg bg-slate-950 border border-white/10 text-xs text-white"
+                          />
+                        </div>
+                        {draft.error && <p className="text-[11px] text-rose-400 font-semibold">{draft.error}</p>}
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleHomeworkDone(hw)}
+                            className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 cursor-pointer"
+                          >
+                            {done ? 'Unmark Local Done' : 'Mark Completed Only'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={draft.submitting}
+                            onClick={() => handleSubmitAssignmentWork(hw)}
+                            className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                          >
+                            {draft.submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                            <span>{status === 'returned_for_revision' ? 'Submit Revision' : 'Submit to Teacher'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1334,7 +1702,7 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
                 <VeylentraIcon name="exam" size="sm" />
                 <div>
                   <h3 className="text-sm font-bold text-white">Exams &amp; Readiness</h3>
-                  <p className="text-[11px] text-slate-400">Official assessment schedule</p>
+                  <p className="text-[11px] text-slate-400">Official assessment schedule &amp; results</p>
                 </div>
               </div>
               <button
@@ -1347,6 +1715,92 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
             </div>
 
             <div className="space-y-2.5">
+              {/* Published Gradebook Assessments */}
+              {publishedAssessments
+                .filter(a => a.status !== 'draft')
+                .map(ass => {
+                  const daysLeft = getDaysDiff(ass.date);
+                  const myEntry = ass.resultsPublished
+                    ? gradeEntries.find(g => g.assessmentId === ass.id)
+                    : undefined;
+                  const isCancelled = ass.status === 'cancelled';
+
+                  return (
+                    <div
+                      key={ass.id}
+                      className={`p-3.5 rounded-xl border space-y-2 ${
+                        isCancelled
+                          ? 'bg-slate-950/40 border-rose-500/20 opacity-75'
+                          : 'bg-slate-950/75 border-white/10'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-white">{ass.subject}</span>
+                        <span
+                          className={`font-mono text-[11px] tabular-nums ${
+                            isCancelled ? 'text-rose-400 line-through' : 'text-amber-400'
+                          }`}
+                        >
+                          {ass.date}
+                          {!isCancelled && daysLeft !== null && daysLeft >= 0 ? ` (${daysLeft}d)` : ''}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-slate-200">{ass.title}</p>
+                        <span
+                          className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                            isCancelled
+                              ? 'bg-rose-500/20 text-rose-300'
+                              : ass.resultsPublished
+                              ? 'bg-emerald-500/20 text-emerald-300'
+                              : 'bg-sky-500/20 text-sky-300'
+                          }`}
+                        >
+                          {isCancelled ? 'Cancelled' : ass.resultsPublished ? 'Results Out' : ass.type}
+                        </span>
+                      </div>
+                      {ass.syllabusCoverage && (
+                        <p className="text-[11px] text-slate-400 leading-snug">
+                          Syllabus: {ass.syllabusCoverage}
+                        </p>
+                      )}
+                      {myEntry && (
+                        <div className="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between text-xs">
+                          <span className="text-emerald-300 font-semibold">Released Mark</span>
+                          <span className="font-mono font-bold text-emerald-300 tabular-nums">
+                            {myEntry.score}/{myEntry.maxScore} ({myEntry.percentage}%) · {myEntry.letterGrade}
+                          </span>
+                        </div>
+                      )}
+                      {!isCancelled && (
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleAskOrionInline(
+                                'student_prep_assessment',
+                                ass.subject,
+                                `Prep Plan: ${ass.title}`,
+                                `Exam Date: ${ass.date}. Type: ${ass.type}. Syllabus coverage: ${ass.syllabusCoverage || 'Full unit review'}. Instructions: ${ass.instructions || 'None'}`
+                              )
+                            }
+                            className="px-2.5 py-1 rounded-lg bg-teal-600/20 hover:bg-teal-600/30 text-teal-300 text-[11px] font-semibold cursor-pointer"
+                          >
+                            Prep Plan
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleCreateExamStudyTask(ass.title, ass.subject)}
+                            className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-[11px] font-semibold cursor-pointer"
+                          >
+                            + Study Task
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
               {exams.map(ex => {
                 const daysLeft = getDaysDiff(ex.examDate);
                 const subSummary = subjectSummaries.find(
@@ -1397,7 +1851,7 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
                   </div>
                 );
               })}
-              {exams.length === 0 && (
+              {exams.length === 0 && publishedAssessments.filter(a => a.status !== 'draft').length === 0 && (
                 <p className="text-xs text-slate-400 py-4 text-center">No upcoming exams published yet.</p>
               )}
             </div>

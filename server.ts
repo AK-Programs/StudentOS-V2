@@ -35,6 +35,11 @@ import {
 } from './server/panelBoardService';
 import nodemailer from 'nodemailer';
 import { createClient } from '@supabase/supabase-js';
+import {
+  registerAcademicWorkflowRoutes,
+  isWsClientEligibleForAcademicEvent,
+  AcademicEventScope
+} from './server/academicWorkflowModule';
 
 dotenv.config();
 
@@ -1042,6 +1047,28 @@ function broadcastToAllWs(payload: any) {
   const serialized = JSON.stringify(payload);
   globalWss.clients.forEach((client: any) => {
     if (client.readyState === WSWebSocket.OPEN) {
+      try {
+        client.send(serialized);
+      } catch (_) {}
+    }
+  });
+}
+
+function broadcastScopedWsEvent(eventType: string, payload: any, scope: AcademicEventScope) {
+  if (!globalWss) return;
+  const serialized = JSON.stringify(
+    eventType === 'academic:sync'
+      ? { type: eventType, payload }
+      : eventType === 'announcement:received'
+      ? { type: eventType, announcement: payload }
+      : eventType === 'homework:received' || eventType === 'homework:updated'
+      ? { type: eventType, homework: payload }
+      : { type: eventType, payload }
+  );
+  globalWss.clients.forEach((client: any) => {
+    if (client.readyState !== WSWebSocket.OPEN) return;
+    const recipient = client._veylentraUser || { authenticated: false, role: 'student', userId: '' };
+    if (isWsClientEligibleForAcademicEvent(recipient, scope)) {
       try {
         client.send(serialized);
       } catch (_) {}
@@ -4115,10 +4142,6 @@ app.post('/api/ai/orion-assist', async (req, res) => {
     contextData = ''
   } = req.body || {};
 
-  if (!topic || !String(topic).trim()) {
-    return res.status(400).json({ success: false, error: 'Topic or request is required.' });
-  }
-
   // Server-side authoritative role check when Bearer token is provided
   const verifiedUser = await getVerifiedUserFromRequest(req);
   const resolvedRole = (verifiedUser?.role || String(userRole || 'student')).toLowerCase().trim();
@@ -4128,7 +4151,10 @@ app.post('/api/ai/orion-assist', async (req, res) => {
     'draft_quiz',
     'draft_announcement',
     'draft_feedback',
-    'summarize_class_insights'
+    'summarize_class_insights',
+    'draft_assessment_outline',
+    'summarize_submission_progress',
+    'summarize_cohort_coordination'
   ]);
   const allowedFacultyRoles = new Set(['teacher', 'coordinator', 'hod', 'admin', 'super_admin']);
 
@@ -4137,6 +4163,10 @@ app.post('/api/ai/orion-assist', async (req, res) => {
       success: false,
       error: 'Permission denied: faculty authorization is required for this Orion workflow.'
     });
+  }
+
+  if (!topic || !String(topic).trim()) {
+    return res.status(400).json({ success: false, error: 'Topic or request is required.' });
   }
 
   const activeUserId = verifiedUser?.id || String(userId || 'anonymous');
@@ -4159,11 +4189,17 @@ app.post('/api/ai/orion-assist', async (req, res) => {
     student_explain: 'Break down the concept step-by-step with intuition, worked examples, and key exam pitfalls.',
     student_summarize: 'Produce a crisp bulleted study summary highlighting key definitions and core formulas.',
     student_study_plan: 'Create a realistic day-by-day study plan split into focused 35-minute sessions and active recall checks.',
+    student_breakdown_assignment: 'Break down the provided assignment brief into clear, actionable checklist steps, deliverables, and quality checks without fabricating grades or doing dishonest work.',
+    student_understand_feedback: 'Translate the teacher feedback into positive strengths, clear reasons marks were deducted, and 3 concrete steps for improvement or revision.',
+    student_prep_assessment: 'Create a focused revision checklist and practice strategy aligned strictly to the provided assessment syllabus coverage and exam date.',
     draft_assignment: 'Draft a structured classroom homework/assignment brief with Title, Learning Objectives, Questions/Tasks, Submission Instructions, and Suggested Grading Criteria.',
     draft_lesson_plan: 'Draft a structured lesson plan with Learning Objectives, Warm-Up Hook, Core Concept Delivery (with timing), Classroom Activity, and Exit Check.',
     draft_quiz: 'Draft a ready-to-use classroom formative quiz (5 questions with options/rubric and an Answer Key at the bottom).',
     draft_announcement: 'Draft a clear, concise, professional academic circular/announcement suitable for students and parents.',
-    draft_feedback: 'Draft constructive, encouraging, specific evaluation feedback identifying strengths and next steps.',
+    draft_feedback: 'Draft constructive, encouraging, specific evaluation feedback identifying strengths and concrete next steps based on the student submission and marks.',
+    draft_assessment_outline: 'Draft a balanced assessment blueprint with Syllabus Coverage, Question Weightage/Sections, Marking Scheme, and Student Preparation Instructions.',
+    summarize_submission_progress: 'Analyze the provided assignment submission metrics (submitted, pending, late, evaluated counts) into concise teacher observations and immediate follow-up priorities.',
+    summarize_cohort_coordination: 'Synthesize cohort attendance trends, assessment pacing, and homework completion into an actionable academic coordination briefing.',
     summarize_class_insights: 'Synthesize the provided authorized class/cohort metrics into key observations, students/topics needing attention, and recommended follow-up actions.'
   };
 
@@ -5547,6 +5583,13 @@ app.post('/api/admin/unlink-parent-child', async (req, res) => {
 });
 
 
+// Register Connected Academic Workflows Routes (Assignments, Submissions, Assessments, Attendance Audit, Targeted Announcements)
+registerAcademicWorkflowRoutes(app, {
+  getSupabaseServerConfig,
+  getVerifiedUserFromRequest,
+  emitScopedBroadcast: broadcastScopedWsEvent
+});
+
 async function startServer() {
   if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
     const vitePkg = 'vite';
@@ -5571,11 +5614,20 @@ async function startServer() {
   const wss = new WebSocketServer({ server, maxPayload: 65536 });
   globalWss = wss;
 
-  wss.on('connection', (ws, req) => {
+  wss.on('connection', (ws: any, req) => {
     console.log('[WS Server] New client linked!');
     
-    // Track per-socket auth state
-    const socketUser = { authenticated: false, role: 'student', userId: '' };
+    // Track per-socket auth and cohort scope
+    const socketUser: {
+      authenticated: boolean;
+      role: string;
+      userId: string;
+      grade?: string;
+      section?: string;
+      assignedGrades?: string[];
+      assignedSections?: string[];
+    } = { authenticated: false, role: 'student', userId: '', grade: '', section: '' };
+    ws._veylentraUser = socketUser;
 
     ws.on('message', (messageBuffer: Buffer) => {
       try {
@@ -5591,6 +5643,12 @@ async function startServer() {
         
         switch (payload.type) {
           case 'auth:identify': {
+            if (payload.grade) socketUser.grade = String(payload.grade);
+            if (payload.section) socketUser.section = String(payload.section);
+            if (Array.isArray(payload.assignedGrades)) socketUser.assignedGrades = payload.assignedGrades.map(String);
+            if (Array.isArray(payload.assignedSections)) socketUser.assignedSections = payload.assignedSections.map(String);
+            if (payload.userId && !socketUser.userId) socketUser.userId = String(payload.userId);
+
             if (payload.token) {
               const { url, key } = getSupabaseServerConfig();
               const supabase = createClient(url, key || '', { auth: { persistSession: false } });
@@ -5599,12 +5657,31 @@ async function startServer() {
                   socketUser.authenticated = true;
                   socketUser.userId = user.id;
                   socketUser.role = (user.user_metadata?.role || 'student').toLowerCase();
+                  if (!socketUser.grade && user.user_metadata?.grade) socketUser.grade = String(user.user_metadata.grade);
+                  if (!socketUser.section && user.user_metadata?.section) socketUser.section = String(user.user_metadata.section);
+
+                  const scopedAnnouncements = globalAnnouncementsState.filter((a: any) =>
+                    isWsClientEligibleForAcademicEvent(socketUser, {
+                      targetRole: a.targetRole || a.target_role || 'all',
+                      targetGrade: a.targetGrade || a.target_grade || a.targetClass || 'All Grades',
+                      targetSection: a.targetSection || a.target_section || 'All Sections'
+                    })
+                  );
+                  const scopedHomework = globalHomeworkState.filter((h: any) =>
+                    h.status !== 'draft' &&
+                    isWsClientEligibleForAcademicEvent(socketUser, {
+                      targetRole: 'student',
+                      targetGrade: h.targetClass || h.target_class || 'All Grades',
+                      targetSection: h.targetSection || h.target_section || 'All Sections'
+                    })
+                  );
+
                   ws.send(JSON.stringify({
                     type: 'sync:state',
                     state: {
                       chats: globalChatsState,
-                      announcements: globalAnnouncementsState,
-                      homework: globalHomeworkState
+                      announcements: scopedAnnouncements,
+                      homework: scopedHomework
                     }
                   }));
                 }
@@ -5637,14 +5714,22 @@ async function startServer() {
 
           case 'announcement:send': {
             const announcement = payload.announcement;
-            const isStaffRole = ['teacher', 'coordinator', 'admin', 'super_admin'].includes(socketUser.role) || ['teacher', 'coordinator', 'admin', 'super_admin'].includes(payload.userRole);
+            const isStaffRole = ['teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes(socketUser.role) || ['teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes(payload.userRole);
             if (announcement && typeof announcement === 'object' && (isStaffRole || process.env.NODE_ENV === 'test')) {
+              if (announcement.status === 'draft' || announcement.status === 'archived') break;
               if (!globalAnnouncementsState.some(a => a.id === announcement.id)) {
                 globalAnnouncementsState.unshift(announcement);
                 if (globalAnnouncementsState.length > 50) globalAnnouncementsState.pop();
               }
-              wss.clients.forEach((client) => {
-                if (client.readyState === WSWebSocket.OPEN) {
+              const scope: AcademicEventScope = {
+                targetRole: announcement.targetRole || announcement.target_role || 'all',
+                targetGrade: announcement.targetGrade || announcement.target_grade || announcement.targetClass || 'All Grades',
+                targetSection: announcement.targetSection || announcement.target_section || 'All Sections'
+              };
+              wss.clients.forEach((client: any) => {
+                if (client.readyState !== WSWebSocket.OPEN) return;
+                const recipient = client._veylentraUser || { authenticated: false, role: 'student', userId: '' };
+                if (isWsClientEligibleForAcademicEvent(recipient, scope)) {
                   client.send(JSON.stringify({
                     type: 'announcement:received',
                     announcement
@@ -5657,14 +5742,22 @@ async function startServer() {
 
           case 'homework:send': {
             const homework = payload.homework;
-            const isStaffRole = ['teacher', 'coordinator', 'admin', 'super_admin'].includes(socketUser.role) || ['teacher', 'coordinator', 'admin', 'super_admin'].includes(payload.userRole);
+            const isStaffRole = ['teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes(socketUser.role) || ['teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes(payload.userRole);
             if (homework && typeof homework === 'object' && (isStaffRole || process.env.NODE_ENV === 'test')) {
+              if (homework.status === 'draft' || homework.status === 'archived') break;
               if (!globalHomeworkState.some(h => h.id === homework.id)) {
                 globalHomeworkState.unshift(homework);
                 if (globalHomeworkState.length > 50) globalHomeworkState.pop();
               }
-              wss.clients.forEach((client) => {
-                if (client.readyState === WSWebSocket.OPEN) {
+              const scope: AcademicEventScope = {
+                targetRole: 'student',
+                targetGrade: homework.targetClass || homework.target_class || 'All Grades',
+                targetSection: homework.targetSection || homework.target_section || 'All Sections'
+              };
+              wss.clients.forEach((client: any) => {
+                if (client.readyState !== WSWebSocket.OPEN) return;
+                const recipient = client._veylentraUser || { authenticated: false, role: 'student', userId: '' };
+                if (isWsClientEligibleForAcademicEvent(recipient, scope)) {
                   client.send(JSON.stringify({
                     type: 'homework:received',
                     homework
@@ -5679,8 +5772,15 @@ async function startServer() {
             const homework = payload.homework;
             if (homework) {
               globalHomeworkState = globalHomeworkState.map(h => h.id === homework.id ? homework : h);
-              wss.clients.forEach((client) => {
-                if (client.readyState === WSWebSocket.OPEN) {
+              const scope: AcademicEventScope = {
+                targetRole: 'student',
+                targetGrade: homework.targetClass || homework.target_class || 'All Grades',
+                targetSection: homework.targetSection || homework.target_section || 'All Sections'
+              };
+              wss.clients.forEach((client: any) => {
+                if (client.readyState !== WSWebSocket.OPEN) return;
+                const recipient = client._veylentraUser || { authenticated: false, role: 'student', userId: '' };
+                if (isWsClientEligibleForAcademicEvent(recipient, scope)) {
                   client.send(JSON.stringify({
                     type: 'homework:updated',
                     homework

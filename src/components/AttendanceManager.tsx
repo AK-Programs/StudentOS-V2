@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { UserProfile, AttendanceRecord, AttendanceStatus, UserRole } from '../types';
+import { UserProfile, AttendanceRecord, AttendanceStatus, AttendanceAuditLog, UserRole } from '../types';
 import { fetchAllSupabaseUsers } from '../lib/supabaseUsers';
 import { supabase } from '../lib/supabase';
 import { sendNotificationToUsers } from '../firebase';
 import { 
   Calendar, Check, X, Clock, FileText, Download, 
-  Users, AlertTriangle, Filter, CheckCircle2, RefreshCw, BarChart2, Shield, FileSpreadsheet, Loader2
+  Users, AlertTriangle, Filter, CheckCircle2, RefreshCw, BarChart2, Shield, FileSpreadsheet, Loader2, History
 } from 'lucide-react';
 import { exportAttendanceToExcel, canUserExport } from '../lib/excelExportService';
 import { ALL_GRADE_OPTIONS, getSectionsForGrade } from '../config/academicHierarchy';
@@ -15,6 +15,10 @@ import {
   getAuthorizedSections,
   isStudentInFacultyScope
 } from '../config/facultyPermissions';
+import {
+  recordAttendanceWithAudit,
+  fetchAttendanceAuditHistory
+} from '../lib/academicWorkflowService';
 
 const SUBJECT_LIST = [
   'General / Homeroom',
@@ -60,6 +64,9 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
     | { kind: 'batch_present'; count: number }
     | null
   >(null);
+  const [correctionReason, setCorrectionReason] = useState('');
+  const [auditLogs, setAuditLogs] = useState<AttendanceAuditLog[]>([]);
+  const [showAuditHistory, setShowAuditHistory] = useState(false);
 
   // Historical stats map (studentId -> { present, total, percentage })
   const [historicalStats, setHistoricalStats] = useState<Record<string, { present: number; total: number; percentage: number }>>({});
@@ -91,8 +98,22 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
     }
   }, [availableSectionsForSelectedGrade, selectedSection]);
 
+  const loadAuditHistory = async () => {
+    try {
+      const res = await fetchAttendanceAuditHistory(currentUser);
+      if (res.ok && res.data) {
+        setAuditLogs(res.data);
+      }
+    } catch (_) {}
+  };
+
   useEffect(() => {
-    if (activeTab === 'attendance' || activeTab === 'analytics') fetchUsersAndAttendance();
+    if (activeTab === 'attendance' || activeTab === 'analytics') {
+      fetchUsersAndAttendance();
+      if (activeTab === 'attendance') {
+        void loadAuditHistory();
+      }
+    }
     if (activeTab === 'leaves') fetchLeaveRequests();
   }, [date, selectedGrade, selectedSection, selectedSubject, activeTab, effectiveRole]);
 
@@ -226,6 +247,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
     const existing = attendance[uid]?.status;
     if (existing && existing !== status) {
       const targetUser = targetUsers.find(u => u.uid === uid);
+      setCorrectionReason('');
       setPendingAttendanceConfirm({
         kind: 'single',
         uid,
@@ -238,12 +260,37 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
     void markStatus(uid, status);
   };
 
-  const markStatus = async (uid: string, status: AttendanceStatus) => {
+  const markStatus = async (uid: string, status: AttendanceStatus, reason?: string) => {
     setMarkingUid(uid);
     setErrorMessage(null);
     setSuccessMessage(null);
 
     const targetUser = targetUsers.find(u => u.uid === uid);
+
+    // Step 1: Submit through server-enforced Academic Workflow API (creates audit log if correcting existing mark)
+    const apiRes = await recordAttendanceWithAudit(currentUser, {
+      studentId: uid,
+      studentName: targetUser?.name || 'Student',
+      date,
+      status,
+      grade: selectedGrade,
+      section: selectedSection,
+      subject: selectedSubject,
+      reason: reason?.trim() || undefined
+    });
+
+    if (!apiRes.ok && apiRes.error && (apiRes.error.includes('403') || apiRes.error.toLowerCase().includes('forbidden') || apiRes.error.toLowerCase().includes('unauthorized') || apiRes.error.toLowerCase().includes('scope'))) {
+      setErrorMessage(apiRes.error);
+      setMarkingUid(null);
+      return;
+    }
+
+    if (apiRes.ok && apiRes.data?.auditEntry) {
+      setAuditLogs(prev => [apiRes.data!.auditEntry!, ...prev]);
+    } else if (apiRes.ok) {
+      void loadAuditHistory();
+    }
+
     const updatedRecord: AttendanceRecord & { remarks?: string } = {
       id: `${uid}_${date}`,
       date,
@@ -253,7 +300,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
       status
     };
 
-    // Step 1: Update local session state and local storage immediately so refresh keeps the mark
+    // Step 2: Update local session state and local storage immediately so refresh keeps the mark
     setAttendance(prev => {
       const next = {
         ...prev,
@@ -265,7 +312,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
         // Sync with global attendance history for Student/Parent portal
         const globalRaw = localStorage.getItem('s_os_attendance_records');
         const list: any[] = globalRaw ? JSON.parse(globalRaw) : [];
-        const filtered = list.filter(r => !( (r.user_id === uid || r.studentId === uid || r.student_id === uid) && r.date === date));
+        const filtered = list.filter(r => !((r.user_id === uid || r.studentId === uid || r.student_id === uid) && r.date === date));
         filtered.push({
           id: `${uid}_${date}`,
           user_id: uid,
@@ -284,67 +331,67 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
       return next;
     });
 
-    // Step 2: Persist to Supabase public.attendance
-    try {
-      const { data: existingRows } = await supabase
-        .from('attendance')
-        .select('id')
-        .eq('date', date)
-        .or(`user_id.eq.${uid},student_id.eq.${uid}`)
-        .maybeSingle();
-
-      const fullPayload: any = {
-        user_id: uid,
-        student_id: uid,
-        student_name: targetUser?.name || '',
-        date: date,
-        status: status,
-        grade: selectedGrade,
-        section: selectedSection,
-        subject: selectedSubject,
-        updated_by: currentUser.name || currentUser.email,
-        updated_at: new Date().toISOString()
-      };
-
-      if (existingRows?.id) {
-        let { error: updateError } = await supabase
+    // Step 3: Persist to Supabase public.attendance when backend fallback isn't already persisting directly
+    if (!apiRes.ok) {
+      try {
+        const { data: existingRows } = await supabase
           .from('attendance')
-          .update(fullPayload)
-          .eq('id', existingRows.id);
+          .select('id')
+          .eq('date', date)
+          .or(`user_id.eq.${uid},student_id.eq.${uid}`)
+          .maybeSingle();
 
-        if (updateError && updateError.code === 'PGRST204') {
-          // Schema fallback: update with base columns
-          await supabase
+        const fullPayload: any = {
+          user_id: uid,
+          student_id: uid,
+          student_name: targetUser?.name || '',
+          date: date,
+          status: status,
+          grade: selectedGrade,
+          section: selectedSection,
+          subject: selectedSubject,
+          updated_by: currentUser.name || currentUser.email,
+          updated_at: new Date().toISOString()
+        };
+
+        if (existingRows?.id) {
+          let { error: updateError } = await supabase
             .from('attendance')
-            .update({
-              student_id: uid,
-              date: date,
-              status: status,
-              grade: selectedGrade,
-              section: selectedSection
-            })
+            .update(fullPayload)
             .eq('id', existingRows.id);
-        }
-      } else {
-        let { error: insertError } = await supabase
-          .from('attendance')
-          .insert(fullPayload);
 
-        if (insertError && insertError.code === 'PGRST204') {
-          // Schema fallback: insert with base columns
-          await supabase
+          if (updateError && updateError.code === 'PGRST204') {
+            await supabase
+              .from('attendance')
+              .update({
+                student_id: uid,
+                date: date,
+                status: status,
+                grade: selectedGrade,
+                section: selectedSection
+              })
+              .eq('id', existingRows.id);
+          }
+        } else {
+          let { error: insertError } = await supabase
             .from('attendance')
-            .insert({
-              student_id: uid,
-              date: date,
-              status: status,
-              grade: selectedGrade,
-              section: selectedSection
-            });
+            .insert(fullPayload);
+
+          if (insertError && insertError.code === 'PGRST204') {
+            await supabase
+              .from('attendance')
+              .insert({
+                student_id: uid,
+                date: date,
+                status: status,
+                grade: selectedGrade,
+                section: selectedSection
+              });
+          }
         }
+      } catch (err: any) {
+        console.warn('[Attendance] Supabase persistence note:', err);
       }
-    } catch (err: any) {
-      console.warn('[Attendance] Supabase persistence note:', err);
     }
 
     setMarkingUid(null);
@@ -368,6 +415,17 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
       for (const u of targetUsers) {
         if (!u.uid) continue;
 
+        const apiRes = await recordAttendanceWithAudit(currentUser, {
+          studentId: u.uid,
+          studentName: u.name,
+          date,
+          status: 'present',
+          grade: selectedGrade,
+          section: selectedSection,
+          subject: selectedSubject,
+          reason: attendance[u.uid]?.status && attendance[u.uid]?.status !== 'present' ? 'Batch mark all present' : undefined
+        });
+
         newMap[u.uid] = {
           id: `${u.uid}_${date}`,
           date,
@@ -377,57 +435,60 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
           status: 'present'
         };
 
-        const fullPayload: any = {
-          user_id: u.uid,
-          student_id: u.uid,
-          student_name: u.name,
-          date: date,
-          status: 'present' as AttendanceStatus,
-          grade: selectedGrade,
-          section: selectedSection,
-          subject: selectedSubject,
-          updated_by: currentUser.name || currentUser.email,
-          updated_at: new Date().toISOString()
-        };
+        if (!apiRes.ok) {
+          const fullPayload: any = {
+            user_id: u.uid,
+            student_id: u.uid,
+            student_name: u.name,
+            date: date,
+            status: 'present' as AttendanceStatus,
+            grade: selectedGrade,
+            section: selectedSection,
+            subject: selectedSubject,
+            updated_by: currentUser.name || currentUser.email,
+            updated_at: new Date().toISOString()
+          };
 
-        try {
-          const { data: existingRows } = await supabase
-            .from('attendance')
-            .select('id')
-            .eq('date', date)
-            .or(`user_id.eq.${u.uid},student_id.eq.${u.uid}`)
-            .maybeSingle();
+          try {
+            const { data: existingRows } = await supabase
+              .from('attendance')
+              .select('id')
+              .eq('date', date)
+              .or(`user_id.eq.${u.uid},student_id.eq.${u.uid}`)
+              .maybeSingle();
 
-          if (existingRows?.id) {
-            let { error: uErr } = await supabase.from('attendance').update(fullPayload).eq('id', existingRows.id);
-            if (uErr && uErr.code === 'PGRST204') {
-              await supabase.from('attendance').update({
-                student_id: u.uid,
-                date,
-                status: 'present',
-                grade: selectedGrade,
-                section: selectedSection
-              }).eq('id', existingRows.id);
+            if (existingRows?.id) {
+              let { error: uErr } = await supabase.from('attendance').update(fullPayload).eq('id', existingRows.id);
+              if (uErr && uErr.code === 'PGRST204') {
+                await supabase.from('attendance').update({
+                  student_id: u.uid,
+                  date,
+                  status: 'present',
+                  grade: selectedGrade,
+                  section: selectedSection
+                }).eq('id', existingRows.id);
+              }
+            } else {
+              let { error: iErr } = await supabase.from('attendance').insert(fullPayload);
+              if (iErr && iErr.code === 'PGRST204') {
+                await supabase.from('attendance').insert({
+                  student_id: u.uid,
+                  date,
+                  status: 'present',
+                  grade: selectedGrade,
+                  section: selectedSection
+                });
+              }
             }
-          } else {
-            let { error: iErr } = await supabase.from('attendance').insert(fullPayload);
-            if (iErr && iErr.code === 'PGRST204') {
-              await supabase.from('attendance').insert({
-                student_id: u.uid,
-                date,
-                status: 'present',
-                grade: selectedGrade,
-                section: selectedSection
-              });
-            }
-          }
-        } catch (_) {}
+          } catch (_) {}
+        }
       }
 
       setAttendance(newMap);
       try {
         localStorage.setItem(getCacheKey(date), JSON.stringify(newMap));
       } catch (_) {}
+      void loadAuditHistory();
       setSuccessMessage('✓ All students marked Present.');
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (e: any) {
@@ -749,42 +810,60 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
           </AnimatePresence>
 
           {pendingAttendanceConfirm && (
-            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-start gap-2.5 text-xs text-amber-200">
-                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-bold text-white">Confirm Official Attendance Update</p>
-                  <p className="text-[11px] text-amber-200/90 mt-0.5">
-                    {pendingAttendanceConfirm.kind === 'batch_present'
-                      ? `Mark all ${pendingAttendanceConfirm.count} visible students in ${selectedGrade} (${selectedSection}) as Present for ${date}?`
-                      : `Change ${pendingAttendanceConfirm.studentName} from "${pendingAttendanceConfirm.previousStatus.toUpperCase()}" to "${pendingAttendanceConfirm.nextStatus.toUpperCase()}" for ${date}?`}
-                  </p>
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-start gap-2.5 text-xs text-amber-200">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold text-white">Confirm Official Attendance Update</p>
+                    <p className="text-[11px] text-amber-200/90 mt-0.5">
+                      {pendingAttendanceConfirm.kind === 'batch_present'
+                        ? `Mark all ${pendingAttendanceConfirm.count} visible students in ${selectedGrade} (${selectedSection}) as Present for ${date}?`
+                        : `Change ${pendingAttendanceConfirm.studentName} from "${pendingAttendanceConfirm.previousStatus.toUpperCase()}" to "${pendingAttendanceConfirm.nextStatus.toUpperCase()}" for ${date}?`}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPendingAttendanceConfirm(null);
+                      setCorrectionReason('');
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-slate-900 border border-white/10 text-xs font-semibold text-slate-300 hover:text-white cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const action = pendingAttendanceConfirm;
+                      const reasonText = correctionReason;
+                      setPendingAttendanceConfirm(null);
+                      setCorrectionReason('');
+                      if (action.kind === 'batch_present') {
+                        void handleMarkAllPresent();
+                      } else {
+                        void markStatus(action.uid, action.nextStatus, reasonText);
+                      }
+                    }}
+                    className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold cursor-pointer"
+                  >
+                    Confirm Save
+                  </button>
                 </div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setPendingAttendanceConfirm(null)}
-                  className="px-3 py-1.5 rounded-lg bg-slate-900 border border-white/10 text-xs font-semibold text-slate-300 hover:text-white cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const action = pendingAttendanceConfirm;
-                    setPendingAttendanceConfirm(null);
-                    if (action.kind === 'batch_present') {
-                      void handleMarkAllPresent();
-                    } else {
-                      void markStatus(action.uid, action.nextStatus);
-                    }
-                  }}
-                  className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold cursor-pointer"
-                >
-                  Confirm Save
-                </button>
-              </div>
+              {pendingAttendanceConfirm.kind === 'single' && (
+                <div>
+                  <input
+                    type="text"
+                    value={correctionReason}
+                    onChange={e => setCorrectionReason(e.target.value)}
+                    placeholder="Optional correction reason (recorded in attendance audit log)..."
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950/80 border border-amber-500/30 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+              )}
             </div>
           )}
 
@@ -1032,6 +1111,61 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
                 )}
               </tbody>
             </table>
+          </div>
+
+          {/* Collapsible Correction Audit History Panel */}
+          <div className="bg-slate-950/60 border border-white/10 rounded-2xl overflow-hidden">
+            <button
+              type="button"
+              onClick={() => {
+                const next = !showAuditHistory;
+                setShowAuditHistory(next);
+                if (next) void loadAuditHistory();
+              }}
+              className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-900/40 transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-2">
+                <History className="w-4 h-4 text-indigo-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wider">Correction Audit History</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-white/5 text-slate-300 border border-white/10">
+                  {auditLogs.length} entries
+                </span>
+              </div>
+              <span className="text-[11px] font-semibold text-indigo-300">
+                {showAuditHistory ? 'Hide' : 'Show Trail'}
+              </span>
+            </button>
+
+            {showAuditHistory && (
+              <div className="border-t border-white/10 p-4 space-y-2.5 max-h-72 overflow-y-auto">
+                {auditLogs.length === 0 ? (
+                  <p className="text-xs text-slate-500 text-center py-4">
+                    No attendance corrections recorded yet. Whenever a marked status is modified, the previous and updated values are logged here.
+                  </p>
+                ) : (
+                  auditLogs.map(log => (
+                    <div key={log.id} className="p-3 rounded-xl bg-slate-900/70 border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                      <div className="space-y-0.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-bold text-white">{log.studentName || log.studentId}</span>
+                          <span className="text-[10px] font-mono text-slate-400">{log.date}</span>
+                          <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px] uppercase font-bold">
+                            {log.previousStatus || 'unmarked'} &rarr; {log.newStatus}
+                          </span>
+                        </div>
+                        {log.reason && (
+                          <p className="text-[11px] text-slate-400">Reason: {log.reason}</p>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-slate-500 sm:text-right shrink-0">
+                        <div className="text-slate-300 font-semibold">{log.actorName || 'Faculty'} ({log.actorRole})</div>
+                        <div>{new Date(log.createdAt).toLocaleString()}</div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

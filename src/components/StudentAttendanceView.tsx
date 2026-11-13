@@ -89,6 +89,34 @@ export default function StudentAttendanceView({ currentUser }: { currentUser: Us
           remarks: r.notes || r.remarks || ''
         }));
 
+        // Merge any same-device recent attendance updates recorded via local cache
+        try {
+          const localRaw = localStorage.getItem('s_os_attendance_records');
+          if (localRaw) {
+            const parsed = JSON.parse(localRaw);
+            if (Array.isArray(parsed)) {
+              parsed
+                .filter((r: any) => r.user_id === currentUser.uid || r.studentId === currentUser.uid || r.student_id === currentUser.uid)
+                .forEach((r: any) => {
+                  const recDate = r.date;
+                  if (recDate && !mapped.some(m => m.date === recDate)) {
+                    mapped.push({
+                      id: r.id || `${currentUser.uid}_${recDate}`,
+                      date: recDate,
+                      grade: r.grade || currentUser.grade,
+                      section: r.section || currentUser.section,
+                      studentId: currentUser.uid!,
+                      status: r.status as AttendanceStatus,
+                      subject: r.subject || 'General / Homeroom',
+                      session: 'Daily Session',
+                      remarks: r.remarks || ''
+                    });
+                  }
+                });
+            }
+          }
+        } catch (_) {}
+
         setRecords(mapped);
       } catch (err) {
         console.error('Failed to load attendance:', err);
@@ -98,6 +126,16 @@ export default function StudentAttendanceView({ currentUser }: { currentUser: Us
     };
     fetchMyAttendance();
     fetchLeaveRequests();
+
+    const handleSync = (e: any) => {
+      const table = e?.detail?.table;
+      if (!table || table === 'attendance' || table === 'leave_requests') {
+        void fetchMyAttendance();
+        void fetchLeaveRequests();
+      }
+    };
+    window.addEventListener('studentos-db-update', handleSync);
+    return () => window.removeEventListener('studentos-db-update', handleSync);
   }, [currentUser]);
 
   const handleSubmitLeaveRequest = async (e: React.FormEvent) => {
