@@ -42,6 +42,7 @@ interface StudentOSJarvisProps {
   onSuperAdminUnlocked?: () => void;
   currentUser: any;
   effectiveRole: string;
+  initialQuery?: string;
 }
 
 const parseInlineMarkdown = (text: string) => {
@@ -164,7 +165,8 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
   createVaultNote,
   onSuperAdminUnlocked,
   currentUser,
-  effectiveRole
+  effectiveRole,
+  initialQuery
 }) => {
   // Navigation & Analytics Selection inside Jarvis
   const [activeJarvisSection, setActiveJarvisSection] = useState<'home' | 'reports' | 'houses' | 'sections' | 'history' | 'search'>('home');
@@ -302,6 +304,19 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
       recognitionRef.current = rec;
     }
   }, []);
+
+  // Automatically execute initialQuery when launched from Byte/Orion assistant or workspace CTA
+  const lastInitialQueryRef = useRef<string>('');
+  useEffect(() => {
+    const trimmed = (initialQuery || '').trim();
+    if (!trimmed || trimmed === lastInitialQueryRef.current) return;
+    lastInitialQueryRef.current = trimmed;
+    setCommandText(trimmed);
+    const timer = setTimeout(() => {
+      executeVoiceCommand(trimmed);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [initialQuery]);
 
   // Load and sync Orion state on mount/user change from Supabase
   useEffect(() => {
@@ -802,7 +817,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     showNotification(`✓ Successfully saved "${generatedNotesContent.title}" packet to your Lecture Notes Vault!`);
   };
 
-  // Perform AI parsing fallback with NVIDIA AI using our robust Express server
+  // Query Orion AI via approved Express server providers (APInex, Ministral, Groq)
   const queryJarvisAIStream = async (command: string): Promise<{ responseText: string; action: string; targetValue?: string; details?: any }> => {
     try {
       const cmdLow = command.toLowerCase().trim();

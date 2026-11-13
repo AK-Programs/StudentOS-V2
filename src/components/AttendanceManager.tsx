@@ -10,6 +10,11 @@ import {
 } from 'lucide-react';
 import { exportAttendanceToExcel, canUserExport } from '../lib/excelExportService';
 import { ALL_GRADE_OPTIONS, getSectionsForGrade } from '../config/academicHierarchy';
+import {
+  getAuthorizedGrades,
+  getAuthorizedSections,
+  isStudentInFacultyScope
+} from '../config/facultyPermissions';
 
 const SUBJECT_LIST = [
   'General / Homeroom',
@@ -26,11 +31,22 @@ const SUBJECT_LIST = [
 
 export default function AttendanceManager({ currentUser, effectiveRole }: { currentUser: UserProfile; effectiveRole: UserRole | undefined }) {
   const [activeTab, setActiveTab] = useState<'attendance' | 'analytics' | 'leaves'>('attendance');
-  
+  const role = (effectiveRole || currentUser?.role || 'teacher') as string;
+  const isInstitutionalAdmin = role === 'admin' || role === 'super_admin';
+
+  const authorizedGrades = useMemo(
+    () => (isInstitutionalAdmin ? ALL_GRADE_OPTIONS : getAuthorizedGrades(currentUser)),
+    [isInstitutionalAdmin, currentUser]
+  );
+  const authorizedSections = useMemo(
+    () => (isInstitutionalAdmin ? [] : getAuthorizedSections(currentUser)),
+    [isInstitutionalAdmin, currentUser]
+  );
+
   // Attendance State
   const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [selectedGrade, setSelectedGrade] = useState<string>('Grade 10');
-  const [selectedSection, setSelectedSection] = useState<string>('Solara');
+  const [selectedGrade, setSelectedGrade] = useState<string>(() => authorizedGrades[0] || 'Grade 10');
+  const [selectedSection, setSelectedSection] = useState<string>(() => authorizedSections[0] || 'Solara');
   const [selectedSubject, setSelectedSubject] = useState<string>('General / Homeroom');
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
@@ -39,7 +55,12 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
   const [markingUid, setMarkingUid] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  
+  const [pendingAttendanceConfirm, setPendingAttendanceConfirm] = useState<
+    | { kind: 'single'; uid: string; studentName: string; previousStatus: string; nextStatus: AttendanceStatus }
+    | { kind: 'batch_present'; count: number }
+    | null
+  >(null);
+
   // Historical stats map (studentId -> { present, total, percentage })
   const [historicalStats, setHistoricalStats] = useState<Record<string, { present: number; total: number; percentage: number }>>({});
 
@@ -49,12 +70,26 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
   const [leaveReason, setLeaveReason] = useState('');
   const [leaveDates, setLeaveDates] = useState('');
 
-  // Target role determination based on hierarchy (with fallback for teacher/admin roles)
-  const role = effectiveRole || currentUser?.role || 'teacher';
-  const targetRoleToManage = 
-    role === 'teacher' ? 'student' :
-    role === 'coordinator' ? 'student' :
-    (role === 'admin' || role === 'super_admin') ? 'student' : 'student';
+  const availableSectionsForSelectedGrade = useMemo(() => {
+    const baseSections = getSectionsForGrade(selectedGrade);
+    if (isInstitutionalAdmin || authorizedSections.length === 0) return baseSections;
+    const matched = baseSections.filter(s =>
+      authorizedSections.some(a => a.toLowerCase() === s.toLowerCase())
+    );
+    return matched.length > 0 ? matched : baseSections;
+  }, [selectedGrade, isInstitutionalAdmin, authorizedSections]);
+
+  useEffect(() => {
+    if (!authorizedGrades.includes(selectedGrade) && authorizedGrades.length > 0) {
+      setSelectedGrade(authorizedGrades[0]);
+    }
+  }, [authorizedGrades, selectedGrade]);
+
+  useEffect(() => {
+    if (availableSectionsForSelectedGrade.length > 0 && !availableSectionsForSelectedGrade.includes(selectedSection)) {
+      setSelectedSection(availableSectionsForSelectedGrade[0]);
+    }
+  }, [availableSectionsForSelectedGrade, selectedSection]);
 
   useEffect(() => {
     if (activeTab === 'attendance' || activeTab === 'analytics') fetchUsersAndAttendance();
@@ -70,8 +105,10 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
     try {
       const allUsers = await fetchAllSupabaseUsers();
       
-      let filtered = allUsers.filter(u => u.role === 'student');
-      
+      let filtered = allUsers.filter(u =>
+        u.role === 'student' && (isInstitutionalAdmin || isStudentInFacultyScope(u, currentUser, role))
+      );
+
       // Filter by Grade and Section
       if (selectedGrade !== 'all') {
         filtered = filtered.filter(u => u.grade === selectedGrade);
@@ -79,7 +116,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
       if (selectedSection !== 'all') {
         filtered = filtered.filter(u => !u.section || u.section === selectedSection);
       }
-      
+
       setTargetUsers(filtered);
 
       // Load local session cache first as initial baseline
@@ -183,6 +220,22 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
     } finally {
       setLoading(false);
     }
+  };
+
+  const requestMarkStatus = (uid: string, status: AttendanceStatus) => {
+    const existing = attendance[uid]?.status;
+    if (existing && existing !== status) {
+      const targetUser = targetUsers.find(u => u.uid === uid);
+      setPendingAttendanceConfirm({
+        kind: 'single',
+        uid,
+        studentName: targetUser?.name || 'Student',
+        previousStatus: existing,
+        nextStatus: status
+      });
+      return;
+    }
+    void markStatus(uid, status);
   };
 
   const markStatus = async (uid: string, status: AttendanceStatus) => {
@@ -299,7 +352,12 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
     setTimeout(() => setSuccessMessage(null), 3000);
   };
 
-  // Bulk action: Mark all visible students present
+  // Bulk action: Mark all visible students present (requires explicit confirmation)
+  const requestMarkAllPresent = () => {
+    if (targetUsers.length === 0) return;
+    setPendingAttendanceConfirm({ kind: 'batch_present', count: targetUsers.length });
+  };
+
   const handleMarkAllPresent = async () => {
     if (targetUsers.length === 0) return;
     setLoading(true);
@@ -577,7 +635,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
                   }} 
                   className="w-full px-2.5 sm:px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-white text-xs focus:outline-none focus:border-indigo-500"
                 >
-                  {ALL_GRADE_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
+                  {authorizedGrades.map(g => <option key={g} value={g}>{g}</option>)}
                 </select>
               </div>
 
@@ -588,7 +646,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
                   onChange={e => setSelectedSection(e.target.value)} 
                   className="w-full px-2.5 sm:px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-white text-xs focus:outline-none focus:border-indigo-500"
                 >
-                  {getSectionsForGrade(selectedGrade).map(s => <option key={s} value={s}>{s}</option>)}
+                  {availableSectionsForSelectedGrade.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
 
@@ -619,8 +677,8 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
               {/* Action buttons */}
               <div className="flex items-center gap-2">
                 <button
-                  onClick={handleMarkAllPresent}
-                  className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 font-bold text-xs border border-emerald-500/30 transition-all flex items-center justify-center gap-1.5"
+                  onClick={requestMarkAllPresent}
+                  className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 font-bold text-xs border border-emerald-500/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                   <span>Mark All Present</span>
@@ -689,6 +747,46 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
               </motion.div>
             )}
           </AnimatePresence>
+
+          {pendingAttendanceConfirm && (
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-2.5 text-xs text-amber-200">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-white">Confirm Official Attendance Update</p>
+                  <p className="text-[11px] text-amber-200/90 mt-0.5">
+                    {pendingAttendanceConfirm.kind === 'batch_present'
+                      ? `Mark all ${pendingAttendanceConfirm.count} visible students in ${selectedGrade} (${selectedSection}) as Present for ${date}?`
+                      : `Change ${pendingAttendanceConfirm.studentName} from "${pendingAttendanceConfirm.previousStatus.toUpperCase()}" to "${pendingAttendanceConfirm.nextStatus.toUpperCase()}" for ${date}?`}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setPendingAttendanceConfirm(null)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-900 border border-white/10 text-xs font-semibold text-slate-300 hover:text-white cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const action = pendingAttendanceConfirm;
+                    setPendingAttendanceConfirm(null);
+                    if (action.kind === 'batch_present') {
+                      void handleMarkAllPresent();
+                    } else {
+                      void markStatus(action.uid, action.nextStatus);
+                    }
+                  }}
+                  className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold cursor-pointer"
+                >
+                  Confirm Save
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Quick Metrics Bar for Selected Class on Selected Date */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
@@ -764,7 +862,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
                     <motion.button 
                       whileTap={{ scale: 0.96 }}
                       disabled={isMarkingThis}
-                      onClick={() => markStatus(u.uid!, 'present')} 
+                      onClick={() => requestMarkStatus(u.uid!, 'present')} 
                       className={`py-2 px-1 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1 border cursor-pointer ${
                         studentAtt === 'present' 
                           ? 'bg-emerald-500 border-emerald-400 text-slate-950 font-black shadow-md shadow-emerald-500/30 ring-2 ring-emerald-400/50' 
@@ -778,7 +876,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
                     <motion.button 
                       whileTap={{ scale: 0.96 }}
                       disabled={isMarkingThis}
-                      onClick={() => markStatus(u.uid!, 'late')} 
+                      onClick={() => requestMarkStatus(u.uid!, 'late')} 
                       className={`py-2 px-1 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1 border cursor-pointer ${
                         studentAtt === 'late' 
                           ? 'bg-amber-500 border-amber-400 text-slate-950 font-black shadow-md shadow-amber-500/30 ring-2 ring-amber-400/50' 
@@ -792,7 +890,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
                     <motion.button 
                       whileTap={{ scale: 0.96 }}
                       disabled={isMarkingThis}
-                      onClick={() => markStatus(u.uid!, 'absent')} 
+                      onClick={() => requestMarkStatus(u.uid!, 'absent')} 
                       className={`py-2 px-1 rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1 border cursor-pointer ${
                         studentAtt === 'absent' 
                           ? 'bg-rose-500 border-rose-400 text-white font-black shadow-md shadow-rose-500/30 ring-2 ring-rose-400/50' 
@@ -879,7 +977,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
                           <motion.button 
                             whileTap={{ scale: 0.95 }}
                             disabled={isMarkingThis}
-                            onClick={() => markStatus(u.uid!, 'present')} 
+                            onClick={() => requestMarkStatus(u.uid!, 'present')} 
                             className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 border ${
                               studentAtt === 'present' 
                                 ? 'bg-emerald-500 text-slate-950 font-black border-emerald-400 shadow-md shadow-emerald-500/30 ring-2 ring-emerald-400/40' 
@@ -894,7 +992,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
                           <motion.button 
                             whileTap={{ scale: 0.95 }}
                             disabled={isMarkingThis}
-                            onClick={() => markStatus(u.uid!, 'late')} 
+                            onClick={() => requestMarkStatus(u.uid!, 'late')} 
                             className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 border ${
                               studentAtt === 'late' 
                                 ? 'bg-amber-500 text-slate-950 font-black border-amber-400 shadow-md shadow-amber-500/30 ring-2 ring-amber-400/40' 
@@ -909,7 +1007,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
                           <motion.button 
                             whileTap={{ scale: 0.95 }}
                             disabled={isMarkingThis}
-                            onClick={() => markStatus(u.uid!, 'absent')} 
+                            onClick={() => requestMarkStatus(u.uid!, 'absent')} 
                             className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 border ${
                               studentAtt === 'absent' 
                                 ? 'bg-rose-500 text-white font-black border-rose-400 shadow-md shadow-rose-500/30 ring-2 ring-rose-400/40' 

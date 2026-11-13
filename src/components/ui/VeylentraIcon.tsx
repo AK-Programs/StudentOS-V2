@@ -73,6 +73,11 @@ export type VeylentraIconName =
   | 'compass'
   | 'globe'
   | 'volume'
+  | 'syllabus'
+  | 'attendance_manager'
+  | 'exam'
+  | 'graduation'
+  | 'orion'
   | 'battery'
   | 'wifi';
 
@@ -696,6 +701,65 @@ export const VeylentraIcon: React.FC<VeylentraIconProps> = ({
           <svg viewBox="0 0 48 48" className="w-full h-full drop-shadow-sm overflow-visible">
             <path d="M24 6 L38 11 V24 C38 33 24 42 24 42 C24 42 10 33 10 24 V11 Z" fill="#3b82f6" />
             <path d="M24 6 V42 C24 42 38 33 38 24 V11 Z" fill="#1d4ed8" />
+          </svg>
+        );
+
+      // 29. Syllabus (Structured curriculum book & checkpoint)
+      case 'syllabus':
+        return (
+          <svg viewBox="0 0 48 48" className="w-full h-full drop-shadow-sm overflow-visible">
+            <rect x="8" y="6" width="32" height="36" rx="6" fill="#0ea5e9" />
+            <rect x="12" y="10" width="24" height="28" rx="3" fill="#e0f2fe" />
+            <rect x="16" y="15" width="16" height="3.5" rx="1.75" fill="#0284c7" />
+            <rect x="16" y="22" width="12" height="3.5" rx="1.75" fill="#38bdf8" />
+            <circle cx="32" cy="32" r="9" fill="#10b981" />
+            <path d="M28 32 L31 35 L36.5 29" fill="none" stroke="#ffffff" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        );
+
+      // 30. Attendance Manager (Register + checkmark)
+      case 'attendance_manager':
+        return (
+          <svg viewBox="0 0 48 48" className="w-full h-full drop-shadow-sm overflow-visible">
+            <rect x="7" y="10" width="34" height="32" rx="7" fill="#14b8a6" />
+            <rect x="7" y="10" width="34" height="10" rx="5" fill="#0f766e" />
+            <rect x="15" y="5" width="4" height="8" rx="2" fill="#cbd5e1" />
+            <rect x="29" y="5" width="4" height="8" rx="2" fill="#cbd5e1" />
+            <circle cx="19" cy="29" r="3" fill="#ffffff" />
+            <path d="M25 29 L29 33 L36 25" fill="none" stroke="#ffffff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        );
+
+      // 31. Exam / Assessment
+      case 'exam':
+        return (
+          <svg viewBox="0 0 48 48" className="w-full h-full drop-shadow-sm overflow-visible">
+            <rect x="9" y="6" width="30" height="36" rx="5" fill="#3b82f6" />
+            <rect x="13" y="11" width="22" height="26" rx="2" fill="#f8fafc" />
+            <path d="M17 17 H31 M17 23 H27 M17 29 H24" stroke="#64748b" strokeWidth="2.5" strokeLinecap="round" />
+            <circle cx="34" cy="34" r="9" fill="#f59e0b" />
+            <path d="M34 29 V35 M34 38 V38.5" stroke="#ffffff" strokeWidth="3" strokeLinecap="round" />
+          </svg>
+        );
+
+      // 32. Graduation / Faculty
+      case 'graduation':
+        return (
+          <svg viewBox="0 0 48 48" className="w-full h-full drop-shadow-sm overflow-visible">
+            <polygon points="24,8 44,18 24,28 4,18" fill="#38bdf8" />
+            <path d="M12 22 V33 C12 36 17.5 39 24 39 C30.5 39 36 36 36 33 V22 L24 28 Z" fill="#0284c7" />
+            <path d="M40 20 V33" stroke="#fbbf24" strokeWidth="3" strokeLinecap="round" />
+            <circle cx="40" cy="34" r="2.5" fill="#f59e0b" />
+          </svg>
+        );
+
+      // 33. Orion AI (Teal/Cobalt Crystal)
+      case 'orion':
+        return (
+          <svg viewBox="0 0 48 48" className="w-full h-full drop-shadow-sm overflow-visible">
+            <circle cx="24" cy="24" r="18" fill="#0f766e" />
+            <polygon points="24,10 31,20 38,24 31,28 24,38 17,28 10,24 17,20" fill="#2dd4bf" />
+            <circle cx="24" cy="24" r="4" fill="#ffffff" />
           </svg>
         );
 

@@ -1,0 +1,1093 @@
+VEYLENTRA — COMPLETE STUDENT, FACULTY & APP EXPERIENCE UPGRADE
+
+PRIMARY OBJECTIVE
+
+The recently completed Student and Faculty upgrades are not good enough yet. The current experience is difficult to understand, lacks meaningful visual guidance, feels feature-limited, and does not deliver the quality expected from a modern educational platform.
+
+I want you to rethink, improve, and substantially upgrade the entire Veylentra experience.
+
+This is not a request to add a few dashboard cards, decorative elements, or superficial features. I want Veylentra to become a polished, intuitive, feature-rich educational application that students and faculty can use comfortably every day.
+
+The final experience should feel like a carefully designed desktop and mobile application—not a conventional website with pages, generic cards, and unnecessary borders.
+
+You have creative freedom to improve the experience, information architecture, navigation, interactions, visual hierarchy, and feature set. However, you must preserve Veylentra's identity, working functionality, existing design language, and established architecture.
+
+---
+
+1. FIRST: AUDIT THE RECENT IMPLEMENTATION
+
+Before changing anything, inspect the actual current codebase and the recently completed Student and Faculty work.
+
+Identify:
+
+- Features that were added but are difficult to understand.
+- Confusing navigation and unclear labels.
+- Dashboards that display information without explaining its meaning.
+- Missing visualizations, progress indicators, illustrations, and contextual guidance.
+- Important student and faculty workflows that are still missing.
+- Features that are duplicated, disconnected, incomplete, or difficult to discover.
+- Poor mobile layouts and inconsistent responsive behavior.
+- Unnecessary borders, decorative outlines, excessive containers, and inconsistent spacing.
+- Places where the UI looks like a website rather than an application.
+- AI features that are superficial instead of genuinely useful.
+- Existing features that should be integrated into the improved experience.
+
+Do not assume the previous implementation is correct simply because it was completed.
+
+Produce a concise internal implementation plan and then execute it. Do not stop after producing an audit.
+
+2. COMPLETE APP-WIDE UI/UX TRANSFORMATION
+
+This is one of the most important requirements.
+
+Upgrade the UI/UX of the entire Veylentra application, not only the Student and Faculty tabs.
+
+Desired design direction
+
+Veylentra should feel like a premium, modern educational productivity application.
+
+The experience should have:
+
+- Clear visual hierarchy.
+- Consistent spacing and alignment.
+- Intuitive navigation.
+- Excellent typography and readability.
+- Thoughtful use of whitespace.
+- Consistent interaction patterns.
+- Smooth and purposeful transitions.
+- Visually understandable information.
+- Clear active, selected, disabled, loading, success, and error states.
+- Consistent layouts across modules.
+- Excellent responsive behavior.
+- A coherent visual identity throughout the application.
+
+Remove the vibe-coded appearance
+
+The Study Dashboard currently contains borders and decorative outlines that make parts of the interface look artificially generated or unfinished.
+
+Remove these unnecessary borders and similar styling throughout Veylentra wherever they reduce visual quality.
+
+Specifically avoid:
+
+- Excessive outlined cards.
+- Random gradient borders.
+- Decorative glowing outlines.
+- Unnecessary nested containers.
+- Too many boxes inside boxes.
+- Randomly rounded shapes.
+- Excessive shadows.
+- Unnecessary separators.
+- Inconsistent card treatments.
+- Decorative elements without a functional purpose.
+- Generic AI-generated dashboard aesthetics.
+
+Do not solve every design problem by adding another card or border.
+
+Use spacing, typography, alignment, background contrast, subtle elevation, icons, and visual grouping to establish hierarchy.
+
+Do not remove borders that are genuinely needed for accessibility, form boundaries, or meaningful separation.
+
+Make Veylentra feel like an application
+
+Improve the application shell and navigation.
+
+Consider the most suitable combination of:
+
+- Persistent desktop navigation.
+- A compact and understandable sidebar.
+- Mobile bottom navigation where appropriate.
+- App-style headers and contextual toolbars.
+- Clear page titles and breadcrumbs where useful.
+- Quick actions.
+- Search and command access.
+- Consistent navigation between modules.
+- Contextual navigation within Student and Faculty workspaces.
+- Appropriate full-screen workspaces for focused activities.
+- Responsive navigation that works naturally on phones, tablets, and desktops.
+
+Do not blindly introduce all these elements everywhere. Choose the best navigation pattern for each screen.
+
+The application must feel cohesive when moving between modules. Users should not feel like they are opening unrelated websites.
+
+Visual communication
+
+A major weakness of the previous implementation was the lack of visuals.
+
+Use meaningful visual elements to make information easier to understand:
+
+- Progress visualizations.
+- Attendance charts.
+- Performance trends.
+- Subject-level summaries.
+- Assignment progress.
+- Assessment calendars.
+- Weekly activity summaries.
+- Learning progress indicators.
+- Timeline views.
+- Workload visualizations.
+- Calendar heatmaps where appropriate.
+- Meaningful illustrations and empty states.
+- Contextual diagrams or visual explanations when they genuinely improve understanding.
+
+Use visuals to communicate real information—not as decoration.
+
+Every visualization must be connected to actual application data. Do not invent academic statistics or display fake progress.
+
+Use clear labels, accessible contrast, helpful legends, and understandable chart types.
+
+3. STUDENT EXPERIENCE — MAKE IT A COMPLETE LEARNING WORKSPACE
+
+The Student experience should become a complete daily academic workspace.
+
+Students should be able to understand what is happening today, what needs attention, how they are progressing, and what they should do next without searching through multiple screens.
+
+A. Student Home Dashboard
+
+Create a genuinely useful student home experience.
+
+Include:
+
+- Personalized greeting.
+- Today's timetable.
+- Next class and upcoming classes.
+- Today's tasks.
+- Pending assignments.
+- Upcoming assignment deadlines.
+- Upcoming assessments and examinations.
+- Attendance overview.
+- Subject-wise progress.
+- Recent academic activity.
+- Important announcements.
+- Upcoming events.
+- Learning streak or study consistency, if supported by actual data.
+- Recent notes and study materials.
+- Recently accessed subjects.
+- Quick actions.
+- Personalized recommendations.
+- Important reminders from Byte.
+
+Prioritize information based on urgency and relevance.
+
+The dashboard should answer:
+
+1. What do I have today?
+2. What must I complete?
+3. What deadlines are approaching?
+4. What am I falling behind on?
+5. How am I performing?
+6. What should I focus on next?
+
+Do not put every metric on the screen at once. Use sensible prioritization and expandable sections.
+
+B. Student Academic Hub
+
+Build a clear academic workspace containing:
+
+- Subjects and courses.
+- Subject overview pages.
+- Syllabus and curriculum.
+- Units and chapters.
+- Learning materials.
+- Lecture notes.
+- Class resources.
+- Assignments.
+- Assessments.
+- Examination information.
+- Academic announcements.
+- Subject-wise attendance.
+- Subject-wise performance.
+
+Every subject should have an understandable overview and easy access to related materials.
+
+C. Assignment Management
+
+Create a complete assignment experience.
+
+Include:
+
+- Assignment list.
+- Upcoming, pending, submitted, overdue, and completed states.
+- Due dates and countdowns.
+- Subject and faculty information.
+- Instructions and attachments.
+- Submission requirements.
+- Submission status.
+- Submission history.
+- Feedback and marks.
+- Resubmission where permitted.
+- Calendar integration.
+- Priority indicators.
+- Search and filters.
+
+Make the assignment detail screen easy to understand.
+
+Do not invent submission capabilities that the backend does not support. Implement the actual supported workflow and identify backend gaps.
+
+D. Assessment and Examination Center
+
+Create a dedicated examination workspace.
+
+Include:
+
+- Upcoming assessments.
+- Examination timetable.
+- Assessment details.
+- Subject and syllabus coverage.
+- Preparation progress.
+- Available study resources.
+- Results and marks where authorized.
+- Performance history.
+- Important examination announcements.
+- Revision planning.
+- Calendar view.
+
+If the existing architecture supports it, include practice tests and quizzes with meaningful feedback.
+
+E. Attendance Center
+
+Build a visual attendance experience.
+
+Include:
+
+- Overall attendance.
+- Subject-wise attendance.
+- Attendance history.
+- Present and absent summaries.
+- Attendance trends.
+- Attendance calendar.
+- Attendance warnings.
+- Institution-defined attendance thresholds.
+- Clear explanations of attendance calculations.
+
+Any attendance projections must be mathematically correct and clearly labeled as estimates.
+
+Never allow students to alter official attendance records.
+
+F. Academic Performance and Insights
+
+Build a useful performance workspace.
+
+Include:
+
+- Subject-wise performance.
+- Assessment history.
+- Marks and grades where available.
+- Performance trends.
+- Areas needing improvement.
+- Strengths based on actual academic data.
+- Learning goals.
+- Progress toward goals.
+- Historical comparisons where meaningful.
+
+Use visualizations that help students understand their performance.
+
+Avoid unsupported predictions and misleading AI-generated claims.
+
+G. Student Study Space
+
+Make this a meaningful learning environment, not simply a collection of tools.
+
+Integrate existing working features where appropriate:
+
+- Lecture Notes.
+- Rich-text and Markdown note editing.
+- Image-to-Note OCR.
+- Study materials.
+- Flashcards.
+- Revision tools.
+- Quizzes.
+- Practice exercises.
+- Study planner.
+- Focus sessions.
+- Learning progress.
+- Subject organization.
+- Search across accessible study resources.
+- Recently used resources.
+
+Preserve the existing working Lecture Notes and OCR functionality.
+
+Do not rewrite them unnecessarily.
+
+H. Student Calendar and Planner
+
+Provide a unified academic calendar.
+
+Include supported events such as:
+
+- Classes.
+- Assignments.
+- Assessments.
+- Examinations.
+- Academic events.
+- Important announcements.
+- Personal study plans.
+
+Provide daily, weekly, and monthly views where useful.
+
+Make it easy to understand the workload ahead.
+
+I. Student Notifications and Reminders
+
+Improve notification organization.
+
+Include:
+
+- Upcoming deadlines.
+- Assignment reminders.
+- Examination reminders.
+- Class-related updates.
+- Announcements.
+- Important academic changes.
+- Relevant Byte reminders.
+
+Allow appropriate notification preferences and read/unread states.
+
+Preserve existing working FCM/Web Push behavior. Trace its actual implementation before changing anything.
+
+---
+
+4. FACULTY EXPERIENCE — BUILD A COMPLETE TEACHING WORKSPACE
+
+The Faculty experience must support both Teachers and Coordinators.
+
+These are the initial faculty roles. The architecture must remain extensible so additional faculty roles can be introduced later without redesigning the entire system.
+
+Do not treat Teacher and Coordinator as identical roles.
+
+A. Faculty Home Dashboard
+
+Create a role-aware faculty dashboard.
+
+Teacher dashboard
+
+Include:
+
+- Today's teaching schedule.
+- Upcoming classes.
+- Assigned classes and subjects.
+- Student groups or sections.
+- Pending work.
+- Assignments awaiting evaluation.
+- Upcoming assessments.
+- Recent student submissions.
+- Important announcements.
+- Class activity.
+- Attendance-related tasks.
+- Quick actions.
+- Byte reminders.
+
+Coordinator dashboard
+
+Include:
+
+- Relevant academic overview.
+- Classes and sections under their responsibility.
+- Teacher and class coordination information.
+- Upcoming academic activities.
+- Assessment schedules.
+- Pending coordination tasks.
+- Important announcements.
+- Relevant attendance summaries.
+- Workload and operational insights.
+- Items requiring attention.
+
+Coordinator access must be limited to the data and actions they are authorized to manage.
+
+B. Teacher Workspace
+
+Build a practical teaching environment.
+
+Include:
+
+- Class and section management.
+- Subject management where authorized.
+- Class schedules.
+- Student lists.
+- Student profiles within authorized scope.
+- Attendance management.
+- Assignment creation.
+- Assignment distribution.
+- Submission review.
+- Feedback.
+- Marks and grading.
+- Assessment creation.
+- Learning materials.
+- Lecture resources.
+- Announcements.
+- Class activity.
+- Academic progress insights.
+
+Provide quick actions for common teaching tasks.
+
+C. Assignment and Evaluation Center
+
+Create a complete faculty assignment workflow.
+
+Include:
+
+- Create assignments.
+- Select eligible classes or sections.
+- Set deadlines.
+- Add instructions.
+- Attach resources.
+- Define submission requirements.
+- View submissions.
+- Track missing submissions.
+- Review student work.
+- Provide feedback.
+- Record marks where authorized.
+- Track evaluation progress.
+- Publish results where permitted.
+
+Make it easy to distinguish between work that is pending, reviewed, and completed.
+
+D. Assessment Management
+
+Include:
+
+- Create and manage assessments.
+- Schedule assessments.
+- Select classes and subjects.
+- Define assessment details.
+- Manage assessment instructions.
+- Record marks where authorized.
+- Review performance.
+- Identify students who may need additional support.
+- View subject and class performance trends.
+- Manage assessment-related announcements.
+
+Do not introduce unsupported examination automation or modify official records without authorization.
+
+E. Attendance Management
+
+Provide:
+
+- Class attendance overview.
+- Date-wise attendance.
+- Student attendance history.
+- Subject-wise summaries.
+- Attendance insights.
+- Authorized attendance marking and correction workflows.
+- Clear confirmation before modifying official records.
+
+Keep the workflow efficient and easy to understand.
+
+F. Class and Student Insights
+
+Give teachers and coordinators meaningful insights based on authorized data.
+
+Examples:
+
+- Assignment completion rates.
+- Assessment performance.
+- Attendance patterns.
+- Students needing academic support.
+- Class-level progress.
+- Subject-level trends.
+- Pending evaluations.
+- Workload summaries.
+
+Avoid presenting AI assumptions as confirmed facts.
+
+G. Coordinator Workspace
+
+Create a dedicated coordinator experience rather than hiding coordinator functionality inside teacher screens.
+
+Include the relevant authorized workflows for:
+
+- Academic coordination.
+- Class and section oversight.
+- Teacher coordination.
+- Timetable and academic schedule visibility.
+- Assessment coordination.
+- Announcements.
+- Academic activity monitoring.
+- Pending operational tasks.
+- Performance summaries.
+
+Clearly distinguish coordinator permissions from teacher permissions.
+
+Design the role system so future faculty roles can be added through configuration and permission definitions rather than hardcoded UI assumptions.
+
+---
+
+5. BYTE — THE CONTEXTUAL PRODUCTIVITY COMPANION
+
+Byte is not the AI that performs academic or administrative work.
+
+Byte is the friendly, contextual, role-aware companion that helps users stay organized and understand what needs attention.
+
+Byte must support:
+
+- Students.
+- Teachers.
+- Coordinators.
+- Future faculty roles through an extensible role-aware design.
+
+Student Byte experience
+
+Byte should understand the student's permitted academic context and help with:
+
+- Today's timetable.
+- Today's tasks.
+- Remaining assignments.
+- Approaching deadlines.
+- Upcoming assessments.
+- Examination reminders.
+- Attendance alerts.
+- Important announcements.
+- Study-plan reminders.
+- Incomplete study goals.
+- Recently updated academic information.
+- Suggested next actions.
+
+Example messages:
+
+- "You have two assignments due soon."
+- "Your next class starts shortly."
+- "You still have one task to complete today."
+- "Your assessment is approaching. Your revision plan has three remaining topics."
+
+These messages must be generated from actual data.
+
+Teacher Byte experience
+
+Byte should help teachers stay organized through:
+
+- Today's teaching schedule.
+- Upcoming classes.
+- Pending assignment evaluations.
+- Upcoming assessments.
+- Missing student submissions.
+- Attendance-related reminders.
+- Important class updates.
+- Teaching preparation reminders.
+- Pending authorized tasks.
+
+Coordinator Byte experience
+
+Byte should provide:
+
+- Upcoming coordination activities.
+- Pending operational tasks.
+- Relevant assessment reminders.
+- Academic schedule updates.
+- Important announcements.
+- Items requiring attention.
+- Relevant class or teacher coordination reminders.
+
+Only use information that the coordinator is authorized to access.
+
+Byte behavior
+
+Byte should:
+
+- Provide concise, understandable reminders.
+- Explain why something needs attention.
+- Offer contextual navigation to the relevant screen.
+- Allow users to dismiss or mark reminders as handled where appropriate.
+- Avoid repeatedly showing the same reminder.
+- Respect notification preferences.
+- Never invent tasks, deadlines, academic events, or user activity.
+
+Critical separation: Byte does not execute work. Orion is responsible for AI-assisted work execution.
+
+Do not merge their identities, responsibilities, or interfaces.
+
+---
+
+6. ORION — EXPAND THE AI WORKSPACE
+
+Orion is Veylentra's AI work assistant.
+
+It should help users complete supported tasks, not merely display generic chat responses.
+
+Integrate Orion into both Student and Faculty experiences.
+
+Student AI capabilities
+
+Explore and implement useful capabilities such as:
+
+- Explain difficult academic concepts.
+- Summarize accessible learning materials.
+- Generate revision notes from permitted source content.
+- Create practice questions.
+- Generate flashcards.
+- Help create study plans.
+- Explain mistakes in practice questions.
+- Organize revision topics.
+- Help students understand assignment instructions.
+- Search and summarize accessible learning resources.
+- Help students plan their academic workload.
+
+Teacher AI capabilities
+
+Explore and implement:
+
+- Draft lesson plans.
+- Generate teaching outlines.
+- Create question sets.
+- Generate practice quizzes.
+- Draft assignment instructions.
+- Prepare revision materials.
+- Summarize permitted learning resources.
+- Draft classroom announcements.
+- Organize teaching preparation.
+- Assist with feedback drafts.
+- Create differentiated explanations for different learning levels.
+
+Coordinator AI capabilities
+
+Explore and implement:
+
+- Draft academic announcements.
+- Summarize authorized academic information.
+- Help organize coordination tasks.
+- Prepare meeting agendas.
+- Summarize relevant academic activity.
+- Draft reports using authorized data.
+- Help coordinate assessment schedules.
+- Identify operational items that require attention.
+
+Orion action execution
+
+Where supported, Orion may perform tasks through approved application workflows.
+
+Examples:
+
+- Create a draft assignment.
+- Prepare a study plan.
+- Create draft learning materials.
+- Draft an announcement.
+- Organize a supported task.
+- Prepare an assessment draft.
+
+For consequential actions, require user review and confirmation before committing changes.
+
+Respect role permissions and existing backend authorization.
+
+Never claim an action succeeded unless the backend confirms it.
+
+Do not expose unauthorized student, teacher, or institutional data to AI providers.
+
+AI provider restrictions
+
+Only use the existing approved providers:
+
+1. APInex.
+2. Ministral.
+3. Groq.
+
+Do not introduce Gemini, NVIDIA, NARA Router, or additional providers.
+
+Inspect the current repository for exact supported model IDs and configuration. Do not invent model names.
+
+Preserve existing provider routing, server-side credential handling, streaming behavior, and fallback logic.
+
+Do not expose provider keys or secrets to the frontend.
+
+AI features should have clear loading, error, retry, cancellation, and response states.
+
+---
+
+7. BYTE AND ORION FLOATING CHARACTER — LONG-PRESS INTERACTION
+
+Preserve the existing floating character and its identity.
+
+Implement the requested interaction carefully:
+
+1. The user presses and holds the floating character.
+2. After three seconds, open a clear choice interface.
+3. Show two options: Byte and Orion.
+4. Selecting Byte opens the Byte conversation.
+5. Selecting Orion opens the Orion conversation.
+6. Enable speech-to-text interaction after the user selects either assistant.
+
+Voice interaction requirements
+
+Include:
+
+- Explicit microphone permission handling.
+- Clear listening indicator.
+- Visible transcription.
+- Ability to stop listening.
+- Ability to cancel.
+- Ability to edit the transcribed text before sending.
+- Typing fallback.
+- Clear microphone permission error messages.
+- No background recording.
+- No silent microphone activation.
+- No bypassing browser or device permissions.
+
+The interaction must work for students, teachers, and coordinators.
+
+Ensure the long-press behavior works on touchscreens and desktop without interfering with ordinary clicks, dragging, scrolling, or other existing interactions.
+
+The selection screen must clearly explain the difference:
+
+- Byte: reminders, organization, and contextual guidance.
+- Orion: AI assistance and supported work execution.
+
+---
+
+8. MAKE FEATURES EASY TO DISCOVER
+
+One of the biggest problems with the current implementation is that users cannot easily understand what is available or where to find it.
+
+Solve this systematically.
+
+Use:
+
+- Clear names.
+- Helpful descriptions.
+- Contextual tooltips.
+- First-use guidance.
+- Useful empty states.
+- Helpful error messages.
+- Consistent icons.
+- Meaningful section headings.
+- Contextual quick actions.
+- Search and filtering.
+- Clear status labels.
+- Progressive disclosure for advanced options.
+
+Avoid overwhelming users with onboarding popups.
+
+Do not make users learn the application by trial and error.
+
+Every important feature should be discoverable from an appropriate location.
+
+When a feature is complex, guide users through its workflow with clear steps.
+
+---
+
+9. APP-WIDE FUNCTIONAL EXPERIENCE
+
+Review other Veylentra modules as part of the application-wide experience upgrade.
+
+Improve consistency across:
+
+- Student.
+- Faculty.
+- Study Dashboard.
+- Study Space.
+- Lecture Notes.
+- Assignments.
+- Assessments.
+- Attendance.
+- Calendar.
+- Notifications.
+- AI assistants.
+- Existing communication and collaboration features.
+- Settings and profile areas.
+
+Do not unnecessarily rewrite modules that already work.
+
+Instead, integrate them into a coherent application experience.
+
+Preserve existing Brain Battle multiplayer, Edge TTS, OCR, rich-text editing, VeylentraIcon, and working notification behavior.
+
+If a module is already functional, focus on discoverability, usability, and visual consistency rather than replacing its implementation.
+
+---
+
+10. VISUAL DESIGN AND INTERACTION QUALITY
+
+The result must look intentionally designed.
+
+Visual system
+
+Maintain Veylentra's established design identity.
+
+Preserve its existing color language, custom icon system, and visual character.
+
+Do not replace it with a generic purple AI dashboard aesthetic.
+
+Do not use generic emoji as replacements for the existing icon system.
+
+Preserve and extend the existing VeylentraIcon custom 3D icon system where appropriate.
+
+Use icons consistently and meaningfully.
+
+Component quality
+
+Create or improve reusable components for:
+
+- Dashboard sections.
+- Metric displays.
+- Progress indicators.
+- Charts.
+- Timelines.
+- Calendar elements.
+- Task lists.
+- Assignment rows.
+- Status indicators.
+- Empty states.
+- Quick-action menus.
+- Contextual assistant entry points.
+- Responsive navigation.
+
+Avoid building slightly different versions of the same component in every module.
+
+Interaction quality
+
+Provide:
+
+- Responsive hover and focus states.
+- Clear click and touch feedback.
+- Accessible keyboard navigation.
+- Consistent menus and dialogs.
+- Predictable back navigation.
+- Smooth but restrained animations.
+- Skeleton loading where appropriate.
+- Useful empty states.
+- Error recovery.
+- Confirmation for consequential actions.
+
+Respect reduced-motion preferences.
+
+The UI should remain fast and usable on ordinary student devices and slower connections.
+
+---
+
+11. DATA, PERMISSIONS, AND ACCURACY
+
+Every feature must be connected to the correct source of data.
+
+Before implementing a feature, inspect:
+
+- Existing database tables.
+- Supabase queries.
+- Existing API routes.
+- Existing role and permission definitions.
+- Existing realtime behavior.
+- Existing notification architecture.
+- Existing storage and file handling.
+- Existing AI service architecture.
+
+Do not create fake frontend-only functionality that appears to work but does not persist data.
+
+Do not introduce mock academic statistics into production screens.
+
+Where a required backend capability is missing:
+
+1. Identify the missing capability.
+2. Determine whether a safe, scoped backend change is appropriate.
+3. Implement it using existing architectural patterns where possible.
+4. Enforce authorization on the server and database.
+5. Clearly report any remaining limitations.
+
+Security requirements:
+
+- Enforce authorization server-side.
+- Respect Supabase Row Level Security.
+- Keep student data isolated.
+- Restrict teacher access to assigned or otherwise authorized classes and students.
+- Restrict coordinator access to their authorized scope.
+- Never trust frontend role checks alone.
+- Validate user input.
+- Protect sensitive academic records.
+- Keep AI context limited to authorized data.
+
+Do not weaken existing security protections to make features easier to implement.
+
+---
+
+12. TECHNICAL IMPLEMENTATION RULES
+
+This project already has an established architecture. Work with it.
+
+Before making changes:
+
+- Inspect the current project structure.
+- Identify reusable components.
+- Identify existing services and hooks.
+- Trace relevant data flows.
+- Check existing design tokens and styles.
+- Check role definitions.
+- Check responsive breakpoints.
+- Identify the actual implementation of each feature.
+
+Do not:
+
+- Rewrite the entire application.
+- Replace working architecture without evidence.
+- Create duplicate services.
+- Introduce unnecessary dependencies.
+- Add fake buttons.
+- Add nonfunctional menu items.
+- Create frontend-only simulations of backend features.
+- Remove existing working features.
+- Break existing routes.
+- Hardcode academic data.
+- Duplicate AI provider implementations.
+- Replace the established icon system with generic icons.
+
+Use small, logical, reviewable implementation stages.
+
+Keep TypeScript types accurate and avoid unnecessary "any".
+
+Ensure components remain maintainable and appropriately modular.
+
+---
+
+13. TESTING AND QUALITY ASSURANCE
+
+Do not consider the work complete just because the new screens render.
+
+Test the actual experience.
+
+Student testing
+
+Verify:
+
+- Dashboard information is understandable.
+- Today's tasks and timetable display correctly.
+- Assignment states are accurate.
+- Deadlines are displayed correctly.
+- Attendance calculations are correct.
+- Academic charts use real data.
+- Subject navigation works.
+- Study tools remain functional.
+- Calendar interactions work.
+- Byte reminders are role-aware and accurate.
+- Orion student workflows respect permissions.
+
+Faculty testing
+
+Verify:
+
+- Teacher and coordinator experiences are distinct.
+- Each role sees only authorized information.
+- Teaching schedules work.
+- Assignment creation and review work.
+- Assessment workflows work.
+- Attendance workflows work.
+- Coordinator functions are appropriately scoped.
+- Byte reminders are role-aware.
+- Orion actions require appropriate confirmation.
+- Existing faculty workflows have not regressed.
+
+Application-wide testing
+
+Verify:
+
+- Desktop layout.
+- Tablet layout.
+- Mobile layout.
+- Navigation consistency.
+- Keyboard accessibility.
+- Loading states.
+- Error states.
+- Empty states.
+- Search and filters.
+- Long-press assistant interaction.
+- Voice input permissions and fallback.
+- Existing notifications.
+- Existing OCR and Lecture Notes.
+- Existing Brain Battle and Edge TTS.
+- Existing routes and authentication.
+
+Run the relevant tests, TypeScript checks, and production build.
+
+Do not claim a test passed unless it was actually executed.
+
+---
+
+14. IMPLEMENTATION ORDER
+
+Work in these stages:
+
+Stage 1 — Audit and design foundation
+
+Inspect the current implementation. Identify usability problems, missing features, inconsistent components, and architectural limitations. Establish a coherent app-wide design and navigation approach.
+
+Stage 2 — Application shell and global UI/UX
+
+Improve the app shell, navigation, responsive behavior, spacing, typography, component consistency, and Study Dashboard appearance. Remove the unnecessary vibe-coded borders and visual clutter.
+
+Stage 3 — Student experience
+
+Implement the complete Student workspace, prioritizing clarity, useful visuals, and genuinely useful academic workflows.
+
+Stage 4 — Faculty experience
+
+Implement the Teacher and Coordinator workspaces, with distinct dashboards, permissions, and workflows.
+
+Stage 5 — Byte
+
+Implement the contextual reminder and productivity experience for students, teachers, and coordinators.
+
+Stage 6 — Orion
+
+Integrate role-aware AI assistance and supported task execution into relevant Student and Faculty workflows.
+
+Stage 7 — Floating character and voice
+
+Implement the three-second long-press selector and safe speech-to-text interaction.
+
+Stage 8 — Integration and polish
+
+Connect features, improve discoverability, fix inconsistencies, and refine the entire application experience.
+
+Stage 9 — Regression and verification
+
+Test all relevant workflows and preserve existing functionality.
+
+Do not stop after Stage 1 or deliver only a design proposal. Complete the implementation.
+
+---
+
+15. FINAL ACCEPTANCE CRITERIA
+
+I will consider this upgrade successful only if:
+
+1. Veylentra feels like a polished application rather than a conventional website.
+2. The entire app has a consistent, understandable UI/UX.
+3. The Study Dashboard no longer has unnecessary vibe-coded borders or decorative clutter.
+4. Student workflows are substantially more complete and useful.
+5. Faculty workflows are substantially more complete and useful.
+6. Teacher and Coordinator roles are meaningfully supported.
+7. The role architecture can accommodate future faculty roles.
+8. Dashboards use meaningful visuals connected to real data.
+9. Students can easily understand their academic workload and progress.
+10. Faculty can efficiently manage their authorized academic responsibilities.
+11. Byte provides useful, accurate, role-aware reminders.
+12. Orion provides meaningful AI assistance and supported work execution.
+13. The Byte/Orion three-second long-press selector works correctly.
+14. Speech-to-text is safe, understandable, and usable.
+15. Features are discoverable without overwhelming users.
+16. Mobile, tablet, and desktop experiences are all polished.
+17. Existing working functionality remains intact.
+18. No fake features, mock production data, or nonfunctional controls remain.
+19. Tests, type-checking, and production build are verified.
+
+16. FINAL REPORT
+
+After implementation, provide a detailed report containing:
+
+- What was wrong with the previous Student experience.
+- What was wrong with the previous Faculty experience.
+- What changed in the application-wide UI/UX.
+- Which Student features were added or improved.
+- Which Teacher features were added or improved.
+- Which Coordinator features were added or improved.
+- Which Byte capabilities were implemented.
+- Which Orion capabilities were implemented.
+- How the voice interaction works.
+- Which backend and database changes were necessary.
+- Which existing components and features were preserved.
+- Which tests were actually run and their results.
+- Any incomplete features and the exact reason they remain incomplete.
+
+For each major feature, distinguish between fully implemented, partially implemented, and not implemented.
+
+FINAL DIRECTION:
+
+Do not give me another superficial dashboard redesign. Do not just add colorful cards and call it an upgrade.
+
+Build Veylentra as a coherent, visually understandable, feature-rich educational application that genuinely helps students learn and faculty teach and coordinate.
+
+Prioritize usability, clarity, meaningful visuals, useful functionality, and consistency over decorative complexity.
+
+Make thoughtful product decisions. Preserve what already works. Fix the root causes of the poor experience. Deliver a complete, integrated implementation.

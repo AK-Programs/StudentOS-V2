@@ -122,7 +122,9 @@ import { StudyHubTaskManager } from './components/StudyHubTaskManager';
 import { OfficialTimetableViewer } from './components/OfficialTimetableViewer';
 import { StudentExperienceWorkspace } from './components/StudentExperienceWorkspace';
 import { FacultyExperienceWorkspace } from './components/FacultyExperienceWorkspace';
-import { ByteOrionAssistantModal, ByteReminderItem } from './components/ByteOrionAssistantModal';
+import { ByteOrionAssistantModal } from './components/ByteOrionAssistantModal';
+import { buildByteReminders } from './lib/byteReminderEngine';
+import { isFacultyRole } from './config/facultyPermissions';
 import { ReminderService } from './lib/reminderService';
 import { ProfessionalTabDropdown } from './components/ProfessionalTabDropdown';
 import { getStoredCards } from './lib/flashcardStorage';
@@ -1340,6 +1342,7 @@ export default function App() {
   // Whiteboard Configurations & Classroom panel projection modes
   const [isSmartBoardPanelMode, setIsSmartBoardPanelMode] = useState<boolean>(false);
   const [isJarvisActive, setIsJarvisActive] = useState<boolean>(false);
+  const [orionInitialQuery, setOrionInitialQuery] = useState<string>('');
   const [canvasShape, setCanvasShape] = useState<'free' | 'rect' | 'circle'>('free');
 
   // Materials Audience alignment toggles
@@ -5183,7 +5186,7 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
       setActiveTab('parent_portal');
     } else if (activeTab === 'parent_portal') {
       setActiveTab('dashboard');
-    } else if (activeTab === 'faculty' && matched.role !== 'teacher') {
+    } else if (activeTab === 'faculty' && !isFacultyRole(matched.role)) {
       setActiveTab('dashboard');
     } else if (activeTab === 'admin' && matched.role !== 'admin' && matched.role !== 'super_admin') {
       setActiveTab('dashboard');
@@ -8716,14 +8719,14 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                               </button>
                             )}
 
-                            {effectiveRole === 'teacher' && matchesFilter('Faculty Center', 'teacher dashboard classes') && (
+                            {isFacultyRole(effectiveRole) && matchesFilter('Faculty Center', 'teacher coordinator hod dashboard classes') && (
                               <button
                                 type="button"
                                 onClick={() => handleTabSelect('faculty')}
                                 className={getSidebarBtnClass('faculty', 'faculty')}
                                 title="Faculty Center"
                               >
-                                <GraduationCap className="w-4 h-4 shrink-0" />
+                                <VeylentraIcon name="graduation" size="sm" />
                                 {sidebarOpen && <span className="truncate">Faculty Center</span>}
                               </button>
                             )}
@@ -9211,9 +9214,11 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 flex-1 min-h-0">
                     <div 
                       onClick={() => handleTabSelect('whiteboard')}
-                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-indigo-500/50 hover:shadow-[0_0_40px_-5px_rgba(99,102,241,0.2)] flex flex-col items-center justify-center text-center gap-4 h-full"
+                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-sky-500/50 flex flex-col items-center justify-center text-center gap-4 h-full"
                     >
-                      <div className="w-16 h-16 sm:w-24 sm:h-24 bg-indigo-500/10 text-indigo-400 flex items-center justify-center rounded-2xl sm:rounded-[2rem] text-3xl sm:text-5xl group-hover:scale-110 transition-transform">✏️</div>
+                      <div className="w-16 h-16 sm:w-20 sm:h-20 bg-sky-500/10 text-sky-400 flex items-center justify-center rounded-2xl border border-sky-500/20 group-hover:scale-105 transition-transform">
+                        <VeylentraIcon name="editor" size="xl" />
+                      </div>
                       <div>
                         <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight mb-2">Class Whiteboard</h3>
                         <p className="text-xs text-slate-500 max-w-[200px] mx-auto leading-relaxed">Launch the interactive full-screen classroom smart board projection.</p>
@@ -9222,9 +9227,11 @@ CRITICAL WEB GROUNDING DIRECTIVE:
 
                     <div 
                       onClick={() => handleTabSelect('materials')}
-                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-emerald-500/50 hover:shadow-[0_0_40px_-5px_rgba(16,185,129,0.2)] flex flex-col items-center justify-center text-center gap-4 h-full"
+                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-emerald-500/50 flex flex-col items-center justify-center text-center gap-4 h-full"
                     >
-                      <div className="w-16 h-16 sm:w-24 sm:h-24 bg-emerald-500/10 text-emerald-400 flex items-center justify-center rounded-2xl sm:rounded-[2rem] text-3xl sm:text-5xl group-hover:scale-110 transition-transform">📚</div>
+                      <div className="w-16 h-16 sm:w-20 sm:h-20 bg-emerald-500/10 text-emerald-400 flex items-center justify-center rounded-2xl border border-emerald-500/20 group-hover:scale-105 transition-transform">
+                        <VeylentraIcon name="materials" size="xl" />
+                      </div>
                       <div>
                         <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight mb-2">
                           {effectiveRole === 'teacher' ? 'Teacher Materials Vault' : 'Materials Hub'}
@@ -9237,9 +9244,11 @@ CRITICAL WEB GROUNDING DIRECTIVE:
 
                     <div 
                       onClick={() => handleTabSelect('ai_teacher')}
-                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-pink-500/50 hover:shadow-[0_0_40px_-5px_rgba(236,72,153,0.2)] flex flex-col items-center justify-center text-center gap-4 h-full"
+                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-amber-500/50 flex flex-col items-center justify-center text-center gap-4 h-full"
                     >
-                      <div className="w-16 h-16 sm:w-24 sm:h-24 bg-pink-500/10 text-pink-400 flex items-center justify-center rounded-2xl sm:rounded-[2rem] text-3xl sm:text-5xl group-hover:scale-110 transition-transform">🤖</div>
+                      <div className="w-16 h-16 sm:w-20 sm:h-20 bg-amber-500/10 text-amber-400 flex items-center justify-center rounded-2xl border border-amber-500/20 group-hover:scale-105 transition-transform">
+                        <VeylentraIcon name="ai_tutor" size="xl" />
+                      </div>
                       <div>
                         <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight mb-2">
                           {effectiveRole === 'teacher' ? 'AI Admin & Assessor' : 'AI Assistant'}
@@ -9251,11 +9260,15 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                     </div>
 
                     <div 
-                      onClick={() => setIsJarvisActive(true)}
-                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-cyan-500/50 hover:shadow-[0_0_40px_-5px_rgba(6,182,212,0.2)] flex flex-col items-center justify-center text-center gap-4 relative overflow-hidden h-full"
+                      onClick={() => {
+                        setOrionInitialQuery('');
+                        setIsJarvisActive(true);
+                      }}
+                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-cyan-500/50 flex flex-col items-center justify-center text-center gap-4 relative overflow-hidden h-full"
                     >
-                      <div className="absolute -inset-4 bg-gradient-to-tr from-cyan-500/10 to-transparent blur-2xl opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                      <div className="w-16 h-16 sm:w-24 sm:h-24 bg-cyan-500/10 text-cyan-400 flex items-center justify-center rounded-2xl sm:rounded-[2rem] text-3xl sm:text-5xl group-hover:scale-110 transition-transform relative z-10">🎙️</div>
+                      <div className="w-16 h-16 sm:w-20 sm:h-20 bg-cyan-500/10 text-cyan-400 flex items-center justify-center rounded-2xl border border-cyan-500/20 group-hover:scale-105 transition-transform relative z-10">
+                        <VeylentraIcon name="orion" size="xl" />
+                      </div>
                       <div className="relative z-10">
                         <h3 className="text-lg sm:text-xl font-black text-white tracking-tight mb-2 uppercase">Orion Copilot</h3>
                         <p className="text-xs text-slate-500 max-w-[200px] mx-auto leading-relaxed">Activate the voice-command smart classroom AI assistant.</p>
@@ -9264,9 +9277,11 @@ CRITICAL WEB GROUNDING DIRECTIVE:
 
                     <div 
                       onClick={() => handleTabSelect('notes')}
-                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-amber-500/50 hover:shadow-[0_0_40px_-5px_rgba(245,158,11,0.2)] flex flex-col items-center justify-center text-center gap-4 h-full"
+                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-amber-500/50 flex flex-col items-center justify-center text-center gap-4 h-full"
                     >
-                      <div className="w-16 h-16 sm:w-24 sm:h-24 bg-amber-500/10 text-amber-400 flex items-center justify-center rounded-2xl sm:rounded-[2rem] text-3xl sm:text-5xl group-hover:scale-110 transition-transform">📝</div>
+                      <div className="w-16 h-16 sm:w-20 sm:h-20 bg-amber-500/10 text-amber-400 flex items-center justify-center rounded-2xl border border-amber-500/20 group-hover:scale-105 transition-transform">
+                        <VeylentraIcon name="notes" size="xl" />
+                      </div>
                       <div>
                         <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight mb-2">
                           {effectiveRole === 'teacher' ? 'Teaching Records' : 'My Notes'}
@@ -9279,9 +9294,11 @@ CRITICAL WEB GROUNDING DIRECTIVE:
 
                     <div 
                       onClick={() => handleTabSelect('pomodoro')}
-                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-red-500/50 hover:shadow-[0_0_40px_-5px_rgba(239,68,68,0.2)] flex flex-col items-center justify-center text-center gap-4 h-full"
+                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-rose-500/50 flex flex-col items-center justify-center text-center gap-4 h-full"
                     >
-                      <div className="w-16 h-16 sm:w-24 sm:h-24 bg-red-500/10 text-red-400 flex items-center justify-center rounded-2xl sm:rounded-[2rem] text-3xl sm:text-5xl group-hover:scale-110 transition-transform">⏲️</div>
+                      <div className="w-16 h-16 sm:w-20 sm:h-20 bg-rose-500/10 text-rose-400 flex items-center justify-center rounded-2xl border border-rose-500/20 group-hover:scale-105 transition-transform">
+                        <VeylentraIcon name="pomodoro" size="xl" />
+                      </div>
                       <div>
                         <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight mb-2">Focus Timer</h3>
                         <p className="text-xs text-slate-500 max-w-[200px] mx-auto leading-relaxed">Customizable work sessions with auditory bell sound alerts.</p>
@@ -9299,8 +9316,15 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                   homeworkList={homeworkList}
                   tasks={tasks}
                   announcements={announcements}
-                  onNavigateTab={handleTabSelect}
+                  dueCardsCount={dueCardsCount}
+                  onNavigateTab={(tab, sub) => {
+                    if (tab === 'study_hub' && sub) {
+                      setStudyHubSubTab(sub as any);
+                    }
+                    handleTabSelect(tab);
+                  }}
                   onOpenOrionFull={(query) => {
+                    setOrionInitialQuery(query || '');
                     setIsJarvisActive(true);
                   }}
                   showNotification={showNotification}
@@ -9349,6 +9373,21 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                     }} 
                   />
 
+                  {['teacher', 'coordinator', 'hod'].includes(effectiveRole || '') ? (
+                    <FacultyExperienceWorkspace
+                      currentUser={currentUser}
+                      effectiveRole={effectiveRole}
+                      homeworkList={homeworkList}
+                      announcements={announcements}
+                      onNavigateTab={handleTabSelect}
+                      onOpenOrionFull={(query) => {
+                        setOrionInitialQuery(query || '');
+                        setIsJarvisActive(true);
+                      }}
+                      showNotification={showNotification}
+                    />
+                  ) : (
+                    <>
                   {/* Welcome Hero & Context Header */}
                   <motion.div
                     initial={{ opacity: 0, y: 6 }}
@@ -10024,6 +10063,8 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                       </div>
                     </div>
                   </div>
+                    </>
+                  )}
 
                 </div>
               )}
@@ -10074,9 +10115,9 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                       />
                     </div>
 
-                    <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-black/40 rounded-xl border border-white/5 text-[11px] text-slate-400 font-mono">
-                      <span>⚡ Mode:</span>
-                      <span className="text-indigo-400 font-bold capitalize">
+                    <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-950 rounded-xl border border-slate-800 text-xs text-slate-300">
+                      <VeylentraIcon name="study_hub" size="sm" />
+                      <span className="font-semibold">
                         {studyHubSubTab === 'dashboard' ? 'Overview' : studyHubSubTab === 'flashcards' ? 'Study Center' : studyHubSubTab === 'tasks' ? 'Task Manager' : 'Study Planner'}
                       </span>
                     </div>
@@ -14291,8 +14332,8 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                 activeTab={activeTab}
               />
 
-              {/* Tab 9: Modern Faculty Center 2.0 (Teacher & Coordinator Workspaces) */}
-              {activeTab === 'faculty' && ['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole) && (
+              {/* Tab 9: Modern Faculty Center 2.0 (Teacher, Coordinator, HOD & Admin Workspaces) */}
+              {activeTab === 'faculty' && isFacultyRole(effectiveRole) && (
                 <FacultyExperienceWorkspace
                   currentUser={currentUser}
                   effectiveRole={effectiveRole}
@@ -14300,6 +14341,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                   announcements={announcements}
                   onNavigateTab={handleTabSelect}
                   onOpenOrionFull={(query) => {
+                    setOrionInitialQuery(query || '');
                     setIsJarvisActive(true);
                   }}
                   showNotification={showNotification}
@@ -14689,8 +14731,12 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                     <div className="absolute inset-0 bg-gradient-to-br from-indigo-900/20 via-slate-950/95 to-violet-900/20 backdrop-blur-3xl" />
                     <div className="relative h-full w-full">
                   <StudentOSJarvis 
-                    onClose={() => setIsJarvisActive(false)}
+                    onClose={() => {
+                      setIsJarvisActive(false);
+                      setOrionInitialQuery('');
+                    }}
                     activeTab={activeTab}
+                    initialQuery={orionInitialQuery}
                     setActiveTab={handleTabSelect}
                     clearWhiteboard={clearCanvas}
                     drawShapeOnWhiteboard={drawShapeOnWhiteboard}
@@ -15147,11 +15193,12 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
         )}
       </AnimatePresence>
 
-      {/* Floating Duolingo-style Byte Widget with Procedural 3D Character — hidden on auth / sign up page */}
+      {/* Floating Byte Companion — hidden on auth / sign up page */}
       {currentUser && !isOnboardingModalOpen && (
         <FloatingByteWidget
           activeTab={activeTab}
           currentUser={currentUser}
+          effectiveRole={effectiveRole}
           tasks={tasks}
           homeworkList={homeworkList}
           announcements={announcements}
@@ -15174,48 +15221,18 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
           effectiveRole={effectiveRole}
           onNavigateTab={handleTabSelect}
           onOpenOrionFull={(query) => {
+            setOrionInitialQuery(query || '');
             setIsJarvisActive(true);
           }}
           showNotification={showNotification}
-          reminders={(() => {
-            const list: ByteReminderItem[] = [];
-            const userIdentifier = currentUser.uid || currentUser.email || '';
-            const pendingHw = homeworkList.filter(h => !(h.completedList || []).includes(userIdentifier));
-            pendingHw.slice(0, 3).forEach(h => {
-              list.push({
-                id: `hw-${h.id}`,
-                title: `${h.subject || 'Class'}: ${h.title}`,
-                subtitle: `Due: ${h.dueDate || 'Soon'}`,
-                type: 'assignment',
-                actionLabel: 'View Assignment',
-                actionTab: 'homework'
-              });
-            });
-
-            if (tasks.some(t => !t.completed)) {
-              list.push({
-                id: 'tasks-reminder',
-                title: 'Pending study planner tasks',
-                subtitle: 'Scheduled in your planner',
-                type: 'task',
-                actionLabel: 'Open Planner',
-                actionTab: 'study_hub'
-              });
-            }
-
-            announcements.slice(0, 2).forEach(a => {
-              list.push({
-                id: `ann-${a.id}`,
-                title: a.title,
-                subtitle: 'School Circular',
-                type: 'announcement',
-                actionLabel: 'Open Circular',
-                actionTab: 'whats_new'
-              });
-            });
-
-            return list;
-          })()}
+          reminders={buildByteReminders({
+            currentUser,
+            effectiveRole,
+            homeworkList,
+            tasks,
+            announcements,
+            dueCardsCount
+          })}
         />
       )}
 

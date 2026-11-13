@@ -14,6 +14,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { UserProfile, UserRole, GradebookEntry, GradebookAssessment, ReportCard } from '../types';
 import { supabase } from '../lib/supabase';
+import { isStudentInFacultyScope } from '../config/facultyPermissions';
 import DigitalGradebook, { computeLetterGrade } from './DigitalGradebook';
 import DigitalReportCards from './DigitalReportCards';
 import { 
@@ -118,37 +119,64 @@ export default function PerformanceAnalytics({
         }
       } else {
         // Teacher / Coordinator / Admin View: Load class or institutional data
+        let scopedStudentIds: Set<string> | null = null;
+        if (!isAdmin) {
+          const { data: cohortProfiles } = await supabase
+            .from('user_profiles')
+            .select('uid, grade, section, role')
+            .eq('role', 'student');
+
+          const inScope = (cohortProfiles || []).filter((p: any) =>
+            isStudentInFacultyScope({ grade: p.grade, section: p.section }, currentUser, effectiveRole)
+          );
+          scopedStudentIds = new Set(inScope.map((p: any) => p.uid).filter(Boolean));
+        }
+
         const { data: allAssessments } = await supabase
           .from('gradebook_assessments')
           .select('*')
           .order('created_at', { ascending: false });
-        
-        setAssessments(allAssessments || []);
+
+        const allowedGradeSet = new Set(
+          (currentUser?.assignedGrades?.length ? currentUser.assignedGrades : [currentUser?.grade])
+            .filter(Boolean)
+            .map(g => String(g).toLowerCase())
+        );
+
+        const scopedAssessments = isAdmin || allowedGradeSet.size === 0
+          ? (allAssessments || [])
+          : (allAssessments || []).filter((a: any) => !a.grade || allowedGradeSet.has(String(a.grade).toLowerCase()));
+        setAssessments(scopedAssessments);
 
         const { data: allEntries } = await supabase
           .from('gradebook_entries')
           .select('*')
           .limit(300);
 
-        setGradeEntries((allEntries || []).map((e: any) => ({
-          id: e.id,
-          assessmentId: e.assessment_id,
-          studentId: e.student_id,
-          studentName: e.student_name,
-          subject: e.subject,
-          score: e.score,
-          maxScore: e.max_score,
-          percentage: e.percentage,
-          letterGrade: e.letter_grade,
-          comment: e.comment,
-          updatedAt: e.updated_at
-        })));
+        const filteredEntries = (allEntries || [])
+          .filter((e: any) => !scopedStudentIds || scopedStudentIds.has(e.student_id))
+          .map((e: any) => ({
+            id: e.id,
+            assessmentId: e.assessment_id,
+            studentId: e.student_id,
+            studentName: e.student_name,
+            subject: e.subject,
+            score: e.score,
+            maxScore: e.max_score,
+            percentage: e.percentage,
+            letterGrade: e.letter_grade,
+            comment: e.comment,
+            updatedAt: e.updated_at
+          }));
+        setGradeEntries(filteredEntries);
 
         const { data: allRc } = await supabase
           .from('report_cards')
           .select('*');
 
-        setReportCards(allRc || []);
+        setReportCards(
+          (allRc || []).filter((r: any) => !scopedStudentIds || scopedStudentIds.has(r.student_id || r.studentId))
+        );
 
         const { data: allAtt } = await supabase
           .from('attendance')
@@ -156,14 +184,20 @@ export default function PerformanceAnalytics({
           .order('date', { ascending: true })
           .limit(500);
 
-        setAttendanceRecords(allAtt || []);
+        setAttendanceRecords(
+          (allAtt || []).filter((a: any) => !scopedStudentIds || scopedStudentIds.has(a.user_id))
+        );
 
-        const { count } = await supabase
-          .from('user_profiles')
-          .select('*', { count: 'exact', head: true })
-          .eq('role', 'student');
+        if (scopedStudentIds) {
+          setAllStudentsCount(scopedStudentIds.size);
+        } else {
+          const { count } = await supabase
+            .from('user_profiles')
+            .select('*', { count: 'exact', head: true })
+            .eq('role', 'student');
 
-        setAllStudentsCount(count || 0);
+          setAllStudentsCount(count || 0);
+        }
       }
     } catch (err) {
       console.error('Failed to load performance analytics data:', err);

@@ -1,15 +1,15 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
- * StudentOS Client AI Handler
- * Routes requests securely through the server-side NVIDIA AI engine.
- * Absolutely NO mock, template, or hardcoded fake AI fallbacks.
+ *
+ * Veylentra Client AI Handler
+ * Routes requests securely through server-side approved AI providers (APInex, Ministral, Groq).
+ * No mock or hardcoded fake AI fallbacks.
  */
 
 export function sanitizeHistory(history: any[] = []): any[] {
   if (!Array.isArray(history) || history.length === 0) return [];
-  
+
   const filtered = history.filter(h => h && typeof h.content === 'string' && h.content.trim().length > 0);
   if (filtered.length === 0) return [];
 
@@ -33,12 +33,11 @@ export function sanitizeHistory(history: any[] = []): any[] {
 }
 
 /**
- * Universal Client-Side AI Completion powered exclusively by NVIDIA AI via StudentOS backend.
- * Never returns fake/mock academic responses on failure.
+ * Universal Client-Side AI Completion powered strictly by approved Veylentra server providers.
  */
-export async function clientSideNvidiaAI(
-  userMessage: string, 
-  history: any[] = [], 
+export async function clientSideAI(
+  userMessage: string,
+  history: any[] = [],
   systemInstruction?: string,
   modelOverride?: string
 ): Promise<string> {
@@ -73,6 +72,4 @@ export async function clientSideNvidiaAI(
   throw new Error('AI is temporarily unavailable. Please try again.');
 }
 
-// Exported universal alias
-export const clientSideAI = clientSideNvidiaAI;
 

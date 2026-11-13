@@ -14,7 +14,6 @@
  */
 
 import dotenv from 'dotenv';
-import { GoogleGenAI } from '@google/genai';
 dotenv.config();
 
 export type TaskComplexityTier = 'short' | 'fast' | 'general' | 'complex' | 'tool';
@@ -32,7 +31,7 @@ export interface ModelRoutingContext {
 
 export interface AIPerformanceTelemetry {
   requestId: string;
-  providerUsed: 'apinex' | 'groq' | 'ministral' | 'gemini';
+  providerUsed: 'apinex' | 'groq' | 'ministral';
   modelUsed: string;
   complexityTier: TaskComplexityTier;
   requestStart: number;
@@ -62,27 +61,7 @@ export interface AICompletionOptions {
   images?: { name?: string; mimeType: string; data: string }[];
 }
 
-// API Key Getters
-export function getGeminiApiKey(): string {
-  return (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || '').trim().replace(/^["']|["']$/g, '');
-}
-
-let cachedGeminiClient: GoogleGenAI | null = null;
-export function getGeminiClient(): GoogleGenAI | null {
-  const key = getGeminiApiKey();
-  if (!key) return null;
-  if (!cachedGeminiClient) {
-    cachedGeminiClient = new GoogleGenAI({
-      apiKey: key,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build'
-        }
-      }
-    });
-  }
-  return cachedGeminiClient;
-}
+// Approved AI Provider API Key Getters (Strictly APInex, Ministral, Groq)
 
 export function getApinexApiKey(): string {
   return (process.env.APINEX_API_KEY || process.env.VITE_APINEX_API_KEY || '').trim().replace(/^["']|["']$/g, '');
@@ -473,8 +452,13 @@ export async function generateAICompletionWithTelemetry(
     contextLength
   });
 
-  const provider = routing.provider;
-  let model = routing.model;
+  const hasImages = Array.isArray(images) && images.length > 0;
+  const provider: 'apinex' | 'groq' | 'ministral' = hasImages && routing.provider === 'groq'
+    ? (getMinistralApiKey() ? 'ministral' : 'apinex')
+    : routing.provider;
+  const model = hasImages && provider === 'ministral'
+    ? 'ministral-8b-2410'
+    : routing.model;
   let retries = 0;
 
   const isAcademicTask = taskType === 'complex' || routing.tier === 'complex';
@@ -483,69 +467,19 @@ export async function generateAICompletionWithTelemetry(
     ? Math.max(maxTokens, 300)
     : routing.tier === 'short' || routing.tier === 'fast'
     ? 1500
-    : 32768; // High budget for Lecture Notes and complex reasoning (20k+ requirement)
+    : 32768; // High budget for Lecture Notes and complex reasoning
 
   console.log(`[AI_ROUTER] tier=${routing.tier} provider=${provider} model=${model} requestId=${requestId} budget=${effectiveMaxTokens} academic=${isAcademicTask}`);
 
-  async function performCompletion(p: typeof provider, m: string, currentMessages: any[], budget: number) {
-    // 0. Primary / Fallback: Google GenAI (Gemini)
-    const gemini = getGeminiClient();
-    const hasGroqKey = Boolean(getGroqApiKey());
-    const hasMinistralKey = Boolean(getMinistralApiKey());
-    const hasApinexKey = Boolean(getApinexApiKey());
-    const providerKeyAvailable = 
-      (p === 'groq' && hasGroqKey) ||
-      (p === 'ministral' && hasMinistralKey) ||
-      (p === 'apinex' && hasApinexKey);
-
-    if (gemini && (!providerKeyAvailable || modelOverride?.toLowerCase().includes('gemini') || (images && images.length > 0))) {
-      try {
-        const imageParts = (images || []).map(img => ({
-          inlineData: {
-            mimeType: img.mimeType || 'image/jpeg',
-            data: (img.data || '').replace(/^data:[^;]+;base64,/, '')
-          }
-        }));
-
-        const contents = [
-          ...history.slice(-8).map(h => ({
-            role: h.role === 'assistant' ? 'model' : 'user',
-            parts: [{ text: String(h.content || '') }]
-          })),
-          {
-            role: 'user',
-            parts: [
-              ...imageParts,
-              { text: prompt }
-            ]
-          }
-        ];
-
-        const config: any = {
-          temperature,
-          systemInstruction,
-          maxOutputTokens: isAcademicTask ? 8192 : Math.max(budget, 2048)
-        };
-        if (jsonMode) config.responseMimeType = 'application/json';
-
-        const geminiRes = await gemini.models.generateContent({ model: 'gemini-2.5-flash', contents, config });
-        return { text: geminiRes.text || '', finishReason: 'stop', provider: 'gemini', model: 'gemini-2.5-flash' };
-      } catch (gErr: any) {
-        console.warn('[Gemini AI Engine] Call error:', gErr?.message || gErr);
-        if (!providerKeyAvailable) throw gErr;
-      }
-    }
-
+  async function callApprovedProvider(p: 'apinex' | 'groq' | 'ministral', m: string, currentMessages: any[], budget: number) {
     const { apiUrl, apiKey } = getProviderEndpointAndKey(p);
     if (!apiKey) {
-      const err: any = new Error('API key not configured.');
+      const err: any = new Error(`${p.toUpperCase()} API key is not configured.`);
       err.status = 500;
       throw err;
     }
 
-    // SAFE CLAMPING: Most OpenAI-compatible providers (Groq, Ministral, APInex) 
-    // cap output tokens between 4096 and 8192. Requesting 32k+ in one call 
-    // often causes a 400 error. The continuation loop will handle the rest.
+    // Clamp single-request token budget cleanly for OpenAI-compatible endpoints
     const clampedBudget = p === 'ministral' ? Math.min(budget, 8192) : Math.min(budget, 4096);
 
     const resp = await fetch(apiUrl, {
@@ -575,6 +509,37 @@ export async function generateAICompletionWithTelemetry(
     const text = extractTextFromChoice(data?.choices?.[0], data);
     const finishReason = data?.choices?.[0]?.finish_reason || 'stop';
     return { text, finishReason, provider: p, model: m };
+  }
+
+  async function performCompletion(primaryProvider: 'apinex' | 'groq' | 'ministral', primaryModel: string, currentMessages: any[], budget: number) {
+    const candidates: Array<{ p: 'apinex' | 'groq' | 'ministral'; m: string }> = [
+      { p: primaryProvider, m: primaryModel }
+    ];
+    if (getMinistralApiKey() && primaryProvider !== 'ministral') {
+      candidates.push({ p: 'ministral', m: 'ministral-8b-2410' });
+    }
+    if (getApinexApiKey() && primaryProvider !== 'apinex') {
+      candidates.push({ p: 'apinex', m: routing.tier === 'tool' ? 'free/glm-5.3-flash' : 'free/gpt-6-luna' });
+    }
+    if (!hasImages && getGroqApiKey() && primaryProvider !== 'groq') {
+      candidates.push({ p: 'groq', m: getNextGroqModel() });
+    }
+
+    let lastErr: any = null;
+    for (let i = 0; i < candidates.length; i++) {
+      const candidate = candidates[i];
+      if (!getProviderEndpointAndKey(candidate.p).apiKey) continue;
+      if (i > 0) retries++;
+      try {
+        const res = await callApprovedProvider(candidate.p, candidate.m, currentMessages, budget);
+        if (res.text && res.text.trim()) return res;
+      } catch (err: any) {
+        lastErr = err;
+        console.warn(`[AI_ROUTER] Provider ${candidate.p} fallback trigger:`, err?.message || err);
+      }
+    }
+
+    throw lastErr || new Error('No configured approved AI providers (APInex, Ministral, Groq) succeeded.');
   }
 
   let finalFullText = '';
@@ -694,8 +659,11 @@ export async function streamAICompletion(
     contextLength
   });
 
-  const activeProvider = routing.provider;
-  let activeModel = routing.model;
+  const hasImages = Array.isArray(images) && images.length > 0;
+  const activeProvider: 'apinex' | 'groq' | 'ministral' = hasImages && routing.provider === 'groq'
+    ? (getMinistralApiKey() ? 'ministral' : 'apinex')
+    : routing.provider;
+  let activeModel = hasImages && activeProvider === 'ministral' ? 'ministral-8b-2410' : routing.model;
   let retries = 0;
 
   const messages = buildMessagesArray(systemInstruction, prompt, history, images);
@@ -708,85 +676,6 @@ export async function streamAICompletion(
   console.log(
     `[AI_STREAM_ROUTER] tier=${routing.tier} provider=${activeProvider} model=${activeModel} requestId=${requestId}`
   );
-
-  // 0. Primary / Fallback: Google GenAI (Gemini) Streaming
-  const gemini = getGeminiClient();
-  const hasGroqKey = Boolean(getGroqApiKey());
-  const hasMinistralKey = Boolean(getMinistralApiKey());
-  const hasApinexKey = Boolean(getApinexApiKey());
-  const providerKeyAvailable = 
-    (activeProvider === 'groq' && hasGroqKey) ||
-    (activeProvider === 'ministral' && hasMinistralKey) ||
-    (activeProvider === 'apinex' && hasApinexKey);
-
-  if (gemini && (!providerKeyAvailable || modelOverride?.toLowerCase().includes('gemini') || (images && images.length > 0))) {
-    try {
-      callbacks.onMeta?.({ requestId, provider: 'gemini', model: 'gemini-2.5-flash', tier: routing.tier });
-      const imageParts = (images || []).map(img => ({
-        inlineData: {
-          mimeType: img.mimeType || 'image/jpeg',
-          data: (img.data || '').replace(/^data:[^;]+;base64,/, '')
-        }
-      }));
-
-      const contents = [
-        ...history.slice(-8).map(h => ({
-          role: h.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: String(h.content || '') }]
-        })),
-        {
-          role: 'user',
-          parts: [
-            ...imageParts,
-            { text: prompt }
-          ]
-        }
-      ];
-
-      const config: any = {
-        temperature,
-        systemInstruction,
-        maxOutputTokens: Math.max(effectiveMaxTokens, 1200)
-      };
-
-      const stream = await gemini.models.generateContentStream({
-        model: 'gemini-2.5-flash',
-        contents,
-        config
-      });
-
-      let fullText = '';
-      let firstTokenLatencyMs: number | null = null;
-      for await (const chunk of stream) {
-        if (abortSignal?.aborted) break;
-        const piece = chunk.text || '';
-        if (piece) {
-          if (firstTokenLatencyMs === null) {
-            firstTokenLatencyMs = Date.now() - requestStart;
-          }
-          fullText += piece;
-          callbacks.onToken(piece, firstTokenLatencyMs);
-        }
-      }
-      const telemetry: AIPerformanceTelemetry = {
-        requestId,
-        providerUsed: 'gemini',
-        modelUsed: 'gemini-2.5-flash',
-        complexityTier: routing.tier,
-        requestStart,
-        firstTokenLatencyMs,
-        totalGenerationTimeMs: Date.now() - requestStart,
-        retries: 0,
-        fallbackTriggered: !providerKeyAvailable,
-        streamed: true
-      };
-      callbacks.onComplete?.(fullText, telemetry);
-      return { text: fullText, telemetry };
-    } catch (gErr: any) {
-      console.warn('[Gemini Stream Engine] Call error:', gErr?.message || gErr);
-      if (!providerKeyAvailable) throw gErr;
-    }
-  }
 
   async function tryStreamOnce(
     p: 'apinex' | 'groq' | 'ministral',

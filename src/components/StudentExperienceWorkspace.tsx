@@ -1,359 +1,1020 @@
-import React, { useState } from 'react';
-import { motion } from 'motion/react';
-import { 
-  Sparkles, BookOpen, Clock, Calendar, CheckCircle2, AlertCircle, 
-  ChevronRight, ArrowRight, Brain, FileText, Award, BarChart3, 
-  TrendingUp, Users, Folder, Star, Bell, Plus
-} from 'lucide-react';
-import { UserProfile, Homework, Task } from '../types';
-import { soundService } from '../lib/soundService';
-import { VeylentraIcon } from './ui/VeylentraIcon';
-import StudentAttendanceView from './StudentAttendanceView';
-import StudentMarksCenter from './StudentMarksCenter';
-import { OfficialTimetableViewer } from './OfficialTimetableViewer';
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Veylentra Student Experience 2.0
+ * Integrated daily academic command center combining live official timetable,
+ * subject-wise academic hub (syllabus, lecture notes, materials, assignments, marks),
+ * assignment & exam readiness center, Recharts analytics + threshold estimate calculator,
+ * study space launcher, and deterministic Byte reminders + Orion AI study assistant.
+ */
 
-interface StudentExperienceWorkspaceProps {
+import React, { useState, useEffect, useMemo } from 'react';
+import { motion } from 'motion/react';
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  Cell
+} from 'recharts';
+import {
+  Clock,
+  ChevronRight,
+  Search,
+  CheckCircle2,
+  AlertTriangle,
+  ArrowRight,
+  Loader2,
+  X,
+  Calendar,
+  BookOpen,
+  SlidersHorizontal
+} from 'lucide-react';
+import {
+  UserProfile,
+  UserRole,
+  Homework,
+  Task,
+  VaultNote,
+  FlashcardDeck,
+  GradebookEntry
+} from '../types';
+import {
+  OfficialSubjectSyllabus,
+  OfficialClassTimetable,
+  StudentChapterProgress,
+  ExamPreparationPlan,
+  TimetablePeriod
+} from '../types/syllabusTimetable';
+import { SyllabusTimetableService } from '../lib/syllabusTimetableService';
+import { getVaultNotes } from '../lib/supabaseNotes';
+import { fetchSupabaseDecks, getCanonicalUserId } from '../lib/flashcardStorage';
+import { getSupabaseMaterials } from '../lib/supabaseResources';
+import { saveSupabaseHomework } from '../lib/supabaseHomework';
+import { supabase } from '../lib/supabase';
+import { computeAttendanceSummary, calculateAttendanceProjection } from '../lib/attendanceCalculator';
+import {
+  buildByteReminders,
+  dismissByteReminder,
+  markByteReminderHandled,
+  snoozeByteReminder
+} from '../lib/byteReminderEngine';
+import { VeylentraIcon } from './ui/VeylentraIcon';
+import { soundService } from '../lib/soundService';
+
+export interface StudentExperienceWorkspaceProps {
   currentUser: UserProfile;
-  effectiveRole: string;
+  effectiveRole: UserRole;
   homeworkList: Homework[];
   tasks: Task[];
   announcements: any[];
-  onNavigateTab: (tabId: string) => void;
+  dueCardsCount?: number;
+  onNavigateTab: (tab: string, subTab?: string) => void;
   onOpenOrionFull: (initialQuery?: string) => void;
   showNotification: (msg: string) => void;
 }
 
+type StudentSubTab = 'home' | 'subjects' | 'assignments' | 'analytics' | 'study_space';
+type AssignmentFilter = 'pending' | 'upcoming' | 'overdue' | 'completed' | 'all';
+
+function parseHHMM(val?: string): number | null {
+  if (!val) return null;
+  const parts = val.split(':');
+  if (parts.length < 2) return null;
+  const h = Number(parts[0]);
+  const m = Number(parts[1]);
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+  return h * 60 + m;
+}
+
+function getDaysDiff(dateStr?: string): number | null {
+  if (!dateStr) return null;
+  const parsed = new Date(dateStr);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const now = new Date();
+  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const dueMidnight = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()).getTime();
+  return Math.round((dueMidnight - todayMidnight) / 86400000);
+}
+
 export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProps> = ({
   currentUser,
-  effectiveRole,
-  homeworkList = [],
-  tasks = [],
-  announcements = [],
+  homeworkList,
+  tasks,
+  announcements,
+  dueCardsCount = 0,
   onNavigateTab,
   onOpenOrionFull,
   showNotification
 }) => {
-  const [subSection, setSubSection] = useState<'dashboard' | 'academics' | 'assignments' | 'attendance' | 'study_space'>('dashboard');
-  const [orionHelpTopic, setOrionHelpTopic] = useState('');
-  const [isExplaining, setIsExplaining] = useState(false);
-  const [aiExplanation, setAiExplanation] = useState<string | null>(null);
+  const userId = currentUser?.uid || currentUser?.email || 'student_default';
+  const grade = currentUser?.grade || 'Grade 10';
+  const schoolId = 'default_school';
 
-  // Date and Time calculation
-  const today = new Date();
-  const dateFormatted = today.toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric'
-  });
+  const [subTab, setSubTab] = useState<StudentSubTab>('home');
+  const [loading, setLoading] = useState<boolean>(true);
 
-  // Filter pending vs completed homework
-  const userIdentifier = currentUser.uid || currentUser.email || '';
-  const myPendingHomework = homeworkList.filter(h => !(h.completedList || []).includes(userIdentifier));
-  const myCompletedHomework = homeworkList.filter(h => (h.completedList || []).includes(userIdentifier));
-  
-  // Pending tasks
-  const pendingTasks = tasks.filter(t => !t.completed);
+  // Live Domain State
+  const [syllabuses, setSyllabuses] = useState<OfficialSubjectSyllabus[]>([]);
+  const [progressMap, setProgressMap] = useState<Record<string, StudentChapterProgress>>({});
+  const [timetable, setTimetable] = useState<OfficialClassTimetable | null>(null);
+  const [exams, setExams] = useState<ExamPreparationPlan[]>([]);
+  const [notes, setNotes] = useState<VaultNote[]>([]);
+  const [materials, setMaterials] = useState<any[]>([]);
+  const [decks, setDecks] = useState<FlashcardDeck[]>([]);
+  const [attendanceRows, setAttendanceRows] = useState<any[]>([]);
+  const [gradeEntries, setGradeEntries] = useState<GradebookEntry[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
 
-  const handleAskOrionTopic = async (topic: string, subject?: string) => {
-    setIsExplaining(true);
-    setAiExplanation(null);
+  // UI Filter & Interactive State
+  const [selectedSubject, setSelectedSubject] = useState<string>('');
+  const [assignmentSearch, setAssignmentSearch] = useState<string>('');
+  const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>('pending');
+  const [targetAttendancePct, setTargetAttendancePct] = useState<number>(75);
+  const [orionQuickQuery, setOrionQuickQuery] = useState<string>('');
+  const [orionInlineAnswer, setOrionInlineAnswer] = useState<{ title: string; content: string; provider?: string } | null>(null);
+  const [orionLoading, setOrionLoading] = useState<boolean>(false);
+  const [orionError, setOrionError] = useState<string | null>(null);
+  const [reminderVersion, setReminderVersion] = useState<number>(0);
+  const [localCompletedHwIds, setLocalCompletedHwIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadWorkspaceData() {
+      setLoading(true);
+      try {
+        const canonicalId = getCanonicalUserId(userId);
+        const [syls, prog, tt, officialExams, vaultNotes, allMaterials, userDecks, attRes, gradesRes, eventsRes] =
+          await Promise.all([
+            SyllabusTimetableService.getOfficialSyllabuses(schoolId, grade),
+            SyllabusTimetableService.getStudentProgress(userId),
+            SyllabusTimetableService.getOfficialTimetable(schoolId, grade),
+            SyllabusTimetableService.getOfficialExams(schoolId),
+            getVaultNotes(userId).catch(() => []),
+            getSupabaseMaterials().catch(() => []),
+            fetchSupabaseDecks(canonicalId).catch(() => []),
+            supabase.from('attendance').select('*').eq('user_id', userId).order('date', { ascending: true }),
+            supabase.from('gradebook_entries').select('*').eq('student_id', userId).order('updated_at', { ascending: false }),
+            supabase.from('calendar_events').select('*').order('event_date', { ascending: true }).limit(20)
+          ]);
+
+        if (!mounted) return;
+        setSyllabuses(syls);
+        setProgressMap(prog);
+        setTimetable(tt);
+        setExams(officialExams);
+        setNotes(vaultNotes || []);
+        setMaterials(allMaterials || []);
+        setDecks(userDecks || []);
+        setAttendanceRows(attRes?.data || []);
+        setGradeEntries(
+          (gradesRes?.data || []).map((e: any) => ({
+            id: e.id,
+            assessmentId: e.assessment_id,
+            studentId: e.student_id,
+            studentName: e.student_name,
+            subject: e.subject,
+            score: e.score,
+            maxScore: e.max_score,
+            percentage: e.percentage,
+            letterGrade: e.letter_grade,
+            comment: e.comment,
+            updatedAt: e.updated_at
+          }))
+        );
+        setCalendarEvents(eventsRes?.data || []);
+        if (syls.length > 0 && !selectedSubject) {
+          setSelectedSubject(syls[0].subject);
+        }
+      } catch (err) {
+        console.warn('[StudentWorkspace] Data load notice:', err);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    loadWorkspaceData();
+    return () => {
+      mounted = false;
+    };
+  }, [userId, grade]);
+
+  // Subject Summaries from Syllabus Service
+  const subjectSummaries = useMemo(
+    () => SyllabusTimetableService.computeSubjectSummaries(syllabuses, progressMap),
+    [syllabuses, progressMap]
+  );
+
+  // Scoped Homework for Student
+  const studentHomework = useMemo(() => {
+    const gradeLow = grade.toLowerCase();
+    return homeworkList.filter(hw => !hw.classGrade || hw.classGrade.toLowerCase() === gradeLow);
+  }, [homeworkList, grade]);
+
+  const isHwCompleted = (hw: Homework) =>
+    localCompletedHwIds.includes(hw.id) || (hw.completedList || []).includes(userId);
+
+  const pendingHomework = useMemo(
+    () => studentHomework.filter(hw => !isHwCompleted(hw)),
+    [studentHomework, localCompletedHwIds, userId]
+  );
+
+  const filteredAssignments = useMemo(() => {
+    const q = assignmentSearch.trim().toLowerCase();
+    return studentHomework
+      .filter(hw => {
+        if (q) {
+          const match =
+            (hw.title || '').toLowerCase().includes(q) ||
+            (hw.subject || '').toLowerCase().includes(q) ||
+            (hw.content || '').toLowerCase().includes(q);
+          if (!match) return false;
+        }
+        const done = isHwCompleted(hw);
+        const daysLeft = getDaysDiff(hw.dueDate);
+        if (assignmentFilter === 'pending') return !done;
+        if (assignmentFilter === 'completed') return done;
+        if (assignmentFilter === 'overdue') return !done && daysLeft !== null && daysLeft < 0;
+        if (assignmentFilter === 'upcoming') return !done && daysLeft !== null && daysLeft >= 0 && daysLeft <= 3;
+        return true;
+      })
+      .sort((a, b) => (getDaysDiff(a.dueDate) ?? 999) - (getDaysDiff(b.dueDate) ?? 999));
+  }, [studentHomework, assignmentSearch, assignmentFilter, localCompletedHwIds, userId]);
+
+  // Attendance summary & projection calculator
+  const attendanceStats = useMemo(() => computeAttendanceSummary(attendanceRows), [attendanceRows]);
+  const attendanceProjection = useMemo(
+    () =>
+      calculateAttendanceProjection(
+        attendanceStats.effectivePresent,
+        attendanceStats.totalConducted,
+        targetAttendancePct
+      ),
+    [attendanceStats.effectivePresent, attendanceStats.totalConducted, targetAttendancePct]
+  );
+
+  // Compute live / next period from Official Timetable
+  const liveScheduleInfo = useMemo(() => {
+    if (!timetable?.schedule?.length) return null;
+    const now = new Date();
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const todayName = dayNames[now.getDay()];
+    const todaySch = timetable.schedule.find(d => d.day.toLowerCase() === todayName.toLowerCase());
+
+    if (!todaySch || todaySch.periods.length === 0) {
+      // Fall back to next instructional day (e.g. Monday on weekend)
+      const monday = timetable.schedule.find(d => d.day === 'Monday') || timetable.schedule[0];
+      const firstPeriod = monday?.periods.find(p => !p.isBreak && p.subject) || null;
+      return {
+        isToday: false,
+        dayLabel: monday?.day || 'Monday',
+        statusLabel: 'Next School Day',
+        activePeriod: firstPeriod,
+        todayPeriods: [] as TimetablePeriod[]
+      };
+    }
+
+    const nowMins = now.getHours() * 60 + now.getMinutes();
+    const instructionalPeriods = todaySch.periods.filter(p => !p.isBreak && p.subject);
+    const currentOrNext =
+      instructionalPeriods.find(p => {
+        const end = parseHHMM(p.endTime);
+        return end !== null && end > nowMins;
+      }) || null;
+
+    let statusLabel = 'Completed for Today';
+    if (currentOrNext) {
+      const start = parseHHMM(currentOrNext.startTime);
+      if (start !== null && start <= nowMins) {
+        statusLabel = 'In Progress Now';
+      } else if (start !== null) {
+        statusLabel = `Starts in ${start - nowMins} min`;
+      } else {
+        statusLabel = 'Upcoming Today';
+      }
+    }
+
+    return {
+      isToday: true,
+      dayLabel: todayName,
+      statusLabel,
+      activePeriod: currentOrNext,
+      todayPeriods: todaySch.periods
+    };
+  }, [timetable]);
+
+  // Deterministic Byte Reminders
+  const byteReminders = useMemo(
+    () =>
+      buildByteReminders({
+        currentUser,
+        effectiveRole: 'student',
+        homeworkList: studentHomework,
+        tasks,
+        announcements,
+        dueCardsCount,
+        attendancePercentage: attendanceStats.percentage,
+        attendanceTotalConducted: attendanceStats.totalConducted,
+        timetable,
+        upcomingExams: exams
+      }),
+    [
+      currentUser,
+      studentHomework,
+      tasks,
+      announcements,
+      dueCardsCount,
+      attendanceStats.percentage,
+      attendanceStats.totalConducted,
+      timetable,
+      exams,
+      reminderVersion
+    ]
+  );
+
+  // Average Marks Percentage
+  const marksSummary = useMemo(() => {
+    if (gradeEntries.length === 0) return null;
+    const avg = gradeEntries.reduce((acc, g) => acc + Number(g.percentage || 0), 0) / gradeEntries.length;
+    return {
+      average: Number(avg.toFixed(1)),
+      count: gradeEntries.length,
+      latest: gradeEntries[0]
+    };
+  }, [gradeEntries]);
+
+  // Chart datasets (Real data only)
+  const subjectChartData = useMemo(
+    () =>
+      subjectSummaries.map(s => ({
+        subject: s.subject.length > 11 ? `${s.subject.slice(0, 10)}.` : s.subject,
+        fullSubject: s.subject,
+        progress: s.progressPercentage
+      })),
+    [subjectSummaries]
+  );
+
+  const marksChartData = useMemo(() => {
+    const bySubj: Record<string, { sum: number; count: number }> = {};
+    gradeEntries.forEach(entry => {
+      const k = entry.subject || 'General';
+      if (!bySubj[k]) bySubj[k] = { sum: 0, count: 0 };
+      bySubj[k].sum += Number(entry.percentage || 0);
+      bySubj[k].count += 1;
+    });
+    return Object.entries(bySubj).map(([subject, stat]) => ({
+      subject: subject.length > 11 ? `${subject.slice(0, 10)}.` : subject,
+      score: Math.round(stat.sum / stat.count)
+    }));
+  }, [gradeEntries]);
+
+  // Active Subject Drilldown Data
+  const activeSubjectSyllabus = useMemo(
+    () =>
+      syllabuses.find(s => s.subject.toLowerCase() === (selectedSubject || '').toLowerCase()) ||
+      syllabuses[0] ||
+      null,
+    [syllabuses, selectedSubject]
+  );
+
+  const activeSubjectNotes = useMemo(() => {
+    const target = (activeSubjectSyllabus?.subject || selectedSubject || '').toLowerCase();
+    return notes.filter(n => !target || (n.subject || '').toLowerCase().includes(target));
+  }, [notes, activeSubjectSyllabus, selectedSubject]);
+
+  const activeSubjectMaterials = useMemo(() => {
+    const target = (activeSubjectSyllabus?.subject || selectedSubject || '').toLowerCase();
+    return materials.filter(m => !target || (m.subject || '').toLowerCase().includes(target));
+  }, [materials, activeSubjectSyllabus, selectedSubject]);
+
+  const activeSubjectHomework = useMemo(() => {
+    const target = (activeSubjectSyllabus?.subject || selectedSubject || '').toLowerCase();
+    return studentHomework.filter(h => !target || (h.subject || '').toLowerCase().includes(target));
+  }, [studentHomework, activeSubjectSyllabus, selectedSubject]);
+
+  const activeSubjectMarks = useMemo(() => {
+    const target = (activeSubjectSyllabus?.subject || selectedSubject || '').toLowerCase();
+    return gradeEntries.filter(g => !target || (g.subject || '').toLowerCase().includes(target));
+  }, [gradeEntries, activeSubjectSyllabus, selectedSubject]);
+
+  // Handlers
+  const handleToggleHomeworkDone = async (hw: Homework) => {
     soundService.playButtonClick();
+    const currentlyDone = isHwCompleted(hw);
+    const updatedCompletedList = currentlyDone
+      ? (hw.completedList || []).filter(id => id !== userId)
+      : Array.from(new Set([...(hw.completedList || []), userId]));
+
+    setLocalCompletedHwIds(prev =>
+      currentlyDone ? prev.filter(id => id !== hw.id) : Array.from(new Set([...prev, hw.id]))
+    );
 
     try {
-      const res = await fetch('/api/ai/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: `Please provide a clear, intuitive 3-step explanation of "${topic}" for a ${currentUser.grade || 'Grade 10'} student in ${subject || 'general academics'}, with one practical example and a practice check question.`,
-          persona: 'tutor',
-          context: `Grade: ${currentUser.grade || 'Grade 10'}. Subject: ${subject || 'Academics'}. Student: ${currentUser.name}.`
-        })
-      });
-
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setAiExplanation(data.text || data.response || 'Here is the breakdown of this concept.');
-      showNotification('Orion prepared an explanation for this topic.');
-    } catch (e) {
-      setAiExplanation('Unable to fetch AI explanation right now. Please try again or open Orion Copilot.');
-    } finally {
-      setIsExplaining(false);
+      await saveSupabaseHomework({ ...hw, completedList: updatedCompletedList });
+      showNotification(currentlyDone ? 'Marked assignment pending.' : '✓ Assignment marked complete.');
+    } catch {
+      showNotification('Updated assignment state locally.');
     }
   };
 
+  const handleToggleChapterDone = async (chapterId: string, subject: string) => {
+    soundService.playButtonClick();
+    const existing = progressMap[chapterId];
+    const nextStatus = existing?.status === 'completed' ? 'in_progress' : 'completed';
+    const updated = await SyllabusTimetableService.updateStudentChapterProgress(userId, chapterId, subject, {
+      status: nextStatus,
+      lastStudiedAt: new Date().toISOString()
+    });
+    setProgressMap(prev => ({ ...prev, [chapterId]: updated }));
+    showNotification(nextStatus === 'completed' ? '✓ Chapter marked completed.' : 'Chapter status set to in progress.');
+  };
+
+  const handleAskOrionInline = async (
+    intent: 'student_explain' | 'student_summarize' | 'student_study_plan',
+    subject: string,
+    topic: string,
+    contextData?: string
+  ) => {
+    soundService.playButtonClick();
+    setOrionLoading(true);
+    setOrionError(null);
+    setOrionInlineAnswer(null);
+    try {
+      const resp = await fetch('/api/ai/orion-assist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          userRole: 'student',
+          intent,
+          subject,
+          grade,
+          topic,
+          contextData
+        })
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) {
+        throw new Error(data.error || 'Orion is temporarily unavailable.');
+      }
+      setOrionInlineAnswer({
+        title: `${subject}: ${topic}`,
+        content: data.text,
+        provider: data.providerUsed ? `${data.providerUsed} (${data.modelUsed || ''})` : undefined
+      });
+    } catch (err: any) {
+      setOrionError(err?.message || 'Could not reach Orion right now.');
+    } finally {
+      setOrionLoading(false);
+    }
+  };
+
+  const navItems: Array<{ id: StudentSubTab; label: string; iconName: 'dashboard' | 'syllabus' | 'homework' | 'analytics' | 'study_hub' }> = [
+    { id: 'home', label: 'Command Center', iconName: 'dashboard' },
+    { id: 'subjects', label: 'Academic Hub', iconName: 'syllabus' },
+    { id: 'assignments', label: 'Assignments & Exams', iconName: 'homework' },
+    { id: 'analytics', label: 'Attendance & Marks', iconName: 'analytics' },
+    { id: 'study_space', label: 'Study Space & Calendar', iconName: 'study_hub' }
+  ];
+
+  if (loading) {
+    return (
+      <div className="max-w-7xl mx-auto py-20 flex flex-col items-center justify-center space-y-3">
+        <Loader2 className="w-7 h-7 text-blue-400 animate-spin" />
+        <p className="text-xs text-slate-400 font-medium">Loading academic workspace...</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6 max-w-6xl mx-auto pb-12 animate-fadeIn select-text">
-      {/* Top Academic Sub-navigation */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
-        <div className="flex items-center gap-1.5 p-1 bg-slate-900 border border-white/10 rounded-2xl overflow-x-auto max-w-full">
-          {[
-            { id: 'dashboard', label: 'Command Center', icon: 'dashboard' },
-            { id: 'academics', label: 'Academic Hub', icon: 'syllabus' },
-            { id: 'assignments', label: 'Assignments & Assessments', icon: 'homework' },
-            { id: 'attendance', label: 'Attendance', icon: 'attendance_manager' },
-            { id: 'study_space', label: 'Study Space', icon: 'study_hub' }
-          ].map((item) => (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className="max-w-7xl mx-auto space-y-5 pb-12"
+    >
+      {/* Clean Student Workspace Header */}
+      <div className="bento-card rounded-2xl p-5 sm:p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+            <span className="font-semibold text-blue-400">Student Workspace</span>
+            <span aria-hidden="true">·</span>
+            <span className="text-slate-200 font-medium">{grade}{currentUser.section ? ` (${currentUser.section})` : ''}</span>
+            {currentUser.house && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{currentUser.house} House</span>
+              </>
+            )}
+          </div>
+          <h1 className="text-xl sm:text-2xl font-bold font-display text-white tracking-tight">
+            Welcome back, {currentUser.name || 'Student'}
+          </h1>
+          <p className="text-xs text-slate-400">
+            Track today&apos;s classes, syllabus progress, pending deadlines, attendance standing, and exam readiness.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onNavigateTab('notes')}
+            className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs font-semibold text-slate-200 flex items-center gap-2 cursor-pointer"
+          >
+            <VeylentraIcon name="notes" size="xs" />
+            <span>Lecture Notes</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onNavigateTab('brain_battle')}
+            className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs font-semibold text-slate-200 flex items-center gap-2 cursor-pointer"
+          >
+            <VeylentraIcon name="brain_battle" size="xs" />
+            <span>Brain Battle</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenOrionFull()}
+            className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-2 cursor-pointer"
+          >
+            <VeylentraIcon name="orion" size="xs" />
+            <span>Open Orion</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Sub-Navigation Bar */}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 border-b border-white/10">
+        {navItems.map(item => {
+          const active = subTab === item.id;
+          return (
             <button
               key={item.id}
               type="button"
               onClick={() => {
                 soundService.playButtonClick();
-                setSubSection(item.id as any);
+                setSubTab(item.id);
               }}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 whitespace-nowrap transition-all cursor-pointer ${
-                subSection === item.id
-                  ? 'bg-indigo-600 text-white shadow-md'
+              className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors shrink-0 cursor-pointer ${
+                active
+                  ? 'bg-blue-600 text-white'
                   : 'text-slate-400 hover:text-white hover:bg-white/5'
               }`}
             >
-              <VeylentraIcon name={item.icon as any} size="sm" />
+              <VeylentraIcon name={item.iconName} size="xs" />
               <span>{item.label}</span>
+              {item.id === 'assignments' && pendingHomework.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded bg-black/25 font-mono text-[10px] tabular-nums">
+                  {pendingHomework.length}
+                </span>
+              )}
             </button>
-          ))}
-        </div>
-
-        {/* Orion Quick Prompt Trigger */}
-        <button
-          type="button"
-          onClick={() => {
-            soundService.playButtonClick();
-            onOpenOrionFull('Explain my pending academic priorities for today.');
-          }}
-          className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-indigo-500/30 text-indigo-300 hover:text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-        >
-          <Brain className="w-3.5 h-3.5 text-indigo-400" />
-          <span>Ask Orion AI</span>
-        </button>
+          );
+        })}
       </div>
 
-      {/* =========================================================================
-          SUB-SECTION 1: STUDENT DASHBOARD — PERSONAL ACADEMIC COMMAND CENTER
-      ========================================================================== */}
-      {subSection === 'dashboard' && (
-        <div className="space-y-6">
-          {/* Welcome Header */}
-          <div className="p-6 rounded-3xl bg-slate-900 border border-white/10 relative overflow-hidden flex flex-col md:flex-row md:items-center justify-between gap-6 shadow-md">
-            <div className="space-y-1.5 relative z-10">
-              <div className="flex items-center gap-2 text-xs font-semibold text-indigo-400">
-                <span>{(currentUser as any).schoolName || 'Veylentra International Academy'}</span>
-                <span>·</span>
-                <span className="text-slate-300">{currentUser.grade || 'Grade 10'} {currentUser.section ? `(${currentUser.section})` : ''}</span>
-                <span>·</span>
-                <span className="text-slate-400 font-mono">{dateFormatted}</span>
+      {/* Inline Orion Result Panel (with loading, error/retry, dismiss) */}
+      {(orionLoading || orionError || orionInlineAnswer) && (
+        <div className="bento-card rounded-2xl p-4 sm:p-5 border border-teal-500/30 bg-slate-950/80 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <VeylentraIcon name="orion" size="sm" />
+              <div>
+                <h3 className="text-sm font-bold text-white">
+                  {orionInlineAnswer ? orionInlineAnswer.title : 'Orion Study Assistant'}
+                </h3>
+                {orionInlineAnswer?.provider && (
+                  <p className="text-[11px] text-slate-400">Generated via {orionInlineAnswer.provider}</p>
+                )}
               </div>
-              <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-                Welcome back, {currentUser.name?.split(' ')[0]}
-              </h1>
-              <p className="text-xs sm:text-sm text-slate-300 max-w-xl leading-relaxed">
-                Here is your academic overview for today. You have {myPendingHomework.length} pending assignment{myPendingHomework.length !== 1 ? 's' : ''} and {pendingTasks.length} study task{pendingTasks.length !== 1 ? 's' : ''} scheduled.
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setOrionInlineAnswer(null);
+                setOrionError(null);
+              }}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 cursor-pointer"
+              aria-label="Close Orion answer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {orionLoading && (
+            <div className="py-4 flex items-center gap-2 text-xs text-slate-300">
+              <Loader2 className="w-4 h-4 text-teal-400 animate-spin" />
+              <span>Preparing structured explanation...</span>
+            </div>
+          )}
+
+          {orionError && (
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-between text-xs text-rose-200">
+              <span>{orionError}</span>
+              <button
+                type="button"
+                onClick={() => onOpenOrionFull(orionQuickQuery)}
+                className="px-2.5 py-1 rounded-lg bg-rose-500/20 text-white font-semibold cursor-pointer"
+              >
+                Open Full Orion
+              </button>
+            </div>
+          )}
+
+          {orionInlineAnswer && (
+            <div className="space-y-3">
+              <div className="text-xs text-slate-200 leading-relaxed whitespace-pre-wrap max-h-72 overflow-y-auto bg-slate-900/70 p-3.5 rounded-xl border border-white/5">
+                {orionInlineAnswer.content}
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => onOpenOrionFull(`Continue helping with ${orionInlineAnswer.title}`)}
+                  className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold cursor-pointer"
+                >
+                  Continue in Orion
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ================================================================== */}
+      {/* TAB 1: STUDENT COMMAND CENTER                                      */}
+      {/* ================================================================== */}
+      {subTab === 'home' && (
+        <div className="space-y-5">
+          {/* Top KPI Summary Row */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bento-card rounded-2xl p-4 space-y-1.5">
+              <div className="flex items-center justify-between text-xs text-slate-400">
+                <span>Live / Next Class</span>
+                <Clock className="w-3.5 h-3.5 text-blue-400" />
+              </div>
+              <p className="text-base font-bold text-white truncate">
+                {liveScheduleInfo?.activePeriod?.subject || 'No Upcoming Class'}
+              </p>
+              <p className="text-[11px] text-slate-400 truncate">
+                {liveScheduleInfo?.activePeriod
+                  ? `${liveScheduleInfo.dayLabel} · ${liveScheduleInfo.activePeriod.startTime}–${liveScheduleInfo.activePeriod.endTime}`
+                  : 'All scheduled classes complete today'}
               </p>
             </div>
 
-            <div className="flex items-center gap-3 shrink-0 relative z-10">
-              <button
-                type="button"
-                onClick={() => setSubSection('assignments')}
-                className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-2 shadow-md transition-all cursor-pointer"
+            <div className="bento-card rounded-2xl p-4 space-y-1.5">
+              <div className="flex items-center justify-between text-xs text-slate-400">
+                <span>Pending Assignments</span>
+                <VeylentraIcon name="homework" size="xs" />
+              </div>
+              <p className="text-2xl font-bold text-white tabular-nums">{pendingHomework.length}</p>
+              <p className="text-[11px] text-slate-400 truncate">
+                {pendingHomework[0]?.dueDate
+                  ? `Next due ${pendingHomework[0].dueDate}`
+                  : 'No urgent homework queued'}
+              </p>
+            </div>
+
+            <div className="bento-card rounded-2xl p-4 space-y-1.5">
+              <div className="flex items-center justify-between text-xs text-slate-400">
+                <span>Recorded Attendance</span>
+                <VeylentraIcon name="attendance" size="xs" />
+              </div>
+              <p
+                className={`text-2xl font-bold tabular-nums ${
+                  attendanceStats.totalConducted > 0 && attendanceStats.percentage < 75
+                    ? 'text-amber-400'
+                    : 'text-emerald-400'
+                }`}
               >
-                <span>View Assignments</span>
-                <ChevronRight className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => onNavigateTab('timetable')}
-                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-semibold text-xs transition-colors cursor-pointer"
-              >
-                Today's Classes
-              </button>
+                {attendanceStats.totalConducted > 0 ? `${attendanceStats.percentage}%` : 'No Records'}
+              </p>
+              <p className="text-[11px] text-slate-400">
+                {attendanceStats.totalConducted > 0
+                  ? `${attendanceStats.effectivePresent}/${attendanceStats.totalConducted} sessions attended`
+                  : 'Awaiting attendance entries'}
+              </p>
+            </div>
+
+            <div className="bento-card rounded-2xl p-4 space-y-1.5">
+              <div className="flex items-center justify-between text-xs text-slate-400">
+                <span>Marks / Active Recall</span>
+                <VeylentraIcon name="quiz" size="xs" />
+              </div>
+              <p className="text-2xl font-bold text-white tabular-nums">
+                {marksSummary ? `${marksSummary.average}%` : `${dueCardsCount} due`}
+              </p>
+              <p className="text-[11px] text-slate-400">
+                {marksSummary
+                  ? `Across ${marksSummary.count} graded assessment${marksSummary.count === 1 ? '' : 's'}`
+                  : `${decks.length} flashcard deck${decks.length === 1 ? '' : 's'} synced`}
+              </p>
             </div>
           </div>
 
-          {/* Quick Metrics Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-            <div className="p-4 rounded-2xl bg-slate-900 border border-white/10 flex flex-col justify-between">
-              <span className="text-xs font-bold text-slate-400">Pending Homework</span>
-              <div className="flex items-baseline gap-2 mt-2">
-                <span className="text-2xl font-black text-amber-400">{myPendingHomework.length}</span>
-                <span className="text-[11px] text-slate-500">due soon</span>
+          {/* Low attendance alert if < 75% and real records exist */}
+          {attendanceStats.totalConducted > 0 && attendanceStats.percentage < 75 && (
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-2.5 text-xs text-amber-200">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-white">Attendance Threshold Alert ({attendanceStats.percentage}%)</p>
+                  <p className="text-[11px] text-amber-200/90 mt-0.5">
+                    Estimated {attendanceProjection.classesNeededForTarget} consecutive session(s) needed to reach 75% (planning estimate).
+                  </p>
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={() => setSubTab('analytics')}
+                className="px-3 py-1.5 rounded-lg bg-amber-500 text-slate-950 text-xs font-bold shrink-0 cursor-pointer"
+              >
+                Open Calculator
+              </button>
             </div>
+          )}
 
-            <div className="p-4 rounded-2xl bg-slate-900 border border-white/10 flex flex-col justify-between">
-              <span className="text-xs font-bold text-slate-400">Completed Work</span>
-              <div className="flex items-baseline gap-2 mt-2">
-                <span className="text-2xl font-black text-emerald-400">{myCompletedHomework.length}</span>
-                <span className="text-[11px] text-slate-500">submitted</span>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-slate-900 border border-white/10 flex flex-col justify-between">
-              <span className="text-xs font-bold text-slate-400">Scheduled Tasks</span>
-              <div className="flex items-baseline gap-2 mt-2">
-                <span className="text-2xl font-black text-cyan-400">{pendingTasks.length}</span>
-                <span className="text-[11px] text-slate-500">in planner</span>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-slate-900 border border-white/10 flex flex-col justify-between">
-              <span className="text-xs font-bold text-slate-400">Next Upcoming Class</span>
-              <div className="flex items-baseline gap-1 mt-2">
-                <span className="text-base font-bold text-white truncate">Mathematics</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Core Dashboard Content (2 Columns) */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Left 7 Cols: Today's Priorities & Assignments */}
-            <div className="lg:col-span-7 space-y-6">
-              <div className="p-6 rounded-3xl bg-slate-900 border border-white/10 space-y-4">
-                <div className="flex items-center justify-between border-b border-white/10 pb-3">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            {/* Left 2 Columns: Timetable Schedule + Subject Progress Chart + Quick Orion */}
+            <div className="lg:col-span-2 space-y-5">
+              {/* Today's Official Periods Strip */}
+              <div className="bento-card rounded-2xl p-5 space-y-3">
+                <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="text-sm font-bold text-white">Pending Assignments</h3>
-                    <p className="text-[11px] text-slate-400">Active coursework requiring submission</p>
+                    <h2 className="text-sm font-bold text-white">
+                      {liveScheduleInfo?.isToday ? `Today's Schedule (${liveScheduleInfo.dayLabel})` : 'Official School Schedule'}
+                    </h2>
+                    <p className="text-xs text-slate-400">{liveScheduleInfo?.statusLabel || 'Synchronized with school timetable'}</p>
                   </div>
                   <button
                     type="button"
-                    onClick={() => setSubSection('assignments')}
-                    className="text-xs font-bold text-indigo-400 hover:text-indigo-300"
+                    onClick={() => onNavigateTab('timetable_viewer')}
+                    className="text-xs font-semibold text-blue-400 hover:text-blue-300 flex items-center gap-1 cursor-pointer"
                   >
-                    View All ({myPendingHomework.length})
+                    <span>Full Timetable</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
 
-                {myPendingHomework.length === 0 ? (
-                  <div className="p-6 rounded-2xl bg-slate-950/40 text-center space-y-1">
-                    <CheckCircle2 className="w-6 h-6 text-emerald-400 mx-auto mb-1" />
-                    <p className="text-xs font-bold text-white">No pending assignments</p>
-                    <p className="text-[11px] text-slate-400">All assigned homework is submitted and up to date.</p>
+                {liveScheduleInfo && liveScheduleInfo.todayPeriods.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                    {liveScheduleInfo.todayPeriods
+                      .filter(p => !p.isBreak)
+                      .slice(0, 6)
+                      .map(period => {
+                        const isNext = liveScheduleInfo.activePeriod?.periodNumber === period.periodNumber;
+                        return (
+                          <div
+                            key={period.periodNumber}
+                            className={`p-3 rounded-xl border text-xs ${
+                              isNext
+                                ? 'bg-blue-600/15 border-blue-500/50 text-white'
+                                : 'bg-slate-950/70 border-white/10 text-slate-300'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="font-mono text-[11px] text-blue-400 font-semibold">
+                                P{period.periodNumber} · {period.startTime}
+                              </span>
+                              {isNext && (
+                                <span className="text-[10px] font-bold text-emerald-300">Current/Next</span>
+                              )}
+                            </div>
+                            <p className="font-bold text-white truncate">{period.subject}</p>
+                            <p className="text-[11px] text-slate-400 truncate">
+                              {period.room || 'Classroom'}{period.teacherName ? ` · ${period.teacherName}` : ''}
+                            </p>
+                          </div>
+                        );
+                      })}
                   </div>
                 ) : (
-                  <div className="space-y-2.5">
-                    {myPendingHomework.slice(0, 4).map((hw) => (
-                      <div
-                        key={hw.id}
-                        className="p-3.5 rounded-2xl bg-slate-950/60 border border-white/5 flex items-center justify-between gap-3"
-                      >
-                        <div className="space-y-0.5">
-                          <div className="flex items-center gap-2">
-                            <span className="px-2 py-0.5 rounded-md bg-indigo-500/15 text-[10px] font-bold text-indigo-300">
-                              {hw.subject || 'Class'}
-                            </span>
-                            <span className="text-xs font-bold text-white">{hw.title}</span>
-                          </div>
-                          <p className="text-[11px] text-slate-400">
-                            Due: {hw.dueDate || 'Standard deadline'} · Assigned by {hw.givenBy || 'Faculty'}
-                          </p>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleAskOrionTopic(hw.title, hw.subject)}
-                            title="Ask Orion AI to explain instructions"
-                            className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 text-xs transition-colors"
-                          >
-                            <Brain className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onNavigateTab('homework')}
-                            className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-semibold text-slate-200"
-                          >
-                            Open
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                  <div className="p-4 rounded-xl bg-slate-950/60 border border-white/10 text-xs text-slate-400 flex items-center justify-between">
+                    <span>
+                      {liveScheduleInfo?.activePeriod
+                        ? `Next instructional day (${liveScheduleInfo.dayLabel}) begins with ${liveScheduleInfo.activePeriod.subject} at ${liveScheduleInfo.activePeriod.startTime}.`
+                        : 'No instructional periods scheduled today.'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onNavigateTab('timetable_viewer')}
+                      className="text-blue-400 font-semibold cursor-pointer shrink-0 ml-2"
+                    >
+                      View Week
+                    </button>
                   </div>
                 )}
               </div>
 
-              {/* Orion Contextual Explanation Card */}
-              {isExplaining && (
-                <div className="p-4 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 flex items-center gap-3 animate-pulse">
-                  <Sparkles className="w-4 h-4 text-indigo-400 animate-spin" />
-                  <span className="text-xs text-indigo-200">Orion is generating a step-by-step concept breakdown...</span>
-                </div>
-              )}
-
-              {aiExplanation && (
-                <div className="p-5 rounded-3xl bg-slate-900 border border-indigo-500/40 space-y-3">
-                  <div className="flex items-center justify-between border-b border-white/10 pb-2">
-                    <span className="text-xs font-bold text-indigo-400 flex items-center gap-1.5">
-                      <Brain className="w-3.5 h-3.5" />
-                      <span>Orion Concept Breakdown</span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setAiExplanation(null)}
-                      className="text-[11px] text-slate-400 hover:text-white"
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                  <p className="text-xs text-slate-200 whitespace-pre-line leading-relaxed">
-                    {aiExplanation}
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Right 5 Cols: Today's Schedule & Announcements */}
-            <div className="lg:col-span-5 space-y-6">
-              {/* Important Announcements */}
-              <div className="p-6 rounded-3xl bg-slate-900 border border-white/10 space-y-3">
+              {/* Subject Mastery Progress Visualization (Recharts) */}
+              <div className="bento-card rounded-2xl p-5 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                    <Bell className="w-4 h-4 text-cyan-400" />
-                    <span>School Announcements</span>
-                  </h3>
+                  <div>
+                    <h2 className="text-sm font-bold text-white">Subject Syllabus Progress</h2>
+                    <p className="text-xs text-slate-400">Based on completed &amp; revised syllabus chapters</p>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => onNavigateTab('whats_new')}
-                    className="text-xs font-bold text-cyan-400 hover:text-cyan-300"
+                    onClick={() => setSubTab('subjects')}
+                    className="text-xs font-semibold text-blue-400 hover:text-blue-300 flex items-center gap-1 cursor-pointer"
                   >
-                    View All
+                    <span>Explore Subjects</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
 
-                <div className="space-y-2">
-                  {announcements.slice(0, 3).map((a, idx) => (
+                {subjectChartData.length > 0 ? (
+                  <div className="h-48 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={subjectChartData} margin={{ top: 6, right: 8, left: -20, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.12)" vertical={false} />
+                        <XAxis dataKey="subject" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} />
+                        <YAxis domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} />
+                        <Tooltip
+                          formatter={(value: any) => [`${value}%`, 'Mastery']}
+                          contentStyle={{
+                            backgroundColor: '#0f172a',
+                            borderColor: 'rgba(255,255,255,0.12)',
+                            borderRadius: '10px',
+                            fontSize: '12px',
+                            color: '#f8fafc'
+                          }}
+                        />
+                        <Bar dataKey="progress" radius={[6, 6, 0, 0]} barSize={32}>
+                          {subjectChartData.map((_, idx) => (
+                            <Cell key={idx} fill={idx % 2 === 0 ? '#2563eb' : '#0d9488'} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400 py-6 text-center">No published syllabus subjects found for {grade}.</p>
+                )}
+              </div>
+
+              {/* Orion Contextual Study Prompt Bar */}
+              <form
+                onSubmit={e => {
+                  e.preventDefault();
+                  const q = orionQuickQuery.trim();
+                  if (!q) return;
+                  handleAskOrionInline('student_explain', selectedSubject || 'General Studies', q);
+                }}
+                className="bento-card rounded-2xl p-4 flex flex-col sm:flex-row items-stretch sm:items-center gap-3"
+              >
+                <div className="flex items-center gap-2.5 flex-1">
+                  <VeylentraIcon name="orion" size="sm" />
+                  <input
+                    type="text"
+                    value={orionQuickQuery}
+                    onChange={e => setOrionQuickQuery(e.target.value)}
+                    placeholder="Ask Orion to explain a concept, summarize notes, or plan study..."
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="submit"
+                    disabled={!orionQuickQuery.trim() || orionLoading}
+                    className="px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold disabled:opacity-50 cursor-pointer"
+                  >
+                    Quick Answer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onOpenOrionFull(orionQuickQuery.trim() || undefined)}
+                    className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-200 text-xs font-semibold cursor-pointer"
+                  >
+                    Full Orion
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Right Column: Byte Deterministic Reminders + Contextual Study Recommendations */}
+            <div className="space-y-5">
+              {/* Byte Smart Reminders Strip */}
+              <div className="bento-card rounded-2xl p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <VeylentraIcon name="byte" size="sm" />
+                    <div>
+                      <h3 className="text-sm font-bold text-white">Byte Reminders</h3>
+                      <p className="text-[11px] text-slate-400">Live priority actions</p>
+                    </div>
+                  </div>
+                  <span className="text-xs font-mono text-slate-400 tabular-nums">{byteReminders.length}</span>
+                </div>
+
+                <div className="space-y-2.5">
+                  {byteReminders.slice(0, 4).map(rem => (
                     <div
-                      key={a.id || idx}
-                      className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-1"
+                      key={rem.id}
+                      className="p-3 rounded-xl bg-slate-950/80 border border-white/10 space-y-2"
                     >
-                      <p className="text-xs font-bold text-white leading-snug">{a.title || 'Campus Circular'}</p>
-                      <p className="text-[11px] text-slate-400 line-clamp-2">{a.content || a.description || 'Important update from administration.'}</p>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <span
+                            className={`text-[10px] font-bold uppercase tracking-wider ${
+                              rem.priority === 'urgent'
+                                ? 'text-rose-400'
+                                : rem.priority === 'high'
+                                ? 'text-amber-400'
+                                : 'text-blue-400'
+                            }`}
+                          >
+                            {rem.priority} · {rem.type.replace('_', ' ')}
+                          </span>
+                          <p className="text-xs font-bold text-white mt-0.5 leading-snug">{rem.title}</p>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-400 leading-relaxed">{rem.reason}</p>
+                      <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => onNavigateTab(rem.actionTab, rem.actionSubTab)}
+                          className="px-2.5 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-[11px] font-semibold cursor-pointer"
+                        >
+                          {rem.actionLabel}
+                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              snoozeByteReminder(userId, rem.id, 60 * 60 * 1000);
+                              setReminderVersion(v => v + 1);
+                              showNotification('Snoozed reminder for 1 hour.');
+                            }}
+                            className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] text-slate-400 hover:text-white cursor-pointer"
+                          >
+                            Snooze 1h
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              markByteReminderHandled(userId, rem.id);
+                              setReminderVersion(v => v + 1);
+                            }}
+                            className="px-2 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-[10px] text-emerald-300 cursor-pointer"
+                          >
+                            Done
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              dismissByteReminder(userId, rem.id);
+                              setReminderVersion(v => v + 1);
+                            }}
+                            className="p-1 rounded-lg text-slate-500 hover:text-white cursor-pointer"
+                            aria-label="Dismiss reminder"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   ))}
+                  {byteReminders.length === 0 && (
+                    <div className="p-4 text-center rounded-xl bg-slate-950/50 border border-dashed border-white/10 text-xs text-slate-400">
+                      All active reminders handled.
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Study Space Quick Access */}
-              <div className="p-6 rounded-3xl bg-slate-900 border border-white/10 space-y-3">
-                <h3 className="text-sm font-bold text-white">Study Space Quick Launch</h3>
-                <div className="grid grid-cols-2 gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => onNavigateTab('lecture_notes')}
-                    className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-indigo-500/30 text-left transition-colors"
-                  >
-                    <span className="text-lg">📝</span>
-                    <p className="text-xs font-bold text-white mt-1">Lecture Notes</p>
-                    <p className="text-[10px] text-slate-400">Saved notes & OCR</p>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => onNavigateTab('study_hub')}
-                    className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 hover:border-indigo-500/30 text-left transition-colors"
-                  >
-                    <span className="text-lg">🗂️</span>
-                    <p className="text-xs font-bold text-white mt-1">Flashcards</p>
-                    <p className="text-[10px] text-slate-400">Spaced repetition</p>
-                  </button>
+              {/* Contextual Next Study Recommendations */}
+              <div className="bento-card rounded-2xl p-5 space-y-3">
+                <h3 className="text-sm font-bold text-white">Recommended Next Steps</h3>
+                <div className="space-y-2">
+                  {subjectSummaries
+                    .filter(s => s.nextRecommendedChapter)
+                    .slice(0, 3)
+                    .map(summary => (
+                      <button
+                        type="button"
+                        key={summary.subject}
+                        onClick={() => {
+                          setSelectedSubject(summary.subject);
+                          setSubTab('subjects');
+                        }}
+                        className="w-full text-left p-3 rounded-xl bg-slate-950/75 border border-white/10 hover:border-blue-500/40 transition-colors cursor-pointer"
+                      >
+                        <div className="flex items-center justify-between text-[11px] font-semibold text-blue-400">
+                          <span>{summary.subject}</span>
+                          <span className="tabular-nums">{summary.progressPercentage}%</span>
+                        </div>
+                        <p className="text-xs font-bold text-white mt-0.5 truncate">
+                          Ch {summary.nextRecommendedChapter?.chapterNumber}: {summary.nextRecommendedChapter?.title}
+                        </p>
+                        <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                          {summary.nextRecommendedChapter?.reason}
+                        </p>
+                      </button>
+                    ))}
                 </div>
               </div>
             </div>
@@ -361,200 +1022,637 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
         </div>
       )}
 
-      {/* =========================================================================
-          SUB-SECTION 2: ACADEMIC HUB (Timetable, Subjects, Syllabus)
-      ========================================================================== */}
-      {subSection === 'academics' && (
-        <div className="space-y-6">
-          <div className="p-6 rounded-3xl bg-slate-900 border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-bold text-white">Class Timetable & Academic Schedule</h2>
-              <p className="text-xs text-slate-400">Official scheduled periods for {currentUser.grade || 'Grade 10'} {currentUser.section || ''}</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => onNavigateTab('timetable')}
-              className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold"
-            >
-              Open Interactive Viewer
-            </button>
-          </div>
-
-          <OfficialTimetableViewer currentUser={currentUser} effectiveRole={effectiveRole as any} />
-        </div>
-      )}
-
-      {/* =========================================================================
-          SUB-SECTION 3: ASSIGNMENTS AND ASSESSMENTS
-      ========================================================================== */}
-      {subSection === 'assignments' && (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-bold text-white">Assignments & Assessment Center</h2>
-              <p className="text-xs text-slate-400">Track deadlines, submissions, and teacher evaluations</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => onNavigateTab('homework')}
-              className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold"
-            >
-              Submit New Assignment
-            </button>
-          </div>
-
-          {/* Pending assignments */}
-          <div className="p-6 rounded-3xl bg-slate-900 border border-white/10 space-y-4">
-            <h3 className="text-sm font-bold text-amber-400 flex items-center gap-2">
-              <Clock className="w-4 h-4" />
-              <span>Pending Submissions ({myPendingHomework.length})</span>
-            </h3>
-
-            {myPendingHomework.length === 0 ? (
-              <p className="text-xs text-slate-400 py-3">No pending assignments!</p>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {myPendingHomework.map(hw => (
-                  <div key={hw.id} className="p-4 rounded-2xl bg-slate-950/60 border border-white/10 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-bold uppercase text-indigo-400 px-2 py-0.5 rounded bg-indigo-500/10">
-                        {hw.subject || 'Class'}
-                      </span>
-                      <span className="text-xs font-mono text-amber-400">Due: {hw.dueDate || 'Scheduled'}</span>
-                    </div>
-                    <h4 className="text-xs font-bold text-white">{hw.title}</h4>
-                    <p className="text-[11px] text-slate-400 line-clamp-2">{(hw as any).description || hw.content || 'Complete coursework questions.'}</p>
-                    <div className="pt-2 border-t border-white/5 flex items-center justify-between">
-                      <button
-                        type="button"
-                        onClick={() => handleAskOrionTopic(hw.title, hw.subject)}
-                        className="text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1"
-                      >
-                        <Brain className="w-3 h-3" />
-                        <span>Explain Instructions</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onNavigateTab('homework')}
-                        className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold"
-                      >
-                        Submit
-                      </button>
-                    </div>
+      {/* ================================================================== */}
+      {/* TAB 2: ACADEMIC HUB (SUBJECT WORKSPACES & CHAPTER TRACKER)         */}
+      {/* ================================================================== */}
+      {subTab === 'subjects' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* Subject List */}
+          <div className="bento-card rounded-2xl p-4 space-y-2.5 h-fit">
+            <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider px-1">
+              Curriculum Subjects ({grade})
+            </h2>
+            {subjectSummaries.map(s => {
+              const isSelected = (activeSubjectSyllabus?.subject || '').toLowerCase() === s.subject.toLowerCase();
+              return (
+                <button
+                  type="button"
+                  key={s.subject}
+                  onClick={() => {
+                    soundService.playButtonClick();
+                    setSelectedSubject(s.subject);
+                  }}
+                  className={`w-full text-left p-3.5 rounded-xl border transition-colors cursor-pointer space-y-2 ${
+                    isSelected
+                      ? 'bg-blue-600/15 border-blue-500/50 text-white'
+                      : 'bg-slate-950/70 border-white/10 text-slate-300 hover:border-white/25'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-bold text-white">{s.subject}</span>
+                    <span className="text-xs font-mono font-bold text-blue-400 tabular-nums">{s.progressPercentage}%</span>
                   </div>
-                ))}
+                  <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
+                    <div className="h-full bg-teal-500 transition-all" style={{ width: `${s.progressPercentage}%` }} />
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-slate-400 tabular-nums">
+                    <span>{s.completedCount + s.revisedCount}/{s.totalChapters} chapters</span>
+                    {s.upcomingExamDate && <span>Exam {s.upcomingExamDate}</span>}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Selected Subject Workspace */}
+          <div className="lg:col-span-2 space-y-5">
+            {activeSubjectSyllabus ? (
+              <>
+                <div className="bento-card rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <span className="text-xs font-semibold text-blue-400">
+                      {activeSubjectSyllabus.grade} · {activeSubjectSyllabus.board || 'Official Curriculum'}
+                    </span>
+                    <h2 className="text-xl font-bold text-white mt-0.5">{activeSubjectSyllabus.subject}</h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {activeSubjectNotes.length} notes · {activeSubjectMaterials.length} class files · {activeSubjectHomework.length} assignments
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleAskOrionInline(
+                          'student_summarize',
+                          activeSubjectSyllabus.subject,
+                          `${activeSubjectSyllabus.subject} Key Concepts`,
+                          activeSubjectSyllabus.chapters.map(c => `Ch ${c.chapterNumber}: ${c.title} (${c.topics.join(', ')})`).join('\n')
+                        )
+                      }
+                      className="px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold cursor-pointer"
+                    >
+                      Summarize Subject
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onNavigateTab('notes')}
+                      className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs font-semibold text-slate-200 cursor-pointer"
+                    >
+                      Open Lecture Notes
+                    </button>
+                  </div>
+                </div>
+
+                {/* Syllabus Chapters */}
+                <div className="bento-card rounded-2xl p-5 space-y-3">
+                  <h3 className="text-sm font-bold text-white">Syllabus Chapters &amp; Readiness</h3>
+                  <div className="space-y-2.5">
+                    {activeSubjectSyllabus.chapters.map(ch => {
+                      const prog = progressMap[ch.id];
+                      const done = prog?.status === 'completed' || prog?.status === 'revised' || prog?.status === 'mastered';
+                      return (
+                        <div
+                          key={ch.id}
+                          className="p-3.5 rounded-xl bg-slate-950/75 border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                        >
+                          <div className="space-y-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-mono text-blue-400 font-semibold">
+                                Ch {ch.chapterNumber}
+                              </span>
+                              <span className="text-xs font-bold text-white truncate">{ch.title}</span>
+                            </div>
+                            <p className="text-[11px] text-slate-400 line-clamp-1">
+                              {ch.topics.join(' · ')}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleAskOrionInline(
+                                  'student_explain',
+                                  activeSubjectSyllabus.subject,
+                                  ch.title,
+                                  `Topics: ${ch.topics.join(', ')}\nNotes: ${ch.syllabusNotes || ''}`
+                                )
+                              }
+                              className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-white/10 text-[11px] font-semibold text-slate-300 cursor-pointer"
+                            >
+                              Explain
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleChapterDone(ch.id, activeSubjectSyllabus.subject)}
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 cursor-pointer ${
+                                done
+                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                  : 'bg-blue-600/20 text-blue-300 border border-blue-500/30'
+                              }`}
+                            >
+                              <CheckCircle2 className="w-3 h-3" />
+                              <span>{done ? 'Completed' : 'Mark Done'}</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Linked Resources & Subject Marks */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bento-card rounded-2xl p-4 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold text-white uppercase tracking-wider">Linked Notes &amp; Files</h4>
+                      <button
+                        type="button"
+                        onClick={() => onNavigateTab('materials')}
+                        className="text-[11px] font-semibold text-blue-400 cursor-pointer"
+                      >
+                        Materials Hub
+                      </button>
+                    </div>
+                    {activeSubjectNotes.slice(0, 3).map(n => (
+                      <div key={n.id} className="p-2.5 rounded-lg bg-slate-950/70 border border-white/5 text-xs">
+                        <p className="font-semibold text-slate-200 truncate">{n.title}</p>
+                        <p className="text-[11px] text-slate-500">Lecture Note · {n.createdAt}</p>
+                      </div>
+                    ))}
+                    {activeSubjectMaterials.slice(0, 2).map((m: any) => (
+                      <div key={m.id} className="p-2.5 rounded-lg bg-slate-950/70 border border-white/5 text-xs">
+                        <p className="font-semibold text-slate-200 truncate">{m.title}</p>
+                        <p className="text-[11px] text-slate-500">Class Material</p>
+                      </div>
+                    ))}
+                    {activeSubjectNotes.length === 0 && activeSubjectMaterials.length === 0 && (
+                      <p className="text-xs text-slate-500 py-3">No subject notes or uploaded files yet.</p>
+                    )}
+                  </div>
+
+                  <div className="bento-card rounded-2xl p-4 space-y-2.5">
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">Subject Assessment Marks</h4>
+                    {activeSubjectMarks.slice(0, 4).map(m => (
+                      <div key={m.id} className="p-2.5 rounded-lg bg-slate-950/70 border border-white/5 flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-200 truncate">{m.subject}</span>
+                        <span className="font-mono font-bold text-emerald-400 tabular-nums">
+                          {m.score}/{m.maxScore} ({m.percentage}%)
+                        </span>
+                      </div>
+                    ))}
+                    {activeSubjectMarks.length === 0 && (
+                      <p className="text-xs text-slate-500 py-3">No published gradebook entries for this subject yet.</p>
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="bento-card rounded-2xl p-8 text-center text-xs text-slate-400">
+                Select a subject on the left to inspect chapters, notes, materials, and marks.
               </div>
             )}
           </div>
+        </div>
+      )}
 
-          {/* Submitted assignments */}
-          <div className="p-6 rounded-3xl bg-slate-900 border border-white/10 space-y-4">
-            <h3 className="text-sm font-bold text-emerald-400 flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4" />
-              <span>Submitted & Evaluated Work ({myCompletedHomework.length})</span>
-            </h3>
-
-            {myCompletedHomework.length === 0 ? (
-              <p className="text-xs text-slate-400 py-3">No completed assignments yet.</p>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {myCompletedHomework.map(hw => (
-                  <div key={hw.id} className="p-4 rounded-2xl bg-slate-950/60 border border-white/10 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-bold uppercase text-emerald-400 px-2 py-0.5 rounded bg-emerald-500/10">
-                        {hw.subject || 'Class'}
-                      </span>
-                      <span className="text-xs text-emerald-400 font-semibold">Submitted</span>
-                    </div>
-                    <h4 className="text-xs font-bold text-white">{hw.title}</h4>
-                    <p className="text-[11px] text-slate-400">{(hw as any).description || hw.content || 'Completed coursework.'}</p>
-                  </div>
-                ))}
+      {/* ================================================================== */}
+      {/* TAB 3: ASSIGNMENTS & EXAM CENTER                                   */}
+      {/* ================================================================== */}
+      {subTab === 'assignments' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* Assignments Manager */}
+          <div className="lg:col-span-2 bento-card rounded-2xl p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-bold text-white">Assignments &amp; Deadlines</h2>
+                <p className="text-xs text-slate-400">Filter pending, upcoming, overdue, and completed coursework</p>
               </div>
-            )}
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={assignmentSearch}
+                  onChange={e => setAssignmentSearch(e.target.value)}
+                  placeholder="Search assignments..."
+                  className="bg-slate-950 border border-white/10 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-1.5">
+              {(['pending', 'upcoming', 'overdue', 'completed', 'all'] as AssignmentFilter[]).map(f => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setAssignmentFilter(f)}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize cursor-pointer ${
+                    assignmentFilter === f
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-slate-950 border border-white/10 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+
+            <div className="space-y-2.5">
+              {filteredAssignments.map(hw => {
+                const done = isHwCompleted(hw);
+                const daysLeft = getDaysDiff(hw.dueDate);
+                const overdue = !done && daysLeft !== null && daysLeft < 0;
+                return (
+                  <div
+                    key={hw.id}
+                    className={`p-4 rounded-xl border space-y-2.5 ${
+                      overdue
+                        ? 'bg-rose-950/20 border-rose-500/30'
+                        : 'bg-slate-950/75 border-white/10'
+                    }`}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                      <div className="space-y-0.5 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                          <span className="font-semibold text-blue-400">{hw.subject || 'Coursework'}</span>
+                          <span className="text-slate-500">·</span>
+                          <span className={overdue ? 'text-rose-400 font-semibold' : 'text-slate-400'}>
+                            {hw.dueDate ? `Due ${hw.dueDate}` : 'No due date'}
+                            {daysLeft !== null && !done && (
+                              <> ({daysLeft < 0 ? `${Math.abs(daysLeft)}d overdue` : daysLeft === 0 ? 'today' : `in ${daysLeft}d`})</>
+                            )}
+                          </span>
+                        </div>
+                        <h3 className="text-sm font-bold text-white">{hw.title}</h3>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleAskOrionInline(
+                              'student_explain',
+                              hw.subject || 'Assignment',
+                              hw.title,
+                              hw.content || 'Explain approach and key steps for this assignment.'
+                            )
+                          }
+                          className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-white/10 text-[11px] font-semibold text-teal-300 cursor-pointer"
+                        >
+                          Ask Orion
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleHomeworkDone(hw)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer ${
+                            done
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                              : 'bg-blue-600 text-white hover:bg-blue-500'
+                          }`}
+                        >
+                          {done ? 'Completed' : 'Mark Complete'}
+                        </button>
+                      </div>
+                    </div>
+                    {hw.content && <p className="text-xs text-slate-300 leading-relaxed">{hw.content}</p>}
+                  </div>
+                );
+              })}
+
+              {filteredAssignments.length === 0 && (
+                <div className="p-8 text-center rounded-xl border border-dashed border-white/10 text-xs text-slate-400">
+                  No assignments match the current filter.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Exam & Readiness Center */}
+          <div className="bento-card rounded-2xl p-5 space-y-4 h-fit">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <VeylentraIcon name="exam" size="sm" />
+                <div>
+                  <h3 className="text-sm font-bold text-white">Exams &amp; Readiness</h3>
+                  <p className="text-[11px] text-slate-400">Official assessment schedule</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onNavigateTab('calendar')}
+                className="text-xs font-semibold text-blue-400 cursor-pointer"
+              >
+                Calendar
+              </button>
+            </div>
+
+            <div className="space-y-2.5">
+              {exams.map(ex => {
+                const daysLeft = getDaysDiff(ex.examDate);
+                const subSummary = subjectSummaries.find(
+                  s => s.subject.toLowerCase() === ex.subject.toLowerCase()
+                );
+                const readinessPct = subSummary?.progressPercentage ?? 0;
+                return (
+                  <div key={ex.id} className="p-3.5 rounded-xl bg-slate-950/75 border border-white/10 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-white">{ex.subject}</span>
+                      <span className="font-mono text-[11px] text-amber-400 tabular-nums">
+                        {ex.examDate}{daysLeft !== null && daysLeft >= 0 ? ` (${daysLeft}d)` : ''}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-300">{ex.examName}</p>
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[11px] text-slate-400">
+                        <span>Syllabus readiness</span>
+                        <span className="tabular-nums font-semibold text-slate-200">{readinessPct}%</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-500" style={{ width: `${readinessPct}%` }} />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleAskOrionInline(
+                            'student_study_plan',
+                            ex.subject,
+                            `${ex.examName} Study Plan`,
+                            `Exam Date: ${ex.examDate}. Included chapters: ${ex.chaptersIncluded.join(', ')}. Target score: ${ex.targetScorePercent || 85}%.`
+                          )
+                        }
+                        className="px-2.5 py-1 rounded-lg bg-teal-600/20 hover:bg-teal-600/30 text-teal-300 text-[11px] font-semibold cursor-pointer"
+                      >
+                        Revision Plan
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onNavigateTab('brain_battle')}
+                        className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-[11px] font-semibold cursor-pointer"
+                      >
+                        Practice Arena
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+              {exams.length === 0 && (
+                <p className="text-xs text-slate-400 py-4 text-center">No upcoming exams published yet.</p>
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {/* =========================================================================
-          SUB-SECTION 4: ATTENDANCE EXPERIENCE
-      ========================================================================== */}
-      {subSection === 'attendance' && (
-        <div className="space-y-6">
-          <StudentAttendanceView currentUser={currentUser} />
+      {/* ================================================================== */}
+      {/* TAB 4: ATTENDANCE & PERFORMANCE CENTER (READ-ONLY RECORDS)         */}
+      {/* ================================================================== */}
+      {subTab === 'analytics' && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* Attendance Projection & Summary Card */}
+            <div className="bento-card rounded-2xl p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-bold text-white">Attendance Overview &amp; Threshold Estimator</h2>
+                  <p className="text-xs text-slate-400">Read-only official records from school attendance register</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onNavigateTab('attendance')}
+                  className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs font-semibold text-blue-400 cursor-pointer"
+                >
+                  Full Log &amp; Leave
+                </button>
+              </div>
+
+              <div className="grid grid-cols-4 gap-2.5">
+                <div className="p-3 rounded-xl bg-slate-950/75 border border-white/10">
+                  <span className="text-[11px] text-slate-400 block">Present</span>
+                  <span className="text-lg font-bold text-emerald-400 tabular-nums">{attendanceStats.presentCount}</span>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-950/75 border border-white/10">
+                  <span className="text-[11px] text-slate-400 block">Late</span>
+                  <span className="text-lg font-bold text-amber-400 tabular-nums">{attendanceStats.lateCount}</span>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-950/75 border border-white/10">
+                  <span className="text-[11px] text-slate-400 block">Absent</span>
+                  <span className="text-lg font-bold text-rose-400 tabular-nums">{attendanceStats.absentCount}</span>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-950/75 border border-white/10">
+                  <span className="text-[11px] text-slate-400 block">Rate</span>
+                  <span className="text-lg font-bold text-white tabular-nums">
+                    {attendanceStats.totalConducted > 0 ? `${attendanceStats.percentage}%` : 'N/A'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Planning Estimate Calculator */}
+              <div className="p-4 rounded-xl bg-slate-950/80 border border-white/10 space-y-3">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-white flex items-center gap-1.5">
+                    <SlidersHorizontal className="w-3.5 h-3.5 text-blue-400" />
+                    Target Attendance Estimate ({targetAttendancePct}%)
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-blue-500/15 text-blue-300 text-[10px] font-semibold">
+                    Planning Estimate
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={65}
+                  max={95}
+                  step={5}
+                  value={targetAttendancePct}
+                  onChange={e => setTargetAttendancePct(Number(e.target.value))}
+                  className="w-full accent-blue-500"
+                />
+                <p className="text-xs text-slate-200">
+                  {attendanceStats.totalConducted === 0 ? (
+                    'No conducted sessions recorded yet to calculate projection.'
+                  ) : attendanceProjection.isMeetingTarget ? (
+                    <>
+                      You currently meet {targetAttendancePct}%. Estimated buffer:{' '}
+                      <strong className="text-emerald-400 tabular-nums">{attendanceProjection.canMissSafely}</strong> session(s) before dropping below threshold.
+                    </>
+                  ) : (
+                    <>
+                      Estimated{' '}
+                      <strong className="text-amber-400 tabular-nums">
+                        {attendanceProjection.classesNeededForTarget}
+                      </strong>{' '}
+                      consecutive attended session(s) needed to reach {targetAttendancePct}%.
+                    </>
+                  )}
+                </p>
+                <p className="text-[11px] text-slate-500">{attendanceProjection.disclaimer}</p>
+              </div>
+            </div>
+
+            {/* Marks & Performance Visualization */}
+            <div className="bento-card rounded-2xl p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-bold text-white">Assessment Performance</h2>
+                  <p className="text-xs text-slate-400">Verified gradebook entries (read-only student access)</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onNavigateTab('performance')}
+                  className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs font-semibold text-blue-400 cursor-pointer"
+                >
+                  Report Cards
+                </button>
+              </div>
+
+              {marksChartData.length > 0 ? (
+                <div className="h-52 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={marksChartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.12)" vertical={false} />
+                      <XAxis dataKey="subject" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} />
+                      <YAxis domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} />
+                      <Tooltip
+                        formatter={(v: any) => [`${v}%`, 'Average Score']}
+                        contentStyle={{
+                          backgroundColor: '#0f172a',
+                          borderColor: 'rgba(255,255,255,0.12)',
+                          borderRadius: '10px',
+                          fontSize: '12px',
+                          color: '#f8fafc'
+                        }}
+                      />
+                      <Bar dataKey="score" fill="#10b981" radius={[6, 6, 0, 0]} barSize={32} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="p-8 text-center rounded-xl bg-slate-950/60 border border-dashed border-white/10 text-xs text-slate-400 space-y-2">
+                  <p>No published assessment marks recorded yet.</p>
+                  <button
+                    type="button"
+                    onClick={() => onNavigateTab('performance')}
+                    className="text-blue-400 font-semibold cursor-pointer"
+                  >
+                    Open Performance Analytics Center
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
-      {/* =========================================================================
-          SUB-SECTION 5: STUDENT STUDY SPACE
-      ========================================================================== */}
-      {subSection === 'study_space' && (
-        <div className="space-y-6">
-          <div className="p-6 rounded-3xl bg-slate-900 border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* ================================================================== */}
+      {/* TAB 5: INTEGRATED STUDY SPACE & ACADEMIC CALENDAR                  */}
+      {/* ================================================================== */}
+      {subTab === 'study_space' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* Unified Study Launchpad */}
+          <div className="lg:col-span-2 bento-card rounded-2xl p-5 space-y-4">
             <div>
-              <h2 className="text-lg font-bold text-white">Personal Study Space & Revision Planner</h2>
-              <p className="text-xs text-slate-400">Integrated learning tools, revision goals, and saved Lecture Notes</p>
+              <h2 className="text-base font-bold text-white">Integrated Study Space</h2>
+              <p className="text-xs text-slate-400">
+                Launch your notes, spaced-repetition flashcards, syllabus study planner, and focus timer
+              </p>
             </div>
-            <div className="flex items-center gap-2">
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
                 type="button"
-                onClick={() => onNavigateTab('lecture_notes')}
-                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold border border-white/10"
+                onClick={() => onNavigateTab('notes')}
+                className="p-4 rounded-xl bg-slate-950/75 border border-white/10 hover:border-blue-500/40 text-left flex items-start gap-3 transition-colors cursor-pointer"
               >
-                Lecture Notes
+                <VeylentraIcon name="notes" size="md" />
+                <div>
+                  <h3 className="text-sm font-bold text-white">Lecture Notes &amp; OCR</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {notes.length} saved note{notes.length === 1 ? '' : 's'} · Includes Image-to-Note capture &amp; math blocks
+                  </p>
+                </div>
               </button>
+
               <button
                 type="button"
-                onClick={() => onNavigateTab('study_hub')}
-                className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold"
+                onClick={() => onNavigateTab('study_hub', 'flashcards')}
+                className="p-4 rounded-xl bg-slate-950/75 border border-white/10 hover:border-blue-500/40 text-left flex items-start gap-3 transition-colors cursor-pointer"
               >
-                Study Hub
+                <VeylentraIcon name="quiz" size="md" />
+                <div>
+                  <h3 className="text-sm font-bold text-white">Spaced Repetition Flashcards</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {dueCardsCount} due today across {decks.length} study deck{decks.length === 1 ? '' : 's'}
+                  </p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onNavigateTab('study_hub', 'planner')}
+                className="p-4 rounded-xl bg-slate-950/75 border border-white/10 hover:border-blue-500/40 text-left flex items-start gap-3 transition-colors cursor-pointer"
+              >
+                <VeylentraIcon name="syllabus" size="md" />
+                <div>
+                  <h3 className="text-sm font-bold text-white">Syllabus &amp; AI Study Planner</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Chapter checkpoints and conflict-free evening study sessions
+                  </p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onNavigateTab('pomodoro')}
+                className="p-4 rounded-xl bg-slate-950/75 border border-white/10 hover:border-blue-500/40 text-left flex items-start gap-3 transition-colors cursor-pointer"
+              >
+                <VeylentraIcon name="timer" size="md" />
+                <div>
+                  <h3 className="text-sm font-bold text-white">Focus Timer</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Distraction-free Pomodoro sessions and study streaks
+                  </p>
+                </div>
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="p-5 rounded-2xl bg-slate-900 border border-white/10 space-y-2">
-              <span className="text-2xl">📚</span>
-              <h4 className="text-sm font-bold text-white">Lecture Notes</h4>
-              <p className="text-xs text-slate-400">Math formulas, OCR diagrams, and structured notes.</p>
+          {/* Upcoming Calendar Events & Milestones */}
+          <div className="bento-card rounded-2xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-blue-400" />
+                <h3 className="text-sm font-bold text-white">Academic Calendar</h3>
+              </div>
               <button
                 type="button"
-                onClick={() => onNavigateTab('lecture_notes')}
-                className="text-xs text-indigo-400 font-bold hover:underline"
+                onClick={() => onNavigateTab('calendar')}
+                className="text-xs font-semibold text-blue-400 hover:text-blue-300 cursor-pointer"
               >
-                Open Notes Workspace →
+                Full Calendar
               </button>
             </div>
 
-            <div className="p-5 rounded-2xl bg-slate-900 border border-white/10 space-y-2">
-              <span className="text-2xl">🧠</span>
-              <h4 className="text-sm font-bold text-white">Flashcard Mastery</h4>
-              <p className="text-xs text-slate-400">Spaced repetition system for long-term retention.</p>
-              <button
-                type="button"
-                onClick={() => onNavigateTab('study_hub')}
-                className="text-xs text-indigo-400 font-bold hover:underline"
-              >
-                Review Cards →
-              </button>
-            </div>
-
-            <div className="p-5 rounded-2xl bg-slate-900 border border-white/10 space-y-2">
-              <span className="text-2xl">🎯</span>
-              <h4 className="text-sm font-bold text-white">Brain Battle Arena</h4>
-              <p className="text-xs text-slate-400">Real-time educational quiz battles with fellow scholars.</p>
-              <button
-                type="button"
-                onClick={() => onNavigateTab('brain_battle')}
-                className="text-xs text-indigo-400 font-bold hover:underline"
-              >
-                Start Arena Challenge →
-              </button>
+            <div className="space-y-2.5">
+              {calendarEvents.slice(0, 5).map((ev: any) => (
+                <div key={ev.id} className="p-3 rounded-xl bg-slate-950/75 border border-white/10 text-xs space-y-0.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-blue-400 capitalize">{ev.event_type || 'Event'}</span>
+                    <span className="font-mono text-[11px] text-slate-400 tabular-nums">{ev.event_date}</span>
+                  </div>
+                  <p className="font-bold text-white">{ev.title}</p>
+                </div>
+              ))}
+              {calendarEvents.length === 0 && (
+                <div className="p-4 text-center rounded-xl bg-slate-950/50 border border-dashed border-white/10 text-xs text-slate-400">
+                  <BookOpen className="w-4 h-4 mx-auto mb-1 text-slate-500" />
+                  <p>No upcoming calendar events posted yet.</p>
+                </div>
+              )}
             </div>
           </div>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 };
