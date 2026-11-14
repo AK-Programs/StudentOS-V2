@@ -42,6 +42,7 @@ import {
 } from '../lib/gamification';
 import { UserProfile } from '../types';
 import { soundService } from '../lib/soundService';
+import { XpLeaderboardPanel } from './gamification/XpLeaderboardPanel';
 
 interface ToastEventDetail {
   xpAdded: number;
@@ -538,138 +539,12 @@ export const StudentGamificationHub: React.FC<{
       {/* SECTION 1: OVERVIEW & TODAY'S GOALS */}
       {(activeSection === 'overview' || activeSection === 'leaderboard') && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Leaderboard Column */}
-          <div className="lg:col-span-7 smart-glass p-6 rounded-3xl border border-white/10 space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h3 className="text-lg font-black text-white flex items-center gap-2">
-                  <Trophy className="w-5 h-5 text-amber-400" />
-                  Academic Scholar Leaderboard
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Ranked by verified academic XP, study streaks, and quiz mastery
-                </p>
-              </div>
-
-              {/* Filter: My Class vs School */}
-              <div className="inline-flex rounded-xl bg-slate-950 p-1 border border-white/10 self-start">
-                <button
-                  onClick={() => setScope('class')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                    scope === 'class' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Users className="w-3.5 h-3.5" />
-                  <span>My Class ({profile.grade || 'Grade 10'})</span>
-                </button>
-                <button
-                  onClick={() => setScope('school')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                    scope === 'school' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <School className="w-3.5 h-3.5" />
-                  <span>Whole School</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Top 3 Podium */}
-            {top3.length >= 3 && (
-              <div className="grid grid-cols-3 gap-3 pt-2 items-end">
-                {/* 2nd Place */}
-                <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-400/30 text-center space-y-1.5">
-                  <div className="text-xl">🥈</div>
-                  <p className="text-xs font-black text-white truncate">{top3[1].name}</p>
-                  <p className="text-[10px] text-slate-400">Lvl {top3[1].level} • {top3[1].levelTitle}</p>
-                  <p className="text-xs font-black text-slate-200">{top3[1].xp.toLocaleString()} XP</p>
-                </div>
-
-                {/* 1st Place */}
-                <div className="p-4 rounded-2xl bg-gradient-to-b from-amber-500/20 to-slate-900 border-2 border-amber-400/50 text-center space-y-1.5 shadow-xl shadow-amber-500/10 -translate-y-1">
-                  <div className="text-2xl">👑</div>
-                  <p className="text-xs sm:text-sm font-black text-amber-300 truncate">{top3[0].name}</p>
-                  <p className="text-[10px] text-amber-200/80">Lvl {top3[0].level} • {top3[0].levelTitle}</p>
-                  <p className="text-sm font-black text-white">{top3[0].xp.toLocaleString()} XP</p>
-                </div>
-
-                {/* 3rd Place */}
-                <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-amber-700/40 text-center space-y-1.5">
-                  <div className="text-xl">🥉</div>
-                  <p className="text-xs font-black text-white truncate">{top3[2].name}</p>
-                  <p className="text-[10px] text-slate-400">Lvl {top3[2].level} • {top3[2].levelTitle}</p>
-                  <p className="text-xs font-black text-amber-400">{top3[2].xp.toLocaleString()} XP</p>
-                </div>
-              </div>
-            )}
-
-            {/* Top 10 List */}
-            <div className="space-y-2">
-              {top10.map((scholar, index) => {
-                const isMe = scholar.userId === profile.userId;
-                return (
-                  <div
-                    key={scholar.userId}
-                    className={`p-3 rounded-2xl border flex items-center justify-between gap-3 transition-all ${
-                      isMe
-                        ? 'bg-indigo-600/20 border-indigo-400/50 shadow-lg'
-                        : 'bg-slate-900/60 border-white/5 hover:border-white/10'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span
-                        className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-black shrink-0 ${
-                          index === 0
-                            ? 'bg-amber-500 text-slate-950'
-                            : index === 1
-                              ? 'bg-slate-300 text-slate-950'
-                              : index === 2
-                                ? 'bg-amber-700 text-white'
-                                : 'bg-slate-800 text-slate-400'
-                        }`}
-                      >
-                        #{index + 1}
-                      </span>
-                      <div className="min-w-0">
-                        <p className="text-xs font-black text-white truncate flex items-center gap-1.5">
-                          <span>{scholar.name}</span>
-                          {isMe && (
-                            <span className="px-1.5 py-0.5 rounded bg-indigo-500 text-white text-[9px] uppercase">
-                              You
-                            </span>
-                          )}
-                        </p>
-                        <p className="text-[10px] text-slate-400">
-                          Level {scholar.level} ({scholar.levelTitle}) • {scholar.grade} {scholar.section}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-3 shrink-0">
-                      <span className="text-[11px] font-bold text-orange-400">
-                        🔥 {scholar.currentStreak}d
-                      </span>
-                      <span className="px-2.5 py-1 rounded-xl bg-slate-950 border border-white/10 text-xs font-black text-amber-300">
-                        {scholar.xp.toLocaleString()} XP
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Current Student's Rank Footer (always visible) */}
-            <div className="p-3.5 rounded-2xl bg-gradient-to-r from-indigo-950 to-slate-900 border border-indigo-500/40 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="px-2.5 py-1 rounded-lg bg-indigo-500 text-white font-black text-xs">
-                  Your Rank: #{myRank}
-                </span>
-                <span className="text-xs font-bold text-white">{profile.name}</span>
-              </div>
-              <span className="text-xs font-black text-amber-300">
-                {profile.xp.toLocaleString()} XP • Lvl {profile.level}
-              </span>
-            </div>
+          {/* Separated Authoritative Leaderboard Column */}
+          <div className="lg:col-span-7">
+            <XpLeaderboardPanel
+              type={['teacher', 'coordinator', 'hod'].includes(String(currentUser.role || '').toLowerCase()) ? 'faculty' : 'student'}
+              currentUser={currentUser}
+            />
           </div>
 
           {/* Right Column: Today's Study Goals & Recent XP Log */}

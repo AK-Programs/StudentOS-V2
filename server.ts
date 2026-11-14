@@ -40,6 +40,11 @@ import {
   isWsClientEligibleForAcademicEvent,
   AcademicEventScope
 } from './server/academicWorkflowModule';
+import { registerFeatureManagementRoutes } from './server/featureManagementModule';
+import {
+  registerWinterFestivalAndLeaderboardRoutes,
+  getUserWinterAiBonusCredits
+} from './server/winterFestivalModule';
 
 dotenv.config();
 
@@ -883,11 +888,20 @@ app.get('/api/gamification/profile', async (req, res) => {
 
 app.post('/api/gamification/award', async (req, res) => {
   const { userId, schoolId = 'default_school', profile } = req.body || {};
-  if (!userId || !profile) {
+  if (!userId || !profile || typeof profile !== 'object') {
     return res.status(400).json({ error: 'userId and profile are required' });
   }
 
-  memoryGamificationStore[userId] = profile;
+  const hasBearer = Boolean(req.headers.authorization || req.headers['x-supabase-auth']);
+  const verified = hasBearer ? await getVerifiedUserFromRequest(req) : null;
+  if (hasBearer && !verified) {
+    return res.status(401).json({ error: 'Invalid authentication token.' });
+  }
+  const verifiedRole = String(verified?.role || '').toLowerCase();
+  const isPriv = verifiedRole === 'super_admin' || verifiedRole === 'admin';
+  if (verified && verified.id !== userId && !isPriv) {
+    return res.status(403).json({ error: 'Forbidden: cannot modify another user gamification profile.' });
+  }
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
   const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
@@ -906,12 +920,19 @@ app.post('/api/gamification/award', async (req, res) => {
         existingMap = loaded;
       }
     }
-    const existingProfile = existingMap[userId];
-    if (existingProfile && typeof existingProfile.xp === 'number' && existingProfile.xp > (profile.xp || 0)) {
-      profile.xp = existingProfile.xp;
-      profile.level = existingProfile.level || profile.level;
-      profile.levelTitle = existingProfile.levelTitle || profile.levelTitle;
+    const existingProfile = existingMap[userId] || memoryGamificationStore[userId];
+    if (existingProfile && typeof existingProfile.xp === 'number') {
+      const incomingXp = Number(profile.xp || 0);
+      if (existingProfile.xp > incomingXp) {
+        profile.xp = existingProfile.xp;
+        profile.level = existingProfile.level || profile.level;
+        profile.levelTitle = existingProfile.levelTitle || profile.levelTitle;
+      } else if (!isPriv && incomingXp - existingProfile.xp > 150) {
+        // Prevent raw client payload tampering with arbitrary XP jumps
+        profile.xp = existingProfile.xp + 150;
+      }
     }
+    memoryGamificationStore[userId] = profile;
     existingMap[userId] = profile;
     Object.assign(memoryGamificationStore, existingMap);
 
@@ -1880,7 +1901,8 @@ function getRolling24hUsage(userId: string, role?: string): {
   activeRecords.sort((a, b) => a.timestamp - b.timestamp);
 
   const baseLimit = getRoleLimit(role);
-  const bonus = userBonusQuotas[userId] || 0;
+  const winterBonus = getUserWinterAiBonusCredits(userId);
+  const bonus = (userBonusQuotas[userId] || 0) + winterBonus;
   const limit = baseLimit + bonus;
   const used = activeRecords.length;
   const remaining = Math.max(0, limit - used);
@@ -5588,6 +5610,117 @@ registerAcademicWorkflowRoutes(app, {
   getSupabaseServerConfig,
   getVerifiedUserFromRequest,
   emitScopedBroadcast: broadcastScopedWsEvent
+});
+
+async function resolveFeatureAndWinterActor(req: express.Request): Promise<{
+  id: string;
+  name: string;
+  email?: string;
+  role: string;
+  grade?: string;
+  section?: string;
+  isVerifiedJwt: boolean;
+} | null> {
+  const hasBearer = Boolean(req.headers.authorization || req.headers['x-supabase-auth']);
+  if (hasBearer) {
+    const verified = await getVerifiedUserFromRequest(req);
+    if (!verified) return null;
+    let name = String(verified.user_metadata?.name || req.headers['x-veylentra-name'] || verified.email || 'Member');
+    let grade = String(req.headers['x-veylentra-grade'] || '');
+    let section = String(req.headers['x-veylentra-section'] || '');
+    try {
+      const cfg = getSupabaseServerConfig();
+      if (cfg.url && cfg.key) {
+        const profRes = await fetch(
+          `${cfg.url}/rest/v1/user_profiles?id=eq.${encodeURIComponent(verified.id)}&select=name,role,grade,section`,
+          { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+        );
+        if (profRes.ok) {
+          const rows = await profRes.json();
+          if (Array.isArray(rows) && rows[0]) {
+            name = String(rows[0].name || name);
+            grade = String(rows[0].grade || grade);
+            section = String(rows[0].section || section);
+          }
+        }
+      }
+    } catch (_) {}
+    return {
+      id: verified.id,
+      name,
+      email: verified.email,
+      role: String(verified.role || 'student').toLowerCase(),
+      grade,
+      section,
+      isVerifiedJwt: true,
+    };
+  }
+
+  const uidHeader = String(req.headers['x-veylentra-uid'] || '').trim();
+  if (!uidHeader) return null;
+
+  if (process.env.NODE_ENV === 'test') {
+    return {
+      id: uidHeader,
+      name: String(req.headers['x-veylentra-name'] || 'Test Member'),
+      role: String(req.headers['x-veylentra-role'] || 'student').toLowerCase(),
+      grade: String(req.headers['x-veylentra-grade'] || ''),
+      section: String(req.headers['x-veylentra-section'] || ''),
+      isVerifiedJwt: false,
+    };
+  }
+
+  // In non-test local/PIN session mode without Bearer JWT, look up authoritative role from Supabase user_profiles
+  let resolvedRole = 'student';
+  let resolvedName = String(req.headers['x-veylentra-name'] || 'Campus Member');
+  let resolvedGrade = String(req.headers['x-veylentra-grade'] || '');
+  let resolvedSection = String(req.headers['x-veylentra-section'] || '');
+  try {
+    const cfg = getSupabaseServerConfig();
+    if (cfg.url && cfg.key) {
+      const profRes = await fetch(
+        `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(uidHeader)},uid.eq.${encodeURIComponent(uidHeader)},email.eq.${encodeURIComponent(uidHeader)})&select=id,name,role,grade,section`,
+        { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+      );
+      if (profRes.ok) {
+        const rows = await profRes.json();
+        if (Array.isArray(rows) && rows[0]) {
+          resolvedRole = String(rows[0].role || 'student').toLowerCase();
+          resolvedName = String(rows[0].name || resolvedName);
+          resolvedGrade = String(rows[0].grade || resolvedGrade);
+          resolvedSection = String(rows[0].section || resolvedSection);
+        }
+      }
+    }
+  } catch (_) {}
+
+  return {
+    id: uidHeader,
+    name: resolvedName,
+    role: resolvedRole,
+    grade: resolvedGrade,
+    section: resolvedSection,
+    isVerifiedJwt: false,
+  };
+}
+
+const featureController = registerFeatureManagementRoutes(app, {
+  getSupabaseServerConfig: () => {
+    const cfg = getSupabaseServerConfig();
+    return { url: cfg.url, key: cfg.key || '' };
+  },
+  getVerifiedUserFromRequest: resolveFeatureAndWinterActor,
+  broadcastToAllWs,
+});
+
+registerWinterFestivalAndLeaderboardRoutes(app, {
+  getSupabaseServerConfig: () => {
+    const cfg = getSupabaseServerConfig();
+    return { url: cfg.url, key: cfg.key || '' };
+  },
+  getVerifiedUserFromRequest: resolveFeatureAndWinterActor,
+  requireFeatureAccess: featureController.requireFeatureAccess,
+  broadcastToAllWs,
 });
 
 async function startServer() {

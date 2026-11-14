@@ -19,6 +19,7 @@ import {
   recordAttendanceWithAudit,
   fetchAttendanceAuditHistory
 } from '../lib/academicWorkflowService';
+import { awardServerActionXp } from '../lib/winterFestivalService';
 
 const SUBJECT_LIST = [
   'General / Homeroom',
@@ -395,6 +396,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
     }
 
     setMarkingUid(null);
+    void awardServerActionXp(currentUser, 'faculty_mark_attendance', `${selectedGrade}_${selectedSection}_${date}`);
     setSuccessMessage(`✓ Marked as ${status.toUpperCase()}`);
     setTimeout(() => setSuccessMessage(null), 3000);
   };

@@ -84,6 +84,9 @@ import {
 } from '../lib/academicWorkflowService';
 import { VeylentraIcon } from './ui/VeylentraIcon';
 import { soundService } from '../lib/soundService';
+import { WinterDashboardBanner } from './winter/WinterFestivalHub';
+import { XpLeaderboardPanel } from './gamification/XpLeaderboardPanel';
+import { awardServerActionXp } from '../lib/winterFestivalService';
 
 export interface StudentExperienceWorkspaceProps {
   currentUser: UserProfile;
@@ -561,6 +564,7 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
       [hw.id]: { ...draft, submitting: false, error: undefined }
     }));
     setActiveSubmitHwId(null);
+    void awardServerActionXp(currentUser, 'complete_homework', hw.id);
     showNotification(
       res.data.isLate
         ? `✓ Late work submitted for "${hw.title}". Your teacher has been notified.`
@@ -1237,6 +1241,20 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
               </div>
             </div>
           </div>
+
+          <WinterDashboardBanner
+            currentUser={currentUser}
+            showNotification={(msg) => showNotification(msg)}
+            onNavigateTab={(t) => onNavigateTab(t)}
+          />
+
+          <XpLeaderboardPanel
+            type="student"
+            compact
+            maxRows={5}
+            currentUser={currentUser}
+            onViewFull={() => onNavigateTab('leaderboard')}
+          />
         </div>
       )}
 

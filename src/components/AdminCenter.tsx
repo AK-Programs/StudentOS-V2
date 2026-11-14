@@ -50,6 +50,7 @@ import {
   FlaskConical, Trash2, Unlink, Sparkles, UserCheck, UserX
 } from 'lucide-react';
 import { ExperienceTestingTab } from './admin/ExperienceTestingTab';
+import { FeatureControlCenter } from './admin/FeatureControlCenter';
 
 export type AdminSubTab =
   | 'overview'
@@ -1197,7 +1198,7 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
             <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
               {[
                 { id: 'whats_new', label: "What's New & Updates", icon: Sparkles },
-                { id: 'flags', label: 'Platform Settings', icon: Flag },
+                { id: 'flags', label: 'Feature & Theme Management', icon: Flag },
                 { id: 'experience_testing', label: 'Integrations & Lab', icon: FlaskConical },
                 { id: 'presence', label: 'Live Presence', icon: Radio },
               ].map(tab => {
@@ -2342,54 +2343,13 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
       )}
 
       {/* =========================================================================
-          VIEW 11: [SUPER ADMIN] FEATURE FLAGS PER SCHOOL
+          VIEW 11: [SUPER ADMIN] FEATURE & THEME MANAGEMENT CONSOLE
       ========================================================================= */}
       {isSuperAdmin && adminSubTab === 'flags' && (
-        <div className="space-y-6 animate-fadeIn">
-          <div className="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl flex items-center justify-between text-xs text-indigo-300">
-            <div className="flex items-center gap-2">
-              <Flag className="w-4 h-4 shrink-0" />
-              <span>Campus Module Feature Flags: Enable or disable specific workspace capabilities for United Public School.</span>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-            {[
-              { key: 'aiBuddy', label: 'Byte AI Study Assistant', desc: 'Curriculum chatbot & math tutor' },
-              { key: 'peerChat', label: 'Peer & Global Chat', desc: 'Direct & room messaging' },
-              { key: 'whiteboard', label: 'Classroom Whiteboard', desc: 'Collaborative live drawing' },
-              { key: 'digitalGradebook', label: 'Digital Gradebook', desc: 'Subject marks & evaluations' },
-              { key: 'digitalReportCards', label: 'Digital Report Cards', desc: 'Formal graduation report cards' },
-              { key: 'attendanceManager', label: 'Attendance Manager', desc: 'Daily attendance & leaves' },
-              { key: 'materialsHub', label: 'Materials Hub', desc: 'Educational files & lecture notes' },
-              { key: 'scheduledReleases', label: 'Scheduled Releases', desc: 'Automated version releases' }
-            ].map(flag => {
-              const isEnabled = featureFlags[flag.key as keyof SchoolFeatureFlags];
-              return (
-                <div
-                  key={flag.key}
-                  className="p-4 bg-slate-900/60 border border-white/10 rounded-2xl flex flex-col justify-between gap-3"
-                >
-                  <div>
-                    <h5 className="font-bold text-white text-xs">{flag.label}</h5>
-                    <p className="text-[10px] text-slate-400 mt-0.5">{flag.desc}</p>
-                  </div>
-
-                  <button
-                    onClick={() => handleToggleFeatureFlag(flag.key as keyof SchoolFeatureFlags)}
-                    className={`w-full py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                      isEnabled
-                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md'
-                        : 'bg-slate-800 hover:bg-slate-700 text-slate-400'
-                    }`}
-                  >
-                    <span>{isEnabled ? 'Enabled ✓' : 'Disabled ✕'}</span>
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <FeatureControlCenter
+          currentUser={currentUser}
+          showNotification={showNotification}
+        />
       )}
 
       {/* =========================================================================

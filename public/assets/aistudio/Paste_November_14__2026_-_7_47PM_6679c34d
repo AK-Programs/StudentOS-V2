@@ -1,0 +1,1083 @@
+VEYLENTRA — WINTER FESTIVAL, SUPER ADMIN FEATURE CONTROL & GAMIFICATION 2.0
+
+PRIMARY OBJECTIVE
+
+Implement a complete Winter Festival experience for Veylentra, together with a reusable Super Admin-controlled feature and theme management system.
+
+This release has five major objectives:
+
+1. Create a beautiful, interactive Winter Theme for Veylentra.
+2. Build a Supabase-backed Feature & Theme Control Center inside the Super Admin panel.
+3. Restore and substantially improve the Student and Faculty XP Leaderboard.
+4. Introduce a special nightly Santa Gift experience with rarity-based rewards.
+5. Introduce a recurring Spin Wheel reward system with a two-hour cooldown.
+
+This must be a fully functional implementation—not a collection of decorative frontend components.
+
+Every important setting, reward, claim, cooldown, leaderboard entry, and user-specific progression must be persisted and synchronized through Supabase.
+
+Preserve the existing excellent Student Dashboard and Faculty experience. Do not start the postponed full app-like interface redesign. Make only the targeted UI changes needed for these features.
+
+---
+
+1. SUPER ADMIN FEATURE & THEME MANAGEMENT SYSTEM
+
+This is a foundational requirement.
+
+I want to control newly introduced features, seasonal themes, gamification systems, experiments, and other optional experiences directly from my Super Admin account.
+
+Build a reusable management system inside the existing Super Admin Admin Panel.
+
+Do not implement isolated hardcoded toggles for Winter Theme, Santa, Spin Wheel, or every future feature.
+
+Build a centralized, extensible system.
+
+A. Feature Control Center
+
+Add a clearly organized section inside the Super Admin panel called:
+
+Feature & Theme Management
+
+It should allow Super Admins to:
+
+- View all registered features.
+- Enable or disable a feature.
+- Enable or disable a theme.
+- Enable or disable seasonal events.
+- Control gamification modules.
+- View each feature's current status.
+- View its description.
+- View its release information.
+- Preview features.
+- View when a feature was last updated.
+- View who changed its status.
+- View rollout information.
+- Search and filter the feature registry.
+
+Suggested categories:
+
+- Themes and Appearance.
+- Student Features.
+- Faculty Features.
+- AI Features.
+- Gamification.
+- Seasonal Events.
+- Experimental Features.
+- Other Platform Features.
+
+B. Global ON/OFF behavior
+
+The core behavior must be:
+
+When a feature is ON
+
+- It becomes available to all eligible users.
+- It appears in the appropriate user interfaces.
+- Its functionality becomes accessible.
+- Its data and interactions work normally.
+- Changes synchronize across the application.
+
+When a feature is OFF
+
+- It becomes available only to authenticated Super Admins.
+- Regular students, teachers, coordinators, and other users must not see or access it.
+- Super Admins can still access it for previewing, testing, and management.
+- The normal user-facing experience must remain unaffected.
+
+This must be enforced by both the frontend and backend.
+
+Important: Hiding a button is not authorization. Disabled features must not remain accessible through direct API requests or manipulated frontend state.
+
+C. Feature registry
+
+Create a centralized feature registry.
+
+Each feature should have a stable unique key and useful metadata.
+
+Suggested fields:
+
+- Feature key.
+- Display name.
+- Description.
+- Category.
+- Enabled status.
+- Release version.
+- Creation timestamp.
+- Last updated timestamp.
+- Updated by.
+- Optional configuration.
+- Optional start and end dates.
+- Optional theme metadata.
+
+Example feature keys:
+
+- "winter_theme"
+- "winter_santa_gifts"
+- "winter_spin_wheel"
+- "xp_leaderboard"
+- "winter_badges"
+- "winter_daily_tasks"
+
+These are examples; follow the repository's existing naming conventions.
+
+The registry must be extensible so future developers can register new features without rebuilding the control system.
+
+D. Supabase persistence
+
+Supabase must be the source of truth.
+
+Create or extend the appropriate database structure.
+
+Requirements:
+
+- Persistent feature configuration.
+- Secure Super Admin authorization.
+- Appropriate Row Level Security policies.
+- Server-side permission validation.
+- Realtime synchronization where appropriate.
+- Safe default behavior when settings cannot be loaded.
+- No unauthorized modification.
+- Audit history for changes.
+
+When a Super Admin changes a toggle:
+
+1. Validate the Super Admin session on the server.
+2. Validate the requested feature key.
+3. Persist the new state in Supabase.
+4. Return the authoritative updated state.
+5. Synchronize the state across connected application sessions.
+6. Update the UI without requiring users to manually refresh unnecessarily.
+
+If a feature-state request fails, do not pretend the toggle succeeded.
+
+E. Feature access hook/service
+
+Create a reusable application-level feature access service.
+
+For example, conceptually:
+
+- Check whether a feature is enabled.
+- Check whether the current user is an authorized Super Admin.
+- Determine whether the feature should be visible.
+- Determine whether its actions are permitted.
+- Subscribe to feature-state changes.
+
+Follow existing project conventions rather than introducing an unnecessary new framework.
+
+All feature-gated components should use the same centralized mechanism.
+
+Avoid inconsistent checks scattered throughout the application.
+
+F. Safety and failure behavior
+
+If the feature configuration cannot be loaded:
+
+- Do not accidentally expose disabled features.
+- Do not grant unauthorized access.
+- Preserve the existing application functionality.
+- Display a reasonable error or retry state for Super Admins.
+
+Feature toggles must not disable critical authentication, security, data integrity, or other essential platform infrastructure.
+
+Do not make the application dependent on an optional theme or seasonal feature to function.
+
+---
+
+2. WINTER FESTIVAL THEME
+
+Create a polished, delightful Winter Festival theme for Veylentra.
+
+It should feel like a seasonal experience integrated into the existing design system—not a completely different application.
+
+A. Winter visual identity
+
+Use winter-inspired details such as:
+
+- Snowflakes.
+- Soft snow effects.
+- Snow-covered visual accents.
+- Red-and-white winter candy-cane decorations.
+- Festive cookies.
+- Subtle winter illustrations.
+- Seasonal badges.
+- Santa-themed accents.
+- Gentle seasonal motion.
+
+Preserve Veylentra's established colors, typography, spacing, and VeylentraIcon system.
+
+Do not replace the entire design language with generic Christmas templates.
+
+Avoid excessive red, green, gradients, glowing borders, or decorative clutter.
+
+The result should remain readable, premium, and comfortable for everyday academic use.
+
+B. Snowflakes
+
+Add subtle animated snowflakes in suitable areas.
+
+Requirements:
+
+- Snowflakes should be lightweight.
+- Animation must not block interaction.
+- Snow should not reduce text readability.
+- Avoid excessive particle counts.
+- Respect reduced-motion preferences.
+- Avoid causing performance problems on low-end devices.
+- Ensure effects do not interfere with scrolling or clicking.
+
+Use CSS or an efficient existing animation approach.
+
+Do not create an expensive continuously running particle system.
+
+C. Snow accents
+
+Add subtle winter snow details around selected:
+
+- Buttons.
+- Cards.
+- Sidebar elements.
+- Section headers.
+- Seasonal widgets.
+- Important dashboard elements.
+
+Snow should appear as a visual accent, not a thick overlay.
+
+Do not add unnecessary borders or decorative outlines.
+
+D. Candy-cane decorations
+
+Add the recognizable red-and-white striped winter sticks (candy-cane style).
+
+Use them selectively:
+
+- Seasonal dashboard decorations.
+- Santa gift presentation.
+- Winter Festival banners.
+- Selected section accents.
+
+Do not place them beside every component.
+
+E. Winter cookies
+
+Introduce cute, visually polished winter cookies.
+
+They may appear as:
+
+- Small decorative illustrations.
+- Seasonal dashboard accents.
+- Santa gift visuals.
+- Winter task rewards.
+- Seasonal collectibles.
+
+Create original visuals or use the existing icon/illustration system.
+
+Do not depend on unnecessary external image downloads.
+
+F. Theme consistency
+
+Ensure the Winter Theme works across:
+
+- Student Dashboard.
+- Faculty Dashboard.
+- Study Dashboard.
+- Sidebar.
+- Relevant navigation elements.
+- Cards and widgets.
+- Buttons.
+- Dialogs.
+- Notification center.
+- Gamification areas.
+- Responsive layouts.
+
+Avoid changing unrelated module functionality.
+
+G. Theme control
+
+The Winter Theme must be controlled by the Super Admin Feature & Theme Management system.
+
+When enabled:
+
+- Eligible users receive the Winter Theme.
+- Existing user preferences should be handled consistently.
+- Theme changes should synchronize.
+- No manual refresh should be necessary where realtime updates are available.
+
+When disabled:
+
+- Normal application appearance returns.
+- No winter decorations remain visible to regular users.
+- Super Admins can still preview the disabled theme.
+
+Do not overwrite the user's existing theme preferences permanently.
+
+Implement seasonal styling as a reversible layer.
+
+---
+
+3. WINTER FESTIVAL TASKS
+
+Introduce a small set of enjoyable seasonal tasks.
+
+These should add engagement without distracting users from their academic responsibilities.
+
+Suggested tasks:
+
+1. Visit the Winter Festival section.
+2. Open the Winter Festival dashboard widget.
+3. Complete one academic task.
+4. Visit the study workspace.
+5. Check today's academic schedule.
+6. Complete a short winter-themed knowledge quiz.
+7. Maintain a study session.
+8. Collect a seasonal cookie.
+9. Explore a winter badge collection.
+10. Claim an available seasonal reward.
+
+Use a sensible subset rather than overwhelming users with too many tasks.
+
+Task behavior
+
+Each task should have:
+
+- Title.
+- Short description.
+- Task category.
+- Reward.
+- Completion status.
+- Creation or availability date.
+- Optional expiry date.
+- Progress information where relevant.
+
+Task completion must be based on actual application events.
+
+For example:
+
+- Visiting a screen should count only if that is the intended task.
+- Completing an academic task must be verified from its actual completion state.
+- Completing a quiz must be verified from its result.
+
+Do not let users repeatedly trigger the same task reward by refreshing or repeatedly clicking a button.
+
+Persist task completion and reward claims in Supabase.
+
+Add daily or seasonal task limits where appropriate.
+
+Make task rewards modest and transparent.
+
+Never penalize students for not completing optional seasonal tasks.
+
+---
+
+4. WINTER BADGES AND COLLECTION
+
+Introduce a set of new Winter Festival badges.
+
+Examples:
+
+- Snowflake Explorer.
+- Winter Scholar.
+- Cookie Collector.
+- Frosty Focus.
+- Snowfall Streak.
+- Holiday Helper.
+- Winter Champion.
+- Santa's Surprise.
+
+These are examples; create a coherent badge collection with meaningful unlock conditions.
+
+Badge requirements
+
+Each badge should have:
+
+- Unique identifier.
+- Name.
+- Description.
+- Original visual/icon.
+- Unlock condition.
+- Rarity where appropriate.
+- Unlock timestamp.
+- Associated seasonal event or feature.
+
+Badges must be persisted in Supabase.
+
+Do not award a badge simply because the frontend says a condition was completed.
+
+Validate the relevant condition on the backend.
+
+Users should be able to:
+
+- View unlocked badges.
+- View locked badges.
+- Understand unlock requirements.
+- See when a badge was earned.
+- View seasonal collections.
+
+Super Admins should be able to preview disabled seasonal badges.
+
+Do not overwrite existing permanent badges.
+
+---
+
+5. RESTORE AND REBUILD THE XP LEADERBOARD
+
+The XP Leaderboard was removed from the Student and Faculty dashboards.
+
+Bring it back and substantially improve it.
+
+This is an important requirement.
+
+A. Student XP Leaderboard
+
+Restore the leaderboard to the Student Dashboard.
+
+It should display relevant student rankings and XP information.
+
+Include:
+
+- Rank.
+- Student display name.
+- Avatar or profile image where available.
+- XP.
+- Level.
+- Relevant badges.
+- Current user's position.
+- Progress toward the next level.
+- Weekly activity where supported.
+
+Provide suitable ranking views:
+
+- Weekly.
+- Monthly.
+- All-time.
+
+Only show the views supported by reliable XP history.
+
+B. Faculty XP Leaderboard
+
+Restore a separate faculty leaderboard.
+
+Include:
+
+- Rank.
+- Faculty display name.
+- XP.
+- Level.
+- Earned badges.
+- Current user's position.
+- Progress toward the next level.
+
+Do not mix student and faculty rankings.
+
+Teachers and coordinators may be included in the appropriate faculty ranking, subject to the platform's rules.
+
+C. Improved UI/UX
+
+Make the leaderboard substantially better than its previous version.
+
+Include:
+
+- A polished podium for the leading users.
+- Clear ranking rows.
+- Current-user highlighting.
+- Level progress.
+- Badge previews.
+- Useful transitions.
+- Subtle ranking animations.
+- Responsive layout.
+- Loading skeletons.
+- Empty states.
+- Clear ranking filters.
+
+Avoid distracting animation or excessive visual decoration.
+
+D. Ranking fairness
+
+Define XP rules consistently.
+
+Examples of legitimate XP sources:
+
+- Completing supported academic tasks.
+- Completing verified study activities.
+- Completing seasonal challenges.
+- Earning verified badges.
+- Participating in supported learning activities.
+
+Prevent:
+
+- Repeated XP claims.
+- Duplicate event processing.
+- Arbitrary frontend XP modification.
+- Unauthorized XP manipulation.
+- Invalid leaderboard entries.
+
+Use backend-validated XP events.
+
+Do not reward spam, unnecessary clicks, or meaningless screen visits excessively.
+
+Make the XP system encourage learning and constructive participation.
+
+E. Privacy
+
+Do not expose unnecessary personal information.
+
+Use appropriate display names and existing privacy settings.
+
+Never expose private student information to other students through leaderboard records.
+
+---
+
+6. SPECIAL NIGHTLY SANTA GIFT EXPERIENCE
+
+Create a special Winter Festival Santa experience.
+
+Santa should appear only during the nightly time window:
+
+7:00 PM to 9:00 PM.
+
+The experience should feel like a special seasonal event.
+
+A. Santa appearance
+
+During the allowed time:
+
+- A special Santa character or illustration becomes available.
+- A seasonal dashboard widget or contextual appearance introduces Santa.
+- The user can interact with Santa.
+- Santa offers one special gift.
+- The gift is presented through a polished reveal animation.
+
+Outside the allowed time:
+
+- Santa should not be available for claiming.
+- The regular application experience should remain clean.
+- A small informational indicator may show when Santa returns, if appropriate.
+
+Use a clear timezone policy.
+
+Do not hardcode a developer's local timezone.
+
+Use the institution's configured timezone if one exists. Otherwise, establish a documented, consistent timezone policy for the event and display it clearly.
+
+The backend must validate the claim window using authoritative time. Client clocks must not determine reward eligibility.
+
+B. Santa reward rarities
+
+Santa rewards should have four rarity categories:
+
+Rarity| Visual identity
+Common| Simple festive gift
+Rare| Special winter gift
+Legendary| Premium seasonal gift
+Insane| Extremely special surprise
+
+Create appropriate rarity presentation and reveal animations.
+
+The actual probability distribution must be configured and validated on the backend.
+
+Make the odds transparent to users before claiming.
+
+Do not imply that rewards are guaranteed to be rare.
+
+C. Reward pool
+
+Possible rewards:
+
+- XP.
+- Seasonal badges.
+- Hidden badges.
+- Small additional AI quota.
+- Streak protection or a modest streak-related bonus, if compatible with the existing streak model.
+- Seasonal collectibles.
+- Special profile decorations.
+- Other non-monetary seasonal rewards.
+
+Important rules:
+
+- AI quota rewards must be small and capped.
+- Do not modify subscriptions or paid entitlements.
+- Do not change permanent account limits unexpectedly.
+- Streak rewards must not fabricate past activity.
+- Hidden badges must have real unlock conditions.
+- Do not duplicate permanent rewards.
+- Do not allow the same reward to be claimed repeatedly through frontend manipulation.
+
+D. Reward claim rules
+
+Implement:
+
+- One valid Santa gift claim per eligible user per event night.
+- Server-side time-window validation.
+- Atomic claim creation.
+- Duplicate claim prevention.
+- Persistent reward history.
+- Correct reward application.
+- Claim confirmation.
+- Recovery from failed reward delivery.
+
+If the reward is generated but the application of that reward fails, provide a safe recovery mechanism.
+
+Never generate a new random reward simply because a request is retried.
+
+The selected reward must be stored before or as part of a reliable atomic reward transaction.
+
+E. Santa presentation
+
+Create an enjoyable experience:
+
+1. Santa becomes available.
+2. The user opens the Santa interaction.
+3. Santa introduces the gift.
+4. The user reveals the gift.
+5. A reward animation plays.
+6. The rarity is displayed.
+7. The reward is applied and confirmed.
+8. The gift is recorded in reward history.
+
+Do not make this intrusive or block normal academic tasks.
+
+---
+
+7. WINTER SPIN WHEEL — TWO-HOUR COOLDOWN
+
+Introduce a separate Spin Wheel gamification system.
+
+This is a recurring, lightweight reward activity.
+
+It is not as special as the nightly Santa gift.
+
+A. Availability
+
+The Spin Wheel becomes available again every two hours after a successful claim.
+
+Requirements:
+
+- A server-authoritative cooldown.
+- Persistent last-claim timestamp.
+- A per-user cooldown record.
+- Accurate remaining-time display.
+- No bypass through refreshing.
+- No bypass through changing device time.
+- No duplicate reward claims.
+
+The next eligible time must be calculated by the backend.
+
+B. Spin Wheel interface
+
+Create a polished, visually attractive wheel.
+
+Possible segments:
+
+- Small XP reward.
+- Moderate XP reward.
+- Small streak-related bonus.
+- Small AI quota bonus.
+- Winter cookie collectible.
+- Seasonal badge progress.
+- Surprise common reward.
+- No additional reward, if clearly disclosed and appropriate.
+
+The wheel should have a balanced, transparent reward pool.
+
+Display the reward probabilities before the user spins.
+
+Do not create misleading odds or imply that a specific outcome is guaranteed.
+
+C. Wheel animations
+
+Implement:
+
+- Wheel rotation.
+- Smooth acceleration.
+- Gradual deceleration.
+- Accurate stopping on the server-selected result.
+- Reward reveal.
+- Subtle celebration effects.
+- Accessible result announcement.
+
+The wheel must stop at the actual server-selected reward.
+
+Do not let the frontend select a reward independently from the backend.
+
+D. Sound effects
+
+Add optional sound effects:
+
+- Spin start.
+- Rotation ticks where appropriate.
+- Wheel stop.
+- Reward reveal.
+
+Requirements:
+
+- Respect device and browser autoplay restrictions.
+- Do not play sound without a valid user interaction.
+- Provide a mute option.
+- Respect existing sound preferences if available.
+- Avoid excessive or repetitive sounds.
+- Provide a silent experience by default if the application has no established sound preference.
+
+E. Floating wheel icon and toast
+
+When the wheel becomes available:
+
+- Display a small, attractive toast informing the user.
+- Show a floating wheel icon.
+- Make the icon clickable.
+- Open the wheel interface when clicked.
+
+After a user successfully spins:
+
+- Keep the wheel icon visible.
+- Reduce its visual prominence and opacity.
+- Do not keep showing availability notifications.
+- When the user clicks it, show the remaining cooldown time.
+- Display the next eligible time clearly.
+
+When the cooldown expires:
+
+- Restore its available appearance.
+- Show an appropriate toast.
+- Make the wheel available again.
+
+Avoid repeatedly showing toasts on every render or page navigation.
+
+Use a persistent notification state or appropriate event tracking so the same availability notification is not spammed.
+
+F. Wheel reward history
+
+Store:
+
+- User ID.
+- Spin timestamp.
+- Selected reward.
+- Reward amount or identifier.
+- Reward application status.
+- Associated event ID.
+
+Allow users to view a small reward history.
+
+---
+
+8. REWARD ENGINE — CENTRALIZED AND SECURE
+
+Do not implement independent random reward logic in multiple components.
+
+Build a centralized reward engine.
+
+It should support:
+
+- Santa gifts.
+- Spin Wheel rewards.
+- Winter task rewards.
+- Badge rewards.
+- XP rewards.
+- AI quota rewards.
+- Seasonal collectibles.
+- Future gamification rewards.
+
+Backend requirements
+
+All random reward selection and reward application must be server-side.
+
+Use secure random selection appropriate to the reward mechanism.
+
+Implement:
+
+- Reward definitions.
+- Rarity configuration.
+- Reward probabilities.
+- Eligibility checks.
+- Claim cooldowns.
+- Duplicate prevention.
+- Atomic reward claims.
+- Reward transaction history.
+- Idempotency.
+- Reward application status.
+- Administrative auditability.
+
+Do not trust client-provided reward names, amounts, rarity, XP, or cooldown timestamps.
+
+A user must not be able to modify a frontend request to grant themselves more XP or AI quota.
+
+Use database constraints and transactions or equivalent reliable server-side atomic operations.
+
+If an existing XP or reward service exists, extend it instead of creating a duplicate.
+
+Responsible gamification
+
+This is a student platform.
+
+Keep the reward systems fun, optional, and age-appropriate.
+
+- No purchases or paid spins.
+- No premium currency gambling.
+- No cash-equivalent rewards.
+- No pressure to claim rewards.
+- No punishment for missing a reward.
+- No manipulative scarcity messages.
+- No misleading odds.
+- No unnecessary interruptions.
+- No reward mechanics that interfere with studying.
+
+Make the experience celebratory, not addictive.
+
+---
+
+9. SUPABASE DATABASE AND SYNCHRONIZATION
+
+All important state must persist in Supabase.
+
+Inspect the current schema before adding tables.
+
+Possible conceptual structures include:
+
+- Feature registry/configuration.
+- Feature configuration audit log.
+- Seasonal event configuration.
+- User XP ledger.
+- User XP balances or derived totals.
+- Badge definitions.
+- User badge ownership.
+- Task definitions.
+- User task progress.
+- Reward definitions.
+- User reward claims.
+- Reward transaction ledger.
+- Santa claim history.
+- Spin Wheel claim history.
+- User cooldown state.
+- User seasonal collectible inventory.
+
+These are conceptual structures, not mandatory table names.
+
+Reuse existing tables and services when appropriate.
+
+Supabase requirements
+
+- Secure migrations.
+- Foreign keys and constraints.
+- Proper indexes.
+- RLS policies.
+- Server-side validation.
+- Secure reward transactions.
+- Appropriate realtime synchronization.
+- Auditability.
+- Data consistency.
+
+Feature configuration should synchronize across connected sessions.
+
+XP changes should be reflected in the relevant leaderboard views.
+
+Badge unlocks should appear in user collections.
+
+Santa and Spin Wheel claims should persist across devices and sessions.
+
+Never rely on localStorage as the source of truth for rewards, cooldowns, XP, or feature access.
+
+Local caching may be used for presentation, but Supabase/backend state remains authoritative.
+
+---
+
+10. SUPER ADMIN CONTROLS FOR THE WINTER RELEASE
+
+Register the following items in the Feature & Theme Management system:
+
+- Winter Theme.
+- Winter Snow Effects.
+- Winter Festival Tasks.
+- Winter Badges.
+- Santa Gift.
+- Spin Wheel.
+- Student XP Leaderboard.
+- Faculty XP Leaderboard.
+
+Provide independent controls where appropriate.
+
+Examples:
+
+- Disabling Santa must not disable the Winter Theme.
+- Disabling the Spin Wheel must not affect XP.
+- Disabling Winter Badges must not remove already earned permanent badges.
+- Disabling the Winter Theme must not erase seasonal rewards.
+- Disabling the leaderboard must not delete XP history.
+
+When a feature is disabled:
+
+- Regular users must lose access to that feature.
+- Super Admins retain preview access.
+- Existing user data must remain safe.
+- Re-enabling must restore the feature without destroying previous records.
+
+The Admin Panel should show the current feature state and whether the change has synchronized successfully.
+
+---
+
+11. PERFORMANCE, ACCESSIBILITY, AND RESPONSIVENESS
+
+The winter experience must not slow down the application.
+
+Requirements:
+
+- Lightweight snow animations.
+- Efficient rendering.
+- No unnecessary repeated Supabase queries.
+- No continuous polling when realtime or a more efficient method is available.
+- Clean subscription lifecycle.
+- Responsive layouts.
+- Keyboard accessibility.
+- Clear focus states.
+- Reduced-motion support.
+- Mute controls.
+- No interaction-blocking overlays.
+- Good performance on lower-end mobile devices.
+
+Seasonal effects should be easy to disable independently.
+
+The Winter Theme should not interfere with existing charts, forms, dialogs, editors, calendars, or navigation.
+
+---
+
+12. IMPLEMENTATION ORDER
+
+Complete this in logical stages.
+
+Stage 1 — Repository and architecture audit
+
+Inspect existing admin authorization, Supabase schema, theme handling, XP system, leaderboard, badge system, notifications, and existing gamification functionality.
+
+Stage 2 — Feature & Theme Management
+
+Build the centralized registry, Super Admin controls, secure persistence, realtime synchronization, and feature access service.
+
+Test ON/OFF behavior before using it for the other features.
+
+Stage 3 — Winter Theme
+
+Implement the theme, snow effects, candy-cane decorations, cookies, and reversible styling.
+
+Register all relevant parts in the feature management system.
+
+Stage 4 — Winter tasks and badges
+
+Implement real task completion, badge definitions, verified unlock conditions, and persistence.
+
+Stage 5 — XP Leaderboard restoration
+
+Restore separate Student and Faculty leaderboards. Improve ranking, XP, badge display, filters, animations, and fairness.
+
+Stage 6 — Santa Gift
+
+Implement nightly availability, rarity configuration, transparent odds, reward selection, reward application, and claim history.
+
+Stage 7 — Spin Wheel
+
+Implement two-hour cooldowns, server-selected outcomes, wheel animations, sounds, floating icon, toast, and reward history.
+
+Stage 8 — Integration and QA
+
+Verify feature toggles, synchronization, permissions, rewards, cooldowns, and regression behavior.
+
+Do not deliver only a design mockup or frontend prototype.
+
+---
+
+13. REQUIRED TESTS
+
+Feature management
+
+- Super Admin can enable a feature.
+- Regular users receive access after it is enabled.
+- Super Admin can disable a feature.
+- Regular users lose access after it is disabled.
+- Super Admin retains preview access.
+- Unauthorized users cannot change feature configuration.
+- Changes synchronize across sessions.
+- Failed updates do not falsely report success.
+
+Winter Theme
+
+- Theme appears when enabled.
+- Theme disappears for regular users when disabled.
+- Existing user theme preferences are preserved.
+- Snow effects respect reduced-motion preferences.
+- Winter decorations do not block interaction.
+- Theme works across supported screen sizes.
+
+XP Leaderboard
+
+- Student and Faculty leaderboards are separate.
+- XP values are correct.
+- Rankings are calculated correctly.
+- Weekly, monthly, and all-time views work where supported.
+- Duplicate XP events are rejected.
+- Unauthorized XP changes are rejected.
+- Existing XP history is preserved.
+
+Santa
+
+- Santa appears only during the configured 7 PM–9 PM window.
+- Backend validates eligibility.
+- One claim per eligible user per event night.
+- Duplicate requests do not generate extra rewards.
+- Rarity selection matches configured probabilities.
+- Reward application is reliable.
+- AI quota rewards remain within their configured limits.
+
+Spin Wheel
+
+- Initial eligibility is correct.
+- Successful spin starts a two-hour cooldown.
+- Refreshing does not reset cooldown.
+- Changing device time does not bypass cooldown.
+- Wheel stops on the actual server-selected reward.
+- Duplicate spins are rejected.
+- Floating icon state is correct.
+- Availability toast does not repeat unnecessarily.
+- Clicking the unavailable wheel displays remaining time.
+- Sound can be muted.
+- Reduced-motion behavior works.
+
+Regression
+
+Verify that existing Student and Faculty dashboards, authentication, notifications, AI features, Lecture Notes, OCR, Brain Battle, Edge TTS, and other existing functionality remain operational.
+
+Run the relevant tests, type checks, and production build.
+
+Report only tests that were actually executed.
+
+---
+
+14. FINAL DELIVERY REPORT
+
+Provide:
+
+1. Feature & Theme Management architecture.
+2. Super Admin panel changes.
+3. Supabase schema and migration changes.
+4. Winter Theme implementation.
+5. Seasonal tasks.
+6. Winter badges.
+7. Student leaderboard changes.
+8. Faculty leaderboard changes.
+9. Santa Gift system.
+10. Spin Wheel system.
+11. Reward engine implementation.
+12. Security and authorization.
+13. Realtime synchronization.
+14. Performance and accessibility improvements.
+15. Tests executed and results.
+16. Incomplete functionality and limitations.
+
+Clearly distinguish fully implemented, partially implemented, and unimplemented items.
+
+FINAL DIRECTION
+
+Build this as a real, persistent, secure Winter Festival release.
+
+The Super Admin Feature & Theme Management system is the foundation. It must be reusable for future releases, not just the Winter Festival.
+
+The Winter Theme should feel festive and polished without compromising Veylentra's established design.
+
+Santa should feel like a special nightly surprise. The Spin Wheel should be a smaller recurring activity. The XP Leaderboard should once again be a meaningful part of Student and Faculty dashboards.
+
+Most importantly: Supabase/backend state is authoritative. No fake toggles, fake rewards, fake XP, frontend-only cooldowns, or simulated synchronization.

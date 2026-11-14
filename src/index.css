@@ -700,12 +700,85 @@ button, a, [role="button"], input, select, textarea {
     margin: 12mm 15mm 12mm 15mm;
   }
 }
+/* ==========================================
+   WINTER FESTIVAL THEME OVERLAY (REVERSIBLE)
+   Isolated class toggled on <html> only when winter_theme is ON.
+   Never overrides user's saved studentos_theme preference.
+   ========================================== */
+.winter-theme-active {
+  --winter-frost-border: rgba(125, 211, 252, 0.28);
+  --winter-frost-glow: rgba(56, 189, 248, 0.14);
+  --winter-candy-red: rgba(220, 38, 38, 0.72);
+  --winter-candy-white: rgba(248, 250, 252, 0.9);
+}
 
+.winter-theme-active .smart-glass,
+.winter-theme-active .bento-card {
+  border-color: var(--winter-frost-border);
+  box-shadow: 0 10px 30px -12px rgba(14, 165, 233, 0.18), inset 0 1px 0 rgba(224, 242, 254, 0.18);
+}
 
+.winter-theme-active aside,
+.winter-theme-active header {
+  border-color: rgba(125, 211, 252, 0.2);
+}
 
+.winter-candy-divider {
+  height: 3px;
+  border-radius: 9999px;
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--winter-candy-red, #dc2626) 0px,
+    var(--winter-candy-red, #dc2626) 8px,
+    var(--winter-candy-white, #f8fafc) 8px,
+    var(--winter-candy-white, #f8fafc) 16px
+  );
+  opacity: 0.78;
+}
 
+.winter-snow-rim {
+  position: relative;
+}
+.winter-snow-rim::before {
+  content: '';
+  position: absolute;
+  inset: 0 12px auto 12px;
+  height: 2px;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, transparent, rgba(224, 242, 254, 0.75), rgba(186, 230, 253, 0.9), rgba(224, 242, 254, 0.75), transparent);
+  pointer-events: none;
+}
 
+@keyframes veylentra-snowfall {
+  0% {
+    transform: translate3d(0, -10vh, 0) rotate(0deg);
+    opacity: 0;
+  }
+  10% {
+    opacity: var(--flake-opacity, 0.55);
+  }
+  90% {
+    opacity: var(--flake-opacity, 0.55);
+  }
+  100% {
+    transform: translate3d(var(--flake-drift, 24px), 108vh, 0) rotate(180deg);
+    opacity: 0;
+  }
+}
 
+.veylentra-snowflake {
+  position: fixed;
+  top: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+  animation: veylentra-snowfall var(--flake-duration, 14s) linear var(--flake-delay, 0s) infinite;
+}
 
-
+@media (prefers-reduced-motion: reduce) {
+  .veylentra-snowflake {
+    animation: none !important;
+    opacity: 0.2 !important;
+    transform: none !important;
+  }
+}
 

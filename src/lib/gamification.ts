@@ -7,8 +7,11 @@
  * Anti-Spam Action Deduplication, and Class/School Leaderboards.
  */
 
+import { HouseType, SectionType, UserRole } from '../types';
 import { supabase } from './supabase';
 import { soundService } from './soundService';
+import { buildAuthHeadersForUser } from './featureAccessService';
+import { awardServerActionXp, fetchSeparatedLeaderboard } from './winterFestivalService';
 
 export type GamificationActionType =
   | 'daily_login'
@@ -553,9 +556,16 @@ export async function saveGamificationProfile(profile: StudentGamificationStats)
   } catch (_) {}
 
   try {
+    const headers = await buildAuthHeadersForUser({
+      uid: profile.userId,
+      name: profile.name,
+      role: (profile.role || 'student') as UserRole,
+      grade: profile.grade,
+      section: profile.section as SectionType,
+    });
     await fetch('/api/gamification/award', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         userId: profile.userId,
         schoolId: profile.schoolId || 'default_school',
@@ -790,8 +800,18 @@ export async function awardStudentXP(
   const newBadges = evaluateBadges(profile, true);
   profile.updatedAt = new Date().toISOString();
 
-  // 6. Save & dispatch UI reward toast event
+  // 6. Save & sync authoritative XP ledger + dispatch UI reward toast event
   await saveGamificationProfile(profile);
+  awardServerActionXp(
+    {
+      ...user,
+      role: user.role as UserRole | undefined,
+      section: user.section as SectionType | undefined,
+      house: user.house as HouseType | undefined,
+    },
+    action,
+    options?.uniqueItemId
+  ).catch(() => {});
 
   if (typeof window !== 'undefined' && !options?.silent) {
     if (leveledUp) {
@@ -823,7 +843,7 @@ export async function awardStudentXP(
 }
 
 /**
- * Fetch combined Class & School Leaderboard (merges real Supabase/server student profiles + realistic classmates for demo richness)
+ * Fetch real separated Student Leaderboard from the authoritative server endpoint
  */
 export async function fetchGamificationLeaderboard(
   currentUser: {
@@ -834,6 +854,7 @@ export async function fetchGamificationLeaderboard(
     grade?: string;
     section?: string;
     house?: string;
+    role?: string;
     schoolId?: string;
   }
 ): Promise<StudentGamificationStats[]> {
@@ -841,100 +862,46 @@ export async function fetchGamificationLeaderboard(
   const schoolId = myProfile.schoolId || 'default_school';
   const entriesMap = new Map<string, StudentGamificationStats>();
 
-  // Always include current student
-  entriesMap.set(myProfile.userId, myProfile);
-
-  // 1. Fetch live leaderboard from backend / Supabase
+  // 1. Primary authoritative separated Student leaderboard endpoint
   try {
-    const res = await fetch(
-      `/api/gamification/profile?userId=${encodeURIComponent(myProfile.userId)}&schoolId=${encodeURIComponent(schoolId)}`
-    );
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data.leaderboard)) {
-        data.leaderboard.forEach((item: StudentGamificationStats) => {
-          if (item && item.userId) {
-            if (item.userId === myProfile.userId) {
-              // Keep whichever has higher XP
-              if ((item.xp || 0) > myProfile.xp) {
-                entriesMap.set(myProfile.userId, item);
-              }
-            } else {
-              entriesMap.set(item.userId, item);
-            }
-          }
+    const res = await fetchSeparatedLeaderboard({
+      type: 'student',
+      period: 'all_time',
+      user: {
+        uid: currentUser.uid || currentUser.id,
+        name: currentUser.name,
+        role: (currentUser.role || 'student') as UserRole,
+        grade: currentUser.grade,
+        section: currentUser.section as SectionType | undefined,
+      },
+    });
+    if (res.ok && Array.isArray(res.data?.rankings)) {
+      res.data.rankings.forEach((row) => {
+        const mapped = createDefaultGamificationProfile({
+          uid: row.userId,
+          name: row.name,
+          avatar: row.avatar || '',
+          grade: row.grade || 'Student',
+          section: row.section || '',
+          house: row.house || '',
+          schoolId,
         });
-      }
-    }
-  } catch (_) {}
-
-  // 2. Also query real student profiles from Supabase user_profiles if available
-  try {
-    const { data: realUsers } = await supabase
-      .from('user_profiles')
-      .select('*')
-      .eq('role', 'student')
-      .limit(30);
-
-    if (Array.isArray(realUsers)) {
-      realUsers.forEach((u: any) => {
-        const uid = u.uid || u.id;
-        if (uid && !entriesMap.has(uid)) {
-          const rawGam = u.raw_data?.gamification;
-          const xpVal = rawGam?.xp ?? (typeof u.points === 'number' ? u.points : 180);
-          const lvl = calculateLevelInfo(xpVal).current;
-          const p = createDefaultGamificationProfile({
-            uid,
-            name: u.name || 'Student Scholar',
-            avatar: u.avatar || '',
-            grade: u.grade || myProfile.grade || 'Grade 10',
-            section: u.section || myProfile.section || 'Solara',
-            house: u.house || 'Ignis',
-            schoolId
-          });
-          p.xp = xpVal;
-          p.level = lvl.level;
-          p.levelTitle = lvl.title;
-          p.currentStreak = rawGam?.currentStreak || 3;
-          p.longestStreak = rawGam?.longestStreak || 5;
-          entriesMap.set(uid, p);
-        }
+        mapped.role = row.role || 'student';
+        mapped.xp = row.xp;
+        mapped.level = row.level;
+        mapped.levelTitle = row.levelTitle;
+        mapped.currentStreak = row.currentStreak || 0;
+        mapped.longestStreak = Math.max(row.currentStreak || 0, myProfile.longestStreak);
+        entriesMap.set(row.userId, mapped);
       });
     }
   } catch (_) {}
 
-  // 3. Ensure at least 10 campus scholars exist so Top 3 Podium & Top 10 Leaderboard are rich for Principal Demo
-  const seedScholars = [
-    { id: 'scholar_1', name: 'Aarav Sharma', grade: myProfile.grade || 'Grade 10', section: myProfile.section || 'Solara', house: 'Astra', xp: 1480, streak: 12 },
-    { id: 'scholar_2', name: 'Diya Patel', grade: myProfile.grade || 'Grade 10', section: myProfile.section || 'Solara', house: 'Elara', xp: 1240, streak: 9 },
-    { id: 'scholar_3', name: 'Rohan Verma', grade: myProfile.grade || 'Grade 10', section: 'Astra', house: 'Solara', xp: 980, streak: 7 },
-    { id: 'scholar_4', name: 'Ananya Nair', grade: myProfile.grade || 'Grade 10', section: myProfile.section || 'Solara', house: 'Vega', xp: 810, streak: 6 },
-    { id: 'scholar_5', name: 'Kabir Mehta', grade: 'Grade 11', section: 'Elara', house: 'Astra', xp: 690, streak: 5 },
-    { id: 'scholar_6', name: 'Meera Krishnan', grade: myProfile.grade || 'Grade 10', section: myProfile.section || 'Solara', house: 'Solara', xp: 540, streak: 4 },
-    { id: 'scholar_7', name: 'Vivaan Gupta', grade: 'Grade 9', section: 'Vega', house: 'Elara', xp: 420, streak: 4 },
-    { id: 'scholar_8', name: 'Ishaan Joshi', grade: myProfile.grade || 'Grade 10', section: 'Astra', house: 'Vega', xp: 310, streak: 3 },
-    { id: 'scholar_9', name: 'Sanya Malhotra', grade: 'Grade 12', section: 'Solara', house: 'Astra', xp: 230, streak: 2 },
-  ];
-
-  seedScholars.forEach(s => {
-    if (!entriesMap.has(s.id)) {
-      const lvl = calculateLevelInfo(s.xp).current;
-      const p = createDefaultGamificationProfile({
-        uid: s.id,
-        name: s.name,
-        grade: s.grade,
-        section: s.section,
-        house: s.house,
-        schoolId
-      });
-      p.xp = s.xp;
-      p.level = lvl.level;
-      p.levelTitle = lvl.title;
-      p.currentStreak = s.streak;
-      p.longestStreak = s.streak + 2;
-      entriesMap.set(s.id, p);
-    }
-  });
+  // 2. Include current student profile if student role
+  const normalizedRole = String(currentUser.role || 'student').toLowerCase();
+  if (normalizedRole === 'student' && !entriesMap.has(myProfile.userId)) {
+    entriesMap.set(myProfile.userId, myProfile);
+  }
 
   return Array.from(entriesMap.values()).sort((a, b) => {
     if (b.xp !== a.xp) return b.xp - a.xp;

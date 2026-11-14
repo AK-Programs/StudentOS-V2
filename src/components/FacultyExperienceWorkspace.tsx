@@ -83,6 +83,9 @@ import AttendanceManager from './AttendanceManager';
 import CoordinatorModule from './CoordinatorModule';
 import { OfficialTimetableViewer } from './OfficialTimetableViewer';
 import { getSectionsForGrade } from '../config/academicHierarchy';
+import { WinterDashboardBanner } from './winter/WinterFestivalHub';
+import { XpLeaderboardPanel } from './gamification/XpLeaderboardPanel';
+import { awardServerActionXp } from '../lib/winterFestivalService';
 
 interface FacultyExperienceWorkspaceProps {
   currentUser: UserProfile;
@@ -580,6 +583,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
     }));
     const refreshHw = await fetchAssignments(currentUser);
     if (refreshHw.ok && refreshHw.data) setBackendAssignments(refreshHw.data);
+    void awardServerActionXp(currentUser, 'faculty_grade_submission', `${hw.id}_${sub.studentId}`);
     showNotification(
       action === 'return_for_revision'
         ? `Returned ${sub.studentName}'s work for revision.`
@@ -656,6 +660,9 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
       setAnnTitle('');
       setAnnContent('');
       setAnnAttachUrl('');
+      if (annStatus === 'published') {
+        void awardServerActionXp(currentUser, 'faculty_publish_announcement', res.data.id);
+      }
       showNotification(
         annStatus === 'draft'
           ? `Saved circular draft "${res.data.title}".`
@@ -778,6 +785,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
         const apiRes = await saveAssignment(currentUser, hwPayload, true);
         if (!apiRes.ok) throw new Error(apiRes.error || 'Failed to publish assignment.');
         await saveSupabaseHomework(apiRes.data || hwPayload).catch(() => {});
+        void awardServerActionXp(currentUser, 'faculty_publish_assignment', (apiRes.data || hwPayload).id);
         showNotification(`✓ Confirmed & published assignment "${pendingDraft.title}" to ${pendingDraft.grade}.`);
       } else if (pendingDraft.intent === 'draft_announcement') {
         const annRes = await createTargetedAnnouncement(currentUser, {
@@ -1619,6 +1627,20 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
               </div>
             )}
           </div>
+
+          <WinterDashboardBanner
+            currentUser={currentUser}
+            showNotification={(msg) => showNotification(msg)}
+            onNavigateTab={(t) => onNavigateTab(t)}
+          />
+
+          <XpLeaderboardPanel
+            type="faculty"
+            compact
+            maxRows={5}
+            currentUser={currentUser}
+            onViewFull={() => onNavigateTab('leaderboard')}
+          />
         </div>
       )}
 

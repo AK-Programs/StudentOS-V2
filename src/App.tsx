@@ -163,6 +163,12 @@ import { GuidedProductTour } from './components/onboarding/GuidedProductTour';
 import { shouldShowOnboarding } from './lib/onboardingService';
 import { BottomSheet } from './components/ui/BottomSheet';
 import { VeylentraIcon } from './components/ui/VeylentraIcon';
+import { useFeatureAccess, isSuperAdminRole } from './lib/featureAccessService';
+import { WinterThemeLayer } from './components/winter/WinterThemeLayer';
+import { WinterFestivalHub } from './components/winter/WinterFestivalHub';
+import { FloatingSpinWheelButton } from './components/winter/FloatingSpinWheelButton';
+import { XpLeaderboardPanel } from './components/gamification/XpLeaderboardPanel';
+import { SnowflakeVector } from './components/winter/WinterArtwork';
 
 // Stub Integrations
 import {
@@ -539,6 +545,26 @@ export default function App() {
 
 
   const [isSoundSettingsModalOpen, setIsSoundSettingsModalOpen] = useState<boolean>(false);
+  const [leaderboardTabView, setLeaderboardTabView] = useState<'student' | 'faculty'>('student');
+  const studentLbAccess = useFeatureAccess('student_xp_leaderboard', currentUser);
+  const facultyLbAccess = useFeatureAccess('faculty_xp_leaderboard', currentUser);
+  const winterThemeAccess = useFeatureAccess('winter_theme', currentUser);
+  const winterTasksAccess = useFeatureAccess('winter_festival_tasks', currentUser);
+  const winterBadgesAccess = useFeatureAccess('winter_badges', currentUser);
+  const winterSantaAccess = useFeatureAccess('winter_santa_gifts', currentUser);
+  const winterSpinAccess = useFeatureAccess('winter_spin_wheel', currentUser);
+
+  const isFacultyRoleForLb = ['teacher', 'coordinator', 'hod'].includes((effectiveRole || '').toLowerCase());
+  const canViewLeaderboardTab =
+    isSuperAdminRole(currentUser?.role) || isSuperAdminRole(effectiveRole)
+      ? (studentLbAccess.accessible || facultyLbAccess.accessible)
+      : (isFacultyRoleForLb ? facultyLbAccess.accessible : studentLbAccess.accessible);
+  const canViewWinterHub =
+    winterThemeAccess.accessible ||
+    winterTasksAccess.accessible ||
+    winterBadgesAccess.accessible ||
+    winterSantaAccess.accessible ||
+    winterSpinAccess.accessible;
   const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState<boolean>(false);
   const [isProductTourOpen, setIsProductTourOpen] = useState<boolean>(false);
 
@@ -8099,6 +8125,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
 
       {currentUser && !isLocked && (
         <div className="flex min-h-screen relative">
+          <WinterThemeLayer currentUser={currentUser} />
           
           {/* Sidebar Overlay (Closes sidebar on outside click for Mobile/Tablet) */}
           {sidebarOpen && (
@@ -8627,6 +8654,30 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                               </button>
                             )}
 
+                            {canViewLeaderboardTab && matchesFilter('XP Leaderboard', 'xp rank student faculty leaderboard weekly monthly') && (
+                              <button
+                                type="button"
+                                onClick={() => handleTabSelect('leaderboard')}
+                                className={getSidebarBtnClass('leaderboard')}
+                                title="XP Leaderboard"
+                              >
+                                <Trophy className={`w-4 h-4 shrink-0 ${activeTab === 'leaderboard' ? 'text-white' : 'text-amber-400'}`} />
+                                {sidebarOpen && <span className="truncate">XP Leaderboard</span>}
+                              </button>
+                            )}
+
+                            {canViewWinterHub && matchesFilter('Winter Festival', 'winter santa gift wheel cookies badges snow') && (
+                              <button
+                                type="button"
+                                onClick={() => handleTabSelect('winter_festival')}
+                                className={getSidebarBtnClass('winter_festival')}
+                                title="Winter Festival"
+                              >
+                                <SnowflakeVector size={16} className={`shrink-0 ${activeTab === 'winter_festival' ? 'text-white' : 'text-sky-300'}`} />
+                                {sidebarOpen && <span className="truncate">Winter Festival</span>}
+                              </button>
+                            )}
+
                             {matchesFilter('Veylentra Life', 'competitions clubs events polls badges') && (
                               <button
                                 type="button"
@@ -9083,6 +9134,8 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                     )}
                     {activeTab === 'whiteboard' && 'Drawing Board'}
                     {activeTab === 'houses' && 'House Standings'}
+                    {activeTab === 'leaderboard' && 'XP Leaderboard'}
+                    {activeTab === 'winter_festival' && 'Winter Festival'}
                     {activeTab === 'materials' && 'Class Files & Materials'}
                     {activeTab === 'assignments' && 'Assignment Center'}
                     {activeTab === 'homework' && 'My Homework'}
@@ -14727,6 +14780,81 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                 <AboutVeylentraPage onNavigateTab={handleTabSelect} />
               )}
 
+              {/* Tab: Role-Separated XP Leaderboard */}
+              {activeTab === 'leaderboard' && currentUser && (
+                canViewLeaderboardTab ? (
+                  <div className="space-y-4">
+                    {(isSuperAdminRole(currentUser?.role) || isSuperAdminRole(effectiveRole)) && (
+                      <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-xl bg-slate-900/80 border border-slate-800 w-fit">
+                        {studentLbAccess.accessible && (
+                          <button
+                            type="button"
+                            onClick={() => setLeaderboardTabView('student')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                              leaderboardTabView === 'student'
+                                ? 'bg-sky-600 text-white'
+                                : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                            }`}
+                          >
+                            Student Leaderboard
+                          </button>
+                        )}
+                        {facultyLbAccess.accessible && (
+                          <button
+                            type="button"
+                            onClick={() => setLeaderboardTabView('faculty')}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                              leaderboardTabView === 'faculty'
+                                ? 'bg-sky-600 text-white'
+                                : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                            }`}
+                          >
+                            Faculty Leaderboard
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    <XpLeaderboardPanel
+                      type={
+                        isSuperAdminRole(currentUser?.role) || isSuperAdminRole(effectiveRole)
+                          ? leaderboardTabView
+                          : isFacultyRoleForLb
+                            ? 'faculty'
+                            : 'student'
+                      }
+                      currentUser={currentUser}
+                    />
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-8 text-center space-y-2">
+                    <Shield className="w-8 h-8 text-slate-400 mx-auto" />
+                    <h3 className="text-base font-bold text-white">XP Leaderboard Unavailable</h3>
+                    <p className="text-xs text-slate-400 max-w-md mx-auto">
+                      This leaderboard is currently disabled by your Super Admin in Feature & Theme Management.
+                    </p>
+                  </div>
+                )
+              )}
+
+              {/* Tab: Winter Festival Hub */}
+              {activeTab === 'winter_festival' && currentUser && (
+                canViewWinterHub ? (
+                  <WinterFestivalHub
+                    currentUser={currentUser}
+                    showNotification={showNotification}
+                    onNavigateTab={handleTabSelect}
+                  />
+                ) : (
+                  <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-8 text-center space-y-2">
+                    <Shield className="w-8 h-8 text-slate-400 mx-auto" />
+                    <h3 className="text-base font-bold text-white">Winter Festival Unavailable</h3>
+                    <p className="text-xs text-slate-400 max-w-md mx-auto">
+                      Winter Festival features are currently disabled by your Super Admin.
+                    </p>
+                  </div>
+                )
+              )}
+
                 </motion.div>
               </AnimatePresence>
             </main>
@@ -15253,6 +15381,14 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
           />
         )}
       </AnimatePresence>
+
+      {/* Persistent Floating Spin Wheel Launcher positioned cleanly above Byte */}
+      {currentUser && !isOnboardingModalOpen && (
+        <FloatingSpinWheelButton
+          currentUser={currentUser}
+          showNotification={showNotification}
+        />
+      )}
 
       {/* Floating Byte Companion — hidden on auth / sign up page */}
       {currentUser && !isOnboardingModalOpen && (

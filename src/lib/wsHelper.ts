@@ -78,6 +78,11 @@ function getDevWebSocket(): WebSocket | null {
         const msg = JSON.parse(evt.data);
         if (msg && msg.type === 'realtime:relay' && msg.channel && msg.event) {
           dispatchIncomingEvent(msg.channel, msg.event, msg.data, msg.envelopeId);
+        } else if (msg && msg.type === 'feature_flags:updated') {
+          window.dispatchEvent(new CustomEvent('veylentra-feature-flags-updated', { detail: msg }));
+        } else if (msg && msg.type === 'leaderboard:updated') {
+          window.dispatchEvent(new CustomEvent('veylentra-winter-updated', { detail: msg }));
+          window.dispatchEvent(new CustomEvent('studentos-gamification-updated', { detail: msg }));
         }
       } catch (_) {}
     };
