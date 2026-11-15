@@ -63,21 +63,26 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
     }
     setLoading(true);
     setError(null);
-    const res = await fetchSeparatedLeaderboard({
-      type,
-      period,
-      user: currentUser,
-    });
-    if (!res.ok || !res.data) {
-      setError(res.error || 'Unable to load leaderboard.');
-      setRankings([]);
-      setCurrentUserEntry(null);
-    } else {
-      setRankings(res.data.rankings || []);
-      setCurrentUserEntry(res.data.currentUserEntry || null);
+    try {
+      const res = await fetchSeparatedLeaderboard({
+        type,
+        period,
+        user: currentUser,
+      });
+      if (!res.ok || !res.data) {
+        setError(res.error || 'Unable to load leaderboard.');
+        setRankings([]);
+        setCurrentUserEntry(null);
+      } else {
+        setRankings(res.data.rankings || []);
+        setCurrentUserEntry(res.data.currentUserEntry || null);
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Unable to load leaderboard.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  }, [access.accessible, type, period, currentUser]);
+  }, [access.accessible, type, period, currentUser?.uid, currentUser?.email, currentUser?.role]);
 
   useEffect(() => {
     loadLeaderboard();

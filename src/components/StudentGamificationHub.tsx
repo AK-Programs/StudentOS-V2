@@ -25,7 +25,11 @@ import {
   Star,
   Users,
   School,
-  X
+  X,
+  History,
+  ShieldCheck,
+  Snowflake,
+  Swords
 } from 'lucide-react';
 import {
   SCHOLAR_LEVELS,
@@ -43,6 +47,7 @@ import {
 import { UserProfile } from '../types';
 import { soundService } from '../lib/soundService';
 import { XpLeaderboardPanel } from './gamification/XpLeaderboardPanel';
+import { fetchWinterStatus, WinterBadgeItem } from '../lib/winterFestivalService';
 
 interface ToastEventDetail {
   xpAdded: number;
@@ -366,26 +371,50 @@ export const DashboardGamificationCard: React.FC<{
  */
 export const StudentGamificationHub: React.FC<{
   currentUser: UserProfile;
-}> = ({ currentUser }) => {
+  leaderboardType?: 'student' | 'faculty';
+  initialSection?: 'overview' | 'leaderboard' | 'badges' | 'levels' | 'history';
+}> = ({ currentUser, leaderboardType, initialSection = 'overview' }) => {
   const [profile, setProfile] = useState<StudentGamificationStats>(() =>
     getLocalGamificationProfile(currentUser)
   );
   const [leaderboard, setLeaderboard] = useState<StudentGamificationStats[]>([]);
+  const [winterBadges, setWinterBadges] = useState<WinterBadgeItem[]>([]);
+  const [winterCookies, setWinterCookies] = useState<number>(0);
   const [scope, setScope] = useState<'class' | 'school'>('class');
-  const [activeSection, setActiveSection] = useState<'overview' | 'leaderboard' | 'badges' | 'levels'>('overview');
+  const [activeSection, setActiveSection] = useState<'overview' | 'leaderboard' | 'badges' | 'levels' | 'history'>(initialSection);
+  const [badgeCategory, setBadgeCategory] = useState<'all' | 'academic' | 'streak' | 'battle' | 'winter'>('all');
+
+  const resolvedLbType: 'student' | 'faculty' =
+    leaderboardType ||
+    (['teacher', 'coordinator', 'hod'].includes(String(currentUser?.role || '').toLowerCase())
+      ? 'faculty'
+      : 'student');
 
   const loadData = async () => {
     const localProf = getLocalGamificationProfile(currentUser);
     setProfile(localProf);
-    const lb = await fetchGamificationLeaderboard(currentUser);
-    setLeaderboard(lb);
+    const [authProf, lb, wStatus] = await Promise.all([
+      loadAuthoritativeGamificationProfile(currentUser).catch(() => localProf),
+      fetchGamificationLeaderboard(currentUser).catch(() => []),
+      fetchWinterStatus(currentUser).catch(() => null),
+    ]);
+    if (authProf) setProfile(authProf);
+    if (Array.isArray(lb)) setLeaderboard(lb);
+    if (wStatus?.badges) setWinterBadges(wStatus.badges);
+    if (typeof wStatus?.winterState?.cookiesCount === 'number') {
+      setWinterCookies(wStatus.winterState.cookiesCount);
+    }
   };
 
   useEffect(() => {
     loadData();
     const handleUpdate = () => loadData();
     window.addEventListener('studentos-gamification-updated', handleUpdate);
-    return () => window.removeEventListener('studentos-gamification-updated', handleUpdate);
+    window.addEventListener('veylentra-winter-updated', handleUpdate);
+    return () => {
+      window.removeEventListener('studentos-gamification-updated', handleUpdate);
+      window.removeEventListener('veylentra-winter-updated', handleUpdate);
+    };
   }, [currentUser?.uid]);
 
   const levelInfo = useMemo(() => calculateLevelInfo(profile.xp), [profile.xp]);
@@ -404,9 +433,6 @@ export const StudentGamificationHub: React.FC<{
     const idx = filteredLeaderboard.findIndex(i => i.userId === profile.userId);
     return idx >= 0 ? idx + 1 : filteredLeaderboard.length + 1;
   }, [filteredLeaderboard, profile.userId]);
-
-  const top3 = filteredLeaderboard.slice(0, 3);
-  const top10 = filteredLeaderboard.slice(0, 10);
 
   const getBadgeProgress = (badgeId: string): { current: number; max: number } => {
     switch (badgeId) {
@@ -441,46 +467,86 @@ export const StudentGamificationHub: React.FC<{
     }
   };
 
+  const unlockedPermanentCount = Object.keys(profile.earnedBadges || {}).length;
+  const unlockedWinterCount = winterBadges.filter(b => Boolean(b.unlockedAt)).length;
+  const totalBadgesAvailable = GAMIFICATION_BADGES.length + winterBadges.length;
+
+  const filteredPermanentBadges = useMemo(() => {
+    if (badgeCategory === 'winter') return [];
+    if (badgeCategory === 'all') return GAMIFICATION_BADGES;
+    if (badgeCategory === 'academic') return GAMIFICATION_BADGES.filter(b => b.category === 'academic');
+    if (badgeCategory === 'streak') return GAMIFICATION_BADGES.filter(b => b.category === 'streak');
+    if (badgeCategory === 'battle') {
+      return GAMIFICATION_BADGES.filter(
+        b => b.category === 'milestone' || b.category === 'leaderboard' || b.id.includes('battle') || b.id.includes('arena')
+      );
+    }
+    return GAMIFICATION_BADGES;
+  }, [badgeCategory]);
+
+  const filteredWinterBadges = useMemo(() => {
+    if (badgeCategory !== 'all' && badgeCategory !== 'winter') return [];
+    return winterBadges;
+  }, [badgeCategory, winterBadges]);
+
+  const LEVEL_PERKS: Record<number, string> = {
+    1: 'Scholar Profile & Academic XP Ledger',
+    2: 'Daily Study Streak Multiplier Eligibility',
+    3: 'Active Scholar Title Unlock',
+    4: 'Custom Study Goal Tracking Badge',
+    5: 'Knowledge Builder Crest',
+    6: 'Academic Achiever Standing',
+    7: 'Top Performer Highlight on Rankings',
+    8: 'Honor Student Recognition',
+    9: 'Master Scholar Gold Seal',
+    10: 'Campus Legend Crown & Max Distinction',
+  };
+
   return (
     <div className="space-y-6">
       {/* Top Hero Banner */}
-      <div className="p-6 rounded-3xl bg-gradient-to-r from-indigo-950/90 via-slate-900 to-amber-950/60 border border-amber-500/30 shadow-2xl relative overflow-hidden">
+      <div className="p-6 rounded-3xl bg-gradient-to-r from-slate-950 via-slate-900 to-sky-950/60 border border-sky-500/25 shadow-2xl relative overflow-hidden">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center relative z-10">
           <div className="lg:col-span-6 flex items-center gap-5">
             <div className={`h-20 w-20 rounded-3xl bg-gradient-to-br ${levelInfo.current.color} flex flex-col items-center justify-center shadow-2xl border-2 border-white/20 shrink-0`}>
-              <span className="text-3xl">{levelInfo.current.icon}</span>
+              <span className="text-3xl leading-none">{levelInfo.current.icon}</span>
               <span className="text-[10px] font-black uppercase text-white mt-1">
                 Level {levelInfo.current.level}
               </span>
             </div>
-            <div className="space-y-1.5 flex-1 min-w-0">
+            <div className="space-y-2 flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-black uppercase tracking-wider">
                   {levelInfo.current.title}
                 </span>
-                <span className="px-2.5 py-0.5 rounded-full bg-orange-500/20 border border-orange-500/40 text-orange-300 text-[10px] font-black">
-                  🔥 {profile.currentStreak} Day Study Streak
+                <span className="px-2.5 py-0.5 rounded-full bg-orange-500/20 border border-orange-500/40 text-orange-300 text-[10px] font-black inline-flex items-center gap-1">
+                  <Flame className="w-3 h-3" /> {profile.currentStreak} Day Streak
                 </span>
+                {winterCookies > 0 && (
+                  <span className="px-2.5 py-0.5 rounded-full bg-sky-500/20 border border-sky-500/40 text-sky-300 text-[10px] font-black">
+                    {winterCookies} Cookies
+                  </span>
+                )}
               </div>
               <h2 className="text-xl sm:text-2xl font-black text-white truncate">
                 {profile.name}
               </h2>
-              <div className="w-full bg-slate-950/80 h-3 rounded-full overflow-hidden border border-white/10 p-0.5">
+              <div className="w-full bg-slate-950/90 h-3 rounded-full overflow-hidden border border-white/10 p-0.5">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-amber-400 via-orange-500 to-indigo-500 transition-all duration-700"
+                  className="h-full rounded-full bg-gradient-to-r from-sky-400 via-indigo-500 to-amber-400 transition-all duration-700"
                   style={{ width: `${levelInfo.progressPercent}%` }}
                 />
               </div>
-              <p className="text-xs text-slate-300 flex items-center justify-between">
+              <p className="text-xs text-slate-300 flex items-center justify-between gap-2 flex-wrap">
                 <span>
-                  <strong className="text-amber-300">{profile.xp.toLocaleString()} XP</strong> Total
+                  <strong className="text-amber-300 font-mono">{profile.xp.toLocaleString()} XP</strong> Total
                 </span>
                 {levelInfo.next ? (
                   <span>
-                    Next: <strong>Level {levelInfo.next.level} ({levelInfo.next.title})</strong> in {levelInfo.xpRequiredForNext} XP
+                    Next: <strong>Lv.{levelInfo.next.level} {levelInfo.next.title}</strong> ({levelInfo.xpRequiredForNext} XP needed)
                   </span>
                 ) : (
-                  <span className="text-amber-300 font-bold">Max Level Achieved!</span>
+                  <span className="text-amber-300 font-bold">Maximum Level Achieved!</span>
                 )}
               </p>
             </div>
@@ -488,27 +554,27 @@ export const StudentGamificationHub: React.FC<{
 
           {/* Quick Metrics */}
           <div className="lg:col-span-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-white/10 text-center">
-              <p className="text-[10px] font-bold uppercase text-slate-400">Leaderboard Rank</p>
-              <p className="text-xl font-black text-indigo-400 mt-1">#{myRank}</p>
-              <p className="text-[10px] text-slate-500">{scope === 'class' ? profile.grade : 'School-Wide'}</p>
+            <div className="p-3.5 rounded-2xl bg-slate-950/75 border border-white/10 text-center">
+              <p className="text-[10px] font-bold uppercase text-slate-400">Cohort Rank</p>
+              <p className="text-xl font-black font-mono text-sky-400 mt-1">#{myRank}</p>
+              <p className="text-[10px] text-slate-500 truncate">{scope === 'class' ? profile.grade : 'School-Wide'}</p>
             </div>
-            <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-white/10 text-center">
-              <p className="text-[10px] font-bold uppercase text-slate-400">Current Streak</p>
-              <p className="text-xl font-black text-orange-400 mt-1">🔥 {profile.currentStreak}d</p>
-              <p className="text-[10px] text-slate-500">Longest: {profile.longestStreak}d</p>
+            <div className="p-3.5 rounded-2xl bg-slate-950/75 border border-white/10 text-center">
+              <p className="text-[10px] font-bold uppercase text-slate-400">Study Streak</p>
+              <p className="text-xl font-black font-mono text-orange-400 mt-1">{profile.currentStreak}d</p>
+              <p className="text-[10px] text-slate-500">Best: {profile.longestStreak}d</p>
             </div>
-            <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-white/10 text-center">
-              <p className="text-[10px] font-bold uppercase text-slate-400">Earned Badges</p>
-              <p className="text-xl font-black text-emerald-400 mt-1">
-                {Object.keys(profile.earnedBadges).length}/{GAMIFICATION_BADGES.length}
+            <div className="p-3.5 rounded-2xl bg-slate-950/75 border border-white/10 text-center">
+              <p className="text-[10px] font-bold uppercase text-slate-400">Badges Earned</p>
+              <p className="text-xl font-black font-mono text-emerald-400 mt-1">
+                {unlockedPermanentCount + unlockedWinterCount}/{totalBadgesAvailable}
               </p>
-              <p className="text-[10px] text-slate-500">Merit Collection</p>
+              <p className="text-[10px] text-slate-500">Total Collection</p>
             </div>
-            <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-white/10 text-center">
+            <div className="p-3.5 rounded-2xl bg-slate-950/75 border border-white/10 text-center">
               <p className="text-[10px] font-bold uppercase text-slate-400">Today's XP</p>
-              <p className="text-xl font-black text-amber-400 mt-1">+{profile.dailyTrackers.xpEarnedToday}</p>
-              <p className="text-[10px] text-slate-500">AI Uses: {profile.dailyTrackers.aiUsesToday}/5</p>
+              <p className="text-xl font-black font-mono text-amber-400 mt-1">+{profile.dailyTrackers.xpEarnedToday}</p>
+              <p className="text-[10px] text-slate-500">AI: {profile.dailyTrackers.aiUsesToday}/5</p>
             </div>
           </div>
         </div>
@@ -517,47 +583,48 @@ export const StudentGamificationHub: React.FC<{
       {/* Sub-navigation Tabs */}
       <div className="flex flex-wrap items-center gap-2 border-b border-white/10 pb-3">
         {[
-          { id: 'overview', label: '⚡ Overview & Today\'s Goals' },
-          { id: 'leaderboard', label: '🏆 Class & School Leaderboard' },
-          { id: 'badges', label: `🏅 Achievements (${Object.keys(profile.earnedBadges).length}/${GAMIFICATION_BADGES.length})` },
-          { id: 'levels', label: '📈 10-Level Scholar Roadmap' }
-        ].map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveSection(tab.id as any)}
-            className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
-              activeSection === tab.id
-                ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
-                : 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-white/10'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+          { id: 'overview', label: 'Overview & Quests', icon: Zap },
+          { id: 'leaderboard', label: 'XP Leaderboard', icon: Trophy },
+          { id: 'badges', label: `Badges (${unlockedPermanentCount + unlockedWinterCount}/${totalBadgesAvailable})`, icon: Award },
+          { id: 'levels', label: '10-Level Roadmap', icon: TrendingUp },
+          { id: 'history', label: 'XP History', icon: History },
+        ].map(tab => {
+          const IconComp = tab.icon;
+          const isActive = activeSection === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveSection(tab.id as any)}
+              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+                isActive
+                  ? 'bg-sky-500 text-slate-950 shadow-lg shadow-sky-500/20'
+                  : 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-white/10'
+              }`}
+            >
+              <IconComp className="w-3.5 h-3.5" />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
       </div>
 
-      {/* SECTION 1: OVERVIEW & TODAY'S GOALS */}
-      {(activeSection === 'overview' || activeSection === 'leaderboard') && (
+      {/* SECTION 1: OVERVIEW & LEADERBOARD */}
+      {activeSection === 'overview' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Separated Authoritative Leaderboard Column */}
           <div className="lg:col-span-7">
-            <XpLeaderboardPanel
-              type={['teacher', 'coordinator', 'hod'].includes(String(currentUser.role || '').toLowerCase()) ? 'faculty' : 'student'}
-              currentUser={currentUser}
-            />
+            <XpLeaderboardPanel type={resolvedLbType} currentUser={currentUser} />
           </div>
 
-          {/* Right Column: Today's Study Goals & Recent XP Log */}
           <div className="lg:col-span-5 space-y-6">
-            {/* How to Earn XP / Daily Quests */}
             <div className="smart-glass p-6 rounded-3xl border border-white/10 space-y-4">
               <div>
                 <h3 className="text-base font-black text-white flex items-center gap-2">
                   <Zap className="w-4 h-4 text-amber-400" />
-                  Academic XP Rewards & Daily Quests
+                  Verified Academic XP Quests
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Complete real learning activities across Veylentra to level up
+                  Earn authoritative server-verified XP across your coursework
                 </p>
               </div>
 
@@ -585,7 +652,7 @@ export const StudentGamificationHub: React.FC<{
                     title: 'Complete Practice Quiz (80%+ Bonus)',
                     xp: '+30 / +50 XP',
                     done: profile.counts.quizzesCompleted > 0,
-                    sub: '+20 bonus XP for scoring above 80%'
+                    sub: '+20 bonus XP for 80%+ mastery'
                   },
                   {
                     title: 'Create Study Note',
@@ -594,13 +661,13 @@ export const StudentGamificationHub: React.FC<{
                     sub: `${profile.counts.notesCreated} notes created`
                   },
                   {
-                    title: 'Use NVIDIA AI Buddy / Orion Tutor',
+                    title: 'Orion Academic Tutor Session',
                     xp: '+10 XP',
                     done: profile.dailyTrackers.aiUsesToday > 0,
-                    sub: `${profile.dailyTrackers.aiUsesToday}/5 daily AI study rewards claimed`
+                    sub: `${profile.dailyTrackers.aiUsesToday}/5 daily AI study rewards`
                   },
                   {
-                    title: 'Read Official School Notice',
+                    title: 'Read School Notice / Circular',
                     xp: '+5 XP',
                     done: profile.counts.noticesRead > 0,
                     sub: `${profile.counts.noticesRead} notices read`
@@ -621,113 +688,179 @@ export const StudentGamificationHub: React.FC<{
                         <p className="text-[10px] text-slate-400">{goal.sub}</p>
                       </div>
                     </div>
-                    <span className="px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 font-black text-[11px] shrink-0">
+                    <span className="px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 font-black font-mono text-[11px] shrink-0">
                       {goal.xp}
                     </span>
                   </div>
                 ))}
               </div>
             </div>
-
-            {/* Recent XP Activity */}
-            <div className="smart-glass p-6 rounded-3xl border border-white/10 space-y-3">
-              <h4 className="text-sm font-black text-white uppercase tracking-wider">
-                Recent XP Activity Log
-              </h4>
-              {profile.recentXpHistory.length > 0 ? (
-                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                  {profile.recentXpHistory.slice(0, 8).map(item => (
-                    <div
-                      key={item.id}
-                      className="p-2.5 rounded-xl bg-slate-900/60 border border-white/5 flex items-center justify-between text-xs"
-                    >
-                      <span className="text-slate-200 font-semibold truncate">{item.label}</span>
-                      <span className="text-amber-400 font-black shrink-0">+{item.xp} XP</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-slate-500">Complete your first study action to log XP!</p>
-              )}
-            </div>
           </div>
         </div>
       )}
 
-      {/* SECTION 2: ACHIEVEMENTS & BADGES GRID */}
-      {(activeSection === 'overview' || activeSection === 'badges') && (
+      {/* SECTION 1B: FULL LEADERBOARD TAB */}
+      {activeSection === 'leaderboard' && (
+        <XpLeaderboardPanel type={resolvedLbType} currentUser={currentUser} />
+      )}
+
+      {/* SECTION 2: CATEGORIZED BADGE COLLECTION & WINTER COLLECTIBLES */}
+      {activeSection === 'badges' && (
         <div className="smart-glass p-6 rounded-3xl border border-white/10 space-y-5">
-          <div>
-            <h3 className="text-lg font-black text-white flex items-center gap-2">
-              <Award className="w-5 h-5 text-emerald-400" />
-              Scholar Achievements & Merit Badges
-            </h3>
-            <p className="text-xs text-slate-400">
-              Earned badges are highlighted in gold & emerald; locked badges show your progress toward unlocking
-            </p>
-          </div>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-black text-white flex items-center gap-2">
+                <Award className="w-5 h-5 text-emerald-400" />
+                Scholar Badges & Seasonal Collectibles
+              </h3>
+              <p className="text-xs text-slate-400">
+                Permanent merit badges and Winter Festival collectibles tracked separately with clear unlock progress
+              </p>
+            </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {GAMIFICATION_BADGES.map(badge => {
-              const unlockedAt = profile.earnedBadges[badge.id];
-              const isUnlocked = Boolean(unlockedAt);
-              const prog = getBadgeProgress(badge.id);
-              const pct = Math.min(100, Math.round((prog.current / prog.max) * 100));
-
-              return (
-                <div
-                  key={badge.id}
-                  className={`p-4 rounded-2xl border transition-all flex flex-col justify-between gap-3 ${
-                    isUnlocked
-                      ? 'bg-gradient-to-br from-emerald-950/60 via-slate-900 to-amber-950/40 border-emerald-400/50 shadow-lg shadow-emerald-500/10'
-                      : 'bg-slate-950/60 border-white/10 opacity-75'
+            <div className="flex flex-wrap items-center gap-1.5">
+              {[
+                { id: 'all', label: 'All Badges' },
+                { id: 'academic', label: 'Academic' },
+                { id: 'streak', label: 'Streaks' },
+                { id: 'battle', label: 'Battle & Rank' },
+                { id: 'winter', label: 'Winter Collectibles' },
+              ].map(cat => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setBadgeCategory(cat.id as any)}
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors cursor-pointer ${
+                    badgeCategory === cat.id
+                      ? 'bg-emerald-500 text-slate-950'
+                      : 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-white/10'
                   }`}
                 >
-                  <div className="flex items-start gap-3.5">
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Permanent Academic / Streak / Battle Badges */}
+          {filteredPermanentBadges.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredPermanentBadges.map(badge => {
+                const unlockedAt = profile.earnedBadges[badge.id];
+                const isUnlocked = Boolean(unlockedAt);
+                const prog = getBadgeProgress(badge.id);
+                const pct = Math.min(100, Math.round((prog.current / prog.max) * 100));
+
+                return (
+                  <div
+                    key={badge.id}
+                    className={`p-4 rounded-2xl border transition-all flex flex-col justify-between gap-3 ${
+                      isUnlocked
+                        ? 'bg-gradient-to-br from-emerald-950/60 via-slate-900 to-sky-950/40 border-emerald-400/50 shadow-lg shadow-emerald-500/10'
+                        : 'bg-slate-950/60 border-white/10 opacity-80'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3.5">
+                      <div
+                        className={`w-12 h-12 rounded-2xl flex items-center justify-center text-2xl shrink-0 border ${
+                          isUnlocked
+                            ? 'bg-emerald-500/20 border-emerald-400/40 shadow-md'
+                            : 'bg-slate-900 border-white/10 grayscale'
+                        }`}
+                      >
+                        {badge.icon}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <h4 className="text-sm font-black text-white truncate">{badge.name}</h4>
+                          {isUnlocked ? (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[9px] font-black uppercase">
+                              Earned
+                            </span>
+                          ) : (
+                            <Lock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                          )}
+                        </div>
+                        <span className="text-[10px] uppercase tracking-wider font-bold text-sky-400">
+                          {badge.category}
+                        </span>
+                        <p className="text-xs text-slate-300 mt-1 leading-relaxed">{badge.description}</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 pt-2 border-t border-white/5">
+                      <div className="flex items-center justify-between text-[10px]">
+                        <span className="text-slate-400 font-semibold">{badge.unlockRequirement}</span>
+                        <span className={isUnlocked ? 'text-emerald-400 font-black font-mono' : 'text-slate-400 font-bold font-mono'}>
+                          {prog.current}/{prog.max}
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${
+                            isUnlocked ? 'bg-emerald-400' : 'bg-sky-500'
+                          }`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Winter Festival Collectibles */}
+          {filteredWinterBadges.length > 0 && (
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-sky-300">
+                <Snowflake className="w-4 h-4" />
+                <span>Seasonal Winter Festival Collectibles</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredWinterBadges.map(wb => {
+                  const isUnlocked = Boolean(wb.unlockedAt);
+                  return (
                     <div
-                      className={`w-12 h-12 rounded-2xl flex items-center justify-center text-2xl shrink-0 border ${
+                      key={wb.id}
+                      className={`p-4 rounded-2xl border transition-all flex flex-col justify-between gap-3 ${
                         isUnlocked
-                          ? 'bg-emerald-500/20 border-emerald-400/40 shadow-md'
-                          : 'bg-slate-900 border-white/10 grayscale'
+                          ? 'bg-gradient-to-br from-sky-950/70 via-slate-900 to-cyan-950/50 border-sky-400/60 shadow-lg shadow-sky-500/15'
+                          : 'bg-slate-950/60 border-white/10 opacity-75'
                       }`}
                     >
-                      {badge.icon}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <h4 className="text-sm font-black text-white truncate">{badge.name}</h4>
-                        {isUnlocked ? (
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[9px] font-black uppercase">
-                            Earned
-                          </span>
-                        ) : (
-                          <Lock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                        )}
+                      <div className="flex items-start gap-3">
+                        <div
+                          className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 border ${
+                            isUnlocked
+                              ? 'bg-sky-500/20 border-sky-400/50 text-sky-300'
+                              : 'bg-slate-900 border-white/10 text-slate-500'
+                          }`}
+                        >
+                          <Snowflake className="w-5 h-5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <h4 className="text-sm font-black text-white truncate">{wb.name}</h4>
+                            <span className="px-2 py-0.5 rounded-full bg-sky-500/20 border border-sky-500/30 text-sky-300 text-[9px] font-black uppercase">
+                              {wb.rarity}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-300 mt-1 leading-relaxed">{wb.description}</p>
+                        </div>
                       </div>
-                      <p className="text-xs text-slate-300 mt-1 leading-relaxed">{badge.description}</p>
+                      <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[10px]">
+                        <span className="text-slate-400">{wb.unlockRequirement}</span>
+                        <span className={isUnlocked ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
+                          {isUnlocked ? 'Collected' : 'Locked'}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-
-                  <div className="space-y-1.5 pt-2 border-t border-white/5">
-                    <div className="flex items-center justify-between text-[10px]">
-                      <span className="text-slate-400 font-semibold">{badge.unlockRequirement}</span>
-                      <span className={isUnlocked ? 'text-emerald-400 font-black' : 'text-slate-400 font-bold'}>
-                        {prog.current}/{prog.max}
-                      </span>
-                    </div>
-                    <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full ${
-                          isUnlocked ? 'bg-emerald-400' : 'bg-indigo-500'
-                        }`}
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -737,7 +870,7 @@ export const StudentGamificationHub: React.FC<{
           <div>
             <h3 className="text-lg font-black text-white">10-Level Veylentra Scholar Progression</h3>
             <p className="text-xs text-slate-400">
-              Advance from Level 1 Rookie Scholar to Level 10 Campus Legend through consistent study
+              Advance from Level 1 Rookie Scholar to Level 10 Campus Legend with milestone distinction unlocks
             </p>
           </div>
 
@@ -748,37 +881,95 @@ export const StudentGamificationHub: React.FC<{
               return (
                 <div
                   key={lvl.level}
-                  className={`p-4 rounded-2xl border transition-all ${
+                  className={`p-4 rounded-2xl border transition-all flex flex-col justify-between ${
                     isCurrent
-                      ? 'bg-gradient-to-br from-amber-500/20 to-indigo-950 border-2 border-amber-400 shadow-xl'
+                      ? 'bg-gradient-to-br from-amber-500/20 via-slate-900 to-sky-950 border-2 border-amber-400 shadow-xl'
                       : reached
                         ? 'bg-slate-900/90 border-emerald-500/40'
-                        : 'bg-slate-950/60 border-white/10 opacity-60'
+                        : 'bg-slate-950/60 border-white/10 opacity-65'
                   }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="text-2xl">{lvl.icon}</span>
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                        isCurrent
-                          ? 'bg-amber-400 text-slate-950'
-                          : reached
-                            ? 'bg-emerald-500/20 text-emerald-300'
-                            : 'bg-slate-800 text-slate-400'
-                      }`}
-                    >
-                      {isCurrent ? 'Current' : reached ? 'Unlocked' : 'Locked'}
-                    </span>
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-2xl">{lvl.icon}</span>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                          isCurrent
+                            ? 'bg-amber-400 text-slate-950'
+                            : reached
+                              ? 'bg-emerald-500/20 text-emerald-300'
+                              : 'bg-slate-800 text-slate-400'
+                        }`}
+                      >
+                        {isCurrent ? 'Current' : reached ? 'Unlocked' : 'Locked'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] font-black text-slate-400 uppercase mt-3">Level {lvl.level}</p>
+                    <h4 className="text-sm font-black text-white mt-0.5">{lvl.title}</h4>
+                    <p className="text-[11px] text-slate-400 mt-1.5 leading-snug">
+                      {LEVEL_PERKS[lvl.level] || 'Academic Distinction'}
+                    </p>
                   </div>
-                  <p className="text-xs font-black text-slate-400 uppercase mt-3">Level {lvl.level}</p>
-                  <h4 className="text-sm font-black text-white mt-0.5">{lvl.title}</h4>
-                  <p className="text-xs font-bold text-amber-300 mt-2">{lvl.minXp.toLocaleString()} XP</p>
+                  <p className="text-xs font-bold font-mono text-amber-300 mt-3 pt-2 border-t border-white/5">
+                    {lvl.minXp.toLocaleString()} XP
+                  </p>
                 </div>
               );
             })}
           </div>
         </div>
       )}
+
+      {/* SECTION 4: XP ACTIVITY LEDGER */}
+      {activeSection === 'history' && (
+        <div className="smart-glass p-6 rounded-3xl border border-white/10 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-black text-white flex items-center gap-2">
+                <History className="w-5 h-5 text-sky-400" />
+                Verified XP Activity Ledger
+              </h3>
+              <p className="text-xs text-slate-400">
+                Chronological breakdown of your recent academic actions, quiz milestones, and Winter Festival rewards
+              </p>
+            </div>
+            <span className="px-3 py-1 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono font-bold text-xs">
+              {profile.xp.toLocaleString()} Total XP
+            </span>
+          </div>
+
+          {profile.recentXpHistory && profile.recentXpHistory.length > 0 ? (
+            <div className="divide-y divide-white/5 rounded-2xl border border-white/10 bg-slate-950/60 overflow-hidden">
+              {profile.recentXpHistory.slice(0, 25).map((item) => (
+                <div
+                  key={item.id}
+                  className="px-4 py-3 flex items-center justify-between gap-3 text-xs hover:bg-slate-900/50 transition-colors"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-sky-500/15 border border-sky-500/30 flex items-center justify-center text-sky-400 shrink-0">
+                      <ShieldCheck className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-bold text-white truncate">{item.label}</p>
+                      <p className="text-[11px] text-slate-400 font-mono">
+                        {item.timestamp ? new Date(item.timestamp).toLocaleString() : 'Verified Entry'}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-mono font-black shrink-0">
+                    +{item.xp} XP
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-8 text-center rounded-2xl border border-white/10 bg-slate-950/50 text-xs text-slate-400">
+              Complete your first academic action, quiz, or Winter Festival event to record XP history entries.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
+

@@ -43,6 +43,7 @@ export interface WinterModuleDeps {
   } | null>;
   requireFeatureAccess: (featureKey: string) => express.RequestHandler;
   broadcastToAllWs: (payload: any) => void;
+  getGamificationStore?: () => Record<string, any>;
 }
 
 export interface XpLedgerEntry {
@@ -473,8 +474,10 @@ export function buildSeparatedLeaderboard(params: {
   }
 
   const periodTotals = new Map<string, { xp: number; entry: XpLedgerEntry }>();
+  const usersWithLedgerHistory = new Set<string>();
   for (const item of params.entries) {
     if (!roleMatches(item.userRole)) continue;
+    usersWithLedgerHistory.add(item.userId);
     const ts = new Date(item.createdAt).getTime();
     if (!Number.isFinite(ts) || ts < cutoffMs || ts > nowMs + 60_000) continue;
     const prev = periodTotals.get(item.userId);
@@ -485,11 +488,14 @@ export function buildSeparatedLeaderboard(params: {
     }
   }
 
-  const rows = Array.from(periodTotals.entries()).map(([userId, agg]) => {
+  const rowsMap = new Map<string, any>();
+
+  // 1. Add users with ledger entries in the selected time window
+  for (const [userId, agg] of periodTotals.entries()) {
     const profile = userProfileMap.get(userId);
-    const totalAllTimeXp = profile?.xp ?? agg.xp;
+    const totalAllTimeXp = Math.max(profile?.xp ?? 0, agg.xp);
     const lvl = computeLevelFromXp(totalAllTimeXp);
-    return {
+    rowsMap.set(userId, {
       userId,
       name: profile?.name || agg.entry.userName || 'Member',
       role: profile?.role || agg.entry.userRole,
@@ -506,10 +512,45 @@ export function buildSeparatedLeaderboard(params: {
       winterCookies: profile?.winterCookies || 0,
       equippedFrame: profile?.equippedFrame || null,
       badgesCount: profile?.badgesCount || 0,
-    };
-  });
+    });
+  }
 
-  rows.sort((a, b) => b.xp - a.xp || a.name.localeCompare(b.name));
+  // 2. Include cohort members from userProfileMap who don't yet have ledger rows in this window
+  for (const [userId, u] of userProfileMap.entries()) {
+    if (rowsMap.has(userId)) continue;
+    // If user has ledger history elsewhere (e.g. older than cutoff), their period XP is 0
+    // Otherwise, check if their recentXpHistory or updatedAt falls in the window
+    let fallbackWindowXp = 0;
+    if (!usersWithLedgerHistory.has(userId) && (u.xp || 0) > 0) {
+      const updatedMs = (u as any).updatedAt ? new Date((u as any).updatedAt).getTime() : 0;
+      if (!updatedMs || (updatedMs >= cutoffMs && updatedMs <= nowMs + 60_000)) {
+        fallbackWindowXp = Math.max(0, Math.round(u.xp || 0));
+      }
+    }
+    const totalAllTimeXp = Math.max(0, Math.round(u.xp || 0));
+    const lvl = computeLevelFromXp(totalAllTimeXp);
+    rowsMap.set(userId, {
+      userId,
+      name: u.name || 'Member',
+      role: u.role,
+      grade: params.type === 'student' ? u.grade || '' : undefined,
+      section: params.type === 'student' ? u.section || '' : undefined,
+      house: u.house || '',
+      avatar: u.avatar || '',
+      xp: fallbackWindowXp,
+      allTimeXp: totalAllTimeXp,
+      level: lvl.level,
+      levelTitle: lvl.levelTitle,
+      nextLevelXp: lvl.nextLevelXp,
+      currentStreak: u.currentStreak || 0,
+      winterCookies: u.winterCookies || 0,
+      equippedFrame: u.equippedFrame || null,
+      badgesCount: u.badgesCount || 0,
+    });
+  }
+
+  const rows = Array.from(rowsMap.values());
+  rows.sort((a, b) => b.xp - a.xp || (b.allTimeXp || 0) - (a.allTimeXp || 0) || a.name.localeCompare(b.name));
   return rows.map((row, idx) => ({ ...row, rank: idx + 1 }));
 }
 
@@ -558,14 +599,14 @@ export async function executeSantaGiftClaim(params: {
       idempotencyKey: `preview_${Date.now()}`,
       eventNightKey: windowStatus.eventNightKey,
       status: 'applied' as const,
-      rarity: roll.tier.rarity,
-      label: roll.tier.label,
-      xpBonus: roll.tier.xpBonus,
-      cookiesBonus: roll.tier.cookiesBonus,
-      aiBonusQueries: roll.tier.aiBonusQueries,
-      streakShield: roll.tier.streakShield,
-      badgeId: roll.tier.badgeId,
-      frameId: roll.tier.frameId,
+      rarity: roll.rarity,
+      label: roll.label,
+      xpBonus: roll.xpBonus,
+      cookiesBonus: roll.cookiesBonus,
+      aiBonusQueries: roll.aiBonusQueries,
+      streakShield: roll.streakShield,
+      badgeId: roll.badgeId,
+      frameId: roll.frameId,
       createdAt: new Date(nowMs).toISOString(),
       appliedAt: new Date(nowMs).toISOString(),
     };
@@ -1348,35 +1389,142 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
     const allUsersMap = new Map<string, any>();
     memoryUserTotalXp.forEach((v, k) => allUsersMap.set(k, { ...v }));
 
+    // Merge server in-memory gamification store if provided
+    if (deps.getGamificationStore) {
+      const gStore = deps.getGamificationStore();
+      Object.values(gStore || {}).forEach((g: any) => {
+        const uid = String(g?.userId || g?.id || '');
+        if (!uid) return;
+        const existing = allUsersMap.get(uid);
+        const wState = memoryWinterStates.get(uid);
+        allUsersMap.set(uid, {
+          userId: uid,
+          name: String(g.userName || g.name || existing?.name || 'Member'),
+          role: String(g.role || existing?.role || 'student').toLowerCase(),
+          grade: String(g.grade || existing?.grade || ''),
+          section: String(g.section || existing?.section || ''),
+          house: String(g.house || existing?.house || ''),
+          avatar: String(g.avatar || g.photoURL || existing?.avatar || ''),
+          xp: Math.max(Number(g.xp || 0), existing?.xp || 0),
+          currentStreak: Math.max(Number(g.currentStreak || 0), existing?.currentStreak || 0),
+          winterCookies: wState?.cookiesCount || 0,
+          equippedFrame: wState?.equippedFrame || null,
+          badgesCount:
+            Object.keys(g.earnedBadges || existing?.earnedBadges || {}).length +
+            Object.keys(wState?.earnedWinterBadges || {}).length,
+          updatedAt: g.updatedAt || existing?.updatedAt,
+        });
+      });
+    }
+
     let ledgerSnapshot = [...memoryXpLedger];
 
     const { url, key } = getSupabaseServerConfig();
     if (process.env.NODE_ENV !== 'test' && url && key) {
       try {
+        // 1. Load school gamification map from global_data
+        const gDocRes = await fetch(
+          `${url}/rest/v1/global_data?id=eq.__studentos_gamification_default_school__&select=*`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+        );
+        if (gDocRes.ok) {
+          const gRows = await gDocRes.json();
+          const gMap = gRows?.[0]?.data ?? (gRows?.[0]?.content ? JSON.parse(gRows[0].content) : null);
+          if (gMap && typeof gMap === 'object') {
+            Object.values(gMap).forEach((g: any) => {
+              const uid = String(g?.userId || g?.id || '');
+              if (!uid) return;
+              const existing = allUsersMap.get(uid);
+              const wState = memoryWinterStates.get(uid);
+              allUsersMap.set(uid, {
+                userId: uid,
+                name: String(g.userName || g.name || existing?.name || 'Member'),
+                role: String(g.role || existing?.role || 'student').toLowerCase(),
+                grade: String(g.grade || existing?.grade || ''),
+                section: String(g.section || existing?.section || ''),
+                house: String(g.house || existing?.house || ''),
+                avatar: String(g.avatar || g.photoURL || existing?.avatar || ''),
+                xp: Math.max(Number(g.xp || 0), existing?.xp || 0),
+                currentStreak: Math.max(Number(g.currentStreak || 0), existing?.currentStreak || 0),
+                winterCookies: wState?.cookiesCount || 0,
+                equippedFrame: wState?.equippedFrame || null,
+                badgesCount:
+                  Object.keys(g.earnedBadges || existing?.earnedBadges || {}).length +
+                  Object.keys(wState?.earnedWinterBadges || {}).length,
+                updatedAt: g.updatedAt || existing?.updatedAt,
+              });
+            });
+          }
+        }
+
+        // 2. Load individual gamification_user_* docs from global_data
+        const uDocsRes = await fetch(
+          `${url}/rest/v1/global_data?id=like.gamification_user_*&select=*`,
+          { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+        );
+        if (uDocsRes.ok) {
+          const uRows = await uDocsRes.json();
+          if (Array.isArray(uRows)) {
+            uRows.forEach((row: any) => {
+              const g = row?.data ?? (row?.content ? JSON.parse(row.content) : null);
+              if (!g || typeof g !== 'object') return;
+              const uid = String(g.userId || String(row.id).replace(/^gamification_user_/, '') || '');
+              if (!uid) return;
+              const existing = allUsersMap.get(uid);
+              const wState = memoryWinterStates.get(uid);
+              allUsersMap.set(uid, {
+                userId: uid,
+                name: String(g.userName || g.name || existing?.name || 'Member'),
+                role: String(g.role || existing?.role || 'student').toLowerCase(),
+                grade: String(g.grade || existing?.grade || ''),
+                section: String(g.section || existing?.section || ''),
+                house: String(g.house || existing?.house || ''),
+                avatar: String(g.avatar || g.photoURL || existing?.avatar || ''),
+                xp: Math.max(Number(g.xp || 0), existing?.xp || 0),
+                currentStreak: Math.max(Number(g.currentStreak || 0), existing?.currentStreak || 0),
+                winterCookies: wState?.cookiesCount || 0,
+                equippedFrame: wState?.equippedFrame || null,
+                badgesCount:
+                  Object.keys(g.earnedBadges || existing?.earnedBadges || {}).length +
+                  Object.keys(wState?.earnedWinterBadges || {}).length,
+                updatedAt: g.updatedAt || existing?.updatedAt,
+              });
+            });
+          }
+        }
+
+        // 3. Load user_profiles using select=* to avoid 400 on optional columns (points, avatar vs photo_url)
         const profRes = await fetch(
-          `${url}/rest/v1/user_profiles?select=id,name,role,grade,section,house,avatar,points`,
+          `${url}/rest/v1/user_profiles?select=*`,
           { headers: { apikey: key, Authorization: `Bearer ${key}` } }
         );
         if (profRes.ok) {
           const profRows = await profRes.json();
           if (Array.isArray(profRows)) {
             profRows.forEach((p: any) => {
-              if (!p?.id) return;
-              const existing = allUsersMap.get(p.id);
-              const wState = memoryWinterStates.get(p.id);
-              allUsersMap.set(p.id, {
-                userId: String(p.id),
+              const uid = String(p?.uid || p?.id || '');
+              if (!uid) return;
+              const existing = allUsersMap.get(uid) || (p.id ? allUsersMap.get(p.id) : undefined);
+              const wState = memoryWinterStates.get(uid) || (p.id ? memoryWinterStates.get(p.id) : undefined);
+              const raw = p.raw_data && typeof p.raw_data === 'object' ? p.raw_data : {};
+              const profileXp = Number(p.points ?? raw.xp ?? raw.points ?? 0);
+              const profileAvatar = String(p.photo_url || p.avatar || raw.photoURL || raw.avatar || existing?.avatar || '');
+              allUsersMap.set(uid, {
+                userId: uid,
                 name: String(p.name || existing?.name || 'Member'),
                 role: String(p.role || existing?.role || 'student').toLowerCase(),
                 grade: String(p.grade || existing?.grade || ''),
                 section: String(p.section || existing?.section || ''),
-                house: String(p.house || existing?.house || ''),
-                avatar: String(p.avatar || existing?.avatar || ''),
-                xp: Math.max(Number(p.points || 0), existing?.xp || 0),
-                currentStreak: existing?.currentStreak || 0,
+                house: String(p.house || raw.house || existing?.house || ''),
+                avatar: profileAvatar,
+                xp: Math.max(Number.isFinite(profileXp) ? profileXp : 0, existing?.xp || 0),
+                currentStreak: existing?.currentStreak || Number(raw.currentStreak || 0),
                 winterCookies: wState?.cookiesCount || 0,
                 equippedFrame: wState?.equippedFrame || null,
-                badgesCount: Object.keys(existing?.earnedBadges || {}).length + Object.keys(wState?.earnedWinterBadges || {}).length,
+                badgesCount:
+                  Object.keys(existing?.earnedBadges || raw.earnedBadges || {}).length +
+                  Object.keys(wState?.earnedWinterBadges || {}).length,
+                updatedAt: p.updated_at || existing?.updatedAt,
               });
             });
           }

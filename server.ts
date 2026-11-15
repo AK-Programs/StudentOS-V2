@@ -5797,6 +5797,7 @@ registerWinterFestivalAndLeaderboardRoutes(app, {
   getVerifiedUserFromRequest: resolveFeatureAndWinterActor,
   requireFeatureAccess: featureController.requireFeatureAccess,
   broadcastToAllWs,
+  getGamificationStore: () => memoryGamificationStore,
 });
 
 async function startServer() {

@@ -178,12 +178,16 @@ export async function fetchWinterStatus(user: Partial<UserProfile> | null | unde
   return res.json();
 }
 
-export async function claimSantaGift(user: Partial<UserProfile> | null | undefined, idempotencyKey: string) {
+export async function claimSantaGift(
+  user: Partial<UserProfile> | null | undefined,
+  idempotencyKey: string,
+  isPreview: boolean = false
+) {
   const headers = await buildAuthHeadersForUser(user);
   const res = await fetch('/api/winter/santa/claim', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ idempotencyKey }),
+    body: JSON.stringify({ idempotencyKey, isPreview }),
   });
   const data = await res.json();
   return { ok: res.ok, status: res.status, data };
@@ -268,18 +272,25 @@ export async function fetchSeparatedLeaderboard(params: {
   period: 'weekly' | 'monthly' | 'all_time';
   user?: Partial<UserProfile> | null;
 }): Promise<{ ok: boolean; status: number; data?: LeaderboardResponse; error?: string }> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
   try {
     const headers = await buildAuthHeadersForUser(params.user);
     const res = await fetch(
       `/api/leaderboard?type=${encodeURIComponent(params.type)}&period=${encodeURIComponent(params.period)}`,
-      { headers }
+      { headers, signal: controller.signal }
     );
-    const data = await res.json();
+    clearTimeout(timeoutId);
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       return { ok: false, status: res.status, data, error: data?.error || 'Leaderboard unavailable' };
     }
     return { ok: true, status: res.status, data };
   } catch (err: any) {
+    clearTimeout(timeoutId);
+    if (err?.name === 'AbortError') {
+      return { ok: false, status: 408, error: 'Request timed out while loading leaderboard. Please retry.' };
+    }
     return { ok: false, status: 500, error: err?.message || 'Unable to load leaderboard' };
   }
 }

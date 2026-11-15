@@ -42,6 +42,7 @@ import { requestFCMPermission, setupFCMForegroundListener } from './lib/fcmNotif
 import { awardStudentXP, isHalloweenBadgeDateRange } from './lib/gamification';
 import { getSavedTheme } from './lib/themeSystem';
 import { ALL_GRADE_OPTIONS, getSectionsForGrade } from './config/academicHierarchy';
+import { StudentGamificationHub } from './components/StudentGamificationHub';
 import {
   streamAIChatClient,
   buildAuthorizedStudentOSContext,
@@ -8654,18 +8655,6 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                               </button>
                             )}
 
-                            {canViewLeaderboardTab && matchesFilter('XP Leaderboard', 'xp rank student faculty leaderboard weekly monthly') && (
-                              <button
-                                type="button"
-                                onClick={() => handleTabSelect('leaderboard')}
-                                className={getSidebarBtnClass('leaderboard')}
-                                title="XP Leaderboard"
-                              >
-                                <Trophy className={`w-4 h-4 shrink-0 ${activeTab === 'leaderboard' ? 'text-white' : 'text-amber-400'}`} />
-                                {sidebarOpen && <span className="truncate">XP Leaderboard</span>}
-                              </button>
-                            )}
-
                             {canViewWinterHub && matchesFilter('Winter Festival', 'winter santa gift wheel cookies badges snow') && (
                               <button
                                 type="button"
@@ -14814,15 +14803,16 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                         )}
                       </div>
                     )}
-                    <XpLeaderboardPanel
-                      type={
+                    <StudentGamificationHub
+                      currentUser={currentUser}
+                      leaderboardType={
                         isSuperAdminRole(currentUser?.role) || isSuperAdminRole(effectiveRole)
                           ? leaderboardTabView
                           : isFacultyRoleForLb
                             ? 'faculty'
                             : 'student'
                       }
-                      currentUser={currentUser}
+                      initialSection="leaderboard"
                     />
                   </div>
                 ) : (
