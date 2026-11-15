@@ -221,6 +221,41 @@ async function loadUserWinterState(
   const { url, key } = getSupabaseServerConfig();
   if (url && key) {
     try {
+      const wpRes = await fetch(
+        `${url}/rest/v1/winter_user_profiles?user_id=eq.${encodeURIComponent(user.id)}&select=*`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+      );
+      if (wpRes.ok) {
+        const rows = await wpRes.json();
+        if (Array.isArray(rows) && rows[0]) {
+          const r = rows[0];
+          const storedState = r.state_json || {};
+          const merged: UserWinterState = {
+            ...getDefaultWinterState(user),
+            ...storedState,
+            userId: user.id,
+            userName: user.name || r.user_name || storedState.userName || 'Member',
+            userRole: user.role || r.user_role || storedState.userRole || 'student',
+            cookiesCount: Number(r.cookies_count ?? storedState.cookiesCount ?? 0),
+            streakShields: Number(r.streak_shields ?? storedState.streakShields ?? 0),
+            unlockedFrames: Array.isArray(r.unlocked_frames) ? r.unlocked_frames : (storedState.unlockedFrames || []),
+            equippedFrame: r.equipped_frame !== undefined ? r.equipped_frame : (storedState.equippedFrame || null),
+            spinNextEligibleAt: r.spin_next_eligible_at || storedState.spinNextEligibleAt || null,
+            lastSpinAt: r.last_spin_at || storedState.lastSpinAt || null,
+            lastWheelNotifiedCycle: r.last_wheel_notified_cycle || storedState.lastWheelNotifiedCycle || null,
+            aiBonusDate: r.ai_bonus_date || storedState.aiBonusDate || getLocalDayKey(),
+            aiBonusCreditsToday: Number(r.ai_bonus_credits_today ?? storedState.aiBonusCreditsToday ?? 0),
+            quizCompleted: Boolean(r.quiz_completed ?? storedState.quizCompleted ?? false),
+            claimedTaskIds: Array.isArray(r.claimed_task_ids) ? r.claimed_task_ids : (storedState.claimedTaskIds || []),
+            earnedWinterBadges: r.earned_winter_badges || storedState.earnedWinterBadges || {},
+            santaClaimedNights: r.santa_claimed_nights || storedState.santaClaimedNights || {},
+            rewardHistory: Array.isArray(r.reward_history) ? r.reward_history : (storedState.rewardHistory || []),
+          };
+          memoryWinterStates.set(user.id, merged);
+          return merged;
+        }
+      }
+
       const docId = `winter_state_${user.id}`;
       const res = await fetch(
         `${url}/rest/v1/global_data?id=eq.${encodeURIComponent(docId)}&select=*`,
@@ -228,7 +263,7 @@ async function loadUserWinterState(
       );
       if (res.ok) {
         const rows = await res.json();
-        const remote = rows?.[0]?.data;
+        const remote = rows?.[0]?.data ?? (rows?.[0]?.content ? JSON.parse(rows[0].content) : null);
         if (remote && typeof remote === 'object') {
           const merged: UserWinterState = {
             ...getDefaultWinterState(user),
@@ -263,21 +298,6 @@ async function saveUserWinterState(
   if (!url || !key) return;
 
   try {
-    await fetch(`${url}/rest/v1/global_data?on_conflict=id`, {
-      method: 'POST',
-      headers: {
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/json',
-        Prefer: 'resolution=merge-duplicates',
-      },
-      body: JSON.stringify({
-        id: `winter_state_${state.userId}`,
-        data: state,
-        updated_at: state.updatedAt,
-      }),
-    }).catch(() => {});
-
     await fetch(`${url}/rest/v1/winter_user_profiles?on_conflict=user_id`, {
       method: 'POST',
       headers: {
@@ -300,6 +320,11 @@ async function saveUserWinterState(
         ai_bonus_date: state.aiBonusDate,
         ai_bonus_credits_today: state.aiBonusCreditsToday,
         quiz_completed: state.quizCompleted,
+        claimed_task_ids: state.claimedTaskIds,
+        earned_winter_badges: state.earnedWinterBadges,
+        santa_claimed_nights: state.santaClaimedNights,
+        reward_history: state.rewardHistory,
+        state_json: state,
         updated_at: state.updatedAt,
       }),
     }).catch(() => {});
