@@ -170,6 +170,7 @@ import { WinterFestivalHub } from './components/winter/WinterFestivalHub';
 import { FloatingSpinWheelButton } from './components/winter/FloatingSpinWheelButton';
 import { XpLeaderboardPanel } from './components/gamification/XpLeaderboardPanel';
 import { SnowflakeVector } from './components/winter/WinterArtwork';
+import { scheduleSantaModelIdlePreload } from './lib/santaModelCache';
 
 // Stub Integrations
 import {
@@ -566,6 +567,13 @@ export default function App() {
     winterBadgesAccess.accessible ||
     winterSantaAccess.accessible ||
     winterSpinAccess.accessible;
+
+  useEffect(() => {
+    if (currentUser && !dataLoading && winterSantaAccess.accessible) {
+      return scheduleSantaModelIdlePreload();
+    }
+  }, [currentUser?.uid, dataLoading, winterSantaAccess.accessible]);
+
   const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState<boolean>(false);
   const [isProductTourOpen, setIsProductTourOpen] = useState<boolean>(false);
 
@@ -1652,13 +1660,20 @@ export default function App() {
 
   // Sync AI Usage status dynamically
   useEffect(() => {
-    fetchAIUsageStatus(currentUser?.uid || 'guest', effectiveRole || 'student').then(setAiUsageState);
+    const syncQuota = () => {
+      fetchAIUsageStatus(currentUser?.uid || 'guest', effectiveRole || 'student').then(setAiUsageState);
+    };
+    syncQuota();
 
     const handleQuotaEvent = (e: any) => {
       if (e.detail) setAiUsageState(e.detail);
     };
     window.addEventListener('s_os_ai_quota_updated', handleQuotaEvent);
-    return () => window.removeEventListener('s_os_ai_quota_updated', handleQuotaEvent);
+    window.addEventListener('veylentra-winter-updated', syncQuota);
+    return () => {
+      window.removeEventListener('s_os_ai_quota_updated', handleQuotaEvent);
+      window.removeEventListener('veylentra-winter-updated', syncQuota);
+    };
   }, [currentUser?.uid, effectiveRole, activeTab]);
 
   // User Activity Tracker for Auto-Lock
@@ -6624,6 +6639,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
           ...prev,
           used: streamResult.usage.used,
           limit: streamResult.usage.limit,
+          baseLimit: streamResult.usage.baseLimit ?? prev.baseLimit,
+          bonus: streamResult.usage.bonus ?? prev.bonus,
+          winterBonus: streamResult.usage.winterBonus ?? prev.winterBonus,
+          voucherBonus: streamResult.usage.voucherBonus ?? prev.voucherBonus,
           remaining: streamResult.usage.remaining,
           nextAvailableInMinutes: streamResult.usage.nextAvailableInMinutes,
           lastUpdated: Date.now()

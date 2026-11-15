@@ -36,6 +36,7 @@ import {
   WinterRewardRecord,
   WinterStatusResponse,
 } from '../../lib/winterFestivalService';
+import { fetchAIUsageStatus } from '../../lib/aiUsageManager';
 import {
   buildResolvedSpinPlan,
   countPegBoundaryCrossings,
@@ -402,6 +403,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
         }
         playWheelCelebrateCue(wheelAudioRef.current);
         onSpinComplete();
+        void fetchAIUsageStatus(currentUser?.uid || 'guest', currentUser?.role || 'student');
         window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
         window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
       }

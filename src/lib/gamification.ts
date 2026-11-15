@@ -810,7 +810,8 @@ export async function awardStudentXP(
       house: user.house as HouseType | undefined,
     },
     action,
-    options?.uniqueItemId
+    options?.uniqueItemId,
+    { syncedFromClientProfile: true }
   ).catch(() => {});
 
   if (typeof window !== 'undefined' && !options?.silent) {

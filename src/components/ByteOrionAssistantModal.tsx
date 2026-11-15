@@ -268,6 +268,9 @@ export const ByteOrionAssistantModal: React.FC<ByteOrionAssistantModalProps> = (
       if (data.providerUsed) {
         setOrionProviderMeta(`${data.providerUsed}${data.modelUsed ? ` · ${data.modelUsed}` : ''}`);
       }
+      if (data.usage && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('s_os_ai_quota_updated', { detail: { ...data.usage, lastUpdated: Date.now() } }));
+      }
 
       if (voiceVolumeEnabled) {
         byteVoiceService.speak(reply.slice(0, 220));

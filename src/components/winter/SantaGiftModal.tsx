@@ -22,6 +22,7 @@ import {
   WinterRewardRecord,
   WinterStatusResponse,
 } from '../../lib/winterFestivalService';
+import { fetchAIUsageStatus } from '../../lib/aiUsageManager';
 import { AnimatedDialog, TactileButton } from '../ui/animatedComponents';
 import { FrostShieldSvg, WinterCookieSvg } from './WinterArtwork';
 import { Santa3DCanvas, SantaScenePhase } from './Santa3DCanvas';
@@ -252,6 +253,7 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
 
     if (!payload.isPreview) {
       await onRewardClaimed();
+      void fetchAIUsageStatus(currentUser?.uid || 'guest', currentUser?.role || 'student');
       window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
       window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
     }

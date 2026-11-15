@@ -869,6 +869,7 @@ async function streamRoutedCompletion(
     mode?: string;
     contextLength?: number;
     images?: { name?: string; mimeType: string; data: string }[];
+    onUsageCommit?: () => Promise<any>;
   },
   res: any
 ) {
@@ -985,6 +986,14 @@ async function streamRoutedCompletion(
           const latency = Date.now() - start;
           res.write(`data: ${JSON.stringify({ type: 'token', token: text, firstTokenLatencyMs: latency })}\n\n`);
           const finishedReply = text.trim();
+          let committedUsage: any = undefined;
+          if (options.onUsageCommit) {
+            try {
+              committedUsage = await options.onUsageCommit();
+            } catch (uErr) {
+              console.warn('[Vercel AI Quota] Commit warning:', uErr);
+            }
+          }
           res.write(
             `data: ${JSON.stringify({
               type: 'done',
@@ -1000,7 +1009,8 @@ async function streamRoutedCompletion(
                 firstTokenLatencyMs: latency,
                 totalGenerationTimeMs: Date.now() - start,
                 streamed: true
-              }
+              },
+              ...(committedUsage ? { usage: committedUsage } : {})
             })}\n\n`
           );
           res.end();
@@ -1046,6 +1056,14 @@ async function streamRoutedCompletion(
 
       const finishedReply = fullText.trim();
       if (finishedReply.length > 0) {
+        let committedUsage: any = undefined;
+        if (options.onUsageCommit) {
+          try {
+            committedUsage = await options.onUsageCommit();
+          } catch (uErr) {
+            console.warn('[Vercel AI Quota] Stream commit warning:', uErr);
+          }
+        }
         res.write(
           `data: ${JSON.stringify({
             type: 'done',
@@ -1061,7 +1079,8 @@ async function streamRoutedCompletion(
               firstTokenLatencyMs: firstTokenLatencyMs ?? (Date.now() - start),
               totalGenerationTimeMs: Date.now() - start,
               streamed: true
-            }
+            },
+            ...(committedUsage ? { usage: committedUsage } : {})
           })}\n\n`
         );
         res.end();
@@ -1566,6 +1585,228 @@ function sendJson(res: any, status: number, data: any) {
 
 let cachedServerApp: any = null;
 
+const SERVERLESS_ROLE_AI_LIMITS: Record<string, number> = {
+  student: 30,
+  teacher: 75,
+  coordinator: 100,
+  admin: 150,
+  super_admin: 150,
+};
+
+function getServerlessSupabaseConfig(): { url: string; key: string } {
+  const url = (
+    process.env.VITE_SUPABASE_URL ||
+    process.env.SUPABASE_URL ||
+    'https://zwpoutanhsujezglbson.supabase.co'
+  ).trim();
+  const DEFAULT_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+  const isInvalid = (k?: string | null) => {
+    if (!k) return true;
+    const t = k.trim();
+    const l = t.toLowerCase();
+    return t.length < 20 || l.includes('your_') || l.includes('placeholder');
+  };
+  const candidates = [
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
+    process.env.SUPABASE_ANON_KEY,
+    process.env.VITE_SUPABASE_ANON_KEY,
+    process.env.SUPABASE_KEY,
+  ];
+  let key = DEFAULT_ANON_KEY;
+  for (const cand of candidates) {
+    if (!isInvalid(cand)) {
+      key = cand!.trim();
+      break;
+    }
+  }
+  return { url, key };
+}
+
+function getServerlessIstDayKey(nowMs: number = Date.now()): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(nowMs));
+  const map: Record<string, string> = {};
+  for (const p of parts) {
+    if (p.type !== 'literal') map[p.type] = p.value;
+  }
+  return `${map.year}-${map.month}-${map.day}`;
+}
+
+function isMissingRelServerless(status: number, bodyText: string): boolean {
+  if (status === 404) return true;
+  const lower = bodyText.toLowerCase();
+  return lower.includes('pgrst205') || lower.includes('schema cache') || (lower.includes('relation') && lower.includes('does not exist'));
+}
+
+async function getServerlessQuotaStatus(userId: string, role: string) {
+  const cfg = getServerlessSupabaseConfig();
+  const normRole = String(role || 'student').toLowerCase().trim() || 'student';
+  const nowMs = Date.now();
+  const windowStart = nowMs - 24 * 60 * 60 * 1000;
+  const sinceIso = new Date(windowStart).toISOString();
+  const todayIstKey = getServerlessIstDayKey(nowMs);
+  const encUid = encodeURIComponent(userId);
+  const headers = { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` };
+
+  const [limitsRes, winterRes, logsRes, vouchersRes] = await Promise.all([
+    fetch(`${cfg.url}/rest/v1/ai_role_limits?select=role,daily_limit`, { headers }).catch(() => null),
+    fetch(`${cfg.url}/rest/v1/winter_user_profiles?user_id=eq.${encUid}&select=ai_bonus_date,ai_bonus_credits_today&limit=1`, { headers }),
+    fetch(`${cfg.url}/rest/v1/ai_usage_logs?user_id=eq.${encUid}&created_at=gte.${encodeURIComponent(sinceIso)}&select=id,created_at&order=created_at.asc`, { headers }),
+    fetch(`${cfg.url}/rest/v1/ai_user_vouchers?user_id=eq.${encUid}&select=voucher_code,bonus_queries`, { headers }),
+  ]);
+
+  const roleLimits = { ...SERVERLESS_ROLE_AI_LIMITS };
+  if (limitsRes && limitsRes.ok) {
+    const lRows = await limitsRes.json();
+    if (Array.isArray(lRows)) {
+      for (const r of lRows) {
+        if (r?.role && Number(r.daily_limit) > 0) {
+          roleLimits[String(r.role).toLowerCase()] = Number(r.daily_limit);
+        }
+      }
+    }
+  }
+
+  let winterBonus = 0;
+  if (winterRes.ok) {
+    const wRows = await winterRes.json();
+    const row = Array.isArray(wRows) ? wRows[0] : null;
+    if (row && String(row.ai_bonus_date || '') === todayIstKey) {
+      winterBonus = Math.min(5, Math.max(0, Number(row.ai_bonus_credits_today || 0)));
+    }
+  } else {
+    const wErr = await winterRes.text().catch(() => '');
+    if (!isMissingRelServerless(winterRes.status, wErr)) {
+      throw new Error(`Winter quota lookup failed (${winterRes.status}): ${wErr}`);
+    }
+  }
+
+  let timestamps: number[] = [];
+  let voucherBonus = 0;
+  let needGlobalDoc = false;
+
+  if (logsRes.ok) {
+    const rows = await logsRes.json();
+    if (Array.isArray(rows)) {
+      timestamps = rows.map((r: any) => Date.parse(String(r.created_at))).filter((ts: number) => Number.isFinite(ts) && ts >= windowStart);
+    }
+  } else {
+    const lErr = await logsRes.text().catch(() => '');
+    if (isMissingRelServerless(logsRes.status, lErr)) {
+      needGlobalDoc = true;
+    } else {
+      throw new Error(`AI usage lookup failed (${logsRes.status}): ${lErr}`);
+    }
+  }
+
+  if (vouchersRes.ok) {
+    const rows = await vouchersRes.json();
+    if (Array.isArray(rows)) {
+      voucherBonus = rows.reduce((s: number, r: any) => s + Math.max(0, Number(r.bonus_queries || 0)), 0);
+    }
+  } else {
+    const vErr = await vouchersRes.text().catch(() => '');
+    if (isMissingRelServerless(vouchersRes.status, vErr)) {
+      needGlobalDoc = true;
+    } else {
+      throw new Error(`AI voucher lookup failed (${vouchersRes.status}): ${vErr}`);
+    }
+  }
+
+  if (needGlobalDoc) {
+    const docId = `__veylentra_ai_quota_${userId}__`;
+    const gRes = await fetch(`${cfg.url}/rest/v1/global_data?id=eq.${encodeURIComponent(docId)}&select=data&limit=1`, { headers });
+    if (gRes.ok) {
+      const rows = await gRes.json();
+      const doc = rows?.[0]?.data;
+      if (doc && typeof doc === 'object') {
+        if (!logsRes.ok && Array.isArray(doc.timestamps)) {
+          timestamps = doc.timestamps.map(Number).filter((ts: number) => Number.isFinite(ts) && ts >= windowStart);
+        }
+        if (!vouchersRes.ok && typeof doc.voucherBonus === 'number') {
+          voucherBonus = doc.voucherBonus;
+        }
+      }
+    }
+  }
+
+  timestamps.sort((a, b) => a - b);
+  const baseLimit = roleLimits[normRole] || SERVERLESS_ROLE_AI_LIMITS[normRole] || 30;
+  const bonus = voucherBonus + winterBonus;
+  const limit = baseLimit + bonus;
+  const used = timestamps.length;
+  const remaining = Math.max(0, limit - used);
+  let nextAvailableInMinutes: number | null = null;
+  if (used >= limit && timestamps.length > 0) {
+    const oldest = timestamps[0];
+    nextAvailableInMinutes = Math.max(1, Math.ceil((oldest + 24 * 60 * 60 * 1000 - nowMs) / 60000));
+  }
+  return {
+    used,
+    limit,
+    baseLimit,
+    bonus,
+    winterBonus,
+    voucherBonus,
+    remaining,
+    nextAvailableInMinutes,
+    role: normRole,
+  };
+}
+
+async function recordServerlessAiUsage(userId: string, role: string, feature: string) {
+  const cfg = getServerlessSupabaseConfig();
+  const nowMs = Date.now();
+  const entryId = `use_${nowMs}_${Math.random().toString(36).substring(2, 10)}`;
+  const res = await fetch(`${cfg.url}/rest/v1/ai_usage_logs`, {
+    method: 'POST',
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      id: entryId,
+      user_id: userId,
+      user_role: role,
+      feature,
+      created_at: new Date(nowMs).toISOString(),
+    }),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    if (isMissingRelServerless(res.status, errText)) {
+      const docId = `__veylentra_ai_quota_${userId}__`;
+      const headers = { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` };
+      const gRes = await fetch(`${cfg.url}/rest/v1/global_data?id=eq.${encodeURIComponent(docId)}&select=data&limit=1`, { headers });
+      let current = { timestamps: [] as number[], voucherBonus: 0, redeemedCodes: [] as string[] };
+      if (gRes.ok) {
+        const rows = await gRes.json();
+        if (rows?.[0]?.data && typeof rows[0].data === 'object') {
+          current = {
+            timestamps: Array.isArray(rows[0].data.timestamps) ? rows[0].data.timestamps.map(Number) : [],
+            voucherBonus: Number(rows[0].data.voucherBonus || 0),
+            redeemedCodes: Array.isArray(rows[0].data.redeemedCodes) ? rows[0].data.redeemedCodes : [],
+          };
+        }
+      }
+      current.timestamps = current.timestamps.filter(ts => ts >= nowMs - 24 * 60 * 60 * 1000);
+      current.timestamps.push(nowMs);
+      await fetch(`${cfg.url}/rest/v1/global_data?on_conflict=id`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' },
+        body: JSON.stringify({ id: docId, data: current, updated_at: new Date().toISOString() }),
+      });
+      return;
+    }
+    throw new Error(`Failed to persist AI usage (${res.status}): ${errText}`);
+  }
+}
+
 export default async function handler(req: any, res: any) {
   const url = req.url || '';
   const pathname = url.split('?')[0];
@@ -1887,6 +2128,8 @@ Schema:
       mode = 'explanatory',
       ragContext = '',
       studentosContext = '',
+      userId,
+      userRole,
       modelOverride,
       taskType,
       contextLength: bodyContextLength,
@@ -1897,6 +2140,42 @@ Schema:
 
     if (!prompt) {
       return sendJson(res, 400, { error: 'Prompt is required', requestId });
+    }
+
+    const headerUid = String(req.headers?.['x-veylentra-uid'] || '').trim();
+    const headerRole = String(req.headers?.['x-veylentra-role'] || '').trim();
+    const rawUserId = String(userId || '').trim();
+    const activeUserId =
+      rawUserId && rawUserId !== 'anonymous' && rawUserId !== 'guest' && rawUserId !== 'user_guest'
+        ? rawUserId
+        : headerUid || rawUserId || 'user_guest';
+    const activeRole = String(userRole || headerRole || 'student').toLowerCase().trim();
+
+    let usageBefore;
+    try {
+      usageBefore = await getServerlessQuotaStatus(activeUserId, activeRole);
+    } catch (qErr: any) {
+      return sendJson(res, 503, {
+        error: 'AI_QUOTA_UNAVAILABLE',
+        message: qErr?.message || 'Unable to verify AI daily quota.',
+        requestId
+      });
+    }
+
+    if (usageBefore.used >= usageBefore.limit) {
+      return sendJson(res, 429, {
+        error: 'AI_LIMIT_REACHED',
+        message: `You have reached your daily limit of ${usageBefore.limit} AI messages. A new message slot will open in ${usageBefore.nextAvailableInMinutes || 60} minutes.`,
+        used: usageBefore.used,
+        limit: usageBefore.limit,
+        baseLimit: usageBefore.baseLimit,
+        bonus: usageBefore.bonus,
+        winterBonus: usageBefore.winterBonus,
+        voucherBonus: usageBefore.voucherBonus,
+        remaining: 0,
+        nextAvailableInMinutes: usageBefore.nextAvailableInMinutes,
+        requestId
+      });
     }
 
     const isStreaming = Boolean(stream || pathname.includes('/stream'));
@@ -1947,7 +2226,11 @@ ${combinedContext}
           maxTokens,
           mode,
           contextLength: effectiveContextLength,
-          images
+          images,
+          onUsageCommit: async () => {
+            await recordServerlessAiUsage(activeUserId, activeRole, persona || 'ai_buddy');
+            return getServerlessQuotaStatus(activeUserId, activeRole);
+          }
         },
         res
       );
@@ -1973,6 +2256,18 @@ ${combinedContext}
         }
       );
 
+      let updatedUsage = {
+        ...usageBefore,
+        used: usageBefore.used + 1,
+        remaining: Math.max(0, usageBefore.limit - (usageBefore.used + 1)),
+      };
+      try {
+        await recordServerlessAiUsage(activeUserId, activeRole, persona || 'ai_buddy');
+        updatedUsage = await getServerlessQuotaStatus(activeUserId, activeRole);
+      } catch (uErr) {
+        console.warn('[Vercel AI Quota] Record notice:', uErr);
+      }
+
       return sendJson(res, 200, {
         success: true,
         text: result.text.trim(),
@@ -1987,7 +2282,8 @@ ${combinedContext}
           streamed: false
         },
         providerUsed: result.providerUsed,
-        modelUsed: result.modelUsed
+        modelUsed: result.modelUsed,
+        usage: updatedUsage,
       });
     } catch (err: any) {
       const statusCode = typeof err?.status === 'number' && err.status >= 400 ? err.status : 500;

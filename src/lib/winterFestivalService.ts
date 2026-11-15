@@ -250,7 +250,8 @@ export async function equipWinterFrame(user: Partial<UserProfile> | null | undef
 export async function awardServerActionXp(
   user: Partial<UserProfile> | null | undefined,
   action: string,
-  itemId?: string
+  itemId?: string,
+  options?: { syncedFromClientProfile?: boolean }
 ) {
   if (!user || !(user.uid || (user as any).id)) return null;
   try {
@@ -258,7 +259,11 @@ export async function awardServerActionXp(
     const res = await fetch('/api/gamification/action', {
       method: 'POST',
       headers,
-      body: JSON.stringify({ action, itemId }),
+      body: JSON.stringify({
+        action,
+        itemId,
+        syncedFromClientProfile: Boolean(options?.syncedFromClientProfile),
+      }),
     });
     if (!res.ok) return null;
     return res.json();

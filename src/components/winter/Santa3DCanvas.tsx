@@ -16,6 +16,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { SantaGiftBoxSvg, SnowflakeVector } from './WinterArtwork';
+import { fetchCachedSantaGlb } from '../../lib/santaModelCache';
 
 export type SantaScenePhase = 'idle' | 'pending' | 'revealing' | 'revealed';
 
@@ -27,23 +28,7 @@ interface Santa3DCanvasProps {
   onRevealComplete?: () => void;
 }
 
-const SANTA_MODEL_URL = '/assets/models/santa.glb';
 const LID_OPEN_ANGLE_RAD = -2.02; // ~115.7 degrees backward around back hinge
-
-let cachedSantaGlbPromise: Promise<ArrayBuffer> | null = null;
-
-function fetchCachedSantaGlb(): Promise<ArrayBuffer> {
-  if (!cachedSantaGlbPromise) {
-    cachedSantaGlbPromise = fetch(SANTA_MODEL_URL, { cache: 'force-cache' }).then((res) => {
-      if (!res.ok) {
-        cachedSantaGlbPromise = null;
-        throw new Error(`Failed to load Santa 3D model (${res.status})`);
-      }
-      return res.arrayBuffer();
-    });
-  }
-  return cachedSantaGlbPromise;
-}
 
 function detectSoftwareWebGL(renderer: THREE.WebGLRenderer): boolean {
   try {

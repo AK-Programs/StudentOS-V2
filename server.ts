@@ -43,8 +43,16 @@ import {
 import { registerFeatureManagementRoutes } from './server/featureManagementModule';
 import {
   registerWinterFestivalAndLeaderboardRoutes,
-  getUserWinterAiBonusCredits
+  getUserWinterAiBonusCredits,
+  appendXpLedgerEntry,
 } from './server/winterFestivalModule';
+import {
+  AIQuotaPersistenceError,
+  getRolling24hUsageAsync,
+  recordAiUsageAsync,
+  redeemAiVoucherAsync,
+  updateRoleLimitsAsync,
+} from './server/aiQuotaService';
 
 dotenv.config();
 
@@ -983,17 +991,28 @@ app.post('/api/gamification/award', async (req, res) => {
     return res.status(403).json({ error: 'Forbidden: cannot modify another user gamification profile.' });
   }
 
-  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
-  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+  const cfg = getSupabaseServerConfig();
+  const supabaseUrl = cfg.url;
+  const supabaseKey = cfg.key;
+  const useDb =
+    Boolean(supabaseUrl && supabaseKey) &&
+    (process.env.NODE_ENV !== 'test' || supabaseUrl.includes('127.0.0.1') || supabaseUrl.includes('localhost'));
+
   const docId = `__studentos_gamification_${schoolId}__`;
   const userDocId = `gamification_user_${userId}`;
 
   try {
     let existingMap: Record<string, any> = {};
-    const gRes = await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.${encodeURIComponent(docId)}&select=*`, {
-      headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
-    });
-    if (gRes.ok) {
+    if (useDb) {
+      const gRes = await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.${encodeURIComponent(docId)}&select=*`, {
+        headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
+      });
+      if (!gRes.ok) {
+        const errText = await gRes.text().catch(() => '');
+        return res.status(503).json({
+          error: `Failed to read gamification state from Supabase (${gRes.status}): ${errText || gRes.statusText}`
+        });
+      }
       const rows = await gRes.json();
       const loaded = rows[0]?.data ?? (rows[0]?.content ? JSON.parse(rows[0].content) : null);
       if (loaded && typeof loaded === 'object') {
@@ -1012,45 +1031,57 @@ app.post('/api/gamification/award', async (req, res) => {
         profile.xp = existingProfile.xp + 150;
       }
     }
-    memoryGamificationStore[userId] = profile;
-    existingMap[userId] = profile;
-    Object.assign(memoryGamificationStore, existingMap);
 
-    // 1. Persist aggregated school gamification store
-    await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
-      method: 'POST',
-      headers: {
-        'apikey': supabaseKey,
-        'Authorization': `Bearer ${supabaseKey}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
-      },
-      body: JSON.stringify({
-        id: docId,
-        data: existingMap,
-        updated_at: new Date().toISOString()
-      })
-    });
+    if (useDb) {
+      const nextMap = { ...existingMap, [userId]: profile };
 
-    // 2. Persist individual user profile document for rock-solid cross-device isolation
-    await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
-      method: 'POST',
-      headers: {
-        'apikey': supabaseKey,
-        'Authorization': `Bearer ${supabaseKey}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
-      },
-      body: JSON.stringify({
-        id: userDocId,
-        data: profile,
-        updated_at: new Date().toISOString()
-      })
-    });
+      // 1. Persist aggregated school gamification store
+      const schoolRes = await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
+        method: 'POST',
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({
+          id: docId,
+          data: nextMap,
+          updated_at: new Date().toISOString()
+        })
+      });
+      if (!schoolRes.ok) {
+        const errText = await schoolRes.text().catch(() => '');
+        return res.status(503).json({
+          error: `Failed to persist school gamification store (${schoolRes.status}): ${errText || schoolRes.statusText}`
+        });
+      }
 
-    // 3. Mirror points to user_profiles table if user row exists
-    try {
-      await fetch(`${supabaseUrl}/rest/v1/user_profiles?id=eq.${encodeURIComponent(userId)}`, {
+      // 2. Persist individual user profile document for rock-solid cross-device isolation
+      const userDocRes = await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
+        method: 'POST',
+        headers: {
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({
+          id: userDocId,
+          data: profile,
+          updated_at: new Date().toISOString()
+        })
+      });
+      if (!userDocRes.ok) {
+        const errText = await userDocRes.text().catch(() => '');
+        return res.status(503).json({
+          error: `Failed to persist user gamification profile (${userDocRes.status}): ${errText || userDocRes.statusText}`
+        });
+      }
+
+      // 3. Mirror points to user_profiles table across both id and uid columns
+      const encUid = encodeURIComponent(userId);
+      const profPatchRes = await fetch(`${supabaseUrl}/rest/v1/user_profiles?or=(id.eq.${encUid},uid.eq.${encUid})`, {
         method: 'PATCH',
         headers: {
           'apikey': supabaseKey,
@@ -1062,9 +1093,23 @@ app.post('/api/gamification/award', async (req, res) => {
           updated_at: Date.now()
         })
       });
-    } catch (_) {}
+      if (!profPatchRes.ok) {
+        const errText = await profPatchRes.text().catch(() => '');
+        return res.status(503).json({
+          error: `Failed to sync user_profiles points (${profPatchRes.status}): ${errText || profPatchRes.statusText}`
+        });
+      }
+
+      Object.assign(memoryGamificationStore, nextMap);
+    } else {
+      memoryGamificationStore[userId] = profile;
+      existingMap[userId] = profile;
+      Object.assign(memoryGamificationStore, existingMap);
+    }
   } catch (e: any) {
-    console.warn('[Gamification Server] Sync notice:', e?.message);
+    return res.status(503).json({
+      error: `Gamification persistence error: ${e?.message || String(e)}`
+    });
   }
 
   return res.json({ status: 'ok', profile });
@@ -1334,28 +1379,63 @@ app.post('/api/brain-battle/complete', async (req, res) => {
   };
 
   const updated = [validatedItem, ...list].slice(0, 250);
+  const cfg = getSupabaseServerConfig();
+  const hDocId = `__studentos_brain_battle_history_${schoolId}__`;
+  const useDb =
+    Boolean(cfg.url && cfg.key) &&
+    (process.env.NODE_ENV !== 'test' || cfg.url.includes('127.0.0.1') || cfg.url.includes('localhost'));
+
+  if (useDb) {
+    try {
+      const saveRes = await fetch(`${cfg.url}/rest/v1/global_data?on_conflict=id`, {
+        method: 'POST',
+        headers: {
+          apikey: cfg.key,
+          Authorization: `Bearer ${cfg.key}`,
+          'Content-Type': 'application/json',
+          Prefer: 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({
+          id: hDocId,
+          data: updated,
+          updated_at: new Date().toISOString()
+        })
+      });
+      if (!saveRes.ok) {
+        const errText = await saveRes.text().catch(() => '');
+        return res.status(503).json({
+          error: `Failed to save Brain Battle history (${saveRes.status}): ${errText || saveRes.statusText}`
+        });
+      }
+    } catch (bbErr: any) {
+      return res.status(503).json({
+        error: `Brain Battle persistence error: ${bbErr?.message || String(bbErr)}`
+      });
+    }
+  }
+
   memoryBrainBattleHistory[schoolId] = updated;
 
-  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
-  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
-  const hDocId = `__studentos_brain_battle_history_${schoolId}__`;
-
   try {
-    await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
-      method: 'POST',
-      headers: {
-        apikey: supabaseKey,
-        Authorization: `Bearer ${supabaseKey}`,
-        'Content-Type': 'application/json',
-        Prefer: 'resolution=merge-duplicates'
-      },
-      body: JSON.stringify({
-        id: hDocId,
-        data: updated,
-        updated_at: new Date().toISOString()
-      })
+    await appendXpLedgerEntry(getSupabaseServerConfig, {
+      id: `xp_bb_${validatedItem.id}`,
+      userId: validatedItem.userId,
+      userName: validatedItem.userName,
+      userRole: validatedItem.userRole,
+      grade: validatedItem.grade || '',
+      section: '',
+      house: validatedItem.house || '',
+      sourceType: 'academic',
+      actionKey: `brain_battle:${validatedItem.id}`,
+      xpDelta: validatedItem.xpEarned,
+      label: `Brain Battle: ${validatedItem.subject}`,
+      createdAt: validatedItem.timestamp,
     });
-  } catch (_) {}
+  } catch (xpErr: any) {
+    return res.status(503).json({
+      error: `Failed to record Brain Battle XP ledger: ${xpErr?.message || String(xpErr)}`
+    });
+  }
 
   return res.json({
     status: 'ok',
@@ -1928,132 +2008,77 @@ app.get('/api/updates/status', (req, res) => {
 // Role-based limits: Student (30), Teacher (75), Coordinator (100), Admin (150)
 // ========================================================================
 
-interface AIUsageLog {
-  id: string;
-  userId: string;
-  role: string;
-  feature: string;
-  timestamp: number;
-}
-
-let ROLE_AI_LIMITS: Record<string, number> = {
-  student: 30,
-  teacher: 75,
-  coordinator: 100,
-  admin: 150,
-  super_admin: 150
-};
-
-const memoryAIUsage: AIUsageLog[] = [];
-
-const userBonusQuotas: Record<string, number> = {};
-const userRedeemedCodes: Record<string, string[]> = {};
 const pendingQuotaRequests: Array<{ id: string; userId: string; userName: string; userEmail: string; reason: string; timestamp: number }> = [];
 
-const VALID_VOUCHERS: Record<string, { bonus: number; title: string }> = {
-  'STUDENTOS-PRO': { bonus: 25, title: 'StudentOS Pro Booster (+25/day)' },
-  'EXAM-PREP': { bonus: 35, title: 'Exam Preparation Sprint (+35/day)' },
-  'SCHOLAR-PASS': { bonus: 50, title: 'Academic Scholar Pass (+50/day)' },
-  'GENIUS-2026': { bonus: 40, title: '2026 Innovation Grant (+40/day)' },
-  'TEACHER-GRANT': { bonus: 60, title: 'Faculty Authorized Quota (+60/day)' },
-  'STUDENTOS-UNLIMITED': { bonus: 100, title: 'StudentOS Unlimited Sprint (+100/day)' },
-};
+async function resolveAiQuotaActor(
+  req: express.Request,
+  fallbackUserId?: string,
+  fallbackRole?: string
+): Promise<{ userId: string; role: string }> {
+  const actor = await resolveFeatureAndWinterActor(req).catch(() => null);
+  const rawBodyUid = String(fallbackUserId || '').trim();
+  const isGenericFallback =
+    !rawBodyUid || rawBodyUid === 'anonymous' || rawBodyUid === 'guest' || rawBodyUid === 'user_guest';
 
-function getRoleLimit(role?: string): number {
-  const r = (role || 'student').toLowerCase();
-  return ROLE_AI_LIMITS[r] || 30;
+  const userId = actor?.isVerifiedJwt
+    ? actor.id
+    : !isGenericFallback
+    ? rawBodyUid
+    : actor?.id || rawBodyUid || 'anonymous';
+
+  const role = (actor?.isVerifiedJwt ? actor.role : (fallbackRole || actor?.role || 'student')).toLowerCase().trim();
+  return { userId, role };
 }
 
-function getRolling24hUsage(userId: string, role?: string): {
-  used: number;
-  limit: number;
-  baseLimit: number;
-  bonus: number;
-  remaining: number;
-  nextAvailableInMinutes: number | null;
-  role: string;
-} {
-  const now = Date.now();
-  const windowStart = now - 24 * 60 * 60 * 1000;
-
-  // Filter records in last 24h
-  const activeRecords = memoryAIUsage.filter(u => u.userId === userId && u.timestamp >= windowStart);
-  activeRecords.sort((a, b) => a.timestamp - b.timestamp);
-
-  const baseLimit = getRoleLimit(role);
-  const winterBonus = getUserWinterAiBonusCredits(userId);
-  const bonus = (userBonusQuotas[userId] || 0) + winterBonus;
-  const limit = baseLimit + bonus;
-  const used = activeRecords.length;
-  const remaining = Math.max(0, limit - used);
-
-  let nextAvailableInMinutes: number | null = null;
-  if (used >= limit && activeRecords.length > 0) {
-    const oldest = activeRecords[0].timestamp;
-    const expiresAt = oldest + 24 * 60 * 60 * 1000;
-    nextAvailableInMinutes = Math.max(1, Math.ceil((expiresAt - now) / 60000));
-  }
-
-  return {
-    used,
-    limit,
-    baseLimit,
-    bonus,
-    remaining,
-    nextAvailableInMinutes,
-    role: (role || 'student').toLowerCase()
-  };
-}
-
-// Endpoint to inspect rolling 24-hour limit
-app.get('/api/ai/usage-status', (req, res) => {
+// Endpoint to inspect rolling 24-hour limit (persistent across restarts & server instances)
+app.get('/api/ai/usage-status', async (req, res) => {
   try {
-    const userId = (req.query.userId as string) || 'anonymous';
-    const role = (req.query.role as string) || 'student';
-    const info = getRolling24hUsage(userId, role);
+    const { userId, role } = await resolveAiQuotaActor(
+      req,
+      req.query.userId as string | undefined,
+      req.query.role as string | undefined
+    );
+    const info = await getRolling24hUsageAsync({
+      cfg: getSupabaseServerConfig(),
+      userId,
+      role,
+      memoryWinterBonusFn: getUserWinterAiBonusCredits,
+    });
     return res.json(info);
   } catch (err: any) {
-    return res.json({
-      used: 0,
-      limit: 30,
-      baseLimit: 30,
-      bonus: 0,
-      remaining: 30,
-      nextAvailableInMinutes: null,
-      role: 'student'
+    if (err instanceof AIQuotaPersistenceError) {
+      return res.status(err.statusCode).json({ success: false, code: err.code, error: err.message });
+    }
+    return res.status(503).json({
+      success: false,
+      code: 'AI_QUOTA_UNAVAILABLE',
+      error: err?.message || 'Unable to verify AI quota status from database.',
     });
   }
 });
 
 // Endpoint to redeem voucher codes for quota boost
-app.post('/api/ai/redeem-voucher', (req, res) => {
-  const { code, userId, userRole } = req.body || {};
-  const activeUserId = userId || 'anonymous';
-  const cleanCode = String(code || '').trim().toUpperCase();
-
-  const voucher = VALID_VOUCHERS[cleanCode];
-  if (!voucher) {
-    return res.status(400).json({ success: false, error: 'Invalid or expired voucher code.' });
+app.post('/api/ai/redeem-voucher', async (req, res) => {
+  try {
+    const { code, userId, userRole } = req.body || {};
+    const resolved = await resolveAiQuotaActor(req, userId, userRole);
+    const result = await redeemAiVoucherAsync({
+      cfg: getSupabaseServerConfig(),
+      userId: resolved.userId,
+      userRole: resolved.role,
+      code,
+      memoryWinterBonusFn: getUserWinterAiBonusCredits,
+    });
+    return res.status(result.statusCode).json(result.body);
+  } catch (err: any) {
+    if (err instanceof AIQuotaPersistenceError) {
+      return res.status(err.statusCode).json({ success: false, code: err.code, error: err.message });
+    }
+    return res.status(503).json({
+      success: false,
+      error: err?.message || 'Failed to redeem AI quota voucher.',
+    });
   }
-
-  const redeemed = userRedeemedCodes[activeUserId] || [];
-  if (redeemed.includes(cleanCode)) {
-    return res.status(400).json({ success: false, error: 'Voucher has already been redeemed for this account.' });
-  }
-
-  // Redeem voucher
-  redeemed.push(cleanCode);
-  userRedeemedCodes[activeUserId] = redeemed;
-  userBonusQuotas[activeUserId] = (userBonusQuotas[activeUserId] || 0) + voucher.bonus;
-
-  const updatedUsage = getRolling24hUsage(activeUserId, userRole);
-  return res.json({
-    success: true,
-    message: `Voucher redeemed! Added ${voucher.title}`,
-    bonusAdded: voucher.bonus,
-    newLimit: updatedUsage.limit,
-    remaining: updatedUsage.remaining
-  });
 });
 
 // Endpoint to request AI boost from school staff
@@ -2081,19 +2106,24 @@ app.post('/api/ai/request-boost', (req, res) => {
 
 // Endpoint for admins to configure role limits
 app.post('/api/admin/ai-limits', async (req, res) => {
-  const verifiedUser = await getVerifiedUserFromRequest(req);
-  const bodyAdminRole = req.body?.adminRole;
-  const isBodyAdmin = bodyAdminRole === 'admin' || bodyAdminRole === 'super_admin';
-  const isVerifiedAdmin = verifiedUser && (verifiedUser.role === 'admin' || verifiedUser.role === 'super_admin');
+  try {
+    const verifiedUser = await getVerifiedUserFromRequest(req);
+    const bodyAdminRole = req.body?.adminRole;
+    const isBodyAdmin = bodyAdminRole === 'admin' || bodyAdminRole === 'super_admin';
+    const isVerifiedAdmin = verifiedUser && (verifiedUser.role === 'admin' || verifiedUser.role === 'super_admin');
 
-  if (!isVerifiedAdmin && !isBodyAdmin) {
-    return res.status(403).json({ error: 'Unauthorized. Admin privilege required.' });
+    if (!isVerifiedAdmin && !isBodyAdmin) {
+      return res.status(403).json({ error: 'Unauthorized. Admin privilege required.' });
+    }
+    const { limits } = req.body || {};
+    const updated = await updateRoleLimitsAsync(getSupabaseServerConfig(), limits || {});
+    return res.json({ status: 'ok', limits: updated });
+  } catch (err: any) {
+    if (err instanceof AIQuotaPersistenceError) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
+    return res.status(503).json({ error: err?.message || 'Failed to persist AI role limits.' });
   }
-  const { limits } = req.body || {};
-  if (limits && typeof limits === 'object') {
-    ROLE_AI_LIMITS = { ...ROLE_AI_LIMITS, ...limits };
-  }
-  return res.json({ status: 'ok', limits: ROLE_AI_LIMITS });
 });
 
 // Global APK Configuration State (Accessible to all users for download, editable by Super Admin)
@@ -2640,17 +2670,36 @@ app.post(['/api/ai/chat', '/api/ai/chat/stream'], async (req, res) => {
     return res.status(400).json({ error: 'Prompt is required' });
   }
 
-  // Enforce server-side rolling 24-hour limit
-  const activeUserId = userId || 'user_guest';
-  const activeRole = userRole || 'student';
+  // Enforce server-side rolling 24-hour limit including Supabase-backed Winter & Voucher bonus credits
+  const resolvedQuotaActor = await resolveAiQuotaActor(req, userId, userRole);
+  const activeUserId = resolvedQuotaActor.userId || 'user_guest';
+  const activeRole = resolvedQuotaActor.role || 'student';
 
-  const usage = getRolling24hUsage(activeUserId, activeRole);
+  let usage;
+  try {
+    usage = await getRolling24hUsageAsync({
+      cfg: getSupabaseServerConfig(),
+      userId: activeUserId,
+      role: activeRole,
+      memoryWinterBonusFn: getUserWinterAiBonusCredits,
+    });
+  } catch (quotaErr: any) {
+    return res.status(quotaErr instanceof AIQuotaPersistenceError ? quotaErr.statusCode : 503).json({
+      error: 'AI_QUOTA_UNAVAILABLE',
+      message: quotaErr?.message || 'Unable to verify daily AI quota from database.',
+    });
+  }
+
   if (usage.used >= usage.limit) {
     return res.status(429).json({
       error: 'AI_LIMIT_REACHED',
       message: `You have reached your daily limit of ${usage.limit} AI messages. A new message slot will open in ${usage.nextAvailableInMinutes || 60} minutes.`,
       used: usage.used,
       limit: usage.limit,
+      baseLimit: usage.baseLimit,
+      bonus: usage.bonus,
+      winterBonus: usage.winterBonus,
+      voucherBonus: usage.voucherBonus,
       remaining: 0,
       nextAvailableInMinutes: usage.nextAvailableInMinutes
     });
@@ -2847,15 +2896,37 @@ Do NOT fabricate current news, circulars, or live statistics. After stating that
           onToken: (token, firstTokenLatencyMs) => {
             res.write(`data: ${JSON.stringify({ type: 'token', token, firstTokenLatencyMs })}\n\n`);
           },
-          onComplete: (fullText, telemetry) => {
-            memoryAIUsage.push({
-              id: 'use_' + Math.random().toString(36).substring(2, 11),
-              userId: activeUserId,
+          onComplete: async (fullText, telemetry) => {
+            let updatedUsage = {
+              used: usage.used + 1,
+              limit: usage.limit,
+              baseLimit: usage.baseLimit,
+              bonus: usage.bonus,
+              winterBonus: usage.winterBonus,
+              voucherBonus: usage.voucherBonus,
+              remaining: Math.max(0, usage.limit - (usage.used + 1)),
+              nextAvailableInMinutes: usage.nextAvailableInMinutes,
               role: activeRole,
-              feature: persona || 'ai_buddy',
-              timestamp: Date.now()
-            });
-            const updatedUsage = getRolling24hUsage(activeUserId, activeRole);
+            };
+            try {
+              const cfg = getSupabaseServerConfig();
+              await recordAiUsageAsync({
+                cfg,
+                userId: activeUserId,
+                role: activeRole,
+                feature: persona || 'ai_buddy',
+              });
+              updatedUsage = await getRolling24hUsageAsync({
+                cfg,
+                userId: activeUserId,
+                role: activeRole,
+                memoryWinterBonusFn: getUserWinterAiBonusCredits,
+              });
+            } catch (usageErr: any) {
+              console.warn('[AI QUOTA] Stream usage persistence warning:', usageErr?.message || usageErr);
+            }
+
+            if (!res.writableEnded) {
               res.write(
                 `data: ${JSON.stringify({
                   type: 'done',
@@ -2868,17 +2939,13 @@ Do NOT fabricate current news, circulars, or live statistics. After stating that
                   webSources,
                   webSearchError,
                   videos: webVideos,
-                  usage: {
-                    used: updatedUsage.used,
-                    limit: updatedUsage.limit,
-                    remaining: updatedUsage.remaining,
-                    nextAvailableInMinutes: updatedUsage.nextAvailableInMinutes
-                  }
+                  usage: updatedUsage,
                 })}\n\n`
               );
               res.end();
             }
-          },
+          }
+        },
           abortController.signal
         );
       } catch (streamErr: any) {
@@ -2938,16 +3005,21 @@ ${searchRes.formattedContext}`;
         images
       });
       
-      // Record rolling 24h usage log
-      memoryAIUsage.push({
-        id: 'use_' + Math.random().toString(36).substring(2, 11),
+      // Record rolling 24h usage log persistently
+      const cfg = getSupabaseServerConfig();
+      await recordAiUsageAsync({
+        cfg,
         userId: activeUserId,
         role: activeRole,
         feature: persona || 'ai_buddy',
-        timestamp: Date.now()
       });
 
-      const updatedUsage = getRolling24hUsage(activeUserId, activeRole);
+      const updatedUsage = await getRolling24hUsageAsync({
+        cfg,
+        userId: activeUserId,
+        role: activeRole,
+        memoryWinterBonusFn: getUserWinterAiBonusCredits,
+      });
 
       return res.json({ 
         success: true,
@@ -2959,12 +3031,7 @@ ${searchRes.formattedContext}`;
         webSearchUsed,
         webSources,
         webSearchError,
-        usage: {
-          used: updatedUsage.used,
-          limit: updatedUsage.limit,
-          remaining: updatedUsage.remaining,
-          nextAvailableInMinutes: updatedUsage.nextAvailableInMinutes
-        }
+        usage: updatedUsage,
       });
     } catch (apiErr: any) {
       console.error(`[AI P0 ERROR] Request ID: ${requestId}`, apiErr?.message || apiErr);
@@ -4271,12 +4338,28 @@ app.post('/api/ai/orion-assist', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Topic or request is required.' });
   }
 
-  const activeUserId = verifiedUser?.id || String(userId || 'anonymous');
-  const usage = getRolling24hUsage(activeUserId, resolvedRole);
+  const orionQuotaActor = await resolveAiQuotaActor(req, verifiedUser?.id || String(userId || ''), resolvedRole);
+  const activeUserId = orionQuotaActor.userId || 'anonymous';
+  let usage;
+  try {
+    usage = await getRolling24hUsageAsync({
+      cfg: getSupabaseServerConfig(),
+      userId: activeUserId,
+      role: resolvedRole,
+      memoryWinterBonusFn: getUserWinterAiBonusCredits,
+    });
+  } catch (quotaErr: any) {
+    return res.status(quotaErr instanceof AIQuotaPersistenceError ? quotaErr.statusCode : 503).json({
+      success: false,
+      error: quotaErr?.message || 'Unable to verify daily AI quota from database.',
+    });
+  }
+
   if (usage.used >= usage.limit) {
     return res.status(429).json({
       success: false,
-      error: `Daily AI limit (${usage.limit}) reached. Try again in ${usage.nextAvailableInMinutes || 60} minutes.`
+      error: `Daily AI limit (${usage.limit}) reached. Try again in ${usage.nextAvailableInMinutes || 60} minutes.`,
+      usage,
     });
   }
 
@@ -4324,19 +4407,26 @@ User Request:
       maxTokens: 3000
     });
 
-    memoryAIUsage.push({
-      id: `orion_${Date.now()}`,
+    const cfg = getSupabaseServerConfig();
+    await recordAiUsageAsync({
+      cfg,
       userId: activeUserId,
       role: resolvedRole,
       feature: `orion_${intent}`,
-      timestamp: Date.now()
+    });
+    const updatedUsage = await getRolling24hUsageAsync({
+      cfg,
+      userId: activeUserId,
+      role: resolvedRole,
+      memoryWinterBonusFn: getUserWinterAiBonusCredits,
     });
 
     return res.json({
       success: true,
       text,
       providerUsed: telemetry.providerUsed,
-      modelUsed: telemetry.modelUsed
+      modelUsed: telemetry.modelUsed,
+      usage: updatedUsage,
     });
   } catch (err: any) {
     console.error('[AI Server] Orion workspace assist error:', err?.message || err);

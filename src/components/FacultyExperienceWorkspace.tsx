@@ -622,6 +622,9 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
         ...prev,
         [key]: { ...currentDraft, feedback: json.text.trim(), orionLoading: false, error: undefined }
       }));
+      if (json.usage && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('s_os_ai_quota_updated', { detail: { ...json.usage, lastUpdated: Date.now() } }));
+      }
     } catch (err: any) {
       setEvalDrafts(prev => ({
         ...prev,
@@ -750,6 +753,9 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
         content: data.text,
         provider: data.providerUsed ? `${data.providerUsed} · ${data.modelUsed || ''}` : undefined
       });
+      if (data.usage && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('s_os_ai_quota_updated', { detail: { ...data.usage, lastUpdated: Date.now() } }));
+      }
     } catch (err: any) {
       setOrionError(err?.message || 'Unable to generate faculty draft right now.');
     } finally {

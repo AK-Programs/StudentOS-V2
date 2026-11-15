@@ -664,6 +664,9 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
       }
       const data = await response.json();
       setSearchResults(data.text || "No recommendations compiled.");
+      if (data.usage && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('s_os_ai_quota_updated', { detail: { ...data.usage, lastUpdated: Date.now() } }));
+      }
     } catch (err: any) {
       console.error("Resource discovery failed:", err);
       setSearchResults(err.message?.includes('limit') ? `⚠️ ${err.message}` : "Connection offline. Check Material Hub for local copies. Alternatively, try reloading the page.");
@@ -694,6 +697,9 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
       }
       const data = await response.json();
       setSearchResults(data.text || "No plan compiled.");
+      if (data.usage && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('s_os_ai_quota_updated', { detail: { ...data.usage, lastUpdated: Date.now() } }));
+      }
       
       // Dispatch a CustomEvent to automatically add to the study planner
       const planEvent = new CustomEvent('s_os_add_schedule', {
@@ -978,6 +984,9 @@ Rules:
                 } else if (parsed.type === 'done') {
                   if (parsed.text) aiText = parsed.text;
                   if (parsed.modelUsed) setOrionModelUsed(parsed.modelUsed);
+                  if (parsed.usage && typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('s_os_ai_quota_updated', { detail: { ...parsed.usage, lastUpdated: Date.now() } }));
+                  }
                   if (Array.isArray(parsed.videos) && parsed.videos.length > 0) {
                     setSearchVideos(parsed.videos);
                   }

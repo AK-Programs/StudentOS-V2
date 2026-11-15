@@ -647,6 +647,9 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
         content: data.text,
         provider: data.providerUsed ? `${data.providerUsed} (${data.modelUsed || ''})` : undefined
       });
+      if (data.usage && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('s_os_ai_quota_updated', { detail: { ...data.usage, lastUpdated: Date.now() } }));
+      }
       setSubTab('home');
     } catch (err: any) {
       setOrionError(err?.message || 'Could not reach Orion right now.');

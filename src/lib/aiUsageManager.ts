@@ -9,6 +9,8 @@ export interface AIUsageState {
   limit: number;
   baseLimit: number;
   bonus: number;
+  winterBonus?: number;
+  voucherBonus?: number;
   remaining: number;
   nextAvailableInMinutes: number | null;
   role: string;
@@ -33,7 +35,7 @@ export function getLocalUsageState(userId: string, role = 'student'): AIUsageSta
   const normRole = (role || 'student').toLowerCase();
   const baseLimit = BASE_ROLE_LIMITS[normRole] || 30;
 
-  if (typeof window === 'undefined') {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
     return {
       used: 0,
       limit: baseLimit,
@@ -108,7 +110,7 @@ export function recordLocalMessage(userId: string, role = 'student'): AIUsageSta
   let timestamps: number[] = [];
 
   try {
-    const raw = localStorage.getItem(key);
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
     if (raw) {
       const parsed = JSON.parse(raw);
       timestamps = (parsed.timestamps || []).filter((ts: number) => ts >= cutoff);
@@ -119,10 +121,12 @@ export function recordLocalMessage(userId: string, role = 'student'): AIUsageSta
   timestamps.sort((a, b) => a - b);
 
   try {
-    localStorage.setItem(key, JSON.stringify({ timestamps }));
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(key, JSON.stringify({ timestamps }));
+    }
   } catch (_) {}
 
-  const bonus = Number(localStorage.getItem(`${key}_bonus`) || 0);
+  const bonus = typeof localStorage !== 'undefined' ? Number(localStorage.getItem(`${key}_bonus`) || 0) : 0;
   const totalLimit = baseLimit + bonus;
   const used = timestamps.length;
   const remaining = Math.max(0, totalLimit - used);
@@ -158,16 +162,28 @@ export async function fetchAIUsageStatus(userId: string, role = 'student'): Prom
     const res = await fetch(`/api/ai/usage-status?userId=${encodeURIComponent(userId || 'guest')}&role=${encodeURIComponent(role || 'student')}`);
     if (res.ok) {
       const serverData = await res.json();
-      const bonus = Number(localStorage.getItem(`${STORAGE_KEY_PREFIX}${userId || 'guest'}_bonus`) || 0);
-      const totalLimit = (serverData.limit || local.baseLimit) + (serverData.bonus || bonus);
-      const used = serverData.used ?? local.used;
-      const remaining = Math.max(0, totalLimit - used);
+      const localBonus = typeof localStorage !== 'undefined'
+        ? Number(localStorage.getItem(`${STORAGE_KEY_PREFIX}${userId || 'guest'}_bonus`) || 0)
+        : 0;
+      const baseLimit = typeof serverData.baseLimit === 'number' && serverData.baseLimit > 0
+        ? serverData.baseLimit
+        : local.baseLimit;
+      const bonus = typeof serverData.bonus === 'number' ? serverData.bonus : localBonus;
+      const totalLimit = typeof serverData.limit === 'number' && serverData.limit > 0
+        ? serverData.limit
+        : baseLimit + bonus;
+      const used = typeof serverData.used === 'number' ? serverData.used : local.used;
+      const remaining = typeof serverData.remaining === 'number'
+        ? serverData.remaining
+        : Math.max(0, totalLimit - used);
 
       const combined: AIUsageState = {
         used,
         limit: totalLimit,
-        baseLimit: serverData.baseLimit || local.baseLimit,
-        bonus: serverData.bonus || bonus,
+        baseLimit,
+        bonus,
+        winterBonus: typeof serverData.winterBonus === 'number' ? serverData.winterBonus : undefined,
+        voucherBonus: typeof serverData.voucherBonus === 'number' ? serverData.voucherBonus : undefined,
         remaining,
         nextAvailableInMinutes: serverData.nextAvailableInMinutes ?? local.nextAvailableInMinutes,
         role: serverData.role || local.role,
