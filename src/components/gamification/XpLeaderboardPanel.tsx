@@ -192,11 +192,11 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
         ) : rankings.length === 0 ? (
           <AnimatedEmptyState
             icon={<Users className="w-8 h-8" />}
-            title={isFaculty ? 'No faculty XP recorded for this window yet' : 'No student XP recorded for this window yet'}
+            title="No ranks yet"
             description={
-              period === 'weekly'
-                ? 'Complete assignments, quizzes, attendance logs, or Winter Festival activities this week to claim the top rank.'
-                : 'Verified XP entries will appear here automatically as activity progresses.'
+              isFaculty
+                ? 'Faculty academic achievements and evaluated submissions will appear here once recorded.'
+                : 'Complete assignments, quizzes, attendance logs, or Winter Festival activities to claim the top rank.'
             }
           />
         ) : (

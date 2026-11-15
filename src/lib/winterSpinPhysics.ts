@@ -150,11 +150,12 @@ export function buildResolvedSpinPlan(params: {
     };
   }
 
-  // Slow-network fallback (> 2000ms API latency): preserve a smooth 6000ms deceleration tail
-  const endAtMs = resolvedAtMs + 6000;
+  // Latency > 2000ms: still guarantee wheel stops by exactly launch.durationMs (8000ms)
+  const endAtMs = launch.durationMs;
   const currentMod = ((anchorAngle % 360) + 360) % 360;
   const modDelta = ((desiredMod - currentMod) % 360 + 360) % 360;
-  const remainingDelta = 6 * 360 + modDelta;
+  const extraTurns = endAtMs - resolvedAtMs > 3000 ? 360 : 0;
+  const remainingDelta = extraTurns + modDelta;
   return {
     startAngle: launch.startAngle,
     nominalDelta: launch.nominalDelta,

@@ -89,7 +89,24 @@ function runSpinCurveTests() {
     }
   }
 
-  // 3. Verify peg boundary crossing detector
+  // 3. Verify slow-network API responses still finish by 8000ms
+  for (const lateMs of [2500, 4500, 6000]) {
+    const latePlan = buildResolvedSpinPlan({
+      launch,
+      resolvedAtMs: lateMs,
+      segmentIndex: 3,
+      segmentCount: 8,
+      reducedMotion: false,
+    });
+    assert.equal(latePlan.endAtMs, SPIN_TOTAL_DURATION_MS, 'Late API responses must still end at 8000ms');
+    const atEnd = evaluateResolvedSpinAngle(latePlan, 8000);
+    assert.equal(atEnd.finished, true, 'Must finish by 8000ms');
+    const finalMod = ((atEnd.angle % 360) + 360) % 360;
+    const expectedMod = getSegmentCenterModulo(3, 8);
+    assert(Math.abs(finalMod - expectedMod) < 1e-7, 'Late plan must land on winning slice');
+  }
+
+  // 4. Verify peg boundary crossing detector
   assert.equal(countPegBoundaryCrossings(10, 44.9, 8), 0);
   assert.equal(countPegBoundaryCrossings(44.9, 45.1, 8), 1);
   assert.equal(countPegBoundaryCrossings(44.9, 136.0, 8), 3);

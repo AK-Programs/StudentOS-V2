@@ -58,23 +58,21 @@ dotenv.config();
 
 const serverStartTime = Date.now();
 
+import {
+  WORKING_ANON_KEY,
+  knownInvalidSupabaseKeys,
+  markSupabaseKeyInvalid,
+  isKnownInvalidSupabaseKey,
+} from './server/supabaseKeyManager';
+
+export { WORKING_ANON_KEY, markSupabaseKeyInvalid };
+
 export function getSupabaseServerConfig(): { url: string; key: string } {
   const url = (
     process.env.VITE_SUPABASE_URL ||
     process.env.SUPABASE_URL ||
     'https://zwpoutanhsujezglbson.supabase.co'
   ).trim();
-
-  const DEFAULT_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
-
-  const isInvalidKey = (k?: string | null) => {
-    if (!k) return true;
-    const trimmed = k.trim();
-    if (trimmed.length < 20) return true;
-    const lower = trimmed.toLowerCase();
-    if (lower.includes('your_') || lower.includes('placeholder')) return true;
-    return false;
-  };
 
   const candidateKeys = [
     process.env.SUPABASE_SERVICE_ROLE_KEY,
@@ -83,9 +81,9 @@ export function getSupabaseServerConfig(): { url: string; key: string } {
     process.env.SUPABASE_KEY,
   ];
 
-  let selectedKey = DEFAULT_ANON_KEY;
+  let selectedKey = WORKING_ANON_KEY;
   for (const cand of candidateKeys) {
-    if (!isInvalidKey(cand)) {
+    if (!isKnownInvalidSupabaseKey(cand, url)) {
       selectedKey = cand!.trim();
       break;
     }

@@ -40,6 +40,7 @@ import {
   getSantaPreloadMetrics,
   resetSantaModelCacheForTests,
 } from '../src/lib/santaModelCache';
+import { WORKING_ANON_KEY } from '../server/supabaseKeyManager';
 
 let passed = 0;
 async function runTest(name: string, fn: () => Promise<void> | void) {
@@ -195,9 +196,14 @@ function createMockSupabaseServer() {
       (!injectedFailure.table || injectedFailure.table === tableName) &&
       (!injectedFailure.method || injectedFailure.method === req.method)
     ) {
-      res.writeHead(injectedFailure.status, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ message: injectedFailure.message }));
-      return;
+      const apiKey = req.headers['apikey'] || req.headers['ApiKey'];
+      if ((injectedFailure as any).onlyIfNotAnon && apiKey === WORKING_ANON_KEY) {
+        // Allow request through on retry with working anon key!
+      } else {
+        res.writeHead(injectedFailure.status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: injectedFailure.message }));
+        return;
+      }
     }
 
     if (!tables[tableName]) {
@@ -585,8 +591,29 @@ async function main() {
       const qCounts = mockDb.getQueryCounts();
       assert.ok((qCounts['GET:winter_user_profiles'] || 0) <= 3, 'Leaderboard must batch winter_user_profiles queries');
 
-      // Fail loudly when DB errors
+      // If user_profiles fails, continue gracefully with status 200
       mockDb.setFailure({ table: 'user_profiles', method: 'GET', status: 500, message: 'DB error' });
+      const profDownLb = await apiJson(baseUrl, '/api/leaderboard?type=student&period=all_time', { headers: stuHeaders });
+      mockDb.setFailure(null);
+      assert.equal(profDownLb.status, 200, 'Leaderboard must continue when user_profiles fails');
+      assert.equal(profDownLb.data.success, true);
+      assert.ok(profDownLb.data.rankings.length >= 1);
+
+      // Verify that if Supabase returns 401 Invalid API key, it retries once with working anon key and succeeds!
+      mockDb.setFailure({ table: 'gamification_xp_ledger', method: 'GET', status: 401, message: 'Invalid API key', onlyIfNotAnon: true } as any);
+      const retryLb = await apiJson(baseUrl, '/api/leaderboard?type=student&period=all_time', { headers: stuHeaders });
+      mockDb.setFailure(null);
+      assert.equal(retryLb.status, 200, 'Leaderboard must recover from 401 Invalid API key by retrying with working anon key');
+      assert.equal(retryLb.data.success, true);
+
+      // Verify empty ledger returns 200 with rankings: [] and does not fail with an error
+      const emptyLedgerRes = await apiJson(baseUrl, '/api/leaderboard?type=student&period=weekly&now=9999999999999', { headers: stuHeaders });
+      assert.equal(emptyLedgerRes.status, 200);
+      assert.equal(emptyLedgerRes.data.success, true);
+      assert.deepEqual(emptyLedgerRes.data.rankings, []);
+
+      // Fail loudly with 503 only when core gamification_xp_ledger table errors completely
+      mockDb.setFailure({ table: 'gamification_xp_ledger', method: 'GET', status: 500, message: 'DB error' });
       const errLb = await apiJson(baseUrl, '/api/leaderboard?type=student&period=all_time', { headers: stuHeaders });
       mockDb.setFailure(null);
       assert.equal(errLb.status, 503);

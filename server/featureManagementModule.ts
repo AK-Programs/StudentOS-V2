@@ -19,6 +19,7 @@ import {
   FeatureCategory,
   PlatformFeatureRecord,
 } from './featureRegistry';
+import { WORKING_ANON_KEY, markSupabaseKeyInvalid } from './supabaseKeyManager';
 
 export interface FeatureModuleDeps {
   getSupabaseServerConfig: () => { url: string; key: string };
@@ -214,6 +215,7 @@ async function persistSingleFeature(
     let errText = tableRes.ok ? '' : await tableRes.text();
 
     if (!tableRes.ok && (errText.includes('Invalid API key') || tableRes.status === 401) && key !== WORKING_ANON_KEY) {
+      markSupabaseKeyInvalid(key);
       tableRes = await makeFeatureRequest(WORKING_ANON_KEY);
       if (!tableRes.ok) {
         errText = await tableRes.text();

@@ -268,12 +268,37 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
     let resolvedSegIndex = 0;
     let apiFailed = false;
 
+    let safetyTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const apiTimeout = new Promise<{ ok: false; error: string; data?: any }>((_, reject) => {
+      setTimeout(() => reject(new Error('Spin server request timed out after 7.5 seconds.')), 7500);
+    });
+
+    safetyTimer = setTimeout(() => {
+      if (!mountedRef.current) return;
+      if (spinningRef.current) {
+        if (rafIdRef.current !== null) {
+          cancelAnimationFrame(rafIdRef.current);
+          rafIdRef.current = null;
+        }
+        pointerAngleRef.current = 0;
+        pointerVelRef.current = 0;
+        if (pointerRef.current) {
+          pointerRef.current.style.transform = 'rotate(0deg)';
+        }
+        spinningRef.current = false;
+        setSpinning(false);
+        setError((prev) => prev || 'Spin timed out after 8 seconds. Please try again.');
+      }
+    }, SPIN_TOTAL_DURATION_MS + 50);
+
     // Fire server-authoritative spin request immediately in parallel with visual launch
-    spinWinterWheel(currentUser, idempotencyKey)
-      .then((res) => {
+    Promise.race([spinWinterWheel(currentUser, idempotencyKey), apiTimeout])
+      .then((res: any) => {
         if (!mountedRef.current || apiFailed) return;
         if (!res.ok || !res.data?.success) {
           apiFailed = true;
+          if (safetyTimer) clearTimeout(safetyTimer);
           if (rafIdRef.current !== null) {
             cancelAnimationFrame(rafIdRef.current);
             rafIdRef.current = null;
@@ -306,6 +331,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
       .catch((err) => {
         if (!mountedRef.current || apiFailed) return;
         apiFailed = true;
+        if (safetyTimer) clearTimeout(safetyTimer);
         if (rafIdRef.current !== null) {
           cancelAnimationFrame(rafIdRef.current);
           rafIdRef.current = null;
@@ -327,13 +353,31 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
       prevFrameTime = now;
       const elapsedMs = now - startTime;
 
+      // Hard safety check: wheel MUST always stop by 8 seconds even if API did not return
+      if (elapsedMs >= launchState.durationMs && !resolvedPlan) {
+        if (safetyTimer) clearTimeout(safetyTimer);
+        if (rafIdRef.current !== null) {
+          cancelAnimationFrame(rafIdRef.current);
+          rafIdRef.current = null;
+        }
+        pointerAngleRef.current = 0;
+        pointerVelRef.current = 0;
+        if (pointerRef.current) {
+          pointerRef.current.style.transform = 'rotate(0deg)';
+        }
+        spinningRef.current = false;
+        setSpinning(false);
+        setError('Spin request timed out after 8 seconds. Please check your connection and try again.');
+        return;
+      }
+
       let currentAngle = prevAngle;
       let finished = false;
 
       if (resolvedPlan) {
         const evalRes = evaluateResolvedSpinAngle(resolvedPlan, elapsedMs);
         currentAngle = evalRes.angle;
-        finished = evalRes.finished;
+        finished = evalRes.finished || elapsedMs >= resolvedPlan.endAtMs;
       } else {
         currentAngle = evaluateLaunchPhase(launchState, elapsedMs).angle;
       }
@@ -374,6 +418,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
       if (!finished) {
         rafIdRef.current = requestAnimationFrame(step);
       } else {
+        if (safetyTimer) clearTimeout(safetyTimer);
         rafIdRef.current = null;
         // Lock exact final target angle with zero overshoot
         if (resolvedPlan) {

@@ -11,6 +11,7 @@
 
 import crypto from 'crypto';
 import { MAX_DAILY_WINTER_AI_BONUS } from './rewardEngine';
+import { WORKING_ANON_KEY, markSupabaseKeyInvalid } from './supabaseKeyManager';
 
 export interface SupabaseConfig {
   url: string;
@@ -123,6 +124,28 @@ function isMissingRelationError(status: number, bodyText: string): boolean {
   );
 }
 
+async function fetchQuotaSupabase(url: string, init: RequestInit): Promise<Response> {
+  let res = await fetch(url, init);
+  if (res.status === 401) {
+    const clone = res.clone();
+    const bodyText = await clone.text().catch(() => '');
+    if (bodyText.includes('Invalid API key') || res.status === 401) {
+      const headers = (init.headers || {}) as Record<string, string>;
+      const apiKey = headers['apikey'] || headers['ApiKey'] || '';
+      if (apiKey && apiKey !== WORKING_ANON_KEY) {
+        markSupabaseKeyInvalid(apiKey);
+        const retryHeaders = {
+          ...headers,
+          apikey: WORKING_ANON_KEY,
+          Authorization: `Bearer ${WORKING_ANON_KEY}`,
+        };
+        res = await fetch(url, { ...init, headers: retryHeaders });
+      }
+    }
+  }
+  return res;
+}
+
 interface GlobalQuotaDoc {
   timestamps: number[];
   redeemedCodes: string[];
@@ -133,7 +156,7 @@ async function loadGlobalQuotaDoc(cfg: SupabaseConfig, userId: string): Promise<
   const docId = `__veylentra_ai_quota_${userId}__`;
   let res: Response;
   try {
-    res = await fetch(
+    res = await fetchQuotaSupabase(
       `${cfg.url}/rest/v1/global_data?id=eq.${encodeURIComponent(docId)}&select=id,data`,
       { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
     );
@@ -169,7 +192,7 @@ async function saveGlobalQuotaDoc(cfg: SupabaseConfig, userId: string, doc: Glob
 
   let res: Response;
   try {
-    res = await fetch(`${cfg.url}/rest/v1/global_data?on_conflict=id`, {
+    res = await fetchQuotaSupabase(`${cfg.url}/rest/v1/global_data?on_conflict=id`, {
       method: 'POST',
       headers: {
         apikey: cfg.key,
@@ -208,7 +231,7 @@ export async function getWinterAiBonusCreditsFromDb(
 
   let res: Response;
   try {
-    res = await fetch(
+    res = await fetchQuotaSupabase(
       `${cfg.url}/rest/v1/winter_user_profiles?user_id=eq.${encodeURIComponent(userId)}&select=ai_bonus_date,ai_bonus_credits_today`,
       { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
     );
@@ -242,7 +265,7 @@ export async function getRoleLimitsAsync(cfg: SupabaseConfig): Promise<Record<st
   }
 
   try {
-    const res = await fetch(`${cfg.url}/rest/v1/ai_role_limits?select=role,daily_limit`, {
+    const res = await fetchQuotaSupabase(`${cfg.url}/rest/v1/ai_role_limits?select=role,daily_limit`, {
       headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` },
     });
     if (res.ok) {
@@ -260,7 +283,7 @@ export async function getRoleLimitsAsync(cfg: SupabaseConfig): Promise<Record<st
     } else {
       const errText = await res.text().catch(() => '');
       if (isMissingRelationError(res.status, errText)) {
-        const docRes = await fetch(
+        const docRes = await fetchQuotaSupabase(
           `${cfg.url}/rest/v1/global_data?id=eq.__veylentra_ai_role_limits__&select=data`,
           { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
         );
@@ -300,7 +323,7 @@ export async function updateRoleLimitsAsync(
     updated_at: new Date().toISOString(),
   }));
 
-  const res = await fetch(`${cfg.url}/rest/v1/ai_role_limits?on_conflict=role`, {
+  const res = await fetchQuotaSupabase(`${cfg.url}/rest/v1/ai_role_limits?on_conflict=role`, {
     method: 'POST',
     headers: {
       apikey: cfg.key,
@@ -314,7 +337,7 @@ export async function updateRoleLimitsAsync(
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
     if (isMissingRelationError(res.status, errText)) {
-      const gRes = await fetch(`${cfg.url}/rest/v1/global_data?on_conflict=id`, {
+      const gRes = await fetchQuotaSupabase(`${cfg.url}/rest/v1/global_data?on_conflict=id`, {
         method: 'POST',
         headers: {
           apikey: cfg.key,
@@ -385,13 +408,13 @@ export async function getRolling24hUsageAsync(params: {
   const [roleLimits, winterBonus, logsRes, vouchersRes] = await Promise.all([
     getRoleLimitsAsync(cfg),
     getWinterAiBonusCreditsFromDb(cfg, userId, nowMs, memoryWinterBonusFn),
-    fetch(
+    fetchQuotaSupabase(
       `${cfg.url}/rest/v1/ai_usage_logs?user_id=eq.${encodeURIComponent(userId)}&created_at=gte.${encodeURIComponent(sinceIso)}&select=id,created_at&order=created_at.asc`,
       { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
     ).catch((err) => {
       throw new AIQuotaPersistenceError(`Network error reading AI usage logs: ${err?.message || err}`);
     }),
-    fetch(
+    fetchQuotaSupabase(
       `${cfg.url}/rest/v1/ai_user_vouchers?user_id=eq.${encodeURIComponent(userId)}&select=voucher_code,bonus_queries`,
       { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
     ).catch((err) => {
@@ -491,7 +514,7 @@ export async function recordAiUsageAsync(params: {
 
   let res: Response;
   try {
-    res = await fetch(`${cfg.url}/rest/v1/ai_usage_logs`, {
+    res = await fetchQuotaSupabase(`${cfg.url}/rest/v1/ai_usage_logs`, {
       method: 'POST',
       headers: {
         apikey: cfg.key,
@@ -576,7 +599,7 @@ export async function redeemAiVoucherAsync(params: {
 
   let res: Response;
   try {
-    res = await fetch(`${cfg.url}/rest/v1/ai_user_vouchers`, {
+    res = await fetchQuotaSupabase(`${cfg.url}/rest/v1/ai_user_vouchers`, {
       method: 'POST',
       headers: {
         apikey: cfg.key,
