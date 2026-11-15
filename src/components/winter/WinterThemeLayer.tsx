@@ -9,9 +9,10 @@
  * - Automatically pauses animations under prefers-reduced-motion
  */
 
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { UserProfile } from '../../types';
 import { useFeatureAccess } from '../../lib/featureAccessService';
+import { getSavedTheme, ThemeId } from '../../lib/themeSystem';
 import { SnowflakeVector } from './WinterArtwork';
 
 interface FlakeSpec {
@@ -29,19 +30,32 @@ export const WinterThemeLayer: React.FC<{ currentUser?: Partial<UserProfile> | n
 }) => {
   const themeAccess = useFeatureAccess('winter_theme', currentUser);
   const snowAccess = useFeatureAccess('winter_snow_effects', currentUser);
+  const [activeTheme, setActiveTheme] = useState<ThemeId>(() => {
+    const rawTheme = (currentUser as any)?.raw_data?.theme as ThemeId;
+    return rawTheme || getSavedTheme();
+  });
+
+  useEffect(() => {
+    const handleThemeChange = (e: any) => {
+      if (e.detail?.themeId) {
+        setActiveTheme(e.detail.themeId as ThemeId);
+      }
+    };
+    window.addEventListener('studentos_theme_changed', handleThemeChange);
+    return () => window.removeEventListener('studentos_theme_changed', handleThemeChange);
+  }, []);
+
+  const isWinterActive = themeAccess.accessible && activeTheme === 'winter';
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
     const root = document.documentElement;
-    if (themeAccess.accessible) {
+    if (isWinterActive) {
       root.classList.add('winter-theme-active');
     } else {
       root.classList.remove('winter-theme-active');
     }
-    return () => {
-      root.classList.remove('winter-theme-active');
-    };
-  }, [themeAccess.accessible]);
+  }, [isWinterActive]);
 
   const flakes = useMemo<FlakeSpec[]>(() => {
     return Array.from({ length: 16 }).map((_, idx) => ({
@@ -55,7 +69,7 @@ export const WinterThemeLayer: React.FC<{ currentUser?: Partial<UserProfile> | n
     }));
   }, []);
 
-  if (!themeAccess.accessible || !snowAccess.accessible) {
+  if (!isWinterActive || !snowAccess.accessible) {
     return null;
   }
 

@@ -2,19 +2,34 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Interactive 8-Segment Winter Spin Wheel Modal
- * - Server-authoritative cryptographic reward roll
- * - Accurate GPU-composited wheel landing aligned to server `segmentIndex`
- * - Strict 2-hour cooldown timer + transparent pre-spin odds
- * - Silent-by-default sound cues unless user explicitly configured audio preferences
- * - Accessible aria-live result announcement
+ * Interactive 8-Segment Illustrated Winter Spin Wheel Modal
+ * - Illustrated 8-segment reward wheel with decorative studded golden rim
+ * - Server-authoritative cryptographic reward roll & accurate GPU physics landing
+ * - Central tactile "SPIN" button with pulse animation & idle breathing motion
+ * - Top 3D pointer with dynamic deflection spring motion
+ * - Strict 2-hour cooldown timer & transparent pre-spin odds
+ * - Silent-by-default audio cues with toggle
+ * - Energetic celebration card with confetti on win
  */
 
-import React, { useEffect, useState } from 'react';
-import { useReducedMotion } from 'motion/react';
-import { Clock, ShieldAlert, Volume2, VolumeX, RotateCw, CheckCircle2 } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { motion, useReducedMotion } from 'motion/react';
+import {
+  Clock,
+  ShieldAlert,
+  Volume2,
+  VolumeX,
+  RotateCw,
+  CheckCircle2,
+  Sparkles,
+  Trophy,
+  Crown,
+  Zap,
+  Award
+} from 'lucide-react';
 import { UserProfile } from '../../types';
 import {
+  DEFAULT_SPIN_SEGMENTS,
   formatCountdownMs,
   hasExplicitSoundPreference,
   isGlobalSoundEnabled,
@@ -52,6 +67,18 @@ function describeSlice(cx: number, cy: number, r: number, startAngle: number, en
   return ['M', cx, cy, 'L', start.x, start.y, 'A', r, r, 0, largeArc, 0, end.x, end.y, 'Z'].join(' ');
 }
 
+// Visual icons for wheel segments
+const SEGMENT_ICONS: Record<string, string> = {
+  xp_25: '⚡',
+  cookies_3: '🍪',
+  xp_50: '🏆',
+  ai_boost_2: '🧠',
+  xp_100: '⭐',
+  streak_shield: '🛡️',
+  cookies_6: '🍪',
+  frost_jackpot: '👑',
+};
+
 export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
   isOpen,
   onClose,
@@ -68,10 +95,20 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
   const [spinning, setSpinning] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [resultReward, setResultReward] = useState<WinterRewardRecord | null>(null);
+  const [winningSegmentIndex, setWinningSegmentIndex] = useState<number | null>(null);
   const [ariaAnnouncement, setAriaAnnouncement] = useState<string>('');
   const [remainingMs, setRemainingMs] = useState<number>(0);
+  const [pointerDeflected, setPointerDeflected] = useState<boolean>(false);
 
-  const segments: SpinWheelSegmentSpec[] = winterStatus?.spinWheel?.segments || [];
+  // Guarantee 8 segments even during loading/offline states
+  const rawSegments = winterStatus?.spinWheel?.segments;
+  const segments: SpinWheelSegmentSpec[] = useMemo(() => {
+    if (Array.isArray(rawSegments) && rawSegments.length >= 8) {
+      return rawSegments;
+    }
+    return DEFAULT_SPIN_SEGMENTS;
+  }, [rawSegments]);
+
   const history = (winterStatus?.winterState?.rewardHistory || []).filter(
     (h) => h.featureType === 'spin_wheel'
   );
@@ -98,6 +135,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
     setSpinning(true);
     setError(null);
     setResultReward(null);
+    setWinningSegmentIndex(null);
 
     const cycleKey = winterStatus?.spinWheel?.nextEligibleAt || `ready_${Math.floor(Date.now() / 60000)}`;
     const idempotencyKey = `wheel_${cycleKey}_${Date.now()}`;
@@ -114,6 +152,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
 
     const segIdx = Number(res.data.segmentIndex ?? 0);
     const sliceDeg = 360 / segments.length;
+    // Align wheel so top pointer (at 12 o'clock, 0 deg relative to vertical) points exactly to segIdx
     const centerOfSlice = segIdx * sliceDeg + sliceDeg / 2;
     const desiredFinalModulo = (360 - centerOfSlice) % 360;
 
@@ -124,10 +163,23 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
       return prev + extraTurns + deltaToTarget;
     });
 
+    // Pointer deflection flutter effect
+    if (!prefersReduced) {
+      const flutterInterval = setInterval(() => {
+        setPointerDeflected((p) => !p);
+      }, 140);
+      setTimeout(() => {
+        clearInterval(flutterInterval);
+        setPointerDeflected(false);
+      }, 3000);
+    }
+
     if (wheelAudioEnabled && !prefersReduced) {
       playWheelTickCue(wheelAudioEnabled);
-      setTimeout(() => playWheelTickCue(wheelAudioEnabled), 700);
-      setTimeout(() => playWheelTickCue(wheelAudioEnabled), 1500);
+      setTimeout(() => playWheelTickCue(wheelAudioEnabled), 600);
+      setTimeout(() => playWheelTickCue(wheelAudioEnabled), 1300);
+      setTimeout(() => playWheelTickCue(wheelAudioEnabled), 2100);
+      setTimeout(() => playWheelTickCue(wheelAudioEnabled), 2800);
     }
 
     const settleDelay = prefersReduced ? 120 : 3450;
@@ -135,6 +187,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
       const reward: WinterRewardRecord | null = res.data.reward || null;
       setSpinning(false);
       setResultReward(reward);
+      setWinningSegmentIndex(segIdx);
       if (reward) {
         setAriaAnnouncement(
           `Winter Spin Wheel landed on ${reward.label}. Earned ${reward.xpBonus} XP and ${reward.cookiesBonus} Winter Cookies.`
@@ -147,7 +200,15 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
     }, settleDelay);
   };
 
-  const sliceAngle = segments.length > 0 ? 360 / segments.length : 45;
+  const sliceAngle = 360 / segments.length;
+
+  // Outer golden studs coordinates (24 studs along rim)
+  const rimStuds = useMemo(() => {
+    return Array.from({ length: 24 }).map((_, i) => {
+      const angle = (i * 360) / 24;
+      return polarToCartesian(150, 150, 142, angle);
+    });
+  }, []);
 
   return (
     <AnimatedDialog
@@ -169,59 +230,197 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-center">
-          <div className="flex flex-col items-center gap-3">
-            <div className="relative w-64 h-64 sm:w-72 sm:h-72 flex items-center justify-center">
-              <div
-                className="absolute -top-2 left-1/2 -translate-x-1/2 z-20 w-0 h-0 border-l-[10px] border-r-[10px] border-t-[18px] border-l-transparent border-r-transparent border-t-amber-400 drop-shadow"
-                aria-hidden="true"
-              />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+          {/* Wheel Assembly */}
+          <div className="flex flex-col items-center gap-4">
+            <div className="relative w-72 h-72 sm:w-80 sm:h-80 flex items-center justify-center select-none">
+              {/* Outer Glow Halo */}
+              <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-sky-500/20 via-cyan-400/10 to-amber-400/20 blur-xl pointer-events-none" />
 
+              {/* 3D Top Pointer with spring deflection */}
               <div
-                className="w-full h-full rounded-full border-4 border-sky-300/40 shadow-[0_0_30px_rgba(56,189,248,0.2)] overflow-hidden will-change-transform"
+                className={`absolute -top-3 left-1/2 -translate-x-1/2 z-30 transition-transform duration-100 ${
+                  pointerDeflected ? 'rotate-6 scale-105' : 'rotate-0'
+                }`}
+                style={{ filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.5))' }}
+                aria-hidden="true"
+              >
+                <svg width="34" height="42" viewBox="0 0 34 42" fill="none">
+                  {/* Pointer Pin base */}
+                  <circle cx="17" cy="8" r="7" fill="#78350f" stroke="#fef08a" strokeWidth="2" />
+                  <circle cx="17" cy="8" r="3.5" fill="#f59e0b" />
+                  {/* Golden Arrow Wedge pointing down */}
+                  <path
+                    d="M10 12 L24 12 L17 38 Z"
+                    fill="url(#pointerGoldGrad)"
+                    stroke="#fef08a"
+                    strokeWidth="1.5"
+                  />
+                  {/* Inner shine */}
+                  <path d="M14 13 L20 13 L17 32 Z" fill="#fef08a" opacity="0.6" />
+                  <defs>
+                    <linearGradient id="pointerGoldGrad" x1="10" y1="12" x2="24" y2="38" gradientUnits="userSpaceOnUse">
+                      <stop stopColor="#f59e0b" />
+                      <stop offset="0.5" stopColor="#fbbf24" />
+                      <stop offset="1" stopColor="#d97706" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+              </div>
+
+              {/* Rotating Illustrated Wheel */}
+              <motion.div
+                className="w-full h-full rounded-full shadow-[0_0_40px_rgba(56,189,248,0.25)] will-change-transform"
+                animate={
+                  isReady && !spinning && !prefersReduced
+                    ? { rotate: [rotationDeg - 1.2, rotationDeg + 1.2, rotationDeg - 1.2] }
+                    : { rotate: rotationDeg }
+                }
+                transition={
+                  isReady && !spinning && !prefersReduced
+                    ? { duration: 3.5, repeat: Infinity, ease: 'easeInOut' }
+                    : {
+                        duration: prefersReduced ? 0.1 : 3.4,
+                        ease: [0.16, 1, 0.3, 1],
+                      }
+                }
                 style={{
-                  transform: `rotate(${rotationDeg}deg)`,
-                  transition: prefersReduced
-                    ? 'transform 0.1s linear'
-                    : 'transform 3.4s cubic-bezier(0.16, 1, 0.3, 1)',
+                  transformOrigin: 'center center',
                 }}
               >
-                <svg viewBox="0 0 240 240" className="w-full h-full">
+                <svg viewBox="0 0 300 300" className="w-full h-full overflow-visible">
+                  <defs>
+                    {/* Radial background rim gradient */}
+                    <radialGradient id="rimGrad" cx="50%" cy="50%" r="50%">
+                      <stop offset="85%" stopColor="#0f172a" />
+                      <stop offset="94%" stopColor="#1e293b" />
+                      <stop offset="98%" stopColor="#38bdf8" />
+                      <stop offset="100%" stopColor="#0284c7" />
+                    </radialGradient>
+                    {/* Center hub gold gradient */}
+                    <linearGradient id="hubGold" x1="0" y1="0" x2="1" y2="1">
+                      <stop offset="0%" stopColor="#fef08a" />
+                      <stop offset="50%" stopColor="#f59e0b" />
+                      <stop offset="100%" stopColor="#b45309" />
+                    </linearGradient>
+                    <filter id="shadowFilter" x="-10%" y="-10%" width="120%" height="120%">
+                      <feDropShadow dx="0" dy="1" stdDeviation="1.5" floodColor="#000000" floodOpacity="0.8" />
+                    </filter>
+                  </defs>
+
+                  {/* Outer Rim Ring */}
+                  <circle cx="150" cy="150" r="148" fill="url(#rimGrad)" stroke="#38bdf8" strokeWidth="3" />
+                  <circle cx="150" cy="150" r="138" fill="#090d16" stroke="#fbbf24" strokeWidth="2" strokeDasharray="3 3" />
+
+                  {/* 24 Golden Decorative Rim Studs */}
+                  {rimStuds.map((stud, idx) => (
+                    <circle
+                      key={idx}
+                      cx={stud.x}
+                      cy={stud.y}
+                      r="2.8"
+                      fill="#fef08a"
+                      stroke="#854d0e"
+                      strokeWidth="0.8"
+                    />
+                  ))}
+
+                  {/* 8 Illustrated Segments */}
                   {segments.map((seg, i) => {
                     const start = i * sliceAngle;
                     const end = (i + 1) * sliceAngle;
                     const mid = start + sliceAngle / 2;
-                    const labelPos = polarToCartesian(120, 120, 74, mid);
+                    const labelPos = polarToCartesian(150, 150, 96, mid);
+                    const iconPos = polarToCartesian(150, 150, 122, mid);
+                    const isWinner = winningSegmentIndex === i;
+
                     return (
-                      <g key={seg.id}>
+                      <g key={seg.id || i} className={isWinner ? 'animate-pulse' : ''}>
+                        {/* Segment Wedge */}
                         <path
-                          d={describeSlice(120, 120, 118, start, end)}
+                          d={describeSlice(150, 150, 137, start, end)}
                           fill={seg.color}
-                          stroke="rgba(255,255,255,0.22)"
-                          strokeWidth="1.2"
+                          stroke="#ffffff"
+                          strokeWidth={isWinner ? '3' : '1.5'}
+                          strokeOpacity={isWinner ? 0.95 : 0.35}
                         />
+
+                        {/* Wedge inner highlight divider */}
+                        <line
+                          x1="150"
+                          y1="150"
+                          x2={polarToCartesian(150, 150, 137, start).x}
+                          y2={polarToCartesian(150, 150, 137, start).y}
+                          stroke="#ffffff"
+                          strokeWidth="1.2"
+                          strokeOpacity="0.4"
+                        />
+
+                        {/* Segment Icon */}
+                        <text
+                          x={iconPos.x}
+                          y={iconPos.y}
+                          fontSize="13"
+                          textAnchor="middle"
+                          dominantBaseline="middle"
+                          transform={`rotate(${mid}, ${iconPos.x}, ${iconPos.y})`}
+                          filter="url(#shadowFilter)"
+                        >
+                          {SEGMENT_ICONS[seg.id] || '✨'}
+                        </text>
+
+                        {/* Segment Text Label */}
                         <text
                           x={labelPos.x}
                           y={labelPos.y}
-                          fill={seg.textColor || '#f8fafc'}
-                          fontSize="9"
-                          fontWeight="700"
+                          fill={seg.textColor || '#ffffff'}
+                          fontSize="11"
+                          fontWeight="800"
+                          fontFamily="sans-serif"
+                          letterSpacing="0.02em"
                           textAnchor="middle"
                           dominantBaseline="middle"
                           transform={`rotate(${mid - 90}, ${labelPos.x}, ${labelPos.y})`}
+                          filter="url(#shadowFilter)"
                         >
                           {seg.shortLabel}
                         </text>
                       </g>
                     );
                   })}
-                  <circle cx="120" cy="120" r="20" fill="#0f172a" stroke="#bae6fd" strokeWidth="2.5" />
-                  <circle cx="120" cy="120" r="6" fill="#38bdf8" />
+
+                  {/* Center Hub Housing */}
+                  <circle cx="150" cy="150" r="32" fill="#040711" stroke="url(#hubGold)" strokeWidth="3.5" />
+                  <circle cx="150" cy="150" r="26" fill="#0f172a" stroke="#38bdf8" strokeWidth="1.5" />
+                  
+                  {/* Central Tactile SPIN Icon & Glow */}
+                  <circle
+                    cx="150"
+                    cy="150"
+                    r="20"
+                    fill={isReady ? '#2563eb' : '#1e293b'}
+                    className={isReady ? 'animate-pulse cursor-pointer' : ''}
+                    onClick={isReady ? handleSpin : undefined}
+                  />
+                  <text
+                    x="150"
+                    y="151"
+                    fill="#ffffff"
+                    fontSize="9.5"
+                    fontWeight="900"
+                    letterSpacing="0.08em"
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    className="select-none pointer-events-none"
+                  >
+                    {spinning ? 'SPIN' : isReady ? 'SPIN!' : 'LOCK'}
+                  </text>
                 </svg>
-              </div>
+              </motion.div>
             </div>
 
-            <div className="flex items-center gap-3">
+            {/* Spin CTA Controls */}
+            <div className="flex items-center gap-3 w-full justify-center">
               <TactileButton
                 variant="primary"
                 size="lg"
@@ -233,13 +432,13 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
                   ? 'Spinning Wheel...'
                   : remainingMs > 0
                   ? `Next Spin in ${formatCountdownMs(remainingMs)}`
-                  : 'Spin Winter Wheel'}
+                  : 'Spin Winter Wheel Now'}
               </TactileButton>
 
               <button
                 type="button"
                 onClick={() => setWheelAudioEnabled((v) => !v)}
-                className="p-2.5 rounded-xl border border-slate-700 text-slate-300 hover:bg-slate-800 transition-colors cursor-pointer"
+                className="p-3 rounded-2xl border border-slate-800 bg-slate-900/80 hover:bg-slate-800 text-slate-300 transition-colors cursor-pointer"
                 aria-label={wheelAudioEnabled ? 'Mute wheel audio cues' : 'Enable wheel audio cues'}
                 title={wheelAudioEnabled ? 'Wheel audio cues ON' : 'Wheel audio cues silent'}
               >
@@ -248,43 +447,69 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
             </div>
           </div>
 
+          {/* Right Column: Status, Won Reward, and Pre-Spin Odds */}
           <div className="space-y-4">
+            {/* Rewarded Celebration Card */}
             {resultReward ? (
-              <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/15 p-4 space-y-2">
-                <div className="flex items-center justify-between text-xs font-bold text-emerald-300">
-                  <span>{resultReward.rarity} Reward Unlocked</span>
-                  <CheckCircle2 className="w-4 h-4" />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                className="rounded-2xl border-2 border-emerald-400/60 bg-gradient-to-br from-emerald-950/80 via-slate-900 to-sky-950/70 p-5 space-y-3 shadow-xl shadow-emerald-500/10"
+              >
+                <div className="flex items-center justify-between text-xs font-black uppercase tracking-wider text-emerald-300">
+                  <span className="flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-amber-300 animate-spin" />
+                    {resultReward.rarity} Win Unlocked!
+                  </span>
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
                 </div>
-                <p className="text-sm font-bold text-white">{resultReward.label}</p>
-                <div className="flex flex-wrap gap-3 text-xs font-mono tabular-nums text-slate-200">
-                  {resultReward.xpBonus > 0 && <span>+{resultReward.xpBonus} XP</span>}
+                <h4 className="text-base font-black text-white">{resultReward.label}</h4>
+                <div className="flex flex-wrap gap-2.5 text-xs font-mono tabular-nums text-slate-200">
+                  {resultReward.xpBonus > 0 && (
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold">
+                      +{resultReward.xpBonus} XP
+                    </span>
+                  )}
                   {resultReward.cookiesBonus > 0 && (
-                    <span className="inline-flex items-center gap-1">
+                    <span className="px-2.5 py-1 rounded-lg bg-rose-500/20 border border-rose-500/40 text-rose-300 font-bold inline-flex items-center gap-1">
                       <WinterCookieSvg size={13} /> +{resultReward.cookiesBonus} Cookies
                     </span>
                   )}
                   {resultReward.aiBonusQueries > 0 && (
-                    <span>+{resultReward.aiBonusQueries} AI Queries</span>
+                    <span className="px-2.5 py-1 rounded-lg bg-indigo-500/20 border border-indigo-500/40 text-indigo-300 font-bold">
+                      +{resultReward.aiBonusQueries} Daily AI Boost
+                    </span>
                   )}
                   {resultReward.streakShield && (
-                    <span className="inline-flex items-center gap-1 text-sky-300">
+                    <span className="px-2.5 py-1 rounded-lg bg-sky-500/20 border border-sky-500/40 text-sky-300 font-bold inline-flex items-center gap-1">
                       <FrostShieldSvg size={13} /> +1 Streak Shield
                     </span>
                   )}
                 </div>
-              </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Rewards have been authoritatively recorded to your Scholar XP ledger and synced with your school profile.
+                </p>
+              </motion.div>
             ) : (
-              <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5 text-xs text-slate-300 flex items-center gap-2.5">
-                <Clock className="w-4 h-4 text-sky-400 shrink-0" />
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-xs text-slate-300 flex items-center gap-3">
+                <Clock className="w-5 h-5 text-sky-400 shrink-0" />
                 {remainingMs > 0 ? (
-                  <span>
-                    Cooldown active · Ready in{' '}
-                    <span className="font-mono font-bold tabular-nums text-sky-300">
-                      {formatCountdownMs(remainingMs)}
-                    </span>
-                  </span>
+                  <div>
+                    <p className="font-bold text-white">2-Hour Cooldown In Progress</p>
+                    <p className="text-slate-400 text-[11px] mt-0.5">
+                      Ready in{' '}
+                      <span className="font-mono font-bold tabular-nums text-sky-300">
+                        {formatCountdownMs(remainingMs)}
+                      </span>
+                    </p>
+                  </div>
                 ) : (
-                  <span>Your 2-hour Winter Wheel spin is ready now.</span>
+                  <div>
+                    <p className="font-bold text-emerald-400">Ready to Spin!</p>
+                    <p className="text-slate-400 text-[11px] mt-0.5">
+                      Press Spin to roll verified academic rewards.
+                    </p>
+                  </div>
                 )}
               </div>
             )}
@@ -295,24 +520,28 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
               </div>
             )}
 
+            {/* Transparent Segment Odds Table */}
             <div>
-              <h4 className="text-xs font-semibold text-slate-300 mb-2">
-                Transparent Pre-Spin Segment Odds
-              </h4>
-              <div className="max-h-44 overflow-y-auto divide-y divide-slate-800 rounded-xl border border-slate-800 bg-slate-950/50">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                  Transparent Segment Odds
+                </h4>
+                <span className="text-[10px] text-slate-500 font-mono">100% Academic Perks</span>
+              </div>
+              <div className="max-h-48 overflow-y-auto divide-y divide-slate-800/80 rounded-2xl border border-slate-800 bg-slate-950/60 p-1">
                 {segments.map((seg) => (
                   <div
-                    key={seg.id}
-                    className="px-3 py-1.5 flex items-center justify-between gap-2 text-xs"
+                    key={seg.id || seg.index}
+                    className="px-3 py-2 flex items-center justify-between gap-2 text-xs"
                   >
-                    <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex items-center gap-2.5 min-w-0">
                       <span
-                        className="w-2.5 h-2.5 rounded-sm shrink-0"
+                        className="w-3 h-3 rounded-full shrink-0 shadow-sm"
                         style={{ backgroundColor: seg.color }}
                       />
-                      <span className="text-slate-200 truncate">{seg.label}</span>
+                      <span className="text-slate-200 font-medium truncate">{seg.label}</span>
                     </div>
-                    <span className="font-mono font-semibold tabular-nums text-sky-300 shrink-0">
+                    <span className="font-mono font-bold tabular-nums text-sky-300 shrink-0">
                       {seg.oddsPercent}%
                     </span>
                   </div>
@@ -320,17 +549,20 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
               </div>
             </div>
 
+            {/* Recent Spins History */}
             {history.length > 0 && (
               <div>
-                <h4 className="text-xs font-semibold text-slate-300 mb-1.5">Recent Spins</h4>
+                <h4 className="text-xs font-bold text-slate-400 mb-1.5 uppercase tracking-wider">
+                  Recent Spin Rolls
+                </h4>
                 <div className="max-h-24 overflow-y-auto space-y-1">
-                  {history.slice(0, 4).map((item) => (
+                  {history.slice(0, 3).map((item) => (
                     <div
                       key={item.id}
-                      className="text-[11px] text-slate-400 flex items-center justify-between gap-2"
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-900/60 border border-slate-800/60 text-[11px] text-slate-400 flex items-center justify-between gap-2"
                     >
                       <span className="truncate">{item.label}</span>
-                      <span className="font-mono tabular-nums text-emerald-400 shrink-0">
+                      <span className="font-mono tabular-nums text-emerald-400 font-bold shrink-0">
                         +{item.xpBonus} XP
                       </span>
                     </div>

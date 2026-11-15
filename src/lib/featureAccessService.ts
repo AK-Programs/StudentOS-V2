@@ -110,8 +110,18 @@ export async function buildAuthHeadersForUser(user?: Partial<UserProfile> | null
     'Content-Type': 'application/json',
   };
   try {
-    const { data } = await supabase.auth.getSession();
-    const token = data?.session?.access_token;
+    let { data: sessionData } = await supabase.auth.getSession();
+    let token = sessionData?.session?.access_token;
+    const expiresAt = sessionData?.session?.expires_at;
+    const isExpiredOrNear = expiresAt ? expiresAt * 1000 < Date.now() + 60000 : false;
+
+    if (!token || isExpiredOrNear) {
+      const { data: refreshData, error: refreshErr } = await supabase.auth.refreshSession();
+      if (!refreshErr && refreshData?.session?.access_token) {
+        token = refreshData.session.access_token;
+      }
+    }
+
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
@@ -120,6 +130,7 @@ export async function buildAuthHeadersForUser(user?: Partial<UserProfile> | null
   if (user) {
     const uid = user.uid || (user as any).id || user.email || '';
     if (uid) headers['x-veylentra-uid'] = String(uid);
+    if (user.email) headers['x-veylentra-email'] = String(user.email);
     if (user.role) headers['x-veylentra-role'] = String(user.role);
     if (user.name) headers['x-veylentra-name'] = String(user.name);
     if (user.grade) headers['x-veylentra-grade'] = String(user.grade);

@@ -28,6 +28,17 @@ export interface SpinWheelSegmentSpec {
   textColor?: string;
 }
 
+export const DEFAULT_SPIN_SEGMENTS: SpinWheelSegmentSpec[] = [
+  { index: 0, id: 'xp_25', label: '+25 Scholar XP', shortLabel: '+25 XP', oddsPercent: 24, rarity: 'standard', color: '#0284c7', textColor: '#ffffff' },
+  { index: 1, id: 'cookies_3', label: '3 Winter Cookies', shortLabel: '3 Cookies', oddsPercent: 20, rarity: 'standard', color: '#e11d48', textColor: '#ffffff' },
+  { index: 2, id: 'xp_50', label: '+50 Scholar XP', shortLabel: '+50 XP', oddsPercent: 18, rarity: 'standard', color: '#0f766e', textColor: '#f0fdfa' },
+  { index: 3, id: 'ai_boost_2', label: '+2 Daily AI Queries', shortLabel: '+2 AI Boost', oddsPercent: 11, rarity: 'rare', color: '#1d4ed8', textColor: '#eff6ff' },
+  { index: 4, id: 'xp_100', label: '+100 Frost XP', shortLabel: '+100 XP', oddsPercent: 10, rarity: 'rare', color: '#0369a1', textColor: '#e0f2fe' },
+  { index: 5, id: 'streak_shield', label: 'Streak Freeze Shield', shortLabel: 'Shield', oddsPercent: 8, rarity: 'rare', color: '#334155', textColor: '#f8fafc' },
+  { index: 6, id: 'cookies_6', label: '6 Cocoa Cookies', shortLabel: '6 Cookies', oddsPercent: 6, rarity: 'rare', color: '#be123c', textColor: '#fff1f2' },
+  { index: 7, id: 'frost_jackpot', label: 'Frost Jackpot (+200 XP)', shortLabel: 'Jackpot!', oddsPercent: 3, rarity: 'jackpot', color: '#d97706', textColor: '#ffffff' },
+];
+
 export interface WinterTaskItem {
   id: string;
   title: string;

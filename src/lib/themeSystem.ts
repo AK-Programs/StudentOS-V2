@@ -12,7 +12,7 @@ import { supabase } from './supabase';
 import { UserProfile } from '../types';
 import { saveSupabaseUserProfile } from './supabaseUsers';
 
-export type ThemeId = 'default' | 'midnight' | 'ocean' | 'aurora' | 'paper' | 'claymorphism' | 'glassmorphism' | 'halloween';
+export type ThemeId = 'default' | 'midnight' | 'ocean' | 'aurora' | 'paper' | 'claymorphism' | 'glassmorphism' | 'halloween' | 'winter';
 export type ThemeAccent = 'indigo' | 'emerald' | 'amber' | 'rose';
 
 export interface ThemeAccentConfig {
@@ -254,11 +254,33 @@ export const STUDENTOS_THEMES: Record<ThemeId, ThemeDefinition> = {
       themeColor: '#09090b'
     },
     previewGradient: 'from-amber-950 via-zinc-950 to-black'
+  },
+  winter: {
+    id: 'winter',
+    name: 'Winter Festival ❄️',
+    tagline: 'Frosted Aurora, Glacier Blue & Festive Atmosphere',
+    isDark: true,
+    colors: {
+      background: '#040d1a',
+      surface: 'rgba(7, 24, 46, 0.85)',
+      surfaceSecondary: '#0b2a4a',
+      surfaceTertiary: '#123d68',
+      text: '#f0f9ff',
+      textMuted: '#bae6fd',
+      textSubtle: '#7dd3fc',
+      primary: '#38bdf8',
+      primaryHover: '#0284c7',
+      border: 'rgba(125, 211, 252, 0.22)',
+      accent: '#67e8f9',
+      themeColor: '#040d1a'
+    },
+    previewGradient: 'from-sky-950 via-cyan-900 to-blue-950'
   }
 };
 
 const THEME_STORAGE_KEY = 'studentos_theme';
 const ACCENT_STORAGE_KEY = 'studentos_accent';
+const LAST_NON_WINTER_KEY = 'studentos_last_non_winter_theme';
 
 export function getSavedTheme(): ThemeId {
   if (typeof window === 'undefined') return 'default';
@@ -292,6 +314,16 @@ export function applyTheme(themeId: ThemeId, accent: ThemeAccent = 'indigo') {
     root.classList.remove(`theme-${id}`);
   });
   root.classList.add(`theme-${theme.id}`);
+
+  // Manage .winter-theme-active class exclusively based on whether winter theme is active
+  if (theme.id === 'winter') {
+    root.classList.add('winter-theme-active');
+  } else {
+    root.classList.remove('winter-theme-active');
+    try {
+      localStorage.setItem(LAST_NON_WINTER_KEY, theme.id);
+    } catch (_) {}
+  }
 
   Object.keys(THEME_ACCENTS).forEach(acc => {
     root.classList.remove(`accent-${acc}`);
@@ -375,6 +407,29 @@ export function useTheme(currentUser?: UserProfile | null) {
     return getSavedAccent();
   });
 
+  const [winterAvailable, setWinterAvailable] = useState<boolean>(true);
+
+  // Check winter theme feature access
+  useEffect(() => {
+    const checkWinterAccess = async () => {
+      try {
+        const { checkFeatureAccess } = await import('./featureAccessService');
+        const access = checkFeatureAccess('winter_theme', currentUser?.role);
+        setWinterAvailable(access.accessible);
+        if (!access.accessible && currentTheme === 'winter') {
+          const fallback = (localStorage.getItem(LAST_NON_WINTER_KEY) as ThemeId) || 'default';
+          setCurrentTheme(fallback);
+          applyTheme(fallback, currentAccent);
+        }
+      } catch (_) {
+        setWinterAvailable(true);
+      }
+    };
+    checkWinterAccess();
+    window.addEventListener('veylentra-feature-flags-updated', checkWinterAccess);
+    return () => window.removeEventListener('veylentra-feature-flags-updated', checkWinterAccess);
+  }, [currentUser?.role, currentTheme, currentAccent]);
+
   useEffect(() => {
     const profileTheme = currentUser?.raw_data?.theme as ThemeId;
     const profileAccent = currentUser?.raw_data?.accent as ThemeAccent;
@@ -414,14 +469,18 @@ export function useTheme(currentUser?: UserProfile | null) {
     await saveThemePreference(currentTheme, newAccent, currentUser);
   };
 
+  const availableThemes = Object.values(STUDENTOS_THEMES).filter(
+    t => t.id !== 'winter' || winterAvailable
+  );
+
   return {
     currentTheme,
     currentAccent,
-    theme: STUDENTOS_THEMES[currentTheme],
-    accent: THEME_ACCENTS[currentAccent],
+    theme: STUDENTOS_THEMES[currentTheme] || STUDENTOS_THEMES.default,
+    accent: THEME_ACCENTS[currentAccent] || THEME_ACCENTS.indigo,
     changeTheme,
     changeAccent,
-    themes: Object.values(STUDENTOS_THEMES),
+    themes: availableThemes,
     accents: Object.values(THEME_ACCENTS)
   };
 }

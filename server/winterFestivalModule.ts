@@ -514,9 +514,10 @@ export function buildSeparatedLeaderboard(params: {
 }
 
 export async function executeSantaGiftClaim(params: {
-  user: { id: string; name: string; role: string; grade?: string; section?: string };
+  user: { id: string; name: string; email?: string; role: string; grade?: string; section?: string };
   idempotencyKey: string;
   nowMs?: number;
+  isPreview?: boolean;
   getSupabaseServerConfig: WinterModuleDeps['getSupabaseServerConfig'];
 }): Promise<{
   statusCode: number;
@@ -529,6 +530,57 @@ export async function executeSantaGiftClaim(params: {
   const endH = Number(santaFeature?.config?.windowEndHour ?? 21);
 
   const windowStatus = getSantaWindowStatus(nowMs, tz, startH, endH);
+
+  const userEmail = (params.user.email || '').toLowerCase().trim();
+  const isSuperAdmin =
+    String(params.user.role || '').toLowerCase().trim() === 'super_admin' ||
+    [
+      'naitik.kashyap0015@gmail.com',
+      'naitik.kashyap5205@gmail.com',
+      'superadmin@studentos.edu',
+      'superadmin@veylentra.edu',
+    ].includes(userEmail);
+
+  if (params.isPreview) {
+    if (!isSuperAdmin) {
+      return {
+        statusCode: 403,
+        body: {
+          success: false,
+          error: 'Only Super Admins can preview Santa gifts outside the event window.',
+        },
+      };
+    }
+    const roll = rollSantaRewardTier();
+    const previewReward = {
+      id: `preview_santa_${Date.now()}`,
+      featureType: 'santa_gift' as const,
+      idempotencyKey: `preview_${Date.now()}`,
+      eventNightKey: windowStatus.eventNightKey,
+      status: 'applied' as const,
+      rarity: roll.tier.rarity,
+      label: roll.tier.label,
+      xpBonus: roll.tier.xpBonus,
+      cookiesBonus: roll.tier.cookiesBonus,
+      aiBonusQueries: roll.tier.aiBonusQueries,
+      streakShield: roll.tier.streakShield,
+      badgeId: roll.tier.badgeId,
+      frameId: roll.tier.frameId,
+      createdAt: new Date(nowMs).toISOString(),
+      appliedAt: new Date(nowMs).toISOString(),
+    };
+    return {
+      statusCode: 200,
+      body: {
+        success: true,
+        isPreview: true,
+        reward: previewReward,
+        message: 'Super Admin Preview: Simulated Santa gift unwrap without mutating real claims or XP.',
+        windowStatus,
+      },
+    };
+  }
+
   if (!windowStatus.isOpen) {
     return {
       statusCode: 403,
@@ -1101,13 +1153,15 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
     if (!actor) return res.status(401).json({ success: false, error: 'Authentication required.' });
 
     const idempotencyKey = String(req.body?.idempotencyKey || '');
+    const isPreview = Boolean(req.body?.isPreview);
     const result = await executeSantaGiftClaim({
       user: actor,
       idempotencyKey,
+      isPreview,
       getSupabaseServerConfig,
     });
 
-    if (result.statusCode === 200 && !result.body.alreadyClaimed) {
+    if (result.statusCode === 200 && !result.body.alreadyClaimed && !result.body.isPreview) {
       broadcastToAllWs({
         type: 'leaderboard:updated',
         userId: actor.id,

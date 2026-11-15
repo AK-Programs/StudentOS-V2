@@ -1005,11 +1005,15 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                         : 'bg-slate-950/80 border-white/10 hover:border-white/20'
                     }`}
                   >
-                    {isSpecial && (
+                    {t.id === 'winter' ? (
+                      <span className="absolute top-3 right-3 px-2 py-0.5 rounded-full bg-gradient-to-r from-sky-500 to-cyan-500 text-white text-[9px] font-black uppercase tracking-wider shadow-sm flex items-center gap-1">
+                        <span>❄️ Seasonal</span>
+                      </span>
+                    ) : isSpecial ? (
                       <span className="absolute top-3 right-3 px-2 py-0.5 rounded-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-[9px] font-black uppercase tracking-wider shadow-sm">
                         New Look
                       </span>
-                    )}
+                    ) : null}
 
                     {/* Theme preview swatch */}
                     <div className={`h-20 rounded-xl mb-3.5 bg-gradient-to-r ${t.previewGradient} border border-white/10 p-2.5 flex flex-col justify-between`}>
@@ -1019,7 +1023,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                         <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.background }} />
                       </div>
                       <div className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-black/50 text-white w-fit">
-                        {t.id === 'claymorphism' ? 'Soft 3D Inflated' : t.id === 'glassmorphism' ? 'Frosted Blur Glass' : t.isDark ? 'Dark Theme' : 'Light Paper'}
+                        {t.id === 'winter' ? 'Frosted Aurora Glass' : t.id === 'claymorphism' ? 'Soft 3D Inflated' : t.id === 'glassmorphism' ? 'Frosted Blur Glass' : t.isDark ? 'Dark Theme' : 'Light Paper'}
                       </div>
                     </div>
 
