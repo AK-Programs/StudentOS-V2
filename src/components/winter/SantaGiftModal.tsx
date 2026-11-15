@@ -20,7 +20,8 @@ import {
   WinterStatusResponse,
 } from '../../lib/winterFestivalService';
 import { AnimatedDialog, TactileButton } from '../ui/animatedComponents';
-import { FrostShieldSvg, SantaCharacterSvg, SantaGiftBoxSvg, WinterCookieSvg } from './WinterArtwork';
+import { FrostShieldSvg, WinterCookieSvg } from './WinterArtwork';
+import { Santa3DCanvas } from './Santa3DCanvas';
 
 interface SantaGiftModalProps {
   isOpen: boolean;
@@ -241,54 +242,9 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
         <div className="rounded-2xl border border-slate-800 bg-gradient-to-b from-slate-950/90 to-sky-950/30 p-5 text-center space-y-4 relative overflow-hidden z-10">
           <div className="winter-candy-divider" />
 
-          {/* Animated Santa Character + Gift Box with opening light beam */}
-          <div className="flex items-center justify-center gap-6 py-2 relative">
-            {/* Rising glow light beam when claiming */}
-            {claiming && (
-              <motion.div
-                initial={{ opacity: 0, scaleY: 0 }}
-                animate={{ opacity: [0, 0.9, 0.4, 0.9], scaleY: [0.5, 1.2, 1] }}
-                transition={{ duration: 1.2, repeat: Infinity }}
-                className="absolute inset-x-20 top-2 h-24 bg-gradient-to-t from-amber-400/0 via-amber-400/30 to-sky-400/40 blur-lg pointer-events-none z-0"
-              />
-            )}
-
-            <motion.div
-              animate={
-                claiming && !prefersReduced
-                  ? { y: [0, -8, 0], rotate: [-4, 5, -4, 0], scale: [1, 1.08, 1] }
-                  : !prefersReduced
-                  ? { y: [0, -4, 0], rotate: [-1.5, 1.5, -1.5] }
-                  : {}
-              }
-              transition={{ duration: claiming ? 0.6 : 2.8, repeat: Infinity }}
-              className="w-20 h-20 rounded-2xl bg-rose-500/15 border border-rose-500/40 flex items-center justify-center shadow-[0_0_20px_rgba(244,63,94,0.2)] relative z-10"
-            >
-              <SantaCharacterSvg size={64} />
-            </motion.div>
-
-            <motion.div
-              animate={
-                claiming && !prefersReduced
-                  ? { rotate: [-10, 10, -10, 12, 0], scale: [1, 1.18, 1.05, 1.15] }
-                  : !prefersReduced
-                  ? { scale: [1, 1.04, 1], y: [0, -3, 0] }
-                  : {}
-              }
-              transition={{ duration: claiming ? 0.5 : 2.4, repeat: Infinity }}
-              className="w-20 h-20 rounded-2xl bg-amber-500/15 border border-amber-400/40 flex items-center justify-center shadow-[0_0_24px_rgba(251,191,36,0.25)] relative z-10"
-            >
-              <SantaGiftBoxSvg size={52} />
-              {claiming && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10, scale: 0.5 }}
-                  animate={{ opacity: 1, y: -16, scale: 1.2 }}
-                  className="absolute -top-3 text-amber-300 font-bold text-xs"
-                >
-                  ✨
-                </motion.div>
-              )}
-            </motion.div>
+          {/* Immersive 3D Santa & Hinged Gift Box Canvas */}
+          <div className="w-full h-60 relative rounded-xl overflow-hidden bg-gradient-to-b from-slate-900/40 to-slate-950/80 border border-slate-800/60 shadow-inner">
+            <Santa3DCanvas isClaiming={claiming} />
           </div>
 
           {santaWindow && (

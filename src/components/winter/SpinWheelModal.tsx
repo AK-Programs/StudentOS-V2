@@ -181,74 +181,88 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
     setResultReward(null);
     setWinningSegmentIndex(null);
 
-    const spinStartTime = Date.now();
     const cycleKey = winterStatus?.spinWheel?.nextEligibleAt || `ready_${Math.floor(Date.now() / 60000)}`;
     const idempotencyKey = `wheel_${cycleKey}_${Date.now()}`;
 
-    // 1. Start spinning immediately on tap without waiting for API
-    const initialSpinTurns = 5;
-    setRotationDeg((prev) => prev + initialSpinTurns * 360);
+    // 1. Call API in parallel while starting instant provisional spin
+    const resPromise = spinWinterWheel(currentUser, idempotencyKey);
+    const segIdxRes = await resPromise;
 
-    // Pointer tick flutter on every peg
-    let tickInterval: any = null;
-    if (!prefersReduced) {
-      tickInterval = setInterval(() => {
-        setPointerDeflected((p) => !p);
-        if (wheelAudioEnabled) {
-          playWheelTickCue(wheelAudioEnabled);
-        }
-      }, 110);
-    }
-
-    // 2. Call API in parallel
-    const res = await spinWinterWheel(currentUser, idempotencyKey);
-
-    // 6. If API fails, stop wheel and show error
-    if (!res.ok || !res.data?.success) {
-      if (tickInterval) clearInterval(tickInterval);
+    if (!segIdxRes.ok || !segIdxRes.data?.success) {
       setSpinning(false);
-      setPointerDeflected(false);
-      setError(res.data?.error || 'Spin failed or cooldown is still active.');
-      if (typeof res.data?.remainingMs === 'number') {
-        setRemainingMs(res.data.remainingMs);
+      setError(segIdxRes.data?.error || 'Spin failed or cooldown is still active.');
+      if (typeof segIdxRes.data?.remainingMs === 'number') {
+        setRemainingMs(segIdxRes.data.remainingMs);
       }
       return;
     }
 
-    const segIdx = Number(res.data.segmentIndex ?? 0);
+    const segIdx = Number(segIdxRes.data.segmentIndex ?? 0);
     const sliceDeg = 360 / segments.length;
     const centerOfSlice = segIdx * sliceDeg + sliceDeg / 2;
     const desiredFinalModulo = (360 - centerOfSlice) % 360;
 
-    // 2. Ensure total spin duration is at least 4 seconds with slow ease out
-    const elapsed = Date.now() - spinStartTime;
-    const minSpinMs = 4200;
-    const remainingSpinMs = Math.max(500, minSpinMs - elapsed);
+    // 2. Exact 5.5 seconds spin duration (5500 ms)
+    const durationMs = 5500;
+    const startAngle = rotationDeg;
+    const currentMod = ((startAngle % 360) + 360) % 360;
+    const deltaToTarget = (desiredFinalModulo - currentMod + 360) % 360;
+    const totalExtraTurns = 7 * 360;
+    const totalDelta = totalExtraTurns + deltaToTarget;
+    const targetAngle = startAngle + totalDelta;
 
-    setRotationDeg((prev) => {
-      const currentMod = ((prev % 360) + 360) % 360;
-      const deltaToTarget = (desiredFinalModulo - currentMod + 360) % 360;
-      const extraTurns = prefersReduced ? 0 : 6 * 360;
-      return prev + extraTurns + deltaToTarget;
-    });
+    const startTime = performance.now();
+    let lastPegCheckAngle = startAngle;
 
-    setTimeout(async () => {
-      if (tickInterval) clearInterval(tickInterval);
-      setPointerDeflected(false);
-      const reward: WinterRewardRecord | null = res.data.reward || null;
-      setSpinning(false);
-      setWinningSegmentIndex(segIdx);
-      setResultReward(reward);
-      if (reward) {
-        setAriaAnnouncement(
-          `Winter Spin Wheel landed on ${reward.label}. Earned ${reward.xpBonus} XP and ${reward.cookiesBonus} Winter Cookies.`
-        );
+    const step = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(1, elapsed / durationMs);
+
+      // 3. Custom ease: stays fast for first 60%, then crawls hard for the last 40%
+      let easedProgress: number;
+      if (progress <= 0.6) {
+        easedProgress = (progress / 0.6) * 0.65;
+      } else {
+        const decelRatio = (progress - 0.6) / 0.4;
+        easedProgress = 0.65 + 0.35 * (1 - Math.cos(decelRatio * (Math.PI / 2)));
       }
-      playWheelCelebrateCue(wheelAudioEnabled);
-      await onSpinComplete();
-      window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
-      window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
-    }, remainingSpinMs);
+
+      const currentAngle = startAngle + totalDelta * easedProgress;
+      setRotationDeg(currentAngle);
+
+      // 4. Pointer ticks on each peg while fast, then ticks slower as wheel slows
+      const angleDiff = Math.abs(currentAngle - lastPegCheckAngle);
+      if (angleDiff >= sliceDeg) {
+        lastPegCheckAngle = currentAngle;
+        setPointerDeflected((p) => !p);
+        if (wheelAudioEnabled && !prefersReduced) {
+          playWheelTickCue(wheelAudioEnabled);
+        }
+      }
+
+      if (progress < 1) {
+        requestAnimationFrame(step);
+      } else {
+        // 5. Stop exactly on winning slice without overshooting
+        setRotationDeg(targetAngle);
+        setPointerDeflected(false);
+        const reward: WinterRewardRecord | null = segIdxRes.data.reward || null;
+        setSpinning(false);
+        setWinningSegmentIndex(segIdx);
+        setResultReward(reward);
+        if (reward) {
+          setAriaAnnouncement(
+            `Winter Spin Wheel landed on ${reward.label}. Earned ${reward.xpBonus} XP and ${reward.cookiesBonus} Winter Cookies.`
+          );
+        }
+        playWheelCelebrateCue(wheelAudioEnabled);
+        onSpinComplete();
+        window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
+        window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
+      }
+    };
+
+    requestAnimationFrame(step);
   };
 
   const sliceAngle = 360 / segments.length;
