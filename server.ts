@@ -50,7 +50,7 @@ dotenv.config();
 
 const serverStartTime = Date.now();
 
-export function getSupabaseServerConfig(): { url: string; key: string | null } {
+export function getSupabaseServerConfig(): { url: string; key: string } {
   const url = (
     process.env.VITE_SUPABASE_URL ||
     process.env.SUPABASE_URL ||
@@ -59,17 +59,33 @@ export function getSupabaseServerConfig(): { url: string; key: string | null } {
 
   const DEFAULT_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
 
-  const key = (
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    process.env.VITE_SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_KEY ||
-    DEFAULT_ANON_KEY
-  ).trim();
+  const isInvalidKey = (k?: string | null) => {
+    if (!k) return true;
+    const trimmed = k.trim();
+    if (trimmed.length < 20) return true;
+    const lower = trimmed.toLowerCase();
+    if (lower.includes('your_') || lower.includes('placeholder')) return true;
+    return false;
+  };
+
+  const candidateKeys = [
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
+    process.env.SUPABASE_ANON_KEY,
+    process.env.VITE_SUPABASE_ANON_KEY,
+    process.env.SUPABASE_KEY,
+  ];
+
+  let selectedKey = DEFAULT_ANON_KEY;
+  for (const cand of candidateKeys) {
+    if (!isInvalidKey(cand)) {
+      selectedKey = cand!.trim();
+      break;
+    }
+  }
 
   return {
     url,
-    key
+    key: selectedKey,
   };
 }
 
