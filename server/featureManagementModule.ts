@@ -180,8 +180,6 @@ async function persistSingleFeature(
   }
 
   try {
-    let persisted = false;
-
     const tableRes = await fetch(`${url}/rest/v1/platform_features?on_conflict=key`, {
       method: 'POST',
       headers: {
@@ -208,73 +206,40 @@ async function persistSingleFeature(
       }),
     });
 
-    if (tableRes.ok) {
-      persisted = true;
-      await fetch(`${url}/rest/v1/platform_feature_audit_logs`, {
-        method: 'POST',
-        headers: {
-          apikey: key,
-          Authorization: `Bearer ${key}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          id: auditEntry.id,
-          feature_key: auditEntry.featureKey,
-          previous_enabled: auditEntry.previousEnabled,
-          new_enabled: auditEntry.newEnabled,
-          action: auditEntry.action,
-          actor_id: auditEntry.actorId,
-          actor_name: auditEntry.actorName,
-          actor_role: auditEntry.actorRole,
-          reason: auditEntry.reason,
-          created_at: auditEntry.createdAt,
-        }),
-      }).catch(() => {});
+    if (!tableRes.ok) {
+      const errText = await tableRes.text();
+      if (prevSnapshot) memoryFeaturesMap.set(record.key, prevSnapshot);
+      else memoryFeaturesMap.delete(record.key);
+      if (errText.includes('relation') && errText.includes('does not exist')) {
+        return {
+          ok: false,
+          error: 'Database persistence failed: table platform_features missing. Please run the SQL migration in Supabase to create platform_features and platform_feature_audit_logs.',
+        };
+      }
+      return { ok: false, error: `Database persistence failed while saving feature configuration: ${errText}` };
     }
 
-    const mapObj: Record<string, PlatformFeatureRecord> = {};
-    memoryFeaturesMap.forEach((v, k) => {
-      mapObj[k] = v;
-    });
-
-    const docRes = await fetch(`${url}/rest/v1/global_data?on_conflict=id`, {
+    // Persist audit log
+    await fetch(`${url}/rest/v1/platform_feature_audit_logs`, {
       method: 'POST',
       headers: {
         apikey: key,
         Authorization: `Bearer ${key}`,
         'Content-Type': 'application/json',
-        Prefer: 'resolution=merge-duplicates',
       },
       body: JSON.stringify({
-        id: REGISTRY_GLOBAL_DOC_ID,
-        data: mapObj,
-        updated_at: record.updatedAt,
+        id: auditEntry.id,
+        feature_key: auditEntry.featureKey,
+        previous_enabled: auditEntry.previousEnabled,
+        new_enabled: auditEntry.newEnabled,
+        action: auditEntry.action,
+        actor_id: auditEntry.actorId,
+        actor_name: auditEntry.actorName,
+        actor_role: auditEntry.actorRole,
+        reason: auditEntry.reason,
+        created_at: auditEntry.createdAt,
       }),
-    });
-
-    if (docRes.ok) {
-      persisted = true;
-      await fetch(`${url}/rest/v1/global_data?on_conflict=id`, {
-        method: 'POST',
-        headers: {
-          apikey: key,
-          Authorization: `Bearer ${key}`,
-          'Content-Type': 'application/json',
-          Prefer: 'resolution=merge-duplicates',
-        },
-        body: JSON.stringify({
-          id: AUDIT_GLOBAL_DOC_ID,
-          data: memoryAuditLogs.slice(0, 120),
-          updated_at: record.updatedAt,
-        }),
-      }).catch(() => {});
-    }
-
-    if (!persisted) {
-      if (prevSnapshot) memoryFeaturesMap.set(record.key, prevSnapshot);
-      else memoryFeaturesMap.delete(record.key);
-      return { ok: false, error: 'Database persistence failed while saving feature configuration.' };
-    }
+    }).catch(() => {});
 
     return { ok: true };
   } catch (err: any) {
