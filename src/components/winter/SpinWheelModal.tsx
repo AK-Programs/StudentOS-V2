@@ -3,16 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Interactive 8-Segment Illustrated Winter Spin Wheel Modal
- * - Illustrated 8-segment reward wheel with decorative studded golden rim
- * - Server-authoritative cryptographic reward roll & accurate GPU physics landing
- * - Central tactile "SPIN" button with pulse animation & idle breathing motion
- * - Top 3D pointer with dynamic deflection spring motion
- * - Strict 2-hour cooldown timer & transparent pre-spin odds
- * - Silent-by-default audio cues with toggle
- * - Energetic celebration card with confetti on win
+ * - Illustrated 8-segment reward wheel with metallic golden pegs at every slice boundary
+ * - Instant-start spin with mathematically controlled 8-second deceleration curve:
+ *     0–5s (~90.5% travel) -> 5–7s (gradual slow approach) -> 7–8s (final subtle crawl)
+ * - Exact center-of-slice landing matching server-authoritative segmentIndex (zero overshoot)
+ * - Boundary-derived spring pointer deflection & debounced mechanical Web Audio ticks
+ * - Zero per-frame React state updates (direct DOM transform updates via requestAnimationFrame)
+ * - Strict 2-hour cooldown timer, duplicate-spin prevention, & reduced-motion support
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import {
   Clock,
@@ -22,10 +22,6 @@ import {
   RotateCw,
   CheckCircle2,
   Sparkles,
-  Trophy,
-  Crown,
-  Zap,
-  Award
 } from 'lucide-react';
 import { UserProfile } from '../../types';
 import {
@@ -40,6 +36,17 @@ import {
   WinterRewardRecord,
   WinterStatusResponse,
 } from '../../lib/winterFestivalService';
+import {
+  buildResolvedSpinPlan,
+  countPegBoundaryCrossings,
+  evaluateLaunchPhase,
+  evaluateResolvedSpinAngle,
+  SPIN_DECEL_EXPONENT,
+  SPIN_NOMINAL_EXTRA_TURNS,
+  SPIN_TOTAL_DURATION_MS,
+  SpinLaunchState,
+  SpinResolvedPlan,
+} from '../../lib/winterSpinPhysics';
 import { AnimatedDialog, TactileButton } from '../ui/animatedComponents';
 import { FrostShieldSvg, WinterCookieSvg } from './WinterArtwork';
 
@@ -67,51 +74,77 @@ function describeSlice(cx: number, cy: number, r: number, startAngle: number, en
   return ['M', cx, cy, 'L', start.x, start.y, 'A', r, r, 0, largeArc, 0, end.x, end.y, 'Z'].join(' ');
 }
 
+// Deterministic seeded PRNG for reproducible confetti bursts
+function mulberry32(seed: number) {
+  let a = seed | 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 // Confetti burst component for win celebration
-const ConfettiBurst: React.FC<{ active: boolean; isLegendary?: boolean }> = ({ active, isLegendary = false }) => {
-  if (!active) return null;
-  const count = isLegendary ? 35 : 25;
-  const colors = isLegendary
-    ? ['#fbbf24', '#f59e0b', '#f43f5e', '#38bdf8', '#a855f7', '#ffffff']
-    : ['#38bdf8', '#34d399', '#fbbf24', '#f8fafc', '#f43f5e'];
+const ConfettiBurst: React.FC<{ active: boolean; isLegendary?: boolean; reduced?: boolean }> = ({
+  active,
+  isLegendary = false,
+  reduced = false,
+}) => {
+  const pieces = useMemo(() => {
+    const rng = mulberry32(isLegendary ? 9187 : 4021);
+    const count = isLegendary ? 34 : 24;
+    const colors = isLegendary
+      ? ['#fbbf24', '#f59e0b', '#f43f5e', '#38bdf8', '#a855f7', '#ffffff']
+      : ['#38bdf8', '#34d399', '#fbbf24', '#f8fafc', '#f43f5e'];
+
+    return Array.from({ length: count }).map((_, i) => {
+      const angle = (i * 360) / count + (rng() * 18 - 9);
+      const distance = 90 + rng() * 115;
+      const rad = (angle * Math.PI) / 180;
+      return {
+        id: i,
+        tx: Math.cos(rad) * distance,
+        ty: Math.sin(rad) * distance + 40,
+        color: colors[i % colors.length],
+        size: 5 + rng() * 6,
+        isRound: rng() > 0.55,
+        aspect: rng() > 0.5 ? 1 : 1.85,
+        rot: rng() * 360 - 180,
+        duration: 1.25 + rng() * 0.55,
+      };
+    });
+  }, [isLegendary]);
+
+  if (!active || reduced) return null;
 
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden z-40 flex items-center justify-center">
-      {Array.from({ length: count }).map((_, i) => {
-        const angle = (i * 360) / count + (Math.random() * 20 - 10);
-        const distance = 90 + Math.random() * 110;
-        const rad = (angle * Math.PI) / 180;
-        const tx = Math.cos(rad) * distance;
-        const ty = Math.sin(rad) * distance;
-        const color = colors[i % colors.length];
-        const size = 5 + Math.random() * 6;
-        return (
-          <motion.div
-            key={i}
-            initial={{ x: 0, y: 0, scale: 0, opacity: 1, rotate: 0 }}
-            animate={{
-              x: tx,
-              y: ty + 40,
-              scale: [0, 1.25, 0.8, 0],
-              opacity: [1, 1, 0.8, 0],
-              rotate: Math.random() * 360 - 180,
-            }}
-            transition={{ duration: 1.3 + Math.random() * 0.6, ease: [0.1, 1, 0.3, 1] }}
-            style={{
-              width: size,
-              height: size * (Math.random() > 0.5 ? 1 : 2),
-              backgroundColor: color,
-              borderRadius: Math.random() > 0.5 ? '50%' : '2px',
-              position: 'absolute',
-            }}
-          />
-        );
-      })}
+      {pieces.map((p) => (
+        <motion.div
+          key={p.id}
+          initial={{ x: 0, y: 0, scale: 0, opacity: 1, rotate: 0 }}
+          animate={{
+            x: p.tx,
+            y: p.ty,
+            scale: [0, 1.25, 0.85, 0],
+            opacity: [1, 1, 0.85, 0],
+            rotate: p.rot,
+          }}
+          transition={{ duration: p.duration, ease: [0.1, 1, 0.3, 1] }}
+          style={{
+            width: p.size,
+            height: p.size * p.aspect,
+            backgroundColor: p.color,
+            borderRadius: p.isRound ? '50%' : '2px',
+            position: 'absolute',
+          }}
+        />
+      ))}
     </div>
   );
 };
 
-// Visual icons for wheel segments
 const SEGMENT_ICONS: Record<string, string> = {
   xp_25: '⚡',
   cookies_3: '🍪',
@@ -131,20 +164,52 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
   onSpinComplete,
   isPreviewOnly = false,
 }) => {
-  const prefersReduced = useReducedMotion();
+  const prefersReduced = Boolean(useReducedMotion());
   const [wheelAudioEnabled, setWheelAudioEnabled] = useState<boolean>(() =>
     hasExplicitSoundPreference() ? isGlobalSoundEnabled() : false
   );
-  const [rotationDeg, setRotationDeg] = useState<number>(0);
+  const wheelAudioRef = useRef<boolean>(wheelAudioEnabled);
+  wheelAudioRef.current = wheelAudioEnabled;
+
   const [spinning, setSpinning] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [resultReward, setResultReward] = useState<WinterRewardRecord | null>(null);
   const [winningSegmentIndex, setWinningSegmentIndex] = useState<number | null>(null);
   const [ariaAnnouncement, setAriaAnnouncement] = useState<string>('');
   const [remainingMs, setRemainingMs] = useState<number>(0);
-  const [pointerDeflected, setPointerDeflected] = useState<boolean>(false);
 
-  // Guarantee 8 segments even during loading/offline states
+  // Direct DOM refs for 60fps zero-rerender animation
+  const wheelRef = useRef<HTMLDivElement | null>(null);
+  const pointerRef = useRef<HTMLDivElement | null>(null);
+  const rotationRef = useRef<number>(0);
+  const pointerAngleRef = useRef<number>(0);
+  const pointerVelRef = useRef<number>(0);
+  const spinningRef = useRef<boolean>(false);
+  const rafIdRef = useRef<number | null>(null);
+  const mountedRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+      spinningRef.current = false;
+    };
+  }, []);
+
+  // Re-apply stored rotation cleanly when modal re-opens
+  useEffect(() => {
+    if (isOpen && wheelRef.current) {
+      wheelRef.current.style.transform = `rotate(${rotationRef.current}deg)`;
+    }
+    if (isOpen && pointerRef.current) {
+      pointerRef.current.style.transform = `rotate(${pointerAngleRef.current}deg)`;
+    }
+  }, [isOpen]);
+
   const rawSegments = winterStatus?.spinWheel?.segments;
   const segments: SpinWheelSegmentSpec[] = useMemo(() => {
     if (Array.isArray(rawSegments) && rawSegments.length >= 8) {
@@ -175,7 +240,9 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
   const isReady = remainingMs <= 0 && !spinning;
 
   const handleSpin = async () => {
-    if (!isReady || segments.length === 0) return;
+    if (spinningRef.current || !isReady || segments.length === 0) return;
+
+    spinningRef.current = true;
     setSpinning(true);
     setError(null);
     setResultReward(null);
@@ -184,96 +251,182 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
     const cycleKey = winterStatus?.spinWheel?.nextEligibleAt || `ready_${Math.floor(Date.now() / 60000)}`;
     const idempotencyKey = `wheel_${cycleKey}_${Date.now()}`;
 
-    // 1. Call API in parallel while starting instant provisional spin
-    const resPromise = spinWinterWheel(currentUser, idempotencyKey);
-    const segIdxRes = await resPromise;
-
-    if (!segIdxRes.ok || !segIdxRes.data?.success) {
-      setSpinning(false);
-      setError(segIdxRes.data?.error || 'Spin failed or cooldown is still active.');
-      if (typeof segIdxRes.data?.remainingMs === 'number') {
-        setRemainingMs(segIdxRes.data.remainingMs);
-      }
-      return;
-    }
-
-    const segIdx = Number(segIdxRes.data.segmentIndex ?? 0);
-    const sliceDeg = 360 / segments.length;
-    const centerOfSlice = segIdx * sliceDeg + sliceDeg / 2;
-    const desiredFinalModulo = (360 - centerOfSlice) % 360;
-
-    // 2. Exact 5.5 seconds spin duration (5500 ms)
-    const durationMs = 5500;
-    const startAngle = rotationDeg;
-    const currentMod = ((startAngle % 360) + 360) % 360;
-    const deltaToTarget = (desiredFinalModulo - currentMod + 360) % 360;
-    const totalExtraTurns = 7 * 360;
-    const totalDelta = totalExtraTurns + deltaToTarget;
-    const targetAngle = startAngle + totalDelta;
-
     const startTime = performance.now();
-    let lastPegCheckAngle = startAngle;
+    let prevFrameTime = startTime;
+    let prevAngle = rotationRef.current;
+
+    const launchState: SpinLaunchState = {
+      startAngle: rotationRef.current,
+      nominalDelta: (prefersReduced ? 1 : SPIN_NOMINAL_EXTRA_TURNS) * 360,
+      durationMs: SPIN_TOTAL_DURATION_MS,
+      exponent: SPIN_DECEL_EXPONENT,
+    };
+
+    let resolvedPlan: SpinResolvedPlan | null = null;
+    let resolvedReward: WinterRewardRecord | null = null;
+    let resolvedSegIndex = 0;
+    let apiFailed = false;
+
+    // Fire server-authoritative spin request immediately in parallel with visual launch
+    spinWinterWheel(currentUser, idempotencyKey)
+      .then((res) => {
+        if (!mountedRef.current || apiFailed) return;
+        if (!res.ok || !res.data?.success) {
+          apiFailed = true;
+          if (rafIdRef.current !== null) {
+            cancelAnimationFrame(rafIdRef.current);
+            rafIdRef.current = null;
+          }
+          pointerAngleRef.current = 0;
+          pointerVelRef.current = 0;
+          if (pointerRef.current) {
+            pointerRef.current.style.transform = 'rotate(0deg)';
+          }
+          spinningRef.current = false;
+          setSpinning(false);
+          setError(res.data?.error || 'Spin failed or cooldown is still active.');
+          if (typeof res.data?.remainingMs === 'number') {
+            setRemainingMs(res.data.remainingMs);
+          }
+          return;
+        }
+
+        resolvedSegIndex = Number(res.data.segmentIndex ?? 0);
+        resolvedReward = res.data.reward || null;
+        const resolvedAtMs = Math.max(16, performance.now() - startTime);
+        resolvedPlan = buildResolvedSpinPlan({
+          launch: launchState,
+          resolvedAtMs,
+          segmentIndex: resolvedSegIndex,
+          segmentCount: segments.length,
+          reducedMotion: prefersReduced,
+        });
+      })
+      .catch((err) => {
+        if (!mountedRef.current || apiFailed) return;
+        apiFailed = true;
+        if (rafIdRef.current !== null) {
+          cancelAnimationFrame(rafIdRef.current);
+          rafIdRef.current = null;
+        }
+        pointerAngleRef.current = 0;
+        pointerVelRef.current = 0;
+        if (pointerRef.current) {
+          pointerRef.current.style.transform = 'rotate(0deg)';
+        }
+        spinningRef.current = false;
+        setSpinning(false);
+        setError(err?.message || 'Unable to reach spin server. Please try again.');
+      });
 
     const step = (now: number) => {
-      const elapsed = now - startTime;
-      const progress = Math.min(1, elapsed / durationMs);
+      if (!mountedRef.current || apiFailed) return;
 
-      // 3. Custom ease: stays fast for first 60%, then crawls hard for the last 40%
-      let easedProgress: number;
-      if (progress <= 0.6) {
-        easedProgress = (progress / 0.6) * 0.65;
+      const dt = Math.min(0.05, Math.max(0.001, (now - prevFrameTime) / 1000));
+      prevFrameTime = now;
+      const elapsedMs = now - startTime;
+
+      let currentAngle = prevAngle;
+      let finished = false;
+
+      if (resolvedPlan) {
+        const evalRes = evaluateResolvedSpinAngle(resolvedPlan, elapsedMs);
+        currentAngle = evalRes.angle;
+        finished = evalRes.finished;
       } else {
-        const decelRatio = (progress - 0.6) / 0.4;
-        easedProgress = 0.65 + 0.35 * (1 - Math.cos(decelRatio * (Math.PI / 2)));
+        currentAngle = evaluateLaunchPhase(launchState, elapsedMs).angle;
       }
 
-      const currentAngle = startAngle + totalDelta * easedProgress;
-      setRotationDeg(currentAngle);
+      // Apply wheel transform directly without React re-render
+      rotationRef.current = currentAngle;
+      if (wheelRef.current) {
+        wheelRef.current.style.transform = `rotate(${currentAngle}deg)`;
+      }
 
-      // 4. Pointer ticks on each peg while fast, then ticks slower as wheel slows
-      const angleDiff = Math.abs(currentAngle - lastPegCheckAngle);
-      if (angleDiff >= sliceDeg) {
-        lastPegCheckAngle = currentAngle;
-        setPointerDeflected((p) => !p);
-        if (wheelAudioEnabled && !prefersReduced) {
-          playWheelTickCue(wheelAudioEnabled);
+      // Detect exact segment-boundary peg crossings
+      const crossings = countPegBoundaryCrossings(prevAngle, currentAngle, segments.length);
+      if (crossings > 0) {
+        // Clockwise peg strikes downward pointer tip rightwards (-deg around top pivot)
+        pointerAngleRef.current = prefersReduced ? -8 : -25;
+        pointerVelRef.current = prefersReduced ? 0 : -140;
+        if (wheelAudioRef.current && !prefersReduced) {
+          playWheelTickCue(true, false);
         }
       }
+      prevAngle = currentAngle;
 
-      if (progress < 1) {
-        requestAnimationFrame(step);
+      // Damped spring integration for mechanical pointer snap-back
+      if (Math.abs(pointerAngleRef.current) > 0.05 || Math.abs(pointerVelRef.current) > 0.5) {
+        const stiffness = 290;
+        const damping = 21;
+        const accel = -stiffness * pointerAngleRef.current - damping * pointerVelRef.current;
+        pointerVelRef.current += accel * dt;
+        pointerAngleRef.current += pointerVelRef.current * dt;
       } else {
-        // 5. Stop exactly on winning slice without overshooting
-        setRotationDeg(targetAngle);
-        setPointerDeflected(false);
-        const reward: WinterRewardRecord | null = segIdxRes.data.reward || null;
+        pointerAngleRef.current = 0;
+        pointerVelRef.current = 0;
+      }
+      if (pointerRef.current) {
+        pointerRef.current.style.transform = `rotate(${pointerAngleRef.current.toFixed(2)}deg)`;
+      }
+
+      if (!finished) {
+        rafIdRef.current = requestAnimationFrame(step);
+      } else {
+        rafIdRef.current = null;
+        // Lock exact final target angle with zero overshoot
+        if (resolvedPlan) {
+          rotationRef.current = resolvedPlan.targetAngle;
+          if (wheelRef.current) {
+            wheelRef.current.style.transform = `rotate(${resolvedPlan.targetAngle}deg)`;
+          }
+        }
+        pointerAngleRef.current = 0;
+        pointerVelRef.current = 0;
+        if (pointerRef.current) {
+          pointerRef.current.style.transform = 'rotate(0deg)';
+        }
+
+        if (wheelAudioRef.current && !prefersReduced) {
+          playWheelTickCue(true, true);
+        }
+
+        spinningRef.current = false;
         setSpinning(false);
-        setWinningSegmentIndex(segIdx);
-        setResultReward(reward);
-        if (reward) {
+        setWinningSegmentIndex(resolvedSegIndex);
+        setResultReward(resolvedReward);
+        if (resolvedReward) {
           setAriaAnnouncement(
-            `Winter Spin Wheel landed on ${reward.label}. Earned ${reward.xpBonus} XP and ${reward.cookiesBonus} Winter Cookies.`
+            `Winter Spin Wheel landed on ${resolvedReward.label}. Earned ${resolvedReward.xpBonus} XP and ${resolvedReward.cookiesBonus} Winter Cookies.`
           );
         }
-        playWheelCelebrateCue(wheelAudioEnabled);
+        playWheelCelebrateCue(wheelAudioRef.current);
         onSpinComplete();
         window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
         window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
       }
     };
 
-    requestAnimationFrame(step);
+    rafIdRef.current = requestAnimationFrame(step);
   };
 
   const sliceAngle = 360 / segments.length;
 
-  // Outer golden studs coordinates (24 studs along rim)
+  // 24 decorative outer bezel studs
   const rimStuds = useMemo(() => {
     return Array.from({ length: 24 }).map((_, i) => {
       const angle = (i * 360) / 24;
-      return polarToCartesian(150, 150, 142, angle);
+      return polarToCartesian(150, 150, 143, angle);
     });
   }, []);
+
+  // 8 metallic pegs placed precisely on segment boundaries (0, 45, 90, ...)
+  const boundaryPegs = useMemo(() => {
+    return Array.from({ length: segments.length }).map((_, i) => {
+      const angle = i * (360 / segments.length);
+      return polarToCartesian(150, 150, 136, angle);
+    });
+  }, [segments.length]);
 
   return (
     <AnimatedDialog
@@ -286,7 +439,8 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
       <div className="space-y-5 relative">
         <ConfettiBurst
           active={Boolean(resultReward)}
-          isLegendary={resultReward?.rarity === 'legendary' || resultReward?.rarity === 'insane'}
+          isLegendary={resultReward?.rarity === 'legendary' || resultReward?.rarity === 'insane' || resultReward?.rarity === 'jackpot'}
+          reduced={prefersReduced}
         />
         <div className="sr-only" aria-live="polite">
           {ariaAnnouncement}
@@ -303,94 +457,91 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
           {/* Wheel Assembly */}
           <div className="flex flex-col items-center gap-4">
             <div className="relative w-72 h-72 sm:w-80 sm:h-80 flex items-center justify-center select-none">
-              {/* Outer Glow Halo */}
-              <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-sky-500/20 via-cyan-400/10 to-amber-400/20 blur-xl pointer-events-none" />
+              {/* Outer Ambient Halo */}
+              <motion.div
+                className="absolute inset-0 rounded-full bg-gradient-to-tr from-sky-500/25 via-cyan-400/10 to-amber-400/25 blur-xl pointer-events-none"
+                animate={
+                  isReady && !spinning && !prefersReduced
+                    ? { opacity: [0.55, 0.9, 0.55], scale: [0.98, 1.03, 0.98] }
+                    : { opacity: 0.7, scale: 1 }
+                }
+                transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+              />
 
-              {/* 3D Top Pointer with spring deflection */}
+              {/* Top Mechanical Clapper Pointer (pivots smoothly around pin at y=8px) */}
               <div
-                className={`absolute -top-3 left-1/2 -translate-x-1/2 z-30 transition-transform duration-100 ${
-                  pointerDeflected ? 'rotate-6 scale-105' : 'rotate-0'
-                }`}
-                style={{ filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.5))' }}
+                ref={pointerRef}
+                className="absolute -top-3.5 left-1/2 -translate-x-1/2 z-30 will-change-transform"
+                style={{
+                  transformOrigin: '50% 9px',
+                  filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.6))',
+                }}
                 aria-hidden="true"
               >
-                <svg width="34" height="42" viewBox="0 0 34 42" fill="none">
-                  {/* Pointer Pin base */}
-                  <circle cx="17" cy="8" r="7" fill="#78350f" stroke="#fef08a" strokeWidth="2" />
-                  <circle cx="17" cy="8" r="3.5" fill="#f59e0b" />
-                  {/* Golden Arrow Wedge pointing down */}
+                <svg width="36" height="44" viewBox="0 0 36 44" fill="none">
+                  <circle cx="18" cy="9" r="7.5" fill="#451a03" stroke="#fef08a" strokeWidth="2" />
+                  <circle cx="18" cy="9" r="3.5" fill="#fbbf24" />
                   <path
-                    d="M10 12 L24 12 L17 38 Z"
+                    d="M11 13 L25 13 L18 40 Z"
                     fill="url(#pointerGoldGrad)"
                     stroke="#fef08a"
                     strokeWidth="1.5"
+                    strokeLinejoin="round"
                   />
-                  {/* Inner shine */}
-                  <path d="M14 13 L20 13 L17 32 Z" fill="#fef08a" opacity="0.6" />
+                  <path d="M15 14 L21 14 L18 33 Z" fill="#fef08a" opacity="0.55" />
                   <defs>
-                    <linearGradient id="pointerGoldGrad" x1="10" y1="12" x2="24" y2="38" gradientUnits="userSpaceOnUse">
+                    <linearGradient id="pointerGoldGrad" x1="11" y1="13" x2="25" y2="40" gradientUnits="userSpaceOnUse">
                       <stop stopColor="#f59e0b" />
-                      <stop offset="0.5" stopColor="#fbbf24" />
-                      <stop offset="1" stopColor="#d97706" />
+                      <stop offset="0.5" stopColor="#fde047" />
+                      <stop offset="1" stopColor="#b45309" />
                     </linearGradient>
                   </defs>
                 </svg>
               </div>
 
-              {/* Rotating Illustrated Wheel */}
-              <motion.div
-                className="w-full h-full rounded-full shadow-[0_0_40px_rgba(56,189,248,0.25)] will-change-transform"
-                animate={
-                  isReady && !spinning && !prefersReduced
-                    ? { rotate: [rotationDeg - 1.2, rotationDeg + 1.2, rotationDeg - 1.2] }
-                    : { rotate: rotationDeg }
-                }
-                transition={
-                  isReady && !spinning && !prefersReduced
-                    ? { duration: 3.5, repeat: Infinity, ease: 'easeInOut' }
-                    : {
-                        duration: prefersReduced ? 0.1 : 3.4,
-                        ease: [0.16, 1, 0.3, 1],
-                      }
-                }
-                style={{
-                  transformOrigin: 'center center',
-                }}
+              {/* Rotating Illustrated Wheel (Direct DOM transform via requestAnimationFrame) */}
+              <div
+                ref={wheelRef}
+                className="w-full h-full rounded-full shadow-[0_0_45px_rgba(56,189,248,0.28)] will-change-transform"
+                style={{ transformOrigin: 'center center' }}
               >
                 <svg viewBox="0 0 300 300" className="w-full h-full overflow-visible">
                   <defs>
-                    {/* Radial background rim gradient */}
                     <radialGradient id="rimGrad" cx="50%" cy="50%" r="50%">
-                      <stop offset="85%" stopColor="#0f172a" />
-                      <stop offset="94%" stopColor="#1e293b" />
-                      <stop offset="98%" stopColor="#38bdf8" />
-                      <stop offset="100%" stopColor="#0284c7" />
+                      <stop offset="84%" stopColor="#0f172a" />
+                      <stop offset="93%" stopColor="#1e293b" />
+                      <stop offset="97.5%" stopColor="#38bdf8" />
+                      <stop offset="100%" stopColor="#0369a1" />
                     </radialGradient>
-                    {/* Center hub gold gradient */}
+                    <radialGradient id="wheelDepthSheen" cx="38%" cy="32%" r="65%">
+                      <stop offset="0%" stopColor="#ffffff" stopOpacity="0.18" />
+                      <stop offset="55%" stopColor="#ffffff" stopOpacity="0.02" />
+                      <stop offset="100%" stopColor="#020617" stopOpacity="0.28" />
+                    </radialGradient>
                     <linearGradient id="hubGold" x1="0" y1="0" x2="1" y2="1">
                       <stop offset="0%" stopColor="#fef08a" />
-                      <stop offset="50%" stopColor="#f59e0b" />
-                      <stop offset="100%" stopColor="#b45309" />
+                      <stop offset="45%" stopColor="#f59e0b" />
+                      <stop offset="100%" stopColor="#92400e" />
                     </linearGradient>
-                    <filter id="shadowFilter" x="-10%" y="-10%" width="120%" height="120%">
-                      <feDropShadow dx="0" dy="1" stdDeviation="1.5" floodColor="#000000" floodOpacity="0.8" />
+                    <filter id="shadowFilter" x="-15%" y="-15%" width="130%" height="130%">
+                      <feDropShadow dx="0" dy="1" stdDeviation="1.4" floodColor="#000000" floodOpacity="0.85" />
                     </filter>
                   </defs>
 
-                  {/* Outer Rim Ring */}
-                  <circle cx="150" cy="150" r="148" fill="url(#rimGrad)" stroke="#38bdf8" strokeWidth="3" />
-                  <circle cx="150" cy="150" r="138" fill="#090d16" stroke="#fbbf24" strokeWidth="2" strokeDasharray="3 3" />
+                  {/* Outer Bezel */}
+                  <circle cx="150" cy="150" r="149" fill="url(#rimGrad)" stroke="#38bdf8" strokeWidth="2.5" />
+                  <circle cx="150" cy="150" r="138" fill="#090d16" stroke="#fbbf24" strokeWidth="1.8" strokeOpacity="0.7" />
 
-                  {/* 24 Golden Decorative Rim Studs */}
+                  {/* 24 Decorative Rim Studs */}
                   {rimStuds.map((stud, idx) => (
                     <circle
                       key={idx}
                       cx={stud.x}
                       cy={stud.y}
-                      r="2.8"
+                      r="2.4"
                       fill="#fef08a"
-                      stroke="#854d0e"
-                      strokeWidth="0.8"
+                      stroke="#78350f"
+                      strokeWidth="0.7"
                     />
                   ))}
 
@@ -399,37 +550,42 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
                     const start = i * sliceAngle;
                     const end = (i + 1) * sliceAngle;
                     const mid = start + sliceAngle / 2;
-                    const labelPos = polarToCartesian(150, 150, 96, mid);
-                    const iconPos = polarToCartesian(150, 150, 122, mid);
+                    const labelPos = polarToCartesian(150, 150, 86, mid);
+                    const iconPos = polarToCartesian(150, 150, 118, mid);
                     const isWinner = winningSegmentIndex === i;
 
                     return (
-                      <g key={seg.id || i} className={isWinner ? 'animate-pulse' : ''}>
-                        {/* Segment Wedge */}
+                      <g key={seg.id || i}>
                         <path
-                          d={describeSlice(150, 150, 137, start, end)}
+                          d={describeSlice(150, 150, 136, start, end)}
                           fill={seg.color}
-                          stroke="#ffffff"
-                          strokeWidth={isWinner ? '3' : '1.5'}
-                          strokeOpacity={isWinner ? 0.95 : 0.35}
+                          stroke={isWinner ? '#fef08a' : '#ffffff'}
+                          strokeWidth={isWinner ? '3.5' : '1.4'}
+                          strokeOpacity={isWinner ? 1 : 0.35}
                         />
-
-                        {/* Wedge inner highlight divider */}
+                        {isWinner && (
+                          <path
+                            d={describeSlice(150, 150, 136, start, end)}
+                            fill="#fef08a"
+                            fillOpacity="0.22"
+                            className={prefersReduced ? '' : 'animate-pulse'}
+                          />
+                        )}
                         <line
                           x1="150"
                           y1="150"
-                          x2={polarToCartesian(150, 150, 137, start).x}
-                          y2={polarToCartesian(150, 150, 137, start).y}
+                          x2={polarToCartesian(150, 150, 136, start).x}
+                          y2={polarToCartesian(150, 150, 136, start).y}
                           stroke="#ffffff"
-                          strokeWidth="1.2"
-                          strokeOpacity="0.4"
+                          strokeWidth="1.4"
+                          strokeOpacity="0.55"
                         />
 
                         {/* Segment Icon */}
                         <text
                           x={iconPos.x}
                           y={iconPos.y}
-                          fontSize="13"
+                          fontSize="14"
                           textAnchor="middle"
                           dominantBaseline="middle"
                           transform={`rotate(${mid}, ${iconPos.x}, ${iconPos.y})`}
@@ -438,12 +594,12 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
                           {SEGMENT_ICONS[seg.id] || '✨'}
                         </text>
 
-                        {/* Segment Text Label */}
+                        {/* Segment Label */}
                         <text
                           x={labelPos.x}
                           y={labelPos.y}
                           fill={seg.textColor || '#ffffff'}
-                          fontSize="11"
+                          fontSize="10.5"
                           fontWeight="800"
                           fontFamily="sans-serif"
                           letterSpacing="0.02em"
@@ -458,17 +614,26 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
                     );
                   })}
 
-                  {/* Center Hub Housing */}
-                  <circle cx="150" cy="150" r="32" fill="#040711" stroke="url(#hubGold)" strokeWidth="3.5" />
-                  <circle cx="150" cy="150" r="26" fill="#0f172a" stroke="#38bdf8" strokeWidth="1.5" />
-                  
-                  {/* Central Tactile SPIN Icon & Glow */}
+                  {/* Specular Depth Sheen Overlay */}
+                  <circle cx="150" cy="150" r="136" fill="url(#wheelDepthSheen)" className="pointer-events-none" />
+
+                  {/* 8 Physical Segment-Boundary Pegs that strike the top pointer */}
+                  {boundaryPegs.map((peg, idx) => (
+                    <g key={`peg_${idx}`}>
+                      <circle cx={peg.x} cy={peg.y} r="4.2" fill="#78350f" />
+                      <circle cx={peg.x} cy={peg.y} r="3.1" fill="#fde047" stroke="#fef9c3" strokeWidth="0.6" />
+                    </g>
+                  ))}
+
+                  {/* Center Hub Medallion */}
+                  <circle cx="150" cy="150" r="33" fill="#040711" stroke="url(#hubGold)" strokeWidth="4" />
+                  <circle cx="150" cy="150" r="27" fill="#0f172a" stroke="#38bdf8" strokeWidth="1.5" />
                   <circle
                     cx="150"
                     cy="150"
-                    r="20"
-                    fill={isReady ? '#2563eb' : '#1e293b'}
-                    className={isReady ? 'animate-pulse cursor-pointer' : ''}
+                    r="21"
+                    fill={spinning ? '#1d4ed8' : isReady ? '#2563eb' : '#1e293b'}
+                    className={isReady && !prefersReduced ? 'animate-pulse cursor-pointer' : isReady ? 'cursor-pointer' : ''}
                     onClick={isReady ? handleSpin : undefined}
                   />
                   <text
@@ -485,7 +650,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
                     {spinning ? 'SPIN' : isReady ? 'SPIN!' : 'LOCK'}
                   </text>
                 </svg>
-              </motion.div>
+              </div>
             </div>
 
             {/* Spin CTA Controls */}
@@ -518,16 +683,15 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
 
           {/* Right Column: Status, Won Reward, and Pre-Spin Odds */}
           <div className="space-y-4">
-            {/* Rewarded Celebration Card */}
             {resultReward ? (
               <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                initial={prefersReduced ? { opacity: 0 } : { opacity: 0, scale: 0.94, y: 10 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 className="rounded-2xl border-2 border-emerald-400/60 bg-gradient-to-br from-emerald-950/80 via-slate-900 to-sky-950/70 p-5 space-y-3 shadow-xl shadow-emerald-500/10"
               >
                 <div className="flex items-center justify-between text-xs font-black uppercase tracking-wider text-emerald-300">
                   <span className="flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4 text-amber-300 animate-spin" />
+                    <Sparkles className="w-4 h-4 text-amber-300" />
                     {resultReward.rarity} Win Unlocked!
                   </span>
                   <CheckCircle2 className="w-5 h-5 text-emerald-400" />
@@ -601,7 +765,9 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
                 {segments.map((seg) => (
                   <div
                     key={seg.id || seg.index}
-                    className="px-3 py-2 flex items-center justify-between gap-2 text-xs"
+                    className={`px-3 py-2 flex items-center justify-between gap-2 text-xs ${
+                      winningSegmentIndex === seg.index ? 'bg-amber-500/15 text-amber-200 rounded-lg' : ''
+                    }`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       <span
@@ -618,7 +784,6 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
               </div>
             </div>
 
-            {/* Recent Spins History */}
             {history.length > 0 && (
               <div>
                 <h4 className="text-xs font-bold text-slate-400 mb-1.5 uppercase tracking-wider">

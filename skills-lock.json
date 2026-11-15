@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "skills": {
+    "particle-system": {
+      "source": "iart-ai/webgl-animation-skills",
+      "sourceType": "github",
+      "skillPath": "skills/particle-system/SKILL.md",
+      "computedHash": "e901340854fb896307236638e7333ac23c21483c6cdf79613daec658169f64b7"
+    },
+    "shader-glsl": {
+      "source": "iart-ai/webgl-animation-skills",
+      "sourceType": "github",
+      "skillPath": "skills/shader-glsl/SKILL.md",
+      "computedHash": "916275255903d5b259a36ef5d71ba010629e37d61325c0cc52b8e2d462c9ef92"
+    },
+    "threejs-animation": {
+      "source": "iart-ai/webgl-animation-skills",
+      "sourceType": "github",
+      "skillPath": "skills/threejs-animation/SKILL.md",
+      "computedHash": "0ba8eea2da421691a047a1a3e4b4d328f513e5a7685edd3da7674b69895afc78"
+    }
+  }
+}

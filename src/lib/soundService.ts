@@ -1350,6 +1350,30 @@ class SoundService {
         break;
     }
   }
+
+  /**
+   * Crisp mechanical clapper peg-tick for the Winter Spin Wheel.
+   * Debounced at 36ms so fast initial spins stay crisp without audio overlap.
+   */
+  public playWheelTick(isSettleTick = false) {
+    this.unlockFromUserGesture();
+    if (!this.categories.ui) return;
+    if (!this.shouldAllowPlay(isSettleTick ? 'wheel_settle' : 'wheel_tick', isSettleTick ? 80 : 36)) return;
+    const ctx = this.getContext(false);
+    if (!ctx) return;
+
+    try {
+      const now = ctx.currentTime;
+      this.scheduleTone(ctx, {
+        type: 'triangle',
+        startFreq: isSettleTick ? 720 : 1180,
+        endFreq: isSettleTick ? 380 : 340,
+        startTime: now,
+        duration: isSettleTick ? 0.032 : 0.022,
+        peakGain: isSettleTick ? 0.045 : 0.065,
+      });
+    } catch (_) {}
+  }
 }
 
 export const soundService = new SoundService();

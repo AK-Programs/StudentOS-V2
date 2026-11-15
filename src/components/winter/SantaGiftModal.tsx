@@ -6,9 +6,10 @@
  * Enforces strict server window + 1-claim-per-night + transparent pre-claim odds
  * + atomic idempotency recovery without re-rolling.
  * + Super Admin Anytime Preview Experience without mutating real nightly claims or XP.
+ * + Coordinated 3D Santa -> Hinged Lid Open -> Magic Glow & Sparkles -> Prize Reveal timeline.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import { Clock, CheckCircle2, ShieldAlert, Sparkles, RefreshCw, Eye } from 'lucide-react';
 import { UserProfile } from '../../types';
@@ -16,12 +17,14 @@ import { isSuperAdminRole } from '../../lib/featureAccessService';
 import {
   claimSantaGift,
   formatCountdownMs,
+  isGlobalSoundEnabled,
+  playWheelCelebrateCue,
   WinterRewardRecord,
   WinterStatusResponse,
 } from '../../lib/winterFestivalService';
 import { AnimatedDialog, TactileButton } from '../ui/animatedComponents';
 import { FrostShieldSvg, WinterCookieSvg } from './WinterArtwork';
-import { Santa3DCanvas } from './Santa3DCanvas';
+import { Santa3DCanvas, SantaScenePhase } from './Santa3DCanvas';
 
 interface SantaGiftModalProps {
   isOpen: boolean;
@@ -39,19 +42,30 @@ const RARITY_STYLES: Record<string, string> = {
   insane: 'border-rose-400/80 bg-gradient-to-br from-rose-500/25 via-amber-500/15 to-sky-500/20 text-rose-100 shadow-[0_0_32px_rgba(244,63,94,0.35)]',
 };
 
-const FallingSnowOverlay: React.FC = () => {
-  const flakes = React.useMemo(
-    () =>
-      Array.from({ length: 16 }).map((_, i) => ({
-        id: i,
-        left: `${Math.random() * 100}%`,
-        size: 3 + Math.random() * 4,
-        duration: 4 + Math.random() * 5,
-        delay: Math.random() * 4,
-        opacity: 0.3 + Math.random() * 0.5,
-      })),
-    []
-  );
+function mulberry32(seed: number) {
+  let a = seed | 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const FallingSnowOverlay: React.FC<{ reduced?: boolean }> = ({ reduced = false }) => {
+  const flakes = useMemo(() => {
+    const rng = mulberry32(202612);
+    return Array.from({ length: 16 }).map((_, i) => ({
+      id: i,
+      left: `${(rng() * 98 + 1).toFixed(1)}%`,
+      size: 3 + rng() * 3.5,
+      duration: 4.5 + rng() * 4.5,
+      delay: rng() * 4,
+      opacity: 0.25 + rng() * 0.45,
+    }));
+  }, []);
+
+  if (reduced) return null;
 
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden z-0">
@@ -81,48 +95,70 @@ const FallingSnowOverlay: React.FC = () => {
   );
 };
 
-const ConfettiBurst: React.FC<{ active: boolean; isLegendary?: boolean }> = ({ active, isLegendary = false }) => {
-  if (!active) return null;
-  const count = isLegendary ? 40 : 25;
-  const colors = isLegendary
-    ? ['#fbbf24', '#f59e0b', '#f43f5e', '#38bdf8', '#a855f7', '#ffffff']
-    : ['#38bdf8', '#34d399', '#fbbf24', '#f8fafc', '#f43f5e'];
+const ConfettiBurst: React.FC<{ active: boolean; isLegendary?: boolean; reduced?: boolean }> = ({
+  active,
+  isLegendary = false,
+  reduced = false,
+}) => {
+  const pieces = useMemo(() => {
+    const rng = mulberry32(isLegendary ? 7771 : 3104);
+    const count = isLegendary ? 40 : 24;
+    const colors = isLegendary
+      ? ['#fbbf24', '#f59e0b', '#f43f5e', '#38bdf8', '#a855f7', '#ffffff']
+      : ['#38bdf8', '#34d399', '#fbbf24', '#f8fafc', '#f43f5e'];
+
+    return Array.from({ length: count }).map((_, i) => {
+      const angle = (i * 360) / count + (rng() * 18 - 9);
+      const distance = 90 + rng() * 120;
+      const rad = (angle * Math.PI) / 180;
+      return {
+        id: i,
+        tx: Math.cos(rad) * distance,
+        ty: Math.sin(rad) * distance + 40,
+        color: colors[i % colors.length],
+        size: 5 + rng() * 6,
+        isRound: rng() > 0.5,
+        aspect: rng() > 0.5 ? 1 : 1.9,
+        rot: rng() * 360 - 180,
+        duration: 1.35 + rng() * 0.5,
+      };
+    });
+  }, [isLegendary]);
+
+  if (!active || reduced) return null;
 
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden z-40 flex items-center justify-center">
-      {Array.from({ length: count }).map((_, i) => {
-        const angle = (i * 360) / count + (Math.random() * 20 - 10);
-        const distance = 90 + Math.random() * 120;
-        const rad = (angle * Math.PI) / 180;
-        const tx = Math.cos(rad) * distance;
-        const ty = Math.sin(rad) * distance;
-        const color = colors[i % colors.length];
-        const size = 5 + Math.random() * 6;
-        return (
-          <motion.div
-            key={i}
-            initial={{ x: 0, y: 0, scale: 0, opacity: 1, rotate: 0 }}
-            animate={{
-              x: tx,
-              y: ty + 40,
-              scale: [0, 1.3, 0.8, 0],
-              opacity: [1, 1, 0.8, 0],
-              rotate: Math.random() * 360 - 180,
-            }}
-            transition={{ duration: 1.4 + Math.random() * 0.5, ease: [0.1, 1, 0.3, 1] }}
-            style={{
-              width: size,
-              height: size * (Math.random() > 0.5 ? 1 : 2),
-              backgroundColor: color,
-              borderRadius: Math.random() > 0.5 ? '50%' : '2px',
-              position: 'absolute',
-            }}
-          />
-        );
-      })}
+      {pieces.map((p) => (
+        <motion.div
+          key={p.id}
+          initial={{ x: 0, y: 0, scale: 0, opacity: 1, rotate: 0 }}
+          animate={{
+            x: p.tx,
+            y: p.ty,
+            scale: [0, 1.3, 0.85, 0],
+            opacity: [1, 1, 0.85, 0],
+            rotate: p.rot,
+          }}
+          transition={{ duration: p.duration, ease: [0.1, 1, 0.3, 1] }}
+          style={{
+            width: p.size,
+            height: p.size * p.aspect,
+            backgroundColor: p.color,
+            borderRadius: p.isRound ? '50%' : '2px',
+            position: 'absolute',
+          }}
+        />
+      ))}
     </div>
   );
 };
+
+interface PendingRevealPayload {
+  reward: WinterRewardRecord | null;
+  recovered: boolean;
+  isPreview: boolean;
+}
 
 export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
   isOpen,
@@ -132,14 +168,25 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
   onRewardClaimed,
   isPreviewOnly = false,
 }) => {
-  const prefersReduced = useReducedMotion();
+  const prefersReduced = Boolean(useReducedMotion());
   const [nowTick, setNowTick] = useState<number>(Date.now());
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
   const [claiming, setClaiming] = useState<boolean>(false);
+  const [scenePhase, setScenePhase] = useState<SantaScenePhase>('idle');
   const [error, setError] = useState<string | null>(null);
   const [claimedReward, setClaimedReward] = useState<WinterRewardRecord | null>(null);
   const [wasRecovered, setWasRecovered] = useState<boolean>(false);
   const [wasSimulatedPreview, setWasSimulatedPreview] = useState<boolean>(false);
+
+  const pendingRevealRef = useRef<PendingRevealPayload | null>(null);
+  const mountedRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const isSuperAdmin = isSuperAdminRole(currentUser?.role);
 
@@ -153,7 +200,12 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
   }, [winterStatus?.serverTime]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      setClaiming(false);
+      setScenePhase('idle');
+      pendingRevealRef.current = null;
+      return;
+    }
     setError(null);
     const interval = setInterval(() => setNowTick(Date.now()), 1000);
     return () => clearInterval(interval);
@@ -180,53 +232,86 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
   const isWindowOpenNow = Boolean(santaWindow?.isOpen) && remainingCloseMs > 0;
   const alreadyClaimed = Boolean(winterStatus?.santa?.alreadyClaimedTonight) && !pendingRecovery;
 
-  const handleUnwrap = async (previewMode: boolean = false) => {
-    setClaiming(true);
-    setError(null);
-    setWasSimulatedPreview(false);
-    setClaimedReward(null);
+  const handleRevealComplete = useCallback(async () => {
+    if (!mountedRef.current) return;
+    const payload = pendingRevealRef.current;
+    pendingRevealRef.current = null;
 
-    const nightKey = santaWindow?.eventNightKey || new Date().toISOString().slice(0, 10);
-    const idempotencyKey = previewMode ? `santa_preview_${Date.now()}` : `santa_${nightKey}`;
-
-    // Ensure claiming animation plays for at least 1.5s (Santa reaches, lid opens, glow rises)
-    const [res] = await Promise.all([
-      claimSantaGift(currentUser, idempotencyKey, previewMode),
-      new Promise((resolve) => setTimeout(resolve, 1500)),
-    ]);
-
+    setScenePhase('revealed');
     setClaiming(false);
 
-    if (!res.ok || !res.data?.success) {
-      setError(res.data?.error || 'Unable to unwrap tonight’s Santa Gift.');
-      return;
+    if (!payload) return;
+
+    setClaimedReward(payload.reward);
+    setWasRecovered(payload.recovered);
+    setWasSimulatedPreview(payload.isPreview);
+
+    if (isGlobalSoundEnabled()) {
+      playWheelCelebrateCue(true);
     }
 
-    setClaimedReward(res.data.reward || null);
-    setWasRecovered(Boolean(res.data.recovered));
-    setWasSimulatedPreview(Boolean(res.data.isPreview));
-
-    if (!res.data.isPreview) {
+    if (!payload.isPreview) {
       await onRewardClaimed();
       window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
       window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
     }
+  }, [onRewardClaimed]);
+
+  const handleUnwrap = async (previewMode: boolean = false) => {
+    if (claiming) return;
+
+    setClaiming(true);
+    setError(null);
+    setWasSimulatedPreview(false);
+    setClaimedReward(null);
+    pendingRevealRef.current = null;
+    setScenePhase('pending');
+
+    const nightKey = santaWindow?.eventNightKey || new Date().toISOString().slice(0, 10);
+    const idempotencyKey = previewMode ? `santa_preview_${Date.now()}` : `santa_${nightKey}`;
+
+    try {
+      const res = await claimSantaGift(currentUser, idempotencyKey, previewMode);
+      if (!mountedRef.current) return;
+
+      if (!res.ok || !res.data?.success) {
+        setScenePhase('idle');
+        setClaiming(false);
+        setError(res.data?.error || 'Unable to unwrap tonight’s Santa Gift.');
+        return;
+      }
+
+      // Server confirmed claim/preview -> trigger coordinated 3D Santa reach -> lid open -> magic glow -> prize reveal
+      pendingRevealRef.current = {
+        reward: res.data.reward || null,
+        recovered: Boolean(res.data.recovered),
+        isPreview: Boolean(res.data.isPreview),
+      };
+      setScenePhase('revealing');
+    } catch (err: any) {
+      if (!mountedRef.current) return;
+      setScenePhase('idle');
+      setClaiming(false);
+      setError(err?.message || 'Unable to unwrap tonight’s Santa Gift.');
+    }
   };
 
-  const rarityStyleKey = String(claimedReward?.rarity || 'common').toLowerCase();
-  const isLegendaryWin = rarityStyleKey === 'legendary' || rarityStyleKey === 'insane' || rarityStyleKey === 'rare';
+  const activeRarity = String(
+    pendingRevealRef.current?.reward?.rarity || claimedReward?.rarity || 'common'
+  ).toLowerCase();
+  const isLegendaryWin = activeRarity === 'legendary' || activeRarity === 'insane' || activeRarity === 'rare';
 
   return (
     <AnimatedDialog
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={() => !claiming && onClose()}
       title="Nightly Santa Gift Drop"
       subtitle="Opens nightly from 7:00 PM to 9:00 PM IST · One verified gift per evening"
       maxWidth="max-w-xl"
     >
       <div className="space-y-5 relative overflow-hidden">
-        <FallingSnowOverlay />
-        <ConfettiBurst active={Boolean(claimedReward)} isLegendary={isLegendaryWin} />
+        <FallingSnowOverlay reduced={prefersReduced} />
+        <ConfettiBurst active={Boolean(claimedReward)} isLegendary={isLegendaryWin} reduced={prefersReduced} />
 
         {(isPreviewOnly || (isSuperAdmin && !isWindowOpenNow)) && (
           <div className="p-3 rounded-xl border border-amber-500/40 bg-amber-500/10 text-xs text-amber-200 flex items-center gap-2.5 z-10 relative">
@@ -243,8 +328,14 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
           <div className="winter-candy-divider" />
 
           {/* Immersive 3D Santa & Hinged Gift Box Canvas */}
-          <div className="w-full h-60 relative rounded-xl overflow-hidden bg-gradient-to-b from-slate-900/40 to-slate-950/80 border border-slate-800/60 shadow-inner">
-            <Santa3DCanvas isClaiming={claiming} />
+          <div className="w-full h-64 relative rounded-xl overflow-hidden bg-gradient-to-b from-slate-900/50 to-slate-950/85 border border-slate-800/60 shadow-inner">
+            <Santa3DCanvas
+              phase={scenePhase}
+              isOpen={isOpen}
+              prefersReducedMotion={prefersReduced}
+              isLegendaryWin={isLegendaryWin}
+              onRevealComplete={handleRevealComplete}
+            />
           </div>
 
           {santaWindow && (
@@ -275,10 +366,11 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
 
           {claimedReward && (
             <motion.div
-              initial={prefersReduced ? { opacity: 0 } : { opacity: 0, scale: 0.94, y: 8 }}
+              initial={prefersReduced ? { opacity: 0 } : { opacity: 0, scale: 0.92, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
+              transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
               className={`rounded-2xl border p-4 text-left space-y-2 transition-all ${
-                RARITY_STYLES[rarityStyleKey] || RARITY_STYLES.common
+                RARITY_STYLES[String(claimedReward.rarity || 'common').toLowerCase()] || RARITY_STYLES.common
               }`}
             >
               <div className="flex items-center justify-between gap-2">
@@ -345,7 +437,7 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
                     disabled={claiming}
                     icon={<Eye className="w-4 h-4" />}
                   >
-                    {claiming ? 'Previewing...' : 'Simulate Another Preview Drop'}
+                    {claiming ? 'Opening Gift...' : 'Simulate Another Preview Drop'}
                   </TactileButton>
                 )}
               </>

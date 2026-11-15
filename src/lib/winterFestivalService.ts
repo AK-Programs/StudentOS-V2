@@ -320,10 +320,10 @@ export function isGlobalSoundEnabled(): boolean {
   }
 }
 
-export function playWheelTickCue(wheelAudioEnabled: boolean) {
+export function playWheelTickCue(wheelAudioEnabled: boolean, isSettleTick: boolean = false) {
   if (!wheelAudioEnabled || soundService.getPreferences().muted) return;
   try {
-    soundService.playButtonClick();
+    soundService.playWheelTick(isSettleTick);
   } catch (_) {}
 }
 
