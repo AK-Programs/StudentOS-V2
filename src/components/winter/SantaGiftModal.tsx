@@ -38,6 +38,91 @@ const RARITY_STYLES: Record<string, string> = {
   insane: 'border-rose-400/80 bg-gradient-to-br from-rose-500/25 via-amber-500/15 to-sky-500/20 text-rose-100 shadow-[0_0_32px_rgba(244,63,94,0.35)]',
 };
 
+const FallingSnowOverlay: React.FC = () => {
+  const flakes = React.useMemo(
+    () =>
+      Array.from({ length: 16 }).map((_, i) => ({
+        id: i,
+        left: `${Math.random() * 100}%`,
+        size: 3 + Math.random() * 4,
+        duration: 4 + Math.random() * 5,
+        delay: Math.random() * 4,
+        opacity: 0.3 + Math.random() * 0.5,
+      })),
+    []
+  );
+
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden z-0">
+      {flakes.map((f) => (
+        <motion.div
+          key={f.id}
+          initial={{ y: -10, opacity: 0 }}
+          animate={{ y: '105%', opacity: [0, f.opacity, f.opacity, 0] }}
+          transition={{
+            duration: f.duration,
+            repeat: Infinity,
+            delay: f.delay,
+            ease: 'linear',
+          }}
+          style={{
+            position: 'absolute',
+            left: f.left,
+            width: f.size,
+            height: f.size,
+            borderRadius: '50%',
+            backgroundColor: '#e0f2fe',
+            filter: 'blur(0.5px)',
+          }}
+        />
+      ))}
+    </div>
+  );
+};
+
+const ConfettiBurst: React.FC<{ active: boolean; isLegendary?: boolean }> = ({ active, isLegendary = false }) => {
+  if (!active) return null;
+  const count = isLegendary ? 40 : 25;
+  const colors = isLegendary
+    ? ['#fbbf24', '#f59e0b', '#f43f5e', '#38bdf8', '#a855f7', '#ffffff']
+    : ['#38bdf8', '#34d399', '#fbbf24', '#f8fafc', '#f43f5e'];
+
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden z-40 flex items-center justify-center">
+      {Array.from({ length: count }).map((_, i) => {
+        const angle = (i * 360) / count + (Math.random() * 20 - 10);
+        const distance = 90 + Math.random() * 120;
+        const rad = (angle * Math.PI) / 180;
+        const tx = Math.cos(rad) * distance;
+        const ty = Math.sin(rad) * distance;
+        const color = colors[i % colors.length];
+        const size = 5 + Math.random() * 6;
+        return (
+          <motion.div
+            key={i}
+            initial={{ x: 0, y: 0, scale: 0, opacity: 1, rotate: 0 }}
+            animate={{
+              x: tx,
+              y: ty + 40,
+              scale: [0, 1.3, 0.8, 0],
+              opacity: [1, 1, 0.8, 0],
+              rotate: Math.random() * 360 - 180,
+            }}
+            transition={{ duration: 1.4 + Math.random() * 0.5, ease: [0.1, 1, 0.3, 1] }}
+            style={{
+              width: size,
+              height: size * (Math.random() > 0.5 ? 1 : 2),
+              backgroundColor: color,
+              borderRadius: Math.random() > 0.5 ? '50%' : '2px',
+              position: 'absolute',
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+};
+
 export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
   isOpen,
   onClose,
@@ -98,9 +183,17 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
     setClaiming(true);
     setError(null);
     setWasSimulatedPreview(false);
+    setClaimedReward(null);
+
     const nightKey = santaWindow?.eventNightKey || new Date().toISOString().slice(0, 10);
     const idempotencyKey = previewMode ? `santa_preview_${Date.now()}` : `santa_${nightKey}`;
-    const res = await claimSantaGift(currentUser, idempotencyKey, previewMode);
+
+    // Ensure claiming animation plays for at least 1.5s (Santa reaches, lid opens, glow rises)
+    const [res] = await Promise.all([
+      claimSantaGift(currentUser, idempotencyKey, previewMode),
+      new Promise((resolve) => setTimeout(resolve, 1500)),
+    ]);
+
     setClaiming(false);
 
     if (!res.ok || !res.data?.success) {
@@ -120,6 +213,7 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
   };
 
   const rarityStyleKey = String(claimedReward?.rarity || 'common').toLowerCase();
+  const isLegendaryWin = rarityStyleKey === 'legendary' || rarityStyleKey === 'insane' || rarityStyleKey === 'rare';
 
   return (
     <AnimatedDialog
@@ -129,9 +223,12 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
       subtitle="Opens nightly from 7:00 PM to 9:00 PM IST · One verified gift per evening"
       maxWidth="max-w-xl"
     >
-      <div className="space-y-5">
+      <div className="space-y-5 relative overflow-hidden">
+        <FallingSnowOverlay />
+        <ConfettiBurst active={Boolean(claimedReward)} isLegendary={isLegendaryWin} />
+
         {(isPreviewOnly || (isSuperAdmin && !isWindowOpenNow)) && (
-          <div className="p-3 rounded-xl border border-amber-500/40 bg-amber-500/10 text-xs text-amber-200 flex items-center gap-2.5">
+          <div className="p-3 rounded-xl border border-amber-500/40 bg-amber-500/10 text-xs text-amber-200 flex items-center gap-2.5 z-10 relative">
             <ShieldAlert className="w-4 h-4 shrink-0 text-amber-300" />
             <span>
               {isPreviewOnly
@@ -141,21 +238,31 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
           </div>
         )}
 
-        <div className="rounded-2xl border border-slate-800 bg-gradient-to-b from-slate-950/90 to-sky-950/30 p-5 text-center space-y-4 relative overflow-hidden">
+        <div className="rounded-2xl border border-slate-800 bg-gradient-to-b from-slate-950/90 to-sky-950/30 p-5 text-center space-y-4 relative overflow-hidden z-10">
           <div className="winter-candy-divider" />
 
-          {/* Animated Santa Character + Gift Box */}
-          <div className="flex items-center justify-center gap-4 py-1">
+          {/* Animated Santa Character + Gift Box with opening light beam */}
+          <div className="flex items-center justify-center gap-6 py-2 relative">
+            {/* Rising glow light beam when claiming */}
+            {claiming && (
+              <motion.div
+                initial={{ opacity: 0, scaleY: 0 }}
+                animate={{ opacity: [0, 0.9, 0.4, 0.9], scaleY: [0.5, 1.2, 1] }}
+                transition={{ duration: 1.2, repeat: Infinity }}
+                className="absolute inset-x-20 top-2 h-24 bg-gradient-to-t from-amber-400/0 via-amber-400/30 to-sky-400/40 blur-lg pointer-events-none z-0"
+              />
+            )}
+
             <motion.div
               animate={
                 claiming && !prefersReduced
-                  ? { y: [0, -6, 0], rotate: [-3, 3, -3, 0] }
+                  ? { y: [0, -8, 0], rotate: [-4, 5, -4, 0], scale: [1, 1.08, 1] }
                   : !prefersReduced
-                  ? { y: [0, -3, 0] }
+                  ? { y: [0, -4, 0], rotate: [-1.5, 1.5, -1.5] }
                   : {}
               }
-              transition={{ duration: claiming ? 0.5 : 2.6, repeat: Infinity }}
-              className="w-20 h-20 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center shadow-lg"
+              transition={{ duration: claiming ? 0.6 : 2.8, repeat: Infinity }}
+              className="w-20 h-20 rounded-2xl bg-rose-500/15 border border-rose-500/40 flex items-center justify-center shadow-[0_0_20px_rgba(244,63,94,0.2)] relative z-10"
             >
               <SantaCharacterSvg size={64} />
             </motion.div>
@@ -163,15 +270,24 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
             <motion.div
               animate={
                 claiming && !prefersReduced
-                  ? { rotate: [-6, 6, -6, 6, 0], scale: [1, 1.12, 1] }
+                  ? { rotate: [-10, 10, -10, 12, 0], scale: [1, 1.18, 1.05, 1.15] }
                   : !prefersReduced
-                  ? { scale: [1, 1.03, 1] }
+                  ? { scale: [1, 1.04, 1], y: [0, -3, 0] }
                   : {}
               }
-              transition={{ duration: claiming ? 0.45 : 2.2, repeat: Infinity }}
-              className="w-20 h-20 rounded-2xl bg-amber-500/10 border border-amber-400/30 flex items-center justify-center shadow-lg"
+              transition={{ duration: claiming ? 0.5 : 2.4, repeat: Infinity }}
+              className="w-20 h-20 rounded-2xl bg-amber-500/15 border border-amber-400/40 flex items-center justify-center shadow-[0_0_24px_rgba(251,191,36,0.25)] relative z-10"
             >
-              <SantaGiftBoxSvg size={50} />
+              <SantaGiftBoxSvg size={52} />
+              {claiming && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10, scale: 0.5 }}
+                  animate={{ opacity: 1, y: -16, scale: 1.2 }}
+                  className="absolute -top-3 text-amber-300 font-bold text-xs"
+                >
+                  ✨
+                </motion.div>
+              )}
             </motion.div>
           </div>
 

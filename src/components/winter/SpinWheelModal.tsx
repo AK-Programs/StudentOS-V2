@@ -67,6 +67,50 @@ function describeSlice(cx: number, cy: number, r: number, startAngle: number, en
   return ['M', cx, cy, 'L', start.x, start.y, 'A', r, r, 0, largeArc, 0, end.x, end.y, 'Z'].join(' ');
 }
 
+// Confetti burst component for win celebration
+const ConfettiBurst: React.FC<{ active: boolean; isLegendary?: boolean }> = ({ active, isLegendary = false }) => {
+  if (!active) return null;
+  const count = isLegendary ? 35 : 25;
+  const colors = isLegendary
+    ? ['#fbbf24', '#f59e0b', '#f43f5e', '#38bdf8', '#a855f7', '#ffffff']
+    : ['#38bdf8', '#34d399', '#fbbf24', '#f8fafc', '#f43f5e'];
+
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden z-40 flex items-center justify-center">
+      {Array.from({ length: count }).map((_, i) => {
+        const angle = (i * 360) / count + (Math.random() * 20 - 10);
+        const distance = 90 + Math.random() * 110;
+        const rad = (angle * Math.PI) / 180;
+        const tx = Math.cos(rad) * distance;
+        const ty = Math.sin(rad) * distance;
+        const color = colors[i % colors.length];
+        const size = 5 + Math.random() * 6;
+        return (
+          <motion.div
+            key={i}
+            initial={{ x: 0, y: 0, scale: 0, opacity: 1, rotate: 0 }}
+            animate={{
+              x: tx,
+              y: ty + 40,
+              scale: [0, 1.25, 0.8, 0],
+              opacity: [1, 1, 0.8, 0],
+              rotate: Math.random() * 360 - 180,
+            }}
+            transition={{ duration: 1.3 + Math.random() * 0.6, ease: [0.1, 1, 0.3, 1] }}
+            style={{
+              width: size,
+              height: size * (Math.random() > 0.5 ? 1 : 2),
+              backgroundColor: color,
+              borderRadius: Math.random() > 0.5 ? '50%' : '2px',
+              position: 'absolute',
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+};
+
 // Visual icons for wheel segments
 const SEGMENT_ICONS: Record<string, string> = {
   xp_25: '⚡',
@@ -137,12 +181,33 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
     setResultReward(null);
     setWinningSegmentIndex(null);
 
+    const spinStartTime = Date.now();
     const cycleKey = winterStatus?.spinWheel?.nextEligibleAt || `ready_${Math.floor(Date.now() / 60000)}`;
     const idempotencyKey = `wheel_${cycleKey}_${Date.now()}`;
+
+    // 1. Start spinning immediately on tap without waiting for API
+    const initialSpinTurns = 5;
+    setRotationDeg((prev) => prev + initialSpinTurns * 360);
+
+    // Pointer tick flutter on every peg
+    let tickInterval: any = null;
+    if (!prefersReduced) {
+      tickInterval = setInterval(() => {
+        setPointerDeflected((p) => !p);
+        if (wheelAudioEnabled) {
+          playWheelTickCue(wheelAudioEnabled);
+        }
+      }, 110);
+    }
+
+    // 2. Call API in parallel
     const res = await spinWinterWheel(currentUser, idempotencyKey);
 
+    // 6. If API fails, stop wheel and show error
     if (!res.ok || !res.data?.success) {
+      if (tickInterval) clearInterval(tickInterval);
       setSpinning(false);
+      setPointerDeflected(false);
       setError(res.data?.error || 'Spin failed or cooldown is still active.');
       if (typeof res.data?.remainingMs === 'number') {
         setRemainingMs(res.data.remainingMs);
@@ -152,9 +217,13 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
 
     const segIdx = Number(res.data.segmentIndex ?? 0);
     const sliceDeg = 360 / segments.length;
-    // Align wheel so top pointer (at 12 o'clock, 0 deg relative to vertical) points exactly to segIdx
     const centerOfSlice = segIdx * sliceDeg + sliceDeg / 2;
     const desiredFinalModulo = (360 - centerOfSlice) % 360;
+
+    // 2. Ensure total spin duration is at least 4 seconds with slow ease out
+    const elapsed = Date.now() - spinStartTime;
+    const minSpinMs = 4200;
+    const remainingSpinMs = Math.max(500, minSpinMs - elapsed);
 
     setRotationDeg((prev) => {
       const currentMod = ((prev % 360) + 360) % 360;
@@ -163,31 +232,13 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
       return prev + extraTurns + deltaToTarget;
     });
 
-    // Pointer deflection flutter effect
-    if (!prefersReduced) {
-      const flutterInterval = setInterval(() => {
-        setPointerDeflected((p) => !p);
-      }, 140);
-      setTimeout(() => {
-        clearInterval(flutterInterval);
-        setPointerDeflected(false);
-      }, 3000);
-    }
-
-    if (wheelAudioEnabled && !prefersReduced) {
-      playWheelTickCue(wheelAudioEnabled);
-      setTimeout(() => playWheelTickCue(wheelAudioEnabled), 600);
-      setTimeout(() => playWheelTickCue(wheelAudioEnabled), 1300);
-      setTimeout(() => playWheelTickCue(wheelAudioEnabled), 2100);
-      setTimeout(() => playWheelTickCue(wheelAudioEnabled), 2800);
-    }
-
-    const settleDelay = prefersReduced ? 120 : 3450;
     setTimeout(async () => {
+      if (tickInterval) clearInterval(tickInterval);
+      setPointerDeflected(false);
       const reward: WinterRewardRecord | null = res.data.reward || null;
       setSpinning(false);
-      setResultReward(reward);
       setWinningSegmentIndex(segIdx);
+      setResultReward(reward);
       if (reward) {
         setAriaAnnouncement(
           `Winter Spin Wheel landed on ${reward.label}. Earned ${reward.xpBonus} XP and ${reward.cookiesBonus} Winter Cookies.`
@@ -197,7 +248,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
       await onSpinComplete();
       window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
       window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
-    }, settleDelay);
+    }, remainingSpinMs);
   };
 
   const sliceAngle = 360 / segments.length;
@@ -218,7 +269,11 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
       subtitle="Refreshes every 2 hours · Pure academic perks & seasonal collectibles"
       maxWidth="max-w-2xl"
     >
-      <div className="space-y-5">
+      <div className="space-y-5 relative">
+        <ConfettiBurst
+          active={Boolean(resultReward)}
+          isLegendary={resultReward?.rarity === 'legendary' || resultReward?.rarity === 'insane'}
+        />
         <div className="sr-only" aria-live="polite">
           {ariaAnnouncement}
         </div>
