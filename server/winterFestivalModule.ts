@@ -2777,21 +2777,47 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
       if (!targetId) {
         return res.status(400).json({ success: false, error: 'User ID is required.' });
       }
-      const mem = memoryWinterStates.get(targetId);
-      if (mem) {
+      const buildCosmeticsResponse = (
+        ef: string | null,
+        eb: string | null,
+        uf: string[] = [],
+        ub: string[] = [],
+        cookies: number = 0,
+        badges: number = 0
+      ) => {
+        const payload = {
+          userId: targetId,
+          equippedFrame: ef,
+          equippedBorder: eb,
+          unlockedFrames: uf,
+          unlockedBorders: ub,
+          cookiesCount: cookies,
+          badgesCount: badges,
+        };
         return res.json({
           success: true,
-          userId: targetId,
-          equippedFrame: mem.equippedFrame || null,
-          equippedBorder: mem.equippedBorder || null,
+          ...payload,
+          cosmetics: payload,
         });
+      };
+
+      const mem = memoryWinterStates.get(targetId);
+      if (mem) {
+        return buildCosmeticsResponse(
+          mem.equippedFrame || null,
+          mem.equippedBorder || null,
+          mem.unlockedFrames || [],
+          mem.unlockedBorders || [],
+          mem.cookiesCount || 0,
+          Object.keys(mem.earnedWinterBadges || {}).length
+        );
       }
 
       const cfg = getSupabaseServerConfig();
       if (shouldUseSupabase(cfg)) {
         const headers = { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` };
         const wpRes = await fetchJsonStrict(
-          `${cfg.url}/rest/v1/winter_user_profiles?user_id=eq.${encodeURIComponent(targetId)}&select=equipped_frame,state_json&limit=1`,
+          `${cfg.url}/rest/v1/winter_user_profiles?user_id=eq.${encodeURIComponent(targetId)}&select=equipped_frame,equipped_border,unlocked_frames,unlocked_borders,cookies_count,earned_winter_badges,state_json&limit=1`,
           { headers },
           'load public winter cosmetics'
         ).catch(() => null);
@@ -2799,21 +2825,18 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
           const rows = await wpRes.json().catch(() => []);
           const row = rows?.[0];
           const sJson = row?.state_json && typeof row.state_json === 'object' ? row.state_json : {};
-          return res.json({
-            success: true,
-            userId: targetId,
-            equippedFrame: row?.equipped_frame ?? sJson.equippedFrame ?? null,
-            equippedBorder: sJson.equippedBorder ?? null,
-          });
+          const ef = row?.equipped_frame ?? sJson.equippedFrame ?? null;
+          const eb = row?.equipped_border ?? sJson.equippedBorder ?? null;
+          const uf = Array.isArray(row?.unlocked_frames) ? row.unlocked_frames : Array.isArray(sJson.unlockedFrames) ? sJson.unlockedFrames : [];
+          const ub = Array.isArray(row?.unlocked_borders) ? row.unlocked_borders : Array.isArray(sJson.unlockedBorders) ? sJson.unlockedBorders : [];
+          const cookies = Number(row?.cookies_count ?? sJson.cookiesCount ?? 0);
+          const badgesObj = row?.earned_winter_badges || sJson.earnedWinterBadges || {};
+          const badges = Object.keys(badgesObj).length;
+          return buildCosmeticsResponse(ef, eb, uf, ub, cookies, badges);
         }
       }
 
-      return res.json({
-        success: true,
-        userId: targetId,
-        equippedFrame: null,
-        equippedBorder: null,
-      });
+      return buildCosmeticsResponse(null, null, [], [], 0, 0);
     } catch (err) {
       return handleWinterRouteError(res, err, 'Failed to load profile cosmetics.');
     }
