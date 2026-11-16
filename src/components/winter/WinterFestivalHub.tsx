@@ -8,8 +8,8 @@
  * 2-Hour Spin Wheel, and Role-Separated XP Leaderboards.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
-import { Award, CheckCircle2, HelpCircle, Lock, ShieldAlert, Sparkles } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Award, CheckCircle2, Gift, HelpCircle, Lock, RotateCw, ShieldAlert, Sparkles } from 'lucide-react';
 import { UserProfile } from '../../types';
 import { useFeatureAccess } from '../../lib/featureAccessService';
 import {
@@ -218,6 +218,8 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
 
   const [status, setStatus] = useState<WinterStatusResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const hasStatusRef = useRef<boolean>(false);
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
   const [santaOpen, setSantaOpen] = useState<boolean>(false);
   const [wheelOpen, setWheelOpen] = useState<boolean>(false);
@@ -232,15 +234,28 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
   const [submittingQuiz, setSubmittingQuiz] = useState<boolean>(false);
   const [equippingFrame, setEquippingFrame] = useState<string | null>(null);
 
-  const isFacultyRole = ['teacher', 'coordinator', 'hod'].includes(
+  const isFacultyRole = ['teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes(
     String(currentUser.role || '').toLowerCase()
   );
 
   const loadWinterData = useCallback(async () => {
-    setLoading((prev) => (status ? false : prev));
-    const data = await fetchWinterStatus(currentUser);
-    if (data) setStatus(data);
-    setLoading(false);
+    if (!hasStatusRef.current) setLoading(true);
+    setStatusError(null);
+    try {
+      const data = await fetchWinterStatus(currentUser);
+      if (data) {
+        hasStatusRef.current = true;
+        setStatus(data);
+      } else if (!hasStatusRef.current) {
+        setStatusError('Could not load Winter Festival status. Please retry.');
+      }
+    } catch (err: any) {
+      if (!hasStatusRef.current) {
+        setStatusError(err?.message || 'Could not load Winter Festival status.');
+      }
+    } finally {
+      setLoading(false);
+    }
   }, [currentUser]);
 
   useEffect(() => {
@@ -362,11 +377,18 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
 
           <div className="winter-candy-divider" />
 
-          {loading || !status ? (
+          {loading && !status ? (
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {[0, 1, 2, 3].map((i) => (
                 <AnimatedSkeleton key={i} height={74} className="w-full" />
               ))}
+            </div>
+          ) : !status ? (
+            <div className="rounded-xl border border-amber-500/30 bg-slate-950/60 p-4 flex items-center justify-between gap-3 text-xs text-amber-200">
+              <span>{statusError || 'Winter collectibles and status are temporarily unavailable.'}</span>
+              <TactileButton variant="outline" size="sm" onClick={loadWinterData}>
+                Retry
+              </TactileButton>
             </div>
           ) : (
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -396,6 +418,11 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
                   {Object.keys(status.winterState.earnedWinterBadges || {}).length} /{' '}
                   {status.badges.length}
                 </div>
+                <p className="text-[10px] text-slate-400 mt-0.5 font-mono">
+                  {(status.winterState.rewardHistory || []).filter((r) => r.featureType === 'santa_gift').length} Santa ·{' '}
+                  {(status.winterState.rewardHistory || []).filter((r) => r.featureType === 'spin_wheel').length} Spins ·{' '}
+                  {(status.winterState.unlockedFrames || []).length} Frames
+                </p>
               </div>
             </div>
           )}
@@ -582,6 +609,84 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
                 );
               })}
             </div>
+          </div>
+
+          <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3">
+            <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+              Claimed Santa Gifts &amp; Spin Rewards
+            </h4>
+            {(() => {
+              const historyItems = (status.winterState.rewardHistory || []).filter(
+                (r) => r.featureType === 'santa_gift' || r.featureType === 'spin_wheel'
+              );
+              const existingNights = new Set(
+                historyItems
+                  .filter((r) => r.featureType === 'santa_gift' && r.eventNightKey)
+                  .map((r) => String(r.eventNightKey))
+              );
+              const fallbackSantaItems = Object.entries(status.winterState.santaClaimedNights || {})
+                .filter(([nightKey]) => !existingNights.has(nightKey))
+                .map(([nightKey, rewardId]) => ({
+                  id: String(rewardId || `santa_${nightKey}`),
+                  featureType: 'santa_gift' as const,
+                  idempotencyKey: `santa_${nightKey}`,
+                  eventNightKey: nightKey,
+                  status: 'applied' as const,
+                  rarity: 'seasonal',
+                  label: 'Santa Nightly Gift',
+                  xpBonus: 0,
+                  cookiesBonus: 0,
+                  aiBonusQueries: 0,
+                  streakShield: false,
+                  createdAt: `${nightKey}T19:00:00.000Z`,
+                }));
+              const collectedRewards = [...historyItems, ...fallbackSantaItems];
+
+              if (collectedRewards.length === 0) {
+                return (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    No Santa gifts or Spin rewards claimed yet. Unwrap tonight’s Santa Drop or spin the wheel to collect them here.
+                  </p>
+                );
+              }
+
+              return (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {collectedRewards.map((item) => {
+                    const isSanta = item.featureType === 'santa_gift';
+                    return (
+                      <div
+                        key={item.id}
+                        className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 p-3.5 space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 min-w-0 truncate">
+                            {isSanta ? (
+                              <Gift className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                            ) : (
+                              <RotateCw className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                            )}
+                            <span className="truncate">{item.label || (isSanta ? 'Santa Nightly Gift' : 'Spin Wheel Reward')}</span>
+                          </span>
+                          <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 capitalize shrink-0">
+                            {item.rarity}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                          {item.xpBonus > 0 && <span>+{item.xpBonus} XP</span>}
+                          {item.cookiesBonus > 0 && <span>+{item.cookiesBonus} Cookies</span>}
+                          {item.aiBonusQueries > 0 && <span>+{item.aiBonusQueries} AI</span>}
+                          {item.streakShield && <span>+1 Shield</span>}
+                        </div>
+                        <p className="text-[11px] text-slate-500 font-mono">
+                          {isSanta ? 'Santa Drop' : 'Spin Wheel'} · {item.eventNightKey || String(item.createdAt || '').slice(0, 10)}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         </section>
       )}

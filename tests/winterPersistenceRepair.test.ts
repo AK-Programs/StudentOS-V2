@@ -80,6 +80,9 @@ function createMockSupabaseServer() {
     if (expr.startsWith('eq.')) {
       return String(row[key] ?? '') === expr.slice(3);
     }
+    if (expr.startsWith('gt.')) {
+      return Number(row[key] ?? 0) > Number(expr.slice(3));
+    }
     if (expr.startsWith('gte.')) {
       return String(row[key] ?? '') >= expr.slice(4);
     }
@@ -539,6 +542,42 @@ async function main() {
       }
     });
 
+    await runTest('Part 1.7: Status and Spin succeed without error even if winter_reward_ledger.reward_label is missing, keeping collectibles visible', async () => {
+      const ledgerMissingHeaders = {
+        ...stuHeaders,
+        'x-veylentra-uid': 'stu-ledger-col-1',
+        'x-veylentra-name': 'Collectible Tester',
+      };
+      // First claim a Santa gift cleanly (or while ledger is broken) — test broken ledger on both GET and POST
+      mockDb.setFailure({
+        table: 'winter_reward_ledger',
+        status: 400,
+        message: 'column winter_reward_ledger.reward_label does not exist',
+      });
+      try {
+        // /api/winter/spin must succeed and persist spin reward in winter_user_profiles
+        const spinOk = await apiJson(baseUrl, '/api/winter/spin', {
+          method: 'POST',
+          headers: ledgerMissingHeaders,
+          body: JSON.stringify({ idempotencyKey: 'missing_ledger_col_spin_1' }),
+        });
+        assert.equal(spinOk.status, 200, `Expected spin 200 when winter_reward_ledger fails, got ${spinOk.status}: ${JSON.stringify(spinOk.data)}`);
+        assert.equal(spinOk.data.success, true);
+
+        // /api/winter/status must STILL return 200 after cold-start cache clear, with collectibles populated from winter_user_profiles
+        clearWinterMemoryCacheOnlyForTests();
+        const statusOk = await apiJson(baseUrl, '/api/winter/status', { headers: ledgerMissingHeaders });
+        assert.equal(statusOk.status, 200);
+        assert.equal(statusOk.data.success, true);
+        assert.ok(
+          Array.isArray(statusOk.data.winterState?.rewardHistory) && statusOk.data.winterState.rewardHistory.length >= 1,
+          'Collectibles rewardHistory must still load from winter_user_profiles even when winter_reward_ledger returns 400'
+        );
+      } finally {
+        mockDb.setFailure(null);
+      }
+    });
+
     // ------------------------------------------------------------------
     // PART 2: XP LEDGER & SEPARATED LEADERBOARD
     // ------------------------------------------------------------------
@@ -583,8 +622,8 @@ async function main() {
       assert.equal(dupRes.totalXp, beforePoints + 50);
     });
 
-    await runTest('Part 2.2: Leaderboard queries ONLY gamification_xp_ledger (limit 50), skips user_profiles & global_data, and returns name, rank, XP', async () => {
-      // Ensure faculty member has a ledger row since leaderboard reads strictly from gamification_xp_ledger
+    await runTest('Part 2.2: Leaderboard merges gamification_xp_ledger + account XP store (user_profiles/global_data) and includes super_admin on faculty board', async () => {
+      // Seed faculty ledger row AND a super_admin + student who only have XP in account XP store (user_profiles / global_data)
       if (!mockDb.tables.gamification_xp_ledger.some(r => r.user_id === 'fac-persist-1')) {
         mockDb.tables.gamification_xp_ledger.push({
           id: 'xp_fac_ledger_1',
@@ -597,48 +636,84 @@ async function main() {
         });
       }
 
+      if (!mockDb.tables.user_profiles.some(u => u.id === 'super-admin-1')) {
+        mockDb.tables.user_profiles.push({
+          id: 'super-admin-1',
+          uid: 'super-admin-1',
+          name: 'Naitik Kashyap',
+          role: 'super_admin',
+          points: 3574,
+          grade: 'Admin',
+          section: 'HQ',
+          updated_at: new Date().toISOString(),
+        });
+      }
+      if (!mockDb.tables.global_data.some(g => g.id === 'gamification_user_stu-store-only')) {
+        mockDb.tables.global_data.push({
+          id: 'gamification_user_stu-store-only',
+          data: {
+            userId: 'stu-store-only',
+            userName: 'Aarav StoreXP',
+            role: 'student',
+            xp: 640,
+            currentStreak: 4,
+          },
+          updated_at: new Date().toISOString(),
+        });
+      }
+
       clearWinterMemoryCacheOnlyForTests();
       mockDb.resetQueryCounts();
 
       const stuLb = await apiJson(baseUrl, '/api/leaderboard?type=student&period=all_time', { headers: stuHeaders });
       assert.equal(stuLb.status, 200);
       assert.equal(stuLb.data.success, true);
-      assert.ok(stuLb.data.rankings.length >= 1);
+      assert.ok(stuLb.data.rankings.length >= 2);
       const riya = stuLb.data.rankings.find((r: any) => r.userId === 'stu-persist-1');
+      const aarav = stuLb.data.rankings.find((r: any) => r.userId === 'stu-store-only');
       assert.ok(riya, 'Student Riya Sharma must appear on leaderboard');
+      assert.ok(aarav && aarav.name === 'Aarav StoreXP' && aarav.xp === 640, 'Account store student XP must appear on student leaderboard');
       assert.equal(riya.name, 'Riya Sharma');
       assert.equal(riya.rank, 1);
       assert.ok(riya.xp > 0, `Expected > 0 XP, got ${riya.xp}`);
       assert.equal((riya as any).raw_data, undefined);
       assert.equal((riya as any).email, undefined);
       assert.equal((riya as any).phone, undefined);
-      assert.ok(!stuLb.data.rankings.some((r: any) => r.role === 'teacher'));
+      assert.ok(!stuLb.data.rankings.some((r: any) => r.role === 'teacher' || r.role === 'super_admin'));
 
-      // Check Weekly student leaderboard uses ledger deltas
+      // Check Weekly student leaderboard includes both ledger deltas and active account XP
       const weeklyLb = await apiJson(baseUrl, '/api/leaderboard?type=student&period=weekly', { headers: stuHeaders });
       assert.equal(weeklyLb.status, 200);
       assert.ok(weeklyLb.data.rankings.some((r: any) => r.userId === 'stu-persist-1'));
 
-      // Check Faculty cohort isolation
+      // Check Faculty cohort includes BOTH teacher and super_admin (even when super_admin XP is only in user_profiles)
       const facLb = await apiJson(baseUrl, '/api/leaderboard?type=faculty&period=all_time', { headers: stuHeaders });
       assert.equal(facLb.status, 200);
-      assert.ok(facLb.data.rankings.some((r: any) => r.userId === 'fac-persist-1' && r.name === 'Dr. Kavita Iyer' && r.rank === 1 && r.xp >= 420));
+      const superAdminEntry = facLb.data.rankings.find((r: any) => r.userId === 'super-admin-1');
+      const kavitaEntry = facLb.data.rankings.find((r: any) => r.userId === 'fac-persist-1');
+      assert.ok(superAdminEntry, 'super_admin must be included on faculty leaderboard');
+      assert.equal(superAdminEntry.name, 'Naitik Kashyap');
+      assert.equal(superAdminEntry.xp, 3574);
+      assert.equal(superAdminEntry.rank, 1);
+      assert.ok(kavitaEntry && kavitaEntry.name === 'Dr. Kavita Iyer' && kavitaEntry.xp >= 420 && kavitaEntry.rank === 2);
       assert.ok(!facLb.data.rankings.some((r: any) => r.role === 'student'));
 
-      // Verify leaderboard queried ONLY gamification_xp_ledger (never user_profiles, winter_user_profiles, or global_data)
+      // Verify leaderboard never queries winter_user_profiles and stays within limit 50 queries
       const qCounts = mockDb.getQueryCounts();
       assert.equal(qCounts['GET:gamification_xp_ledger'] || 0, 3);
       assert.equal(qCounts['GET:winter_user_profiles'] || 0, 0, 'Leaderboard must not query winter_user_profiles');
-      assert.equal(qCounts['GET:user_profiles'] || 0, 0, 'Leaderboard must not query user_profiles');
-      assert.equal(qCounts['GET:global_data'] || 0, 0, 'Leaderboard must not query global_data');
 
-      // Even if user_profiles fails completely, leaderboard still returns 200 without waiting
+      // Even if user_profiles AND global_data fail completely, leaderboard still returns 200 using gamification_xp_ledger
       mockDb.setFailure({ table: 'user_profiles', method: 'GET', status: 500, message: 'DB error' });
       const profDownLb = await apiJson(baseUrl, '/api/leaderboard?type=student&period=all_time', { headers: stuHeaders });
+      mockDb.setFailure({ table: 'global_data', method: 'GET', status: 500, message: 'DB error' });
+      const gdDownLb = await apiJson(baseUrl, '/api/leaderboard?type=student&period=all_time', { headers: stuHeaders });
       mockDb.setFailure(null);
       assert.equal(profDownLb.status, 200);
       assert.equal(profDownLb.data.success, true);
       assert.ok(profDownLb.data.rankings.length >= 1);
+      assert.equal(gdDownLb.status, 200);
+      assert.equal(gdDownLb.data.success, true);
 
       // Verify that if Supabase returns 401 Invalid API key, it retries once with working anon key and succeeds!
       mockDb.setFailure({ table: 'gamification_xp_ledger', method: 'GET', status: 401, message: 'Invalid API key', onlyIfNotAnon: true } as any);
@@ -647,9 +722,13 @@ async function main() {
       assert.equal(retryLb.status, 200, 'Leaderboard must recover from 401 Invalid API key by retrying with working anon key');
       assert.equal(retryLb.data.success, true);
 
-      // Verify empty ledger returns 200 with rankings: [] and does not fail with an error
+      // Verify empty ledger + empty account store returns 200 with rankings: [] and does not fail with an error
       const savedLedger = [...mockDb.tables.gamification_xp_ledger];
+      const savedProfiles = [...mockDb.tables.user_profiles];
+      const savedGd = [...mockDb.tables.global_data];
       mockDb.tables.gamification_xp_ledger = [];
+      mockDb.tables.user_profiles = [];
+      mockDb.tables.global_data = [];
       clearWinterMemoryCacheOnlyForTests();
       try {
         const emptyLedgerRes = await apiJson(baseUrl, '/api/leaderboard?type=student&period=weekly', { headers: stuHeaders });
@@ -658,6 +737,8 @@ async function main() {
         assert.deepEqual(emptyLedgerRes.data.rankings, []);
       } finally {
         mockDb.tables.gamification_xp_ledger = savedLedger;
+        mockDb.tables.user_profiles = savedProfiles;
+        mockDb.tables.global_data = savedGd;
       }
 
       // Fail loudly with 503 only when core gamification_xp_ledger table errors completely

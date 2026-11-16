@@ -47,7 +47,12 @@ import {
 import { UserProfile } from '../types';
 import { soundService } from '../lib/soundService';
 import { XpLeaderboardPanel } from './gamification/XpLeaderboardPanel';
-import { fetchWinterStatus, WinterBadgeItem } from '../lib/winterFestivalService';
+import {
+  fetchWinterStatus,
+  WinterBadgeItem,
+  WinterProfileFrame,
+  WinterStatusResponse,
+} from '../lib/winterFestivalService';
 
 interface ToastEventDetail {
   xpAdded: number;
@@ -379,6 +384,8 @@ export const StudentGamificationHub: React.FC<{
   );
   const [leaderboard, setLeaderboard] = useState<StudentGamificationStats[]>([]);
   const [winterBadges, setWinterBadges] = useState<WinterBadgeItem[]>([]);
+  const [winterFrames, setWinterFrames] = useState<WinterProfileFrame[]>([]);
+  const [winterState, setWinterState] = useState<WinterStatusResponse['winterState'] | null>(null);
   const [winterCookies, setWinterCookies] = useState<number>(0);
   const [scope, setScope] = useState<'class' | 'school'>('class');
   const [activeSection, setActiveSection] = useState<'overview' | 'leaderboard' | 'badges' | 'levels' | 'history'>(initialSection);
@@ -386,7 +393,7 @@ export const StudentGamificationHub: React.FC<{
 
   const resolvedLbType: 'student' | 'faculty' =
     leaderboardType ||
-    (['teacher', 'coordinator', 'hod'].includes(String(currentUser?.role || '').toLowerCase())
+    (['teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes(String(currentUser?.role || '').toLowerCase())
       ? 'faculty'
       : 'student');
 
@@ -401,6 +408,8 @@ export const StudentGamificationHub: React.FC<{
     if (authProf) setProfile(authProf);
     if (Array.isArray(lb)) setLeaderboard(lb);
     if (wStatus?.badges) setWinterBadges(wStatus.badges);
+    if (wStatus?.frames) setWinterFrames(wStatus.frames);
+    if (wStatus?.winterState) setWinterState(wStatus.winterState);
     if (typeof wStatus?.winterState?.cookiesCount === 'number') {
       setWinterCookies(wStatus.winterState.cookiesCount);
     }
@@ -811,54 +820,115 @@ export const StudentGamificationHub: React.FC<{
           )}
 
           {/* Winter Festival Collectibles */}
-          {filteredWinterBadges.length > 0 && (
-            <div className="space-y-3 pt-2">
+          {(badgeCategory === 'all' || badgeCategory === 'winter') &&
+            (filteredWinterBadges.length > 0 ||
+              winterFrames.length > 0 ||
+              (winterState?.rewardHistory || []).length > 0) && (
+            <div className="space-y-4 pt-2">
               <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-sky-300">
                 <Snowflake className="w-4 h-4" />
                 <span>Seasonal Winter Festival Collectibles</span>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredWinterBadges.map(wb => {
-                  const isUnlocked = Boolean(wb.unlockedAt);
-                  return (
-                    <div
-                      key={wb.id}
-                      className={`p-4 rounded-2xl border transition-all flex flex-col justify-between gap-3 ${
-                        isUnlocked
-                          ? 'bg-gradient-to-br from-sky-950/70 via-slate-900 to-cyan-950/50 border-sky-400/60 shadow-lg shadow-sky-500/15'
-                          : 'bg-slate-950/60 border-white/10 opacity-75'
-                      }`}
-                    >
-                      <div className="flex items-start gap-3">
-                        <div
-                          className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 border ${
-                            isUnlocked
-                              ? 'bg-sky-500/20 border-sky-400/50 text-sky-300'
-                              : 'bg-slate-900 border-white/10 text-slate-500'
-                          }`}
-                        >
-                          <Snowflake className="w-5 h-5" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <h4 className="text-sm font-black text-white truncate">{wb.name}</h4>
-                            <span className="px-2 py-0.5 rounded-full bg-sky-500/20 border border-sky-500/30 text-sky-300 text-[9px] font-black uppercase">
-                              {wb.rarity}
-                            </span>
+              {filteredWinterBadges.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredWinterBadges.map(wb => {
+                    const isUnlocked = Boolean(wb.unlockedAt);
+                    return (
+                      <div
+                        key={wb.id}
+                        className={`p-4 rounded-2xl border transition-all flex flex-col justify-between gap-3 ${
+                          isUnlocked
+                            ? 'bg-gradient-to-br from-sky-950/70 via-slate-900 to-cyan-950/50 border-sky-400/60 shadow-lg shadow-sky-500/15'
+                            : 'bg-slate-950/60 border-white/10 opacity-75'
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div
+                            className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 border ${
+                              isUnlocked
+                                ? 'bg-sky-500/20 border-sky-400/50 text-sky-300'
+                                : 'bg-slate-900 border-white/10 text-slate-500'
+                            }`}
+                          >
+                            <Snowflake className="w-5 h-5" />
                           </div>
-                          <p className="text-xs text-slate-300 mt-1 leading-relaxed">{wb.description}</p>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <h4 className="text-sm font-black text-white truncate">{wb.name}</h4>
+                              <span className="px-2 py-0.5 rounded-full bg-sky-500/20 border border-sky-500/30 text-sky-300 text-[9px] font-black uppercase">
+                                {wb.rarity}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-300 mt-1 leading-relaxed">{wb.description}</p>
+                          </div>
+                        </div>
+                        <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[10px]">
+                          <span className="text-slate-400">{wb.unlockRequirement}</span>
+                          <span className={isUnlocked ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
+                            {isUnlocked ? 'Collected' : 'Locked'}
+                          </span>
                         </div>
                       </div>
-                      <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[10px]">
-                        <span className="text-slate-400">{wb.unlockRequirement}</span>
-                        <span className={isUnlocked ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
-                          {isUnlocked ? 'Collected' : 'Locked'}
+                    );
+                  })}
+                </div>
+              )}
+
+              {winterFrames.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                  {winterFrames.map((frame) => {
+                    const isUnlocked = Boolean(winterState?.unlockedFrames?.includes(frame.id));
+                    return (
+                      <div
+                        key={frame.id}
+                        className={`p-3.5 rounded-2xl border flex items-center justify-between gap-3 ${
+                          isUnlocked
+                            ? 'bg-sky-950/50 border-sky-400/50'
+                            : 'bg-slate-950/60 border-white/10 opacity-75'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-white truncate">{frame.name}</p>
+                          <p className="text-[11px] text-slate-400 truncate">{frame.description}</p>
+                        </div>
+                        <span className={`text-[10px] font-bold shrink-0 ${isUnlocked ? 'text-emerald-400' : 'text-slate-500'}`}>
+                          {isUnlocked ? 'Frame Unlocked' : 'Locked'}
                         </span>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {(() => {
+                const rewards = (winterState?.rewardHistory || []).filter(
+                  (r) => r.featureType === 'santa_gift' || r.featureType === 'spin_wheel'
+                );
+                if (rewards.length === 0) return null;
+                return (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+                    {rewards.map((item) => (
+                      <div
+                        key={item.id}
+                        className="p-3.5 rounded-2xl border border-amber-400/30 bg-slate-950/70 space-y-1"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold text-white truncate">{item.label}</span>
+                          <span className="text-[10px] font-mono uppercase text-amber-300 shrink-0">
+                            {item.featureType === 'santa_gift' ? 'Santa Gift' : 'Spin Wheel'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] font-mono text-emerald-400">
+                          {item.xpBonus > 0 ? `+${item.xpBonus} XP ` : ''}
+                          {item.cookiesBonus > 0 ? `+${item.cookiesBonus} Cookies ` : ''}
+                          {item.aiBonusQueries > 0 ? `+${item.aiBonusQueries} AI ` : ''}
+                          {item.streakShield ? '+1 Shield' : ''}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>
