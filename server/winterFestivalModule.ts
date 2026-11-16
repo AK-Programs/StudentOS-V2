@@ -27,6 +27,7 @@ import {
   getSantaWindowStatus,
   rollSantaRewardTier,
   rollSpinWheelSegment,
+} from './rewardEngine';
 import { getFeatureRecord, isFeatureAccessibleForActor } from './featureManagementModule';
 import { WORKING_ANON_KEY, markSupabaseKeyInvalid } from './supabaseKeyManager';
 
