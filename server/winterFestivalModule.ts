@@ -244,6 +244,20 @@ function isUniqueViolationResponse(status: number, bodyText: string): boolean {
   return lower.includes('23505') || lower.includes('duplicate key') || lower.includes('already exists');
 }
 
+function isMissingColumnOrRelationError(status: number, bodyText: string): boolean {
+  const lower = bodyText.toLowerCase();
+  return (
+    status === 404 ||
+    bodyText.includes('PGRST204') ||
+    bodyText.includes('PGRST205') ||
+    bodyText.includes('42703') ||
+    bodyText.includes('42P01') ||
+    (lower.includes('column') && (lower.includes('does not exist') || lower.includes('could not find'))) ||
+    (lower.includes('relation') && lower.includes('does not exist')) ||
+    lower.includes('could not find the table')
+  );
+}
+
 function resolveWinterSupabaseConfig(
   getCfg: WinterModuleDeps['getSupabaseServerConfig']
 ): { url: string; key: string } {
@@ -369,6 +383,13 @@ export async function loadUserWinterState(
 
   if (!wpRes.ok) {
     const errText = await wpRes.text().catch(() => '');
+    if (isMissingColumnOrRelationError(wpRes.status, errText)) {
+      throw new WinterPersistenceError(
+        `Missing columns or table in winter_user_profiles (${errText || wpRes.statusText}). Run the Winter SQL migration script in Supabase SQL Editor first.`,
+        503,
+        'WINTER_SQL_MIGRATION_REQUIRED'
+      );
+    }
     throw new WinterPersistenceError(
       `Failed to load Winter profile from Supabase (${wpRes.status}): ${errText || wpRes.statusText}`,
       503
@@ -408,6 +429,13 @@ export async function loadUserWinterState(
   if (Array.isArray(wpRows) && wpRows[0]) {
     const r = wpRows[0];
     const storedState = r.state_json && typeof r.state_json === 'object' ? r.state_json : {};
+    const dbFrames = Array.isArray(r.unlocked_frames) ? r.unlocked_frames : [];
+    const storedFrames = Array.isArray(storedState.unlockedFrames) ? storedState.unlockedFrames : [];
+    const dbTasks = Array.isArray(r.claimed_task_ids) ? r.claimed_task_ids : [];
+    const storedTasks = Array.isArray(storedState.claimedTaskIds) ? storedState.claimedTaskIds : [];
+    const dbHistory = Array.isArray(r.reward_history) ? r.reward_history : [];
+    const storedHistory = Array.isArray(storedState.rewardHistory) ? storedState.rewardHistory : [];
+
     merged = {
       ...merged,
       ...storedState,
@@ -416,7 +444,7 @@ export async function loadUserWinterState(
       userRole: user.role || r.user_role || storedState.userRole || 'student',
       cookiesCount: Number(r.cookies_count ?? storedState.cookiesCount ?? 0),
       streakShields: Number(r.streak_shields ?? storedState.streakShields ?? 0),
-      unlockedFrames: Array.isArray(r.unlocked_frames) ? r.unlocked_frames : (storedState.unlockedFrames || []),
+      unlockedFrames: Array.from(new Set([...storedFrames, ...dbFrames])),
       equippedFrame: r.equipped_frame !== undefined ? r.equipped_frame : (storedState.equippedFrame || null),
       spinNextEligibleAt: r.spin_next_eligible_at || storedState.spinNextEligibleAt || null,
       lastSpinAt: r.last_spin_at || storedState.lastSpinAt || null,
@@ -424,10 +452,16 @@ export async function loadUserWinterState(
       aiBonusDate: r.ai_bonus_date || storedState.aiBonusDate || getLocalDayKey(),
       aiBonusCreditsToday: Number(r.ai_bonus_credits_today ?? storedState.aiBonusCreditsToday ?? 0),
       quizCompleted: Boolean(r.quiz_completed ?? storedState.quizCompleted ?? false),
-      claimedTaskIds: Array.isArray(r.claimed_task_ids) ? r.claimed_task_ids : (storedState.claimedTaskIds || []),
-      earnedWinterBadges: r.earned_winter_badges || storedState.earnedWinterBadges || {},
-      santaClaimedNights: r.santa_claimed_nights || storedState.santaClaimedNights || {},
-      rewardHistory: Array.isArray(r.reward_history) ? r.reward_history : (storedState.rewardHistory || []),
+      claimedTaskIds: Array.from(new Set([...storedTasks, ...dbTasks])),
+      earnedWinterBadges: {
+        ...(storedState.earnedWinterBadges && typeof storedState.earnedWinterBadges === 'object' ? storedState.earnedWinterBadges : {}),
+        ...(r.earned_winter_badges && typeof r.earned_winter_badges === 'object' ? r.earned_winter_badges : {}),
+      },
+      santaClaimedNights: {
+        ...(storedState.santaClaimedNights && typeof storedState.santaClaimedNights === 'object' ? storedState.santaClaimedNights : {}),
+        ...(r.santa_claimed_nights && typeof r.santa_claimed_nights === 'object' ? r.santa_claimed_nights : {}),
+      },
+      rewardHistory: dbHistory.length >= storedHistory.length ? dbHistory : storedHistory,
       updatedAt: String(r.updated_at || storedState.updatedAt || new Date().toISOString()),
     };
   } else {
@@ -478,6 +512,8 @@ export async function loadUserWinterState(
 
   if (Array.isArray(ledgerRows) && ledgerRows.length > 0) {
     const nightsMap = { ...(merged.santaClaimedNights || {}) };
+    const badgesMap = { ...(merged.earnedWinterBadges || {}) };
+    const framesSet = new Set<string>(merged.unlockedFrames || []);
     const historyById = new Map<string, UserWinterState['rewardHistory'][number]>();
     for (const h of merged.rewardHistory || []) {
       if (h?.id) historyById.set(h.id, h);
@@ -485,6 +521,12 @@ export async function loadUserWinterState(
     for (const r of ledgerRows) {
       if (r?.feature_type === 'santa_gift' && r?.event_night_key && !nightsMap[r.event_night_key]) {
         nightsMap[String(r.event_night_key)] = String(r.id);
+      }
+      if (r?.status === 'applied' && r?.badge_id && !badgesMap[r.badge_id]) {
+        badgesMap[String(r.badge_id)] = String(r.applied_at || r.created_at || new Date().toISOString());
+      }
+      if (r?.status === 'applied' && r?.frame_id) {
+        framesSet.add(String(r.frame_id));
       }
       if (r?.id) {
         const mapped = mapLedgerRowToHistoryItem(r);
@@ -494,6 +536,8 @@ export async function loadUserWinterState(
       }
     }
     merged.santaClaimedNights = nightsMap;
+    merged.earnedWinterBadges = badgesMap;
+    merged.unlockedFrames = Array.from(framesSet);
     merged.rewardHistory = Array.from(historyById.values())
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
       .slice(0, 60);
@@ -591,6 +635,13 @@ export async function saveUserWinterState(
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
+    if (isMissingColumnOrRelationError(res.status, errText)) {
+      throw new WinterPersistenceError(
+        `Winter rewards could not be saved because required columns (claimed_task_ids, earned_winter_badges, santa_claimed_nights, reward_history, state_json) are missing on winter_user_profiles. Please run the Winter SQL migration script in Supabase SQL Editor. (${errText || res.statusText})`,
+        503,
+        'WINTER_SQL_MIGRATION_REQUIRED'
+      );
+    }
     throw new WinterPersistenceError(
       `Failed to save Winter state to Supabase (${res.status}): ${errText || res.statusText}`,
       503
@@ -650,7 +701,7 @@ export async function appendXpLedgerEntry(
   };
 
   // 1. Authoritative Postgres insert FIRST (no merge-duplicates so UNIQUE(user_id, action_key) rejects duplicates atomically)
-  const insertRes = await fetchJsonStrict(
+  let insertRes = await fetchJsonStrict(
     `${cfg.url}/rest/v1/gamification_xp_ledger`,
     {
       method: 'POST',
@@ -677,16 +728,46 @@ export async function appendXpLedgerEntry(
   const encUid = encodeURIComponent(entry.userId);
 
   if (!insertRes.ok) {
-    const errText = await insertRes.text().catch(() => '');
+    let errText = await insertRes.text().catch(() => '');
     if (isUniqueViolationResponse(insertRes.status, errText)) {
       const curTotal = await fetchAuthoritativeUserTotalXp(cfg, entry.userId);
       const lvl = computeLevelFromXp(curTotal);
       return { accepted: false, deduplicated: true, totalXp: curTotal, ...lvl };
     }
-    throw new WinterPersistenceError(
-      `Failed to write XP ledger entry to Supabase (${insertRes.status}): ${errText || insertRes.statusText}`,
-      503
-    );
+    if (isMissingColumnOrRelationError(insertRes.status, errText)) {
+      // Retry insert with the minimal column set in case gamification_xp_ledger uses only core columns
+      const minimalInsertRes = await fetchJsonStrict(
+        `${cfg.url}/rest/v1/gamification_xp_ledger`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            id: entry.id,
+            user_id: entry.userId,
+            user_name: entry.userName,
+            user_role: entry.userRole,
+            xp_delta: entry.xpDelta,
+            label: entry.label,
+            created_at: entry.createdAt,
+          }),
+        },
+        'insert minimal gamification_xp_ledger'
+      );
+      if (minimalInsertRes.ok) {
+        insertRes = minimalInsertRes;
+      } else {
+        errText = await minimalInsertRes.text().catch(() => errText);
+      }
+    }
+    if (!insertRes.ok) {
+      throw new WinterPersistenceError(
+        isMissingColumnOrRelationError(insertRes.status, errText)
+          ? `XP ledger table gamification_xp_ledger is missing or outdated (${errText || insertRes.statusText}). Please run the Winter SQL script in Supabase SQL Editor.`
+          : `Failed to write XP ledger entry to Supabase (${insertRes.status}): ${errText || insertRes.statusText}`,
+        503,
+        isMissingColumnOrRelationError(insertRes.status, errText) ? 'WINTER_SQL_MIGRATION_REQUIRED' : 'WINTER_PERSISTENCE_ERROR'
+      );
+    }
   }
 
   // 2. Read authoritative existing XP across ledger, user_profiles, & global_data so cold restarts never overwrite with 0
@@ -1347,6 +1428,8 @@ export async function executeSantaGiftClaim(params: {
       createdAt: appliedAtIso,
     });
 
+    const reloadedState = await loadUserWinterState(params.getSupabaseServerConfig, params.user);
+
     return {
       statusCode: 200,
       body: {
@@ -1356,7 +1439,7 @@ export async function executeSantaGiftClaim(params: {
         tier,
         xpSummary: xpRes,
         windowStatus,
-        winterState: persistedState,
+        winterState: reloadedState || persistedState,
       },
     };
   } finally {
@@ -1572,6 +1655,8 @@ export async function executeSpinWheel(params: {
       createdAt: nowIso,
     });
 
+    const reloadedState = await loadUserWinterState(params.getSupabaseServerConfig, params.user);
+
     return {
       statusCode: 200,
       body: {
@@ -1583,7 +1668,7 @@ export async function executeSpinWheel(params: {
         nextEligibleAt,
         cooldownMs,
         remainingMs: cooldownMs,
-        winterState: persistedState,
+        winterState: reloadedState || persistedState,
       },
     };
   } finally {
@@ -2300,28 +2385,22 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
                 new Date(Date.now() - (period === 'weekly' ? 7 : 30) * 24 * 60 * 60 * 1000).toISOString()
               )}&`;
 
-        // Fetch authoritative gamification_xp_ledger and winter_user_profiles (ZERO dependency on global_data!)
-        // Optional user_profiles is queried for display enrichment only; if user_profiles fails, continue safely!
-        const [ledRes, winterProfRes, profRes] = await Promise.all([
-          fetchJsonStrict(
-            `${cfg.url}/rest/v1/gamification_xp_ledger?${sinceClause}select=id,user_id,user_name,user_role,grade,section,house,avatar,source_type,action_key,xp_delta,label,created_at&order=created_at.desc&limit=1000`,
-            { headers },
-            'leaderboard gamification_xp_ledger'
-          ),
-          fetchJsonStrict(
-            `${cfg.url}/rest/v1/winter_user_profiles?select=user_id,cookies_count,equipped_frame,earned_winter_badges`,
-            { headers },
-            'leaderboard winter_user_profiles'
-          ).catch(() => null),
-          fetchJsonStrict(
-            `${cfg.url}/rest/v1/user_profiles?select=id,uid,name,role,grade,section,house,photo_url,points,badges,updated_at`,
-            { headers },
-            'leaderboard user_profiles'
-          ).catch(() => null),
-        ]);
+        // Query ONLY gamification_xp_ledger with limit=50 for fast loading (never wait on user_profiles, winter_user_profiles, or global_data)
+        const ledRes = await fetchJsonStrict(
+          `${cfg.url}/rest/v1/gamification_xp_ledger?${sinceClause}select=id,user_id,user_name,user_role,xp_delta,label,created_at&order=created_at.desc&limit=50`,
+          { headers },
+          'leaderboard gamification_xp_ledger'
+        );
 
         if (!ledRes.ok) {
           const errText = await ledRes.text().catch(() => '');
+          if (isMissingColumnOrRelationError(ledRes.status, errText)) {
+            throw new WinterPersistenceError(
+              `Leaderboard table gamification_xp_ledger is missing or outdated (${errText || ledRes.statusText}). Please run the Winter SQL migration script in Supabase SQL Editor.`,
+              503,
+              'WINTER_SQL_MIGRATION_REQUIRED'
+            );
+          }
           throw new WinterPersistenceError(
             `Leaderboard query failed on gamification_xp_ledger (${ledRes.status}): ${errText || ledRes.statusText}`,
             503,
@@ -2331,130 +2410,48 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
 
         const ledRows = await ledRes.json().catch(() => []);
 
-        // Hydrate winter cookies, equipped frames & winter collectible badge counts
-        if (winterProfRes && winterProfRes.ok) {
-          const winterRows = await winterProfRes.json().catch(() => []);
-          if (Array.isArray(winterRows)) {
-            for (const w of winterRows) {
-              if (!w?.user_id) continue;
-              winterProfilesByUser.set(String(w.user_id), {
-                cookiesCount: Math.max(0, Number(w.cookies_count || 0)),
-                equippedFrame: w.equipped_frame ? String(w.equipped_frame) : null,
-                badgesCount:
-                  w.earned_winter_badges && typeof w.earned_winter_badges === 'object'
-                    ? Object.keys(w.earned_winter_badges).length
-                    : 0,
-              });
-            }
-          }
-        }
-
-        const mergeUserRecord = (rawUser: {
-          userId: string;
-          name?: string;
-          role?: string;
-          grade?: string;
-          section?: string;
-          house?: string;
-          avatar?: string;
-          xp?: number;
-          currentStreak?: number;
-          permBadgesCount?: number;
-          updatedAt?: string | number | null;
-        }) => {
-          const canonicalId = aliasToCanonicalId.get(rawUser.userId) || rawUser.userId;
-          if (!canonicalId || canonicalId.startsWith('__probe_')) return;
-          const existing = allUsersMap.get(canonicalId);
-          const wInfo = winterProfilesByUser.get(canonicalId) || winterProfilesByUser.get(rawUser.userId);
-          const permBadges = Math.max(rawUser.permBadgesCount || 0, existing?.permBadgesCount || 0);
-          allUsersMap.set(canonicalId, {
-            userId: canonicalId,
-            name: String(rawUser.name || existing?.name || 'Member'),
-            role: String(rawUser.role || existing?.role || 'student').toLowerCase(),
-            grade: String(rawUser.grade || existing?.grade || ''),
-            section: String(rawUser.section || existing?.section || ''),
-            house: String(rawUser.house || existing?.house || ''),
-            avatar: String(rawUser.avatar || existing?.avatar || ''),
-            xp: Math.max(Number(rawUser.xp || 0), existing?.xp || 0),
-            currentStreak: Math.max(Number(rawUser.currentStreak || 0), existing?.currentStreak || 0),
-            permBadgesCount: permBadges,
-            winterCookies: wInfo?.cookiesCount ?? existing?.winterCookies ?? 0,
-            equippedFrame: wInfo?.equippedFrame ?? existing?.equippedFrame ?? null,
-            badgesCount: permBadges + (wInfo?.badgesCount ?? 0),
-            updatedAt: rawUser.updatedAt || existing?.updatedAt || null,
-          });
-        };
-
-        // 1. Canonical identities from user_profiles (optional enrichment; if user_profiles fails, continue!)
-        if (profRes && profRes.ok) {
-          const profRows = await profRes.json().catch(() => []);
-          if (Array.isArray(profRows)) {
-            for (const p of profRows) {
-              const canonicalId = String(p?.uid || p?.id || '').trim();
-              if (!canonicalId) continue;
-              if (p?.id && p?.uid && String(p.id) !== String(p.uid)) {
-                aliasToCanonicalId.set(String(p.id), String(p.uid));
-              }
-              const badgeCount = Array.isArray(p.badges)
-                ? p.badges.length
-                : p.badges && typeof p.badges === 'object'
-                ? Object.keys(p.badges).length
-                : 0;
-              const upd =
-                typeof p.updated_at === 'number'
-                  ? p.updated_at > 0
-                    ? new Date(p.updated_at).toISOString()
-                    : null
-                  : p.updated_at || null;
-              mergeUserRecord({
-                userId: canonicalId,
-                name: p.name,
-                role: p.role,
-                grade: p.grade,
-                section: p.section,
-                house: p.house,
-                avatar: p.photo_url,
-                xp: Number(p.points || 0),
-                permBadgesCount: badgeCount,
-                updatedAt: upd,
-              });
-            }
-          }
-        }
-
-        // 2. Authoritative ledger rows & cohort identity fallback
         if (Array.isArray(ledRows)) {
           const seenIds = new Set(ledgerSnapshot.map((l) => l.id));
           for (const r of ledRows) {
             if (!r?.id || seenIds.has(r.id)) continue;
-            const canonUid = aliasToCanonicalId.get(String(r.user_id)) || String(r.user_id);
+            const uid = String(r.user_id || '').trim();
+            if (!uid || uid.startsWith('__probe_')) continue;
+            const role = String(r.user_role || 'student').toLowerCase();
+            const name = String(r.user_name || 'Member');
+
             ledgerSnapshot.push({
               id: String(r.id),
-              userId: canonUid,
-              userName: String(r.user_name || 'Member'),
-              userRole: String(r.user_role || 'student').toLowerCase(),
-              grade: String(r.grade || ''),
-              section: String(r.section || ''),
-              house: String(r.house || ''),
-              avatar: String(r.avatar || ''),
-              sourceType: (r.source_type || 'academic') as XpLedgerEntry['sourceType'],
-              actionKey: String(r.action_key || r.id),
+              userId: uid,
+              userName: name,
+              userRole: role,
+              grade: '',
+              section: '',
+              house: '',
+              avatar: '',
+              sourceType: 'academic',
+              actionKey: String(r.id),
               xpDelta: Number(r.xp_delta || 0),
               label: String(r.label || ''),
               createdAt: String(r.created_at),
             });
 
-            // Ensure user exists in allUsersMap even when user_profiles query failed or user is not yet registered there
-            mergeUserRecord({
-              userId: canonUid,
-              name: r.user_name,
-              role: r.user_role,
-              grade: r.grade,
-              section: r.section,
-              house: r.house,
-              avatar: r.avatar,
-              updatedAt: r.created_at,
-            });
+            if (!allUsersMap.has(uid)) {
+              allUsersMap.set(uid, {
+                userId: uid,
+                name,
+                role,
+                grade: '',
+                section: '',
+                house: '',
+                avatar: '',
+                xp: 0,
+                currentStreak: 0,
+                winterCookies: 0,
+                equippedFrame: null,
+                badgesCount: 0,
+                updatedAt: r.created_at || null,
+              });
+            }
           }
         }
       } else {

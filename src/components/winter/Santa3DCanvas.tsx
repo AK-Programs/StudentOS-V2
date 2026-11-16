@@ -712,6 +712,15 @@ export const Santa3DCanvas: React.FC<Santa3DCanvasProps> = ({
     syncLoopRef.current?.();
   }, [isOpen]);
 
+  // Ensure fallback stage still completes reveal callback cleanly when WebGL is unavailable
+  useEffect(() => {
+    if (!webglFailed || phase !== 'revealing') return;
+    const t = setTimeout(() => {
+      onRevealCompleteRef.current?.();
+    }, prefersReducedMotion ? 50 : 550);
+    return () => clearTimeout(t);
+  }, [webglFailed, phase, prefersReducedMotion]);
+
   if (webglFailed) {
     return (
       <div className="w-full h-full min-h-[240px] flex flex-col items-center justify-center gap-3 p-4 bg-gradient-to-b from-slate-900/70 to-sky-950/60 text-center">

@@ -173,7 +173,7 @@ export interface LeaderboardResponse {
 export async function fetchWinterStatus(user: Partial<UserProfile> | null | undefined): Promise<WinterStatusResponse | null> {
   if (!user) return null;
   const headers = await buildAuthHeadersForUser(user);
-  const res = await fetch('/api/winter/status', { headers });
+  const res = await fetch('/api/winter/status', { headers, cache: 'no-store' });
   if (!res.ok) return null;
   return res.json();
 }

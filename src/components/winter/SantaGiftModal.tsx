@@ -233,6 +233,12 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
   const isWindowOpenNow = Boolean(santaWindow?.isOpen) && remainingCloseMs > 0;
   const alreadyClaimed = Boolean(winterStatus?.santa?.alreadyClaimedTonight) && !pendingRecovery;
 
+  const savedTonightReward = useMemo(() => {
+    if (claimedReward) return claimedReward;
+    if (!alreadyClaimed || !santaWindow?.eventNightKey) return null;
+    return history.find((h) => h.eventNightKey === santaWindow.eventNightKey) || null;
+  }, [claimedReward, alreadyClaimed, santaWindow?.eventNightKey, history]);
+
   const handleRevealComplete = useCallback(async () => {
     if (!mountedRef.current) return;
     const payload = pendingRevealRef.current;
@@ -283,6 +289,11 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
         return;
       }
 
+      // Reload user's saved state immediately when claim persists, then reveal prize cleanly
+      if (!res.data.isPreview) {
+        void onRewardClaimed();
+      }
+
       // Server confirmed claim/preview -> trigger coordinated 3D Santa reach -> lid open -> magic glow -> prize reveal
       pendingRevealRef.current = {
         reward: res.data.reward || null,
@@ -298,8 +309,18 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
     }
   };
 
+  useEffect(() => {
+    if (scenePhase !== 'revealing') return;
+    const fallback = setTimeout(() => {
+      if (mountedRef.current && pendingRevealRef.current) {
+        void handleRevealComplete();
+      }
+    }, 2400);
+    return () => clearTimeout(fallback);
+  }, [scenePhase, handleRevealComplete]);
+
   const activeRarity = String(
-    pendingRevealRef.current?.reward?.rarity || claimedReward?.rarity || 'common'
+    pendingRevealRef.current?.reward?.rarity || savedTonightReward?.rarity || 'common'
   ).toLowerCase();
   const isLegendaryWin = activeRarity === 'legendary' || activeRarity === 'insane' || activeRarity === 'rare';
 
@@ -366,35 +387,35 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
             </div>
           )}
 
-          {claimedReward && (
+          {savedTonightReward && (
             <motion.div
               initial={prefersReduced ? { opacity: 0 } : { opacity: 0, scale: 0.92, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
               className={`rounded-2xl border p-4 text-left space-y-2 transition-all ${
-                RARITY_STYLES[String(claimedReward.rarity || 'common').toLowerCase()] || RARITY_STYLES.common
+                RARITY_STYLES[String(savedTonightReward.rarity || 'common').toLowerCase()] || RARITY_STYLES.common
               }`}
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-black uppercase tracking-wider flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5" />
-                  {claimedReward.rarity} Drop{' '}
+                  {savedTonightReward.rarity} Drop{' '}
                   {wasSimulatedPreview ? '· Preview Simulation' : wasRecovered ? '· Recovered' : '· Claimed'}
                 </span>
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
               </div>
-              <p className="text-sm font-bold text-white">{claimedReward.label}</p>
+              <p className="text-sm font-bold text-white">{savedTonightReward.label}</p>
               <div className="flex flex-wrap items-center gap-3 text-xs font-mono tabular-nums pt-1">
-                {claimedReward.xpBonus > 0 && <span>+{claimedReward.xpBonus} XP</span>}
-                {claimedReward.cookiesBonus > 0 && (
+                {savedTonightReward.xpBonus > 0 && <span>+{savedTonightReward.xpBonus} XP</span>}
+                {savedTonightReward.cookiesBonus > 0 && (
                   <span className="inline-flex items-center gap-1">
-                    <WinterCookieSvg size={14} /> +{claimedReward.cookiesBonus} Cookies
+                    <WinterCookieSvg size={14} /> +{savedTonightReward.cookiesBonus} Cookies
                   </span>
                 )}
-                {claimedReward.aiBonusQueries > 0 && (
-                  <span>+{claimedReward.aiBonusQueries} AI Queries Today</span>
+                {savedTonightReward.aiBonusQueries > 0 && (
+                  <span>+{savedTonightReward.aiBonusQueries} AI Queries Today</span>
                 )}
-                {claimedReward.streakShield && (
+                {savedTonightReward.streakShield && (
                   <span className="inline-flex items-center gap-1 text-sky-300">
                     <FrostShieldSvg size={14} /> +1 Streak Shield
                   </span>

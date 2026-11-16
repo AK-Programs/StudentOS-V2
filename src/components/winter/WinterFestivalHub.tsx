@@ -237,7 +237,7 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
   );
 
   const loadWinterData = useCallback(async () => {
-    setLoading(true);
+    setLoading((prev) => (status ? false : prev));
     const data = await fetchWinterStatus(currentUser);
     if (data) setStatus(data);
     setLoading(false);

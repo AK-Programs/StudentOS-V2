@@ -447,7 +447,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
           );
         }
         playWheelCelebrateCue(wheelAudioRef.current);
-        onSpinComplete();
+        void Promise.resolve(onSpinComplete()).catch(() => {});
         void fetchAIUsageStatus(currentUser?.uid || 'guest', currentUser?.role || 'student');
         window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
         window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));

@@ -514,6 +514,31 @@ async function main() {
       assert.equal(claimAcad.data.success, true);
     });
 
+    await runTest('Part 1.6: Missing winter_user_profiles columns return clear SQL migration error', async () => {
+      mockDb.setFailure({
+        table: 'winter_user_profiles',
+        method: 'POST',
+        status: 400,
+        message: "PGRST204: Could not find the 'claimed_task_ids' column of 'winter_user_profiles' in the schema cache",
+      });
+      try {
+        const spinErrRes = await apiJson(baseUrl, '/api/winter/spin', {
+          method: 'POST',
+          headers: {
+            ...stuHeaders,
+            'x-veylentra-uid': 'stu-col-err-1',
+            'x-veylentra-name': 'Column Tester',
+          },
+          body: JSON.stringify({ idempotencyKey: 'col_err_spin_1' }),
+        });
+        assert.equal(spinErrRes.status, 503);
+        assert.equal(spinErrRes.data.code, 'WINTER_SQL_MIGRATION_REQUIRED');
+        assert.match(String(spinErrRes.data.error), /SQL/i);
+      } finally {
+        mockDb.setFailure(null);
+      }
+    });
+
     // ------------------------------------------------------------------
     // PART 2: XP LEDGER & SEPARATED LEADERBOARD
     // ------------------------------------------------------------------
@@ -558,7 +583,20 @@ async function main() {
       assert.equal(dupRes.totalXp, beforePoints + 50);
     });
 
-    await runTest('Part 2.2: Leaderboard returns persistent real rankings with Winter cookies/frame, zero PII, zero N+1, and 503 on DB error', async () => {
+    await runTest('Part 2.2: Leaderboard queries ONLY gamification_xp_ledger (limit 50), skips user_profiles & global_data, and returns name, rank, XP', async () => {
+      // Ensure faculty member has a ledger row since leaderboard reads strictly from gamification_xp_ledger
+      if (!mockDb.tables.gamification_xp_ledger.some(r => r.user_id === 'fac-persist-1')) {
+        mockDb.tables.gamification_xp_ledger.push({
+          id: 'xp_fac_ledger_1',
+          user_id: 'fac-persist-1',
+          user_name: 'Dr. Kavita Iyer',
+          user_role: 'teacher',
+          xp_delta: 420,
+          label: 'Graded Assignments',
+          created_at: new Date().toISOString(),
+        });
+      }
+
       clearWinterMemoryCacheOnlyForTests();
       mockDb.resetQueryCounts();
 
@@ -568,9 +606,9 @@ async function main() {
       assert.ok(stuLb.data.rankings.length >= 1);
       const riya = stuLb.data.rankings.find((r: any) => r.userId === 'stu-persist-1');
       assert.ok(riya, 'Student Riya Sharma must appear on leaderboard');
-      assert.ok(riya.xp >= 1559, `Expected >= 1559 XP, got ${riya.xp}`);
-      assert.equal(riya.equippedFrame, 'frosted_aurora');
-      assert.ok(riya.winterCookies > 0);
+      assert.equal(riya.name, 'Riya Sharma');
+      assert.equal(riya.rank, 1);
+      assert.ok(riya.xp > 0, `Expected > 0 XP, got ${riya.xp}`);
       assert.equal((riya as any).raw_data, undefined);
       assert.equal((riya as any).email, undefined);
       assert.equal((riya as any).phone, undefined);
@@ -584,18 +622,21 @@ async function main() {
       // Check Faculty cohort isolation
       const facLb = await apiJson(baseUrl, '/api/leaderboard?type=faculty&period=all_time', { headers: stuHeaders });
       assert.equal(facLb.status, 200);
-      assert.ok(facLb.data.rankings.some((r: any) => r.userId === 'fac-persist-1'));
+      assert.ok(facLb.data.rankings.some((r: any) => r.userId === 'fac-persist-1' && r.name === 'Dr. Kavita Iyer' && r.rank === 1 && r.xp >= 420));
       assert.ok(!facLb.data.rankings.some((r: any) => r.role === 'student'));
 
-      // Verify zero N+1 winter_user_profiles queries (all 3 leaderboard calls used bulk lookup)
+      // Verify leaderboard queried ONLY gamification_xp_ledger (never user_profiles, winter_user_profiles, or global_data)
       const qCounts = mockDb.getQueryCounts();
-      assert.ok((qCounts['GET:winter_user_profiles'] || 0) <= 3, 'Leaderboard must batch winter_user_profiles queries');
+      assert.equal(qCounts['GET:gamification_xp_ledger'] || 0, 3);
+      assert.equal(qCounts['GET:winter_user_profiles'] || 0, 0, 'Leaderboard must not query winter_user_profiles');
+      assert.equal(qCounts['GET:user_profiles'] || 0, 0, 'Leaderboard must not query user_profiles');
+      assert.equal(qCounts['GET:global_data'] || 0, 0, 'Leaderboard must not query global_data');
 
-      // If user_profiles fails, continue gracefully with status 200
+      // Even if user_profiles fails completely, leaderboard still returns 200 without waiting
       mockDb.setFailure({ table: 'user_profiles', method: 'GET', status: 500, message: 'DB error' });
       const profDownLb = await apiJson(baseUrl, '/api/leaderboard?type=student&period=all_time', { headers: stuHeaders });
       mockDb.setFailure(null);
-      assert.equal(profDownLb.status, 200, 'Leaderboard must continue when user_profiles fails');
+      assert.equal(profDownLb.status, 200);
       assert.equal(profDownLb.data.success, true);
       assert.ok(profDownLb.data.rankings.length >= 1);
 
@@ -608,11 +649,7 @@ async function main() {
 
       // Verify empty ledger returns 200 with rankings: [] and does not fail with an error
       const savedLedger = [...mockDb.tables.gamification_xp_ledger];
-      const savedProfiles = [...mockDb.tables.user_profiles];
-      const savedWinterProfiles = [...mockDb.tables.winter_user_profiles];
       mockDb.tables.gamification_xp_ledger = [];
-      mockDb.tables.user_profiles = [];
-      mockDb.tables.winter_user_profiles = [];
       clearWinterMemoryCacheOnlyForTests();
       try {
         const emptyLedgerRes = await apiJson(baseUrl, '/api/leaderboard?type=student&period=weekly', { headers: stuHeaders });
@@ -621,8 +658,6 @@ async function main() {
         assert.deepEqual(emptyLedgerRes.data.rankings, []);
       } finally {
         mockDb.tables.gamification_xp_ledger = savedLedger;
-        mockDb.tables.user_profiles = savedProfiles;
-        mockDb.tables.winter_user_profiles = savedWinterProfiles;
       }
 
       // Fail loudly with 503 only when core gamification_xp_ledger table errors completely
