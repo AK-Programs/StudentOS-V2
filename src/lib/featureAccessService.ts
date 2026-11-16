@@ -109,20 +109,39 @@ export async function buildAuthHeadersForUser(user?: Partial<UserProfile> | null
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  try {
-    let { data: sessionData } = await supabase.auth.getSession();
-    let token = sessionData?.session?.access_token;
-    const expiresAt = sessionData?.session?.expires_at;
-    const isExpiredOrNear = expiresAt ? expiresAt * 1000 < Date.now() + 60000 : false;
+  const withTimeout = <T,>(promise: Promise<T>, ms: number, fallback: T): Promise<T> =>
+    Promise.race([
+      promise,
+      new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+    ]);
 
-    if (!token || isExpiredOrNear) {
-      const { data: refreshData, error: refreshErr } = await supabase.auth.refreshSession();
-      if (!refreshErr && refreshData?.session?.access_token) {
-        token = refreshData.session.access_token;
+  try {
+    const sessionRes = await withTimeout(
+      supabase.auth.getSession().catch(() => ({ data: { session: null } } as any)),
+      2000,
+      { data: { session: null } } as any
+    );
+    const session = sessionRes?.data?.session || null;
+    let token: string | undefined = session?.access_token;
+    const expiresAt = session?.expires_at;
+    const nowMs = Date.now();
+    const isExpired = expiresAt ? expiresAt * 1000 <= nowMs : false;
+    const isNearExpiry = expiresAt ? expiresAt * 1000 < nowMs + 60000 : false;
+
+    if (session && isNearExpiry) {
+      const refreshRes = await withTimeout(
+        supabase.auth.refreshSession().catch(() => ({ data: { session: null }, error: true } as any)),
+        2000,
+        { data: { session: null }, error: true } as any
+      );
+      if (!refreshRes?.error && refreshRes?.data?.session?.access_token) {
+        token = refreshRes.data.session.access_token;
+      } else if (isExpired) {
+        token = undefined;
       }
     }
 
-    if (token) {
+    if (token && (!isExpired || token !== session?.access_token)) {
       headers['Authorization'] = `Bearer ${token}`;
     }
   } catch (_) {}

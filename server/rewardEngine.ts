@@ -26,6 +26,7 @@ export interface SantaRewardTier {
   streakShield: boolean;
   badgeId?: string;
   frameId?: string;
+  borderId?: string;
   description: string;
 }
 
@@ -51,7 +52,8 @@ export const SANTA_REWARD_TIERS: SantaRewardTier[] = [
     aiBonusQueries: 2,
     streakShield: true,
     frameId: 'frosted_aurora',
-    description: '+60 XP, 6 Winter Cookies, Streak Shield & Frosted Aurora Frame',
+    borderId: 'winter_glow_border',
+    description: '+60 XP, 6 Winter Cookies, Streak Shield, Frosted Aurora Frame & Winter Glow Border',
   },
   {
     rarity: 'legendary',
@@ -64,7 +66,8 @@ export const SANTA_REWARD_TIERS: SantaRewardTier[] = [
     streakShield: true,
     badgeId: 'sleigh_keeper',
     frameId: 'starlight_gold',
-    description: '+120 XP, 12 Winter Cookies, +3 AI Queries, Streak Shield & Sleigh Keeper Badge',
+    borderId: 'golden_festival_border',
+    description: '+120 XP, 12 Winter Cookies, +3 AI Queries, Streak Shield, Sleigh Keeper Badge & Golden Festival Border',
   },
   {
     rarity: 'insane',
@@ -77,7 +80,8 @@ export const SANTA_REWARD_TIERS: SantaRewardTier[] = [
     streakShield: true,
     badgeId: 'aurora_miracle',
     frameId: 'aurora_crown',
-    description: '+250 XP, 20 Winter Cookies, +5 Daily AI Queries, Streak Shield & Secret Aurora Miracle Badge!',
+    borderId: 'golden_festival_border',
+    description: '+250 XP, 20 Winter Cookies, +5 Daily AI Queries, Streak Shield, Aurora Miracle Badge & Golden Festival Border!',
   },
 ];
 
@@ -96,6 +100,7 @@ export interface SpinWheelSegment {
   streakShield: boolean;
   badgeId?: string;
   frameId?: string;
+  borderId?: string;
   rarity: 'standard' | 'rare' | 'jackpot';
 }
 
@@ -203,6 +208,7 @@ export const SPIN_WHEEL_SEGMENTS: SpinWheelSegment[] = [
     cookiesBonus: 6,
     aiBonusQueries: 1,
     streakShield: false,
+    borderId: 'candy_cane_border',
     rarity: 'rare',
   },
   {
@@ -220,6 +226,7 @@ export const SPIN_WHEEL_SEGMENTS: SpinWheelSegment[] = [
     streakShield: true,
     badgeId: 'winter_wheel_ace',
     frameId: 'candy_ribbon',
+    borderId: 'golden_festival_border',
     rarity: 'jackpot',
   },
 ];
@@ -235,6 +242,7 @@ export interface WinterTaskDefinition {
   xpReward: number;
   cookiesReward: number;
   badgeId?: string;
+  borderId?: string;
   verificationMode: 'hub_visit' | 'academic_action' | 'winter_quiz' | 'spin_or_santa' | 'study_check';
   actionTab?: string;
   actionLabel?: string;
@@ -248,6 +256,7 @@ export const WINTER_FESTIVAL_TASKS: WinterTaskDefinition[] = [
     xpReward: 20,
     cookiesReward: 2,
     badgeId: 'snowflake_explorer',
+    borderId: 'frosted_ice_border',
     verificationMode: 'hub_visit',
     actionLabel: 'Claim Arrival Treat',
   },
@@ -258,6 +267,7 @@ export const WINTER_FESTIVAL_TASKS: WinterTaskDefinition[] = [
     xpReward: 40,
     cookiesReward: 3,
     badgeId: 'winter_scholar',
+    borderId: 'snowflake_border',
     verificationMode: 'winter_quiz',
     actionLabel: 'Take Quick Quiz',
   },
@@ -268,6 +278,7 @@ export const WINTER_FESTIVAL_TASKS: WinterTaskDefinition[] = [
     xpReward: 35,
     cookiesReward: 3,
     badgeId: 'frosty_focus',
+    borderId: 'winter_glow_border',
     verificationMode: 'academic_action',
     actionTab: 'study_hub',
     actionLabel: 'Open Study Hub',
@@ -279,6 +290,7 @@ export const WINTER_FESTIVAL_TASKS: WinterTaskDefinition[] = [
     xpReward: 45,
     cookiesReward: 4,
     badgeId: 'cookie_collector',
+    borderId: 'candy_cane_border',
     verificationMode: 'study_check',
     actionLabel: 'Verify Cookie Jar',
   },
@@ -376,6 +388,8 @@ export interface WinterProfileFrame {
   name: string;
   borderClass: string;
   description: string;
+  rarity: 'rare' | 'legendary' | 'secret';
+  unlockRequirement: string;
 }
 
 export const WINTER_PROFILE_FRAMES: WinterProfileFrame[] = [
@@ -384,26 +398,117 @@ export const WINTER_PROFILE_FRAMES: WinterProfileFrame[] = [
     name: 'Frosted Aurora Ring',
     borderClass: 'ring-2 ring-sky-400 shadow-[0_0_16px_rgba(56,189,248,0.45)]',
     description: 'Crisp ice-blue rim unlocked from Rare Santa chests',
+    rarity: 'rare',
+    unlockRequirement: 'Unwrap a Rare Frost Lantern Pack from Nightly Santa Gift (25%)',
   },
   {
     id: 'candy_ribbon',
     name: 'Candy Ribbon Frame',
     borderClass: 'ring-2 ring-rose-400 shadow-[0_0_16px_rgba(244,63,94,0.45)]',
     description: 'Peppermint border unlocked from Spin Wheel Jackpot',
+    rarity: 'legendary',
+    unlockRequirement: 'Land on the Frost Jackpot slice in the Winter Spin Wheel (3%)',
   },
   {
     id: 'starlight_gold',
     name: 'Starlight Sleigh Frame',
     borderClass: 'ring-2 ring-amber-400 shadow-[0_0_18px_rgba(251,191,36,0.5)]',
     description: 'Golden sleigh trim from Legendary Santa chests',
+    rarity: 'legendary',
+    unlockRequirement: 'Unwrap a Legendary Starlight Sleigh Crate from Nightly Santa Gift (11%)',
   },
   {
     id: 'aurora_crown',
     name: 'Aurora Crown Frame',
     borderClass: 'ring-2 ring-cyan-300 shadow-[0_0_20px_rgba(103,232,249,0.6)]',
     description: 'Ultra-rare frost crown from Insane Santa vaults',
+    rarity: 'secret',
+    unlockRequirement: 'Unwrap the 4% Aurora Crown Vault from Nightly Santa Gift',
   },
 ];
+
+export interface WinterProfileBorder {
+  id: string;
+  name: string;
+  description: string;
+  unlockRequirement: string;
+  rarity: 'seasonal' | 'rare' | 'legendary';
+  accentColor: string;
+}
+
+export const WINTER_PROFILE_BORDERS: WinterProfileBorder[] = [
+  {
+    id: 'frosted_ice_border',
+    name: 'Frosted Ice Border',
+    description: 'Subtle crystalline frost enclosure with cool glacial rim glow.',
+    unlockRequirement: 'Claim the Step Into the Winter Festival arrival task',
+    rarity: 'seasonal',
+    accentColor: '#38bdf8',
+  },
+  {
+    id: 'snowflake_border',
+    name: 'Snowflake Border',
+    description: 'Precision six-point snowflake crest perimeter for winter scholars.',
+    unlockRequirement: 'Pass & claim the 3-question Winter Knowledge Check task',
+    rarity: 'seasonal',
+    accentColor: '#7dd3fc',
+  },
+  {
+    id: 'winter_glow_border',
+    name: 'Winter Glow Border',
+    description: 'Luminous boreal mist halo around avatars and leaderboard rows.',
+    unlockRequirement: 'Claim One Verified Study Action OR unwrap a Rare Santa Chest',
+    rarity: 'rare',
+    accentColor: '#22d3ee',
+  },
+  {
+    id: 'candy_cane_border',
+    name: 'Candy Cane Border',
+    description: 'Festive peppermint stripe trim stackable with any profile frame.',
+    unlockRequirement: 'Claim Bake 5 Winter Cookies OR land 6 Cocoa Cookies on the Spin Wheel',
+    rarity: 'rare',
+    accentColor: '#fb7185',
+  },
+  {
+    id: 'golden_festival_border',
+    name: 'Golden Festival Border',
+    description: 'Distinguished gilded winter solstice border with warm starlight sheen.',
+    unlockRequirement: 'Hit Spin Wheel Jackpot, Legendary/Insane Santa Chest, or North Star Secret (15 Cookies + 3 Tasks)',
+    rarity: 'legendary',
+    accentColor: '#fbbf24',
+  },
+];
+
+export function getWinterBadgeById(id?: string | null): WinterBadgeDefinition | undefined {
+  if (!id) return undefined;
+  return WINTER_FESTIVAL_BADGES.find(b => b.id === id);
+}
+
+export function getWinterFrameById(id?: string | null): WinterProfileFrame | undefined {
+  if (!id) return undefined;
+  return WINTER_PROFILE_FRAMES.find(f => f.id === id);
+}
+
+export function getWinterBorderById(id?: string | null): WinterProfileBorder | undefined {
+  if (!id) return undefined;
+  return WINTER_PROFILE_BORDERS.find(b => b.id === id);
+}
+
+export function isValidWinterFrameId(id?: string | null): boolean {
+  return Boolean(getWinterFrameById(id));
+}
+
+export function isValidWinterBorderId(id?: string | null): boolean {
+  return Boolean(getWinterBorderById(id));
+}
+
+export function getAllWinterCollectibleIds() {
+  return {
+    badgeIds: WINTER_FESTIVAL_BADGES.map(b => b.id),
+    frameIds: WINTER_PROFILE_FRAMES.map(f => f.id),
+    borderIds: WINTER_PROFILE_BORDERS.map(b => b.id),
+  };
+}
 
 export interface WinterQuizQuestion {
   id: string;

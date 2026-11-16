@@ -171,6 +171,8 @@ import { FloatingSpinWheelButton } from './components/winter/FloatingSpinWheelBu
 import { XpLeaderboardPanel } from './components/gamification/XpLeaderboardPanel';
 import { SnowflakeVector } from './components/winter/WinterArtwork';
 import { scheduleSantaModelIdlePreload } from './lib/santaModelCache';
+import { WinterCosmeticAvatar } from './components/winter/WinterCosmeticAvatar';
+import { fetchPublicWinterCosmetics } from './lib/winterFestivalService';
 
 // Stub Integrations
 import {
@@ -556,7 +558,7 @@ export default function App() {
   const winterSantaAccess = useFeatureAccess('winter_santa_gifts', currentUser);
   const winterSpinAccess = useFeatureAccess('winter_spin_wheel', currentUser);
 
-  const isFacultyRoleForLb = ['teacher', 'coordinator', 'hod'].includes((effectiveRole || '').toLowerCase());
+  const isFacultyRoleForLb = ['teacher', 'coordinator', 'hod', 'admin'].includes((effectiveRole || '').toLowerCase());
   const canViewLeaderboardTab =
     isSuperAdminRole(currentUser?.role) || isSuperAdminRole(effectiveRole)
       ? (studentLbAccess.accessible || facultyLbAccess.accessible)
@@ -567,6 +569,36 @@ export default function App() {
     winterBadgesAccess.accessible ||
     winterSantaAccess.accessible ||
     winterSpinAccess.accessible;
+
+  const [sidebarWinterCosmetics, setSidebarWinterCosmetics] = useState<{ equippedFrame: string | null; equippedBorder: string | null }>({
+    equippedFrame: null,
+    equippedBorder: null,
+  });
+
+  useEffect(() => {
+    const uid = currentUser?.uid;
+    if (!uid) {
+      setSidebarWinterCosmetics({ equippedFrame: null, equippedBorder: null });
+      return;
+    }
+    let active = true;
+    const syncCosmetics = async () => {
+      const cos = await fetchPublicWinterCosmetics(uid, currentUser);
+      if (active && cos) {
+        setSidebarWinterCosmetics({
+          equippedFrame: cos.equippedFrame || null,
+          equippedBorder: cos.equippedBorder || null,
+        });
+      }
+    };
+    void syncCosmetics();
+    const onWinterUpdate = () => { void syncCosmetics(); };
+    window.addEventListener('veylentra-winter-updated', onWinterUpdate);
+    return () => {
+      active = false;
+      window.removeEventListener('veylentra-winter-updated', onWinterUpdate);
+    };
+  }, [currentUser?.uid]);
 
   useEffect(() => {
     if (currentUser && !dataLoading && winterSantaAccess.accessible) {
@@ -8991,22 +9023,14 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                   className="w-full p-2.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/15 flex items-center gap-3 text-left transition-colors cursor-pointer group"
                   title="Click to switch accounts or manage profile"
                 >
-                  {currentUser.photoURL ? (
-                    <img
-                      src={currentUser.photoURL}
-                      alt="Avatar"
-                      className="h-9 w-9 rounded-xl object-cover border border-white/10 shrink-0"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <div
-                      className={`h-9 w-9 rounded-xl flex items-center justify-center font-bold text-white shrink-0 ${
-                        currentUser.house ? getHouseBadgeColor(currentUser.house) : 'bg-slate-700'
-                      }`}
-                    >
-                      {currentUser.name ? currentUser.name[0] : '?'}
-                    </div>
-                  )}
+                  <WinterCosmeticAvatar
+                    name={currentUser.name || 'Veylentra User'}
+                    avatarUrl={currentUser.photoURL}
+                    equippedBorder={sidebarWinterCosmetics.equippedBorder}
+                    equippedFrame={sidebarWinterCosmetics.equippedFrame}
+                    size="sm"
+                    fallbackBgClass={currentUser.house ? `${getHouseBadgeColor(currentUser.house)} text-white` : 'bg-slate-700 text-white'}
+                  />
                   <div className="flex flex-col min-w-0 flex-1">
                     <span className="text-xs font-bold text-white truncate leading-tight group-hover:text-indigo-200 transition-colors">
                       {currentUser.name || 'Veylentra User'}
@@ -9024,22 +9048,14 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                   className="w-full flex items-center justify-center p-1.5 rounded-xl hover:bg-white/5 transition-colors cursor-pointer"
                   title={`${currentUser.name || 'User'} — Click to switch accounts`}
                 >
-                  {currentUser.photoURL ? (
-                    <img
-                      src={currentUser.photoURL}
-                      alt="Avatar"
-                      className="h-8 w-8 rounded-xl object-cover border border-white/10"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <div
-                      className={`h-8 w-8 rounded-xl flex items-center justify-center font-bold text-xs text-white ${
-                        currentUser.house ? getHouseBadgeColor(currentUser.house) : 'bg-slate-700'
-                      }`}
-                    >
-                      {currentUser.name ? currentUser.name[0] : '?'}
-                    </div>
-                  )}
+                  <WinterCosmeticAvatar
+                    name={currentUser.name || 'Veylentra User'}
+                    avatarUrl={currentUser.photoURL}
+                    equippedBorder={sidebarWinterCosmetics.equippedBorder}
+                    equippedFrame={sidebarWinterCosmetics.equippedFrame}
+                    size="xs"
+                    fallbackBgClass={currentUser.house ? `${getHouseBadgeColor(currentUser.house)} text-white` : 'bg-slate-700 text-white'}
+                  />
                 </button>
               )}
 

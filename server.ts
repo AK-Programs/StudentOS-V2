@@ -5806,17 +5806,21 @@ async function resolveFeatureAndWinterActor(req: express.Request): Promise<{
   grade?: string;
   section?: string;
   isVerifiedJwt: boolean;
+  authToken?: string;
 } | null> {
-  const hasBearer = Boolean(req.headers.authorization || req.headers['x-supabase-auth']);
+  const rawAuthHeader = String(req.headers.authorization || (req.headers['x-supabase-auth'] as string) || '');
+  const bearerToken = rawAuthHeader.replace(/^Bearer\s+/i, '').trim();
+  const hasBearer = Boolean(bearerToken);
   let verified = null;
+  let verifiedJwtToken: string | undefined = undefined;
 
   if (hasBearer) {
     verified = await getVerifiedUserFromRequest(req);
-    if (!verified) {
+    if (verified) {
+      verifiedJwtToken = bearerToken;
+    } else {
       try {
-        const rawAuth = req.headers.authorization || (req.headers['x-supabase-auth'] as string) || '';
-        const token = rawAuth.replace(/^Bearer\s+/i, '').trim();
-        const parts = token.split('.');
+        const parts = bearerToken.split('.');
         if (parts.length === 3) {
           const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf-8'));
           const tokenEmail = (payload.email || payload.user_metadata?.email || '').toLowerCase().trim();
@@ -5876,6 +5880,7 @@ async function resolveFeatureAndWinterActor(req: express.Request): Promise<{
         grade,
         section,
         isVerifiedJwt: true,
+        authToken: verifiedJwtToken,
       };
     }
   }

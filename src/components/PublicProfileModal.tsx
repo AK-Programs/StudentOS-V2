@@ -1,8 +1,10 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, MessageSquare, Phone, Video, ShieldCheck, Sparkles, BookOpen, Target, Award, ExternalLink, Calendar } from 'lucide-react';
 import { UserProfile, ProfileFrameStyle } from '../types';
 import { AVATAR_FRAMES, BANNER_PRESETS, ACCENT_COLORS } from './ProfileCustomizer';
 import { getVerificationStatus } from '../lib/verification';
+import { fetchPublicWinterCosmetics } from '../lib/winterFestivalService';
+import { WinterCosmeticAvatar } from './winter/WinterCosmeticAvatar';
 
 interface PublicProfileModalProps {
   user: UserProfile | any;
@@ -19,6 +21,11 @@ export const PublicProfileModal: React.FC<PublicProfileModalProps> = ({
   onStartDirectMessage,
   onStartCall
 }) => {
+  const [winterCosmetics, setWinterCosmetics] = useState<{ equippedFrame: string | null; equippedBorder: string | null }>({
+    equippedFrame: null,
+    equippedBorder: null,
+  });
+
   // Handle ESC key to close
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -27,6 +34,23 @@ export const PublicProfileModal: React.FC<PublicProfileModalProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
+
+  const targetUserId = user?.uid || user?.id || user?.email || '';
+  useEffect(() => {
+    if (!targetUserId) return;
+    let active = true;
+    fetchPublicWinterCosmetics(String(targetUserId)).then((cos) => {
+      if (active && cos) {
+        setWinterCosmetics({
+          equippedFrame: cos.equippedFrame || null,
+          equippedBorder: cos.equippedBorder || null,
+        });
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [targetUserId]);
 
   if (!user) return null;
 
@@ -101,19 +125,15 @@ export const PublicProfileModal: React.FC<PublicProfileModalProps> = ({
           {/* Avatar with customized frame (Offset to overlap banner) */}
           <div className="-mt-12 flex items-end justify-between gap-4">
             <div className="relative shrink-0">
-              <div className={`w-24 h-24 rounded-full flex items-center justify-center ${activeFrame.className} bg-slate-900`}>
-                {photoURL ? (
-                  <img 
-                    src={photoURL} 
-                    alt={user.name || 'User'} 
-                    className="w-full h-full rounded-full object-cover bg-slate-950"
-                  />
-                ) : (
-                  <div className="w-full h-full rounded-full bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-white text-3xl font-black font-display">
-                    {(user.name || 'U').charAt(0).toUpperCase()}
-                  </div>
-                )}
-              </div>
+              <WinterCosmeticAvatar
+                name={user.name || 'User'}
+                avatarUrl={photoURL}
+                equippedBorder={winterCosmetics.equippedBorder || user.equippedWinterBorder || rawData.equippedWinterBorder || null}
+                equippedFrame={winterCosmetics.equippedFrame || user.equippedWinterFrame || rawData.equippedWinterFrame || null}
+                permanentFrameClass={activeFrame.className}
+                size="xl"
+                fallbackBgClass="bg-gradient-to-tr from-indigo-600 to-purple-600 text-white font-black font-display"
+              />
 
               {/* Verified badge tick overlay on avatar */}
               {isVerified && (

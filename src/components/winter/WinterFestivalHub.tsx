@@ -14,6 +14,7 @@ import { UserProfile } from '../../types';
 import { useFeatureAccess } from '../../lib/featureAccessService';
 import {
   claimWinterTask,
+  equipWinterBorder,
   equipWinterFrame,
   fetchWinterStatus,
   formatCountdownMs,
@@ -30,6 +31,8 @@ import {
 import { XpLeaderboardPanel } from '../gamification/XpLeaderboardPanel';
 import { SantaGiftModal } from './SantaGiftModal';
 import { SpinWheelModal } from './SpinWheelModal';
+import { WinterCosmeticAvatar } from './WinterCosmeticAvatar';
+import { getWinterBorderVisual, getWinterFrameVisual } from '../../lib/winterCosmetics';
 import {
   CandyCaneAccent,
   FrostShieldSvg,
@@ -63,6 +66,30 @@ function getTaskProgress(task: WinterTaskItem, status: WinterStatusResponse): { 
     }
     default:
       return { current: task.claimed ? 1 : 0, target: 1, eligible: true };
+  }
+}
+
+function getWinterBadgeProgress(badgeId: string, status: WinterStatusResponse, unlocked: boolean): { label: string } | null {
+  const ws = status.winterState;
+  const cookies = ws.cookiesCount || 0;
+  const tasksDone = (ws.claimedTaskIds || []).length;
+  switch (badgeId) {
+    case 'snowflake_explorer':
+      return { label: unlocked ? '1 / 1 arrival task' : '0 / 1 arrival task' };
+    case 'winter_scholar':
+      return { label: ws.quizCompleted ? '1 / 1 quiz passed' : '0 / 1 quiz passed' };
+    case 'frosty_focus':
+      return { label: unlocked ? '1 / 1 study task' : '0 / 1 study task' };
+    case 'cookie_collector':
+      return { label: `${Math.min(5, cookies)} / 5 Cookies` };
+    case 'winter_champion': {
+      const done = (ws.rewardHistory || []).some(r => r.featureType === 'spin_wheel' || r.featureType === 'santa_gift');
+      return { label: done || unlocked ? '1 / 1 spin or gift' : '0 / 1 spin or gift' };
+    }
+    case 'north_star_secret':
+      return { label: unlocked ? 'Secret Unlocked' : `${Math.min(15, cookies)}/15 Cookies · ${Math.min(3, tasksDone)}/3 Tasks` };
+    default:
+      return null;
   }
 }
 
@@ -233,6 +260,7 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
   } | null>(null);
   const [submittingQuiz, setSubmittingQuiz] = useState<boolean>(false);
   const [equippingFrame, setEquippingFrame] = useState<string | null>(null);
+  const [equippingBorder, setEquippingBorder] = useState<string | null>(null);
 
   const isFacultyRole = ['teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes(
     String(currentUser.role || '').toLowerCase()
@@ -312,6 +340,19 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
       return;
     }
     showNotification?.(frameId ? 'Winter profile frame equipped!' : 'Profile frame unequipped.', 'success');
+    await loadWinterData();
+    window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
+  };
+
+  const handleEquipBorder = async (borderId: string | null) => {
+    setEquippingBorder(borderId || 'none');
+    const res = await equipWinterBorder(currentUser, borderId);
+    setEquippingBorder(null);
+    if (!res.ok || !res.data?.success) {
+      showNotification?.(res.data?.error || 'Unable to equip winter border.', 'error');
+      return;
+    }
+    showNotification?.(borderId ? 'Winter avatar border equipped!' : 'Winter avatar border unequipped.', 'success');
     await loadWinterData();
     window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
   };
@@ -419,9 +460,10 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
                   {status.badges.length}
                 </div>
                 <p className="text-[10px] text-slate-400 mt-0.5 font-mono">
+                  {(status.winterState.unlockedFrames || []).length} Frames ·{' '}
+                  {(status.winterState.unlockedBorders || []).length} Borders ·{' '}
                   {(status.winterState.rewardHistory || []).filter((r) => r.featureType === 'santa_gift').length} Santa ·{' '}
-                  {(status.winterState.rewardHistory || []).filter((r) => r.featureType === 'spin_wheel').length} Spins ·{' '}
-                  {(status.winterState.unlockedFrames || []).length} Frames
+                  {(status.winterState.rewardHistory || []).filter((r) => r.featureType === 'spin_wheel').length} Spins
                 </p>
               </div>
             </div>
@@ -530,68 +572,257 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
       )}
 
       {badgesAccess.accessible && status && (
-        <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 p-5 space-y-5">
-          <div>
-            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
-              Winter Collectible Badges
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Stored in a dedicated seasonal collection — separate from your permanent academic badges.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {status.badges.map((badge) => {
-              const unlocked = Boolean(badge.unlockedAt);
-              return (
-                <div
-                  key={badge.id}
-                  className={`rounded-xl border p-3.5 space-y-1.5 transition-colors ${
-                    unlocked
-                      ? 'border-sky-500/40 bg-sky-500/10'
-                      : 'border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/40 opacity-80'
-                  }`}
+        <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 p-5 space-y-6">
+          {/* Active Stackable Cosmetic Loadout Preview */}
+          <div className="rounded-xl border border-sky-500/30 bg-slate-50 dark:bg-slate-950/70 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5 min-w-0">
+              <WinterCosmeticAvatar
+                name={currentUser.name}
+                avatarUrl={currentUser.photoURL || currentUser.avatar}
+                equippedBorder={status.winterState.equippedBorder}
+                equippedFrame={status.winterState.equippedFrame}
+                size="lg"
+              />
+              <div className="min-w-0 space-y-0.5">
+                <p className="text-xs font-bold uppercase tracking-wider text-sky-600 dark:text-sky-400">
+                  Active Cosmetic Loadout (Stackable)
+                </p>
+                <p className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                  Border:{' '}
+                  {getWinterBorderVisual(status.winterState.equippedBorder)?.name || 'None Equipped'}{' '}
+                  · Frame:{' '}
+                  {getWinterFrameVisual(status.winterState.equippedFrame)?.name || 'None Equipped'}
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Winter Borders enclose your avatar and stack cleanly alongside seasonal or permanent Profile Frames.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              {status.winterState.equippedBorder && (
+                <TactileButton
+                  variant="outline"
+                  size="sm"
+                  disabled={equippingBorder === 'none'}
+                  onClick={() => handleEquipBorder(null)}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                      {unlocked ? (
-                        <Award className="w-4 h-4 text-sky-500 shrink-0" />
-                      ) : (
-                        <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      )}
-                      {badge.name}
-                    </span>
-                    <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 capitalize">
-                      {badge.rarity}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-600 dark:text-slate-400">{badge.description}</p>
-                  <p className="text-[11px] text-slate-500">
-                    Requirement: {badge.unlockRequirement}
-                  </p>
-                </div>
-              );
-            })}
+                  Unequip Border
+                </TactileButton>
+              )}
+              {status.winterState.equippedFrame && (
+                <TactileButton
+                  variant="outline"
+                  size="sm"
+                  disabled={equippingFrame === 'none'}
+                  onClick={() => handleEquipFrame(null)}
+                >
+                  Unequip Frame
+                </TactileButton>
+              )}
+            </div>
           </div>
 
+          {/* Winter Badges (Owned vs Locked separation + timestamps + progress) */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                  Winter Collectible Badges
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Stored in a dedicated seasonal collection — separate from your permanent academic badges.
+                </p>
+              </div>
+              <span className="text-xs font-mono tabular-nums text-sky-600 dark:text-sky-400 font-semibold">
+                {status.badges.filter((b) => Boolean(b.unlockedAt)).length} Earned ·{' '}
+                {status.badges.filter((b) => !b.unlockedAt).length} Locked
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {status.badges.map((badge) => {
+                const unlocked = Boolean(badge.unlockedAt);
+                const prog = getWinterBadgeProgress(badge.id, status, unlocked);
+                const earnedDate =
+                  badge.unlockedAt && !Number.isNaN(Date.parse(badge.unlockedAt))
+                    ? new Date(badge.unlockedAt).toLocaleDateString()
+                    : null;
+                return (
+                  <div
+                    key={badge.id}
+                    className={`rounded-xl border p-3.5 space-y-1.5 transition-colors ${
+                      unlocked
+                        ? 'border-sky-500/40 bg-sky-500/10'
+                        : 'border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/40 opacity-85'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                        {unlocked ? (
+                          <Award className="w-4 h-4 text-sky-500 shrink-0" />
+                        ) : (
+                          <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        )}
+                        {badge.name}
+                      </span>
+                      <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 capitalize">
+                        {badge.rarity}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-600 dark:text-slate-400">{badge.description}</p>
+                    <div className="pt-1 flex items-center justify-between gap-2 text-[11px]">
+                      <span className="text-slate-500 truncate">
+                        {unlocked ? `Earned${earnedDate ? ` · ${earnedDate}` : ''}` : badge.unlockRequirement}
+                      </span>
+                      {prog && (
+                        <span
+                          className={`font-mono tabular-nums shrink-0 ${
+                            unlocked ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'text-slate-500'
+                          }`}
+                        >
+                          {prog.label}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Winter Borders (5 Collectible Stackable Avatar Borders) */}
           <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3">
-            <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              Seasonal Leaderboard Avatar Frames
-            </h4>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div>
+                <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  Winter Avatar Borders (Stackable Cosmetics)
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Outer festive borders appear on leaderboards, profile headers, and cards alongside your Profile Frame.
+                </p>
+              </div>
+              <span className="text-xs font-mono tabular-nums text-sky-600 dark:text-sky-400 font-semibold">
+                {(status.winterState.unlockedBorders || []).length} / {(status.borders || []).length} Unlocked
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {(status.borders || []).map((border) => {
+                const isUnlocked = (status.winterState.unlockedBorders || []).includes(border.id);
+                const isEquipped = status.winterState.equippedBorder === border.id;
+                return (
+                  <div
+                    key={border.id}
+                    className={`rounded-xl border p-3.5 flex flex-col justify-between gap-3 transition-colors ${
+                      isUnlocked
+                        ? 'border-sky-500/40 bg-sky-500/5'
+                        : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 opacity-85'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <WinterCosmeticAvatar
+                        name={currentUser.name}
+                        avatarUrl={currentUser.photoURL || currentUser.avatar}
+                        equippedBorder={border.id}
+                        size="sm"
+                      />
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+                            {border.name}
+                          </p>
+                          <span className="text-[10px] font-mono uppercase text-slate-500 dark:text-slate-400 shrink-0">
+                            {border.rarity}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-snug">
+                          {border.description}
+                        </p>
+                        <p className="text-[10px] text-slate-500 pt-0.5">
+                          Unlock: {border.unlockRequirement}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/70 dark:border-slate-800/80">
+                      <span
+                        className={`text-[11px] font-semibold ${
+                          isEquipped
+                            ? 'text-sky-600 dark:text-sky-400'
+                            : isUnlocked
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-slate-400'
+                        }`}
+                      >
+                        {isEquipped ? 'Equipped' : isUnlocked ? 'Owned' : 'Locked'}
+                      </span>
+                      {isUnlocked ? (
+                        <TactileButton
+                          variant={isEquipped ? 'secondary' : 'primary'}
+                          size="sm"
+                          disabled={equippingBorder === border.id}
+                          onClick={() => handleEquipBorder(isEquipped ? null : border.id)}
+                        >
+                          {isEquipped ? 'Unequip' : 'Equip Border'}
+                        </TactileButton>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
+                          <Lock className="w-3 h-3" />
+                          Locked
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Seasonal Leaderboard Avatar Frames */}
+          <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                Seasonal Leaderboard Avatar Frames
+              </h4>
+              <span className="text-xs font-mono tabular-nums text-sky-600 dark:text-sky-400 font-semibold">
+                {(status.winterState.unlockedFrames || []).length} / {status.frames.length} Unlocked
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {status.frames.map((frame) => {
                 const isUnlocked = status.winterState.unlockedFrames.includes(frame.id);
                 const isEquipped = status.winterState.equippedFrame === frame.id;
                 return (
                   <div
                     key={frame.id}
-                    className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 p-3 flex items-center justify-between gap-3"
+                    className={`rounded-xl border p-3.5 flex items-center justify-between gap-3 ${
+                      isUnlocked
+                        ? 'border-sky-500/40 bg-sky-500/5'
+                        : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 opacity-85'
+                    }`}
                   >
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
-                        {frame.name}
-                      </p>
-                      <p className="text-[11px] text-slate-500 truncate">{frame.description}</p>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <WinterCosmeticAvatar
+                        name={currentUser.name}
+                        avatarUrl={currentUser.photoURL || currentUser.avatar}
+                        equippedFrame={frame.id}
+                        size="sm"
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+                            {frame.name}
+                          </p>
+                          {frame.rarity && (
+                            <span className="text-[10px] font-mono uppercase text-slate-500 dark:text-slate-400 shrink-0">
+                              {frame.rarity}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-500 truncate">{frame.description}</p>
+                        {frame.unlockRequirement && (
+                          <p className="text-[10px] text-slate-400 truncate">{frame.unlockRequirement}</p>
+                        )}
+                      </div>
                     </div>
                     {isUnlocked ? (
                       <TactileButton
@@ -600,10 +831,13 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
                         disabled={equippingFrame === frame.id}
                         onClick={() => handleEquipFrame(isEquipped ? null : frame.id)}
                       >
-                        {isEquipped ? 'Unequip' : 'Equip'}
+                        {isEquipped ? 'Unequip' : 'Equip Frame'}
                       </TactileButton>
                     ) : (
-                      <span className="text-[11px] text-slate-400 shrink-0">Locked</span>
+                      <span className="inline-flex items-center gap-1 text-[11px] text-slate-400 shrink-0">
+                        <Lock className="w-3 h-3" />
+                        Locked
+                      </span>
                     )}
                   </div>
                 );
@@ -638,6 +872,8 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
                   cookiesBonus: 0,
                   aiBonusQueries: 0,
                   streakShield: false,
+                  frameId: undefined as string | undefined,
+                  borderId: undefined as string | undefined,
                   createdAt: `${nightKey}T19:00:00.000Z`,
                 }));
               const collectedRewards = [...historyItems, ...fallbackSantaItems];
@@ -677,6 +913,8 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
                           {item.cookiesBonus > 0 && <span>+{item.cookiesBonus} Cookies</span>}
                           {item.aiBonusQueries > 0 && <span>+{item.aiBonusQueries} AI</span>}
                           {item.streakShield && <span>+1 Shield</span>}
+                          {item.frameId && <span className="text-sky-500">+Frame</span>}
+                          {item.borderId && <span className="text-amber-500">+Border</span>}
                         </div>
                         <p className="text-[11px] text-slate-500 font-mono">
                           {isSanta ? 'Santa Drop' : 'Spin Wheel'} · {item.eventNightKey || String(item.createdAt || '').slice(0, 10)}

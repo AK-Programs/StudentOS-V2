@@ -22,9 +22,12 @@ import {
   SPIN_WHEEL_SEGMENTS,
   WINTER_FESTIVAL_BADGES,
   WINTER_FESTIVAL_TASKS,
+  WINTER_PROFILE_BORDERS,
   WINTER_PROFILE_FRAMES,
   WINTER_QUIZ_QUESTIONS,
   getSantaWindowStatus,
+  isValidWinterBorderId,
+  isValidWinterFrameId,
   rollSantaRewardTier,
   rollSpinWheelSegment,
 } from './rewardEngine';
@@ -46,6 +49,7 @@ export interface WinterModuleDeps {
     grade?: string;
     section?: string;
     isVerifiedJwt: boolean;
+    authToken?: string;
   } | null>;
   requireFeatureAccess: (featureKey: string) => express.RequestHandler;
   broadcastToAllWs: (payload: any) => void;
@@ -88,6 +92,8 @@ export interface UserWinterState {
   streakShields: number;
   unlockedFrames: string[];
   equippedFrame: string | null;
+  unlockedBorders: string[];
+  equippedBorder: string | null;
   spinNextEligibleAt: string | null;
   lastSpinAt: string | null;
   lastWheelNotifiedCycle: string | null;
@@ -112,6 +118,7 @@ export interface UserWinterState {
     streakShield: boolean;
     badgeId?: string;
     frameId?: string;
+    borderId?: string;
     createdAt: string;
     appliedAt?: string;
   }>;
@@ -202,6 +209,8 @@ function getDefaultWinterState(user: { id: string; name: string; role: string })
     streakShields: 0,
     unlockedFrames: [],
     equippedFrame: null,
+    unlockedBorders: [],
+    equippedBorder: null,
     spinNextEligibleAt: null,
     lastSpinAt: null,
     lastWheelNotifiedCycle: null,
@@ -220,6 +229,7 @@ function cloneWinterState(state: UserWinterState): UserWinterState {
   return {
     ...state,
     unlockedFrames: [...(state.unlockedFrames || [])],
+    unlockedBorders: [...(state.unlockedBorders || [])],
     claimedTaskIds: [...(state.claimedTaskIds || [])],
     earnedWinterBadges: { ...(state.earnedWinterBadges || {}) },
     santaClaimedNights: { ...(state.santaClaimedNights || {}) },
@@ -244,17 +254,30 @@ function isUniqueViolationResponse(status: number, bodyText: string): boolean {
   return lower.includes('23505') || lower.includes('duplicate key') || lower.includes('already exists');
 }
 
+function isRlsPolicyViolationError(status: number, bodyText: string): boolean {
+  const lower = bodyText.toLowerCase();
+  return (
+    (status === 401 || status === 403) &&
+    (bodyText.includes('42501') ||
+      lower.includes('row-level security') ||
+      lower.includes('insufficient_privilege') ||
+      lower.includes('permission denied'))
+  );
+}
+
 function isMissingColumnOrRelationError(status: number, bodyText: string): boolean {
   const lower = bodyText.toLowerCase();
   return (
     status === 404 ||
     bodyText.includes('PGRST204') ||
     bodyText.includes('PGRST205') ||
+    bodyText.includes('PGRST202') ||
     bodyText.includes('42703') ||
     bodyText.includes('42P01') ||
     (lower.includes('column') && (lower.includes('does not exist') || lower.includes('could not find'))) ||
     (lower.includes('relation') && lower.includes('does not exist')) ||
-    lower.includes('could not find the table')
+    lower.includes('could not find the table') ||
+    lower.includes('could not find the function')
   );
 }
 
@@ -323,13 +346,22 @@ export async function getUserWinterAiBonusCreditsAsync(
   return Math.min(MAX_DAILY_WINTER_AI_BONUS, Math.max(0, Number.isFinite(val) ? val : 0));
 }
 
-function evaluateSecretWinterBadges(state: UserWinterState, nowIso: string) {
+function evaluateSecretWinterBadges(state: UserWinterState, nowIso: string, badgesEnabled: boolean = true) {
+  if (!badgesEnabled) return;
   if (
     state.cookiesCount >= 15 &&
     state.claimedTaskIds.length >= 3 &&
     !state.earnedWinterBadges['north_star_secret']
   ) {
     state.earnedWinterBadges['north_star_secret'] = nowIso;
+    if (!state.unlockedBorders.includes('golden_festival_border')) {
+      state.unlockedBorders.push('golden_festival_border');
+    }
+  } else if (
+    state.earnedWinterBadges['north_star_secret'] &&
+    !state.unlockedBorders.includes('golden_festival_border')
+  ) {
+    state.unlockedBorders.push('golden_festival_border');
   }
 }
 
@@ -361,6 +393,7 @@ function mapLedgerRowToHistoryItem(r: any): UserWinterState['rewardHistory'][num
     streakShield: Boolean(r.streak_shield ?? extra.streakShield),
     badgeId: r.badge_id ? String(r.badge_id) : extra.badgeId ? String(extra.badgeId) : undefined,
     frameId: r.frame_id ? String(r.frame_id) : extra.frameId ? String(extra.frameId) : undefined,
+    borderId: r.border_id ? String(r.border_id) : extra.borderId ? String(extra.borderId) : undefined,
     createdAt: String(r.created_at || new Date().toISOString()),
     appliedAt: r.applied_at ? String(r.applied_at) : undefined,
   };
@@ -429,7 +462,7 @@ async function insertWinterRewardLedgerRow(
 
 export async function loadUserWinterState(
   getSupabaseServerConfig: WinterModuleDeps['getSupabaseServerConfig'],
-  user: { id: string; name: string; role: string }
+  user: { id: string; name: string; role: string; isVerifiedJwt?: boolean; authToken?: string }
 ): Promise<UserWinterState> {
   const cfg = resolveWinterSupabaseConfig(getSupabaseServerConfig);
   if (!shouldUseSupabase(cfg)) {
@@ -441,14 +474,18 @@ export async function loadUserWinterState(
   }
 
   const headers = { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` };
+  const actorAuthHeaders =
+    user.isVerifiedJwt && user.authToken
+      ? { apikey: cfg.key, Authorization: `Bearer ${user.authToken}` }
+      : headers;
   const encUid = encodeURIComponent(user.id);
 
-  // Use select=* on winter_reward_ledger so missing optional columns (like reward_label before SQL migration)
+  // Use select=* on winter_reward_ledger so missing optional columns (like reward_label or border_id before SQL migration)
   // never cause a 400 error, and keep ledger/task/badge auxiliary reads non-fatal so winter status always returns.
   const [wpRes, claimsRes, badgesRes, ledgerRes] = await Promise.all([
     fetchJsonStrict(`${cfg.url}/rest/v1/winter_user_profiles?user_id=eq.${encUid}&select=*`, { headers }, 'load winter_user_profiles'),
-    fetchJsonStrict(`${cfg.url}/rest/v1/winter_task_claims?user_id=eq.${encUid}&select=task_id,claimed_at`, { headers }, 'load winter_task_claims').catch(() => null),
-    fetchJsonStrict(`${cfg.url}/rest/v1/winter_user_badges?user_id=eq.${encUid}&select=badge_id,unlocked_at`, { headers }, 'load winter_user_badges').catch(() => null),
+    fetchJsonStrict(`${cfg.url}/rest/v1/winter_task_claims?user_id=eq.${encUid}&select=task_id,claimed_at`, { headers: actorAuthHeaders }, 'load winter_task_claims').catch(() => null),
+    fetchJsonStrict(`${cfg.url}/rest/v1/winter_user_badges?user_id=eq.${encUid}&select=badge_id,unlocked_at`, { headers: actorAuthHeaders }, 'load winter_user_badges').catch(() => null),
     fetchJsonStrict(
       `${cfg.url}/rest/v1/winter_reward_ledger?user_id=eq.${encUid}&select=*&order=created_at.desc&limit=60`,
       { headers },
@@ -492,6 +529,8 @@ export async function loadUserWinterState(
     const storedState = r.state_json && typeof r.state_json === 'object' ? r.state_json : {};
     const dbFrames = Array.isArray(r.unlocked_frames) ? r.unlocked_frames : [];
     const storedFrames = Array.isArray(storedState.unlockedFrames) ? storedState.unlockedFrames : [];
+    const dbBorders = Array.isArray(r.unlocked_borders) ? r.unlocked_borders : [];
+    const storedBorders = Array.isArray(storedState.unlockedBorders) ? storedState.unlockedBorders : [];
     const dbTasks = Array.isArray(r.claimed_task_ids) ? r.claimed_task_ids : [];
     const storedTasks = Array.isArray(storedState.claimedTaskIds) ? storedState.claimedTaskIds : [];
     const dbHistory = Array.isArray(r.reward_history) ? r.reward_history : [];
@@ -507,6 +546,8 @@ export async function loadUserWinterState(
       streakShields: Number(r.streak_shields ?? storedState.streakShields ?? 0),
       unlockedFrames: Array.from(new Set([...storedFrames, ...dbFrames])),
       equippedFrame: r.equipped_frame !== undefined ? r.equipped_frame : (storedState.equippedFrame || null),
+      unlockedBorders: Array.from(new Set([...storedBorders, ...dbBorders])),
+      equippedBorder: r.equipped_border !== undefined ? r.equipped_border : (storedState.equippedBorder || null),
       spinNextEligibleAt: r.spin_next_eligible_at || storedState.spinNextEligibleAt || null,
       lastSpinAt: r.last_spin_at || storedState.lastSpinAt || null,
       lastWheelNotifiedCycle: r.last_wheel_notified_cycle || storedState.lastWheelNotifiedCycle || null,
@@ -544,6 +585,8 @@ export async function loadUserWinterState(
             userId: user.id,
             userName: user.name || remote.userName || 'Member',
             userRole: user.role || remote.userRole || 'student',
+            unlockedBorders: Array.isArray(remote.unlockedBorders) ? remote.unlockedBorders : [],
+            equippedBorder: remote.equippedBorder ?? null,
           };
         }
       }
@@ -575,30 +618,33 @@ export async function loadUserWinterState(
     const nightsMap = { ...(merged.santaClaimedNights || {}) };
     const badgesMap = { ...(merged.earnedWinterBadges || {}) };
     const framesSet = new Set<string>(merged.unlockedFrames || []);
+    const bordersSet = new Set<string>(merged.unlockedBorders || []);
     const historyById = new Map<string, UserWinterState['rewardHistory'][number]>();
     for (const h of merged.rewardHistory || []) {
       if (h?.id) historyById.set(h.id, h);
     }
     for (const r of ledgerRows) {
+      const mapped = mapLedgerRowToHistoryItem(r);
       if (r?.feature_type === 'santa_gift' && r?.event_night_key && !nightsMap[r.event_night_key]) {
         nightsMap[String(r.event_night_key)] = String(r.id);
       }
-      if (r?.status === 'applied' && r?.badge_id && !badgesMap[r.badge_id]) {
-        badgesMap[String(r.badge_id)] = String(r.applied_at || r.created_at || new Date().toISOString());
+      if (r?.status === 'applied' && mapped.badgeId && !badgesMap[mapped.badgeId]) {
+        badgesMap[mapped.badgeId] = String(r.applied_at || r.created_at || new Date().toISOString());
       }
-      if (r?.status === 'applied' && r?.frame_id) {
-        framesSet.add(String(r.frame_id));
+      if (r?.status === 'applied' && mapped.frameId) {
+        framesSet.add(mapped.frameId);
       }
-      if (r?.id) {
-        const mapped = mapLedgerRowToHistoryItem(r);
-        if (!historyById.has(mapped.id)) {
-          historyById.set(mapped.id, mapped);
-        }
+      if (r?.status === 'applied' && mapped.borderId) {
+        bordersSet.add(mapped.borderId);
+      }
+      if (r?.id && !historyById.has(mapped.id)) {
+        historyById.set(mapped.id, mapped);
       }
     }
     merged.santaClaimedNights = nightsMap;
     merged.earnedWinterBadges = badgesMap;
     merged.unlockedFrames = Array.from(framesSet);
+    merged.unlockedBorders = Array.from(bordersSet);
     merged.rewardHistory = Array.from(historyById.values())
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
       .slice(0, 60);
@@ -611,10 +657,12 @@ export async function loadUserWinterState(
 async function syncEarnedBadgesTable(
   cfg: { url: string; key: string },
   userId: string,
-  badges: Record<string, string>
+  badges: Record<string, string>,
+  actorAuthToken?: string
 ): Promise<void> {
   const entries = Object.entries(badges || {});
   if (entries.length === 0) return;
+  const bearer = actorAuthToken || cfg.key;
   const payload = entries.map(([badgeId, unlockedAt]) => {
     const def = WINTER_FESTIVAL_BADGES.find(b => b.id === badgeId);
     return {
@@ -632,7 +680,7 @@ async function syncEarnedBadgesTable(
       method: 'POST',
       headers: {
         apikey: cfg.key,
-        Authorization: `Bearer ${cfg.key}`,
+        Authorization: `Bearer ${bearer}`,
         'Content-Type': 'application/json',
         Prefer: 'resolution=ignore-duplicates',
       },
@@ -640,18 +688,104 @@ async function syncEarnedBadgesTable(
     },
     'sync winter_user_badges'
   );
-  if (!res.ok && !isUniqueViolationResponse(res.status, await res.text().catch(() => ''))) {
-    throw new WinterPersistenceError(`Failed to persist Winter badges (${res.status})`, 503);
+  if (res.ok) return;
+
+  const errText = await res.text().catch(() => '');
+  if (isUniqueViolationResponse(res.status, errText)) return;
+
+  if (isRlsPolicyViolationError(res.status, errText)) {
+    // Fallback to hardened SECURITY DEFINER RPC (sync_winter_badge_secure)
+    let rpcBlocked = false;
+    for (const row of payload) {
+      const rpcRes = await fetchJsonStrict(
+        `${cfg.url}/rest/v1/rpc/sync_winter_badge_secure`,
+        {
+          method: 'POST',
+          headers: {
+            apikey: cfg.key,
+            Authorization: `Bearer ${bearer}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            p_row_id: row.id,
+            p_user_id: row.user_id,
+            p_badge_id: row.badge_id,
+            p_rarity: row.rarity,
+            p_unlocked_at: row.unlocked_at,
+          }),
+        },
+        'rpc sync_winter_badge_secure'
+      ).catch(() => null);
+      if (!rpcRes || !rpcRes.ok) {
+        const rpcErr = rpcRes ? await rpcRes.text().catch(() => '') : '';
+        if (rpcRes && isUniqueViolationResponse(rpcRes.status, rpcErr)) continue;
+        rpcBlocked = true;
+        console.warn(`[WINTER] winter_user_badges RPC sync warning (${rpcRes?.status || 'net'}): ${rpcErr}`);
+      }
+    }
+    if (!rpcBlocked) return;
+    // Note: winter_user_profiles.earned_winter_badges is already durably saved cleanly above;
+    // avoid crashing Spin/Santa saves when live SQL migration hasn't created sync_winter_badge_secure yet.
+    return;
   }
+
+  throw new WinterPersistenceError(`Failed to persist Winter badges (${res.status})`, 503);
+}
+
+async function syncCosmeticsToLeaderboardDoc(
+  cfg: { url: string; key: string },
+  state: UserWinterState
+): Promise<void> {
+  try {
+    const docId = `gamification_user_${state.userId}`;
+    const headers = { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` };
+    const gdRes = await fetchJsonStrict(
+      `${cfg.url}/rest/v1/global_data?id=eq.${encodeURIComponent(docId)}&select=id,data`,
+      { headers },
+      'read gamification doc for cosmetic sync'
+    ).catch(() => null);
+    if (!gdRes || !gdRes.ok) return;
+    const rows = await gdRes.json().catch(() => []);
+    const existingDoc = rows?.[0]?.data && typeof rows[0].data === 'object' ? rows[0].data : {};
+    await fetchJsonStrict(
+      `${cfg.url}/rest/v1/global_data?on_conflict=id`,
+      {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' },
+        body: JSON.stringify({
+          id: docId,
+          data: {
+            ...existingDoc,
+            userId: state.userId,
+            userName: state.userName || existingDoc.userName || 'Member',
+            role: state.userRole || existingDoc.role || 'student',
+            equippedFrame: state.equippedFrame,
+            equippedBorder: state.equippedBorder,
+            winterCookies: state.cookiesCount,
+            badgesCount: Math.max(
+              Object.keys(existingDoc.earnedBadges || {}).length + Object.keys(state.earnedWinterBadges || {}).length,
+              Number(existingDoc.badgesCount || 0)
+            ),
+            updatedAt: existingDoc.updatedAt || state.updatedAt,
+          },
+          updated_at: new Date().toISOString(),
+        }),
+      },
+      'sync cosmetics to gamification_user doc'
+    ).catch(() => {});
+  } catch (_) {}
 }
 
 export async function saveUserWinterState(
   getSupabaseServerConfig: WinterModuleDeps['getSupabaseServerConfig'],
-  state: UserWinterState
+  state: UserWinterState,
+  options?: { actorAuthToken?: string; badgesEnabled?: boolean; syncLeaderboardCosmetics?: boolean }
 ): Promise<UserWinterState> {
   const nextState = cloneWinterState(state);
   nextState.updatedAt = new Date().toISOString();
-  evaluateSecretWinterBadges(nextState, nextState.updatedAt);
+  const badgesEnabled =
+    options?.badgesEnabled ?? isFeatureAccessibleForActor('winter_badges', nextState.userRole, true);
+  evaluateSecretWinterBadges(nextState, nextState.updatedAt, badgesEnabled);
 
   const cfg = resolveWinterSupabaseConfig(getSupabaseServerConfig);
   if (!shouldUseSupabase(cfg)) {
@@ -659,57 +793,91 @@ export async function saveUserWinterState(
     return nextState;
   }
 
-  const res = await fetchJsonStrict(
+  const basePayload: Record<string, any> = {
+    user_id: nextState.userId,
+    user_name: nextState.userName,
+    user_role: nextState.userRole,
+    cookies_count: nextState.cookiesCount,
+    streak_shields: nextState.streakShields,
+    unlocked_frames: nextState.unlockedFrames,
+    equipped_frame: nextState.equippedFrame,
+    unlocked_borders: nextState.unlockedBorders,
+    equipped_border: nextState.equippedBorder,
+    spin_next_eligible_at: nextState.spinNextEligibleAt,
+    last_spin_at: nextState.lastSpinAt,
+    last_wheel_notified_cycle: nextState.lastWheelNotifiedCycle,
+    ai_bonus_date: nextState.aiBonusDate,
+    ai_bonus_credits_today: nextState.aiBonusCreditsToday,
+    quiz_completed: nextState.quizCompleted,
+    claimed_task_ids: nextState.claimedTaskIds,
+    earned_winter_badges: nextState.earnedWinterBadges,
+    santa_claimed_nights: nextState.santaClaimedNights,
+    reward_history: nextState.rewardHistory,
+    state_json: nextState,
+    updated_at: nextState.updatedAt,
+  };
+
+  const headers = {
+    apikey: cfg.key,
+    Authorization: `Bearer ${cfg.key}`,
+    'Content-Type': 'application/json',
+    Prefer: 'resolution=merge-duplicates',
+  };
+
+  let res = await fetchJsonStrict(
     `${cfg.url}/rest/v1/winter_user_profiles?on_conflict=user_id`,
     {
       method: 'POST',
-      headers: {
-        apikey: cfg.key,
-        Authorization: `Bearer ${cfg.key}`,
-        'Content-Type': 'application/json',
-        Prefer: 'resolution=merge-duplicates',
-      },
-      body: JSON.stringify({
-        user_id: nextState.userId,
-        user_name: nextState.userName,
-        user_role: nextState.userRole,
-        cookies_count: nextState.cookiesCount,
-        streak_shields: nextState.streakShields,
-        unlocked_frames: nextState.unlockedFrames,
-        equipped_frame: nextState.equippedFrame,
-        spin_next_eligible_at: nextState.spinNextEligibleAt,
-        last_spin_at: nextState.lastSpinAt,
-        last_wheel_notified_cycle: nextState.lastWheelNotifiedCycle,
-        ai_bonus_date: nextState.aiBonusDate,
-        ai_bonus_credits_today: nextState.aiBonusCreditsToday,
-        quiz_completed: nextState.quizCompleted,
-        claimed_task_ids: nextState.claimedTaskIds,
-        earned_winter_badges: nextState.earnedWinterBadges,
-        santa_claimed_nights: nextState.santaClaimedNights,
-        reward_history: nextState.rewardHistory,
-        state_json: nextState,
-        updated_at: nextState.updatedAt,
-      }),
+      headers,
+      body: JSON.stringify(basePayload),
     },
     'save winter_user_profiles'
   );
 
   if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    if (isMissingColumnOrRelationError(res.status, errText)) {
+    let errText = await res.text().catch(() => '');
+    const lowerErr = errText.toLowerCase();
+    // Graceful additive fallback ONLY if the new border columns aren't added yet; state_json preserves unlockedBorders & equippedBorder cleanly
+    if (
+      isMissingColumnOrRelationError(res.status, errText) &&
+      (lowerErr.includes('unlocked_borders') || lowerErr.includes('equipped_border'))
+    ) {
+      const legacyPayload = { ...basePayload };
+      delete legacyPayload.unlocked_borders;
+      delete legacyPayload.equipped_border;
+      res = await fetchJsonStrict(
+        `${cfg.url}/rest/v1/winter_user_profiles?on_conflict=user_id`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(legacyPayload),
+        },
+        'save winter_user_profiles (state_json border fallback)'
+      );
+      if (!res.ok) {
+        errText = await res.text().catch(() => errText);
+      }
+    }
+
+    if (!res.ok) {
+      if (isMissingColumnOrRelationError(res.status, errText)) {
+        throw new WinterPersistenceError(
+          `Winter rewards could not be saved because required columns (claimed_task_ids, earned_winter_badges, santa_claimed_nights, reward_history, state_json) are missing on winter_user_profiles. Please run the Winter SQL migration script in Supabase SQL Editor. (${errText || res.statusText})`,
+          503,
+          'WINTER_SQL_MIGRATION_REQUIRED'
+        );
+      }
       throw new WinterPersistenceError(
-        `Winter rewards could not be saved because required columns (claimed_task_ids, earned_winter_badges, santa_claimed_nights, reward_history, state_json) are missing on winter_user_profiles. Please run the Winter SQL migration script in Supabase SQL Editor. (${errText || res.statusText})`,
-        503,
-        'WINTER_SQL_MIGRATION_REQUIRED'
+        `Failed to save Winter state to Supabase (${res.status}): ${errText || res.statusText}`,
+        503
       );
     }
-    throw new WinterPersistenceError(
-      `Failed to save Winter state to Supabase (${res.status}): ${errText || res.statusText}`,
-      503
-    );
   }
 
-  await syncEarnedBadgesTable(cfg, nextState.userId, nextState.earnedWinterBadges);
+  await syncEarnedBadgesTable(cfg, nextState.userId, nextState.earnedWinterBadges, options?.actorAuthToken);
+  if (options?.syncLeaderboardCosmetics) {
+    await syncCosmeticsToLeaderboardDoc(cfg, nextState);
+  }
   memoryWinterStates.set(nextState.userId, cloneWinterState(nextState));
   return nextState;
 }
@@ -1007,6 +1175,7 @@ export function buildSeparatedLeaderboard(params: {
     currentStreak?: number;
     winterCookies?: number;
     equippedFrame?: string | null;
+    equippedBorder?: string | null;
     badgesCount?: number;
     updatedAt?: string | number | null;
   }>;
@@ -1058,6 +1227,7 @@ export function buildSeparatedLeaderboard(params: {
           currentStreak: 0,
           winterCookies: 0,
           equippedFrame: null,
+          equippedBorder: null,
           badgesCount: 0,
         });
       } else if (agg.xp > existing.xp) {
@@ -1082,10 +1252,17 @@ export function buildSeparatedLeaderboard(params: {
         currentStreak: u.currentStreak || 0,
         winterCookies: u.winterCookies || 0,
         equippedFrame: u.equippedFrame || null,
+        equippedBorder: u.equippedBorder || null,
         badgesCount: u.badgesCount || 0,
       };
     });
-    rows.sort((a, b) => b.xp - a.xp || b.winterCookies - a.winterCookies || a.name.localeCompare(b.name));
+    rows.sort(
+      (a, b) =>
+        b.xp - a.xp ||
+        b.winterCookies - a.winterCookies ||
+        a.name.localeCompare(b.name) ||
+        a.userId.localeCompare(b.userId)
+    );
     return rows.map((row, idx) => ({ ...row, rank: idx + 1 }));
   }
 
@@ -1127,6 +1304,7 @@ export function buildSeparatedLeaderboard(params: {
       currentStreak: profile?.currentStreak || 0,
       winterCookies: profile?.winterCookies || 0,
       equippedFrame: profile?.equippedFrame || null,
+      equippedBorder: profile?.equippedBorder || null,
       badgesCount: profile?.badgesCount || 0,
     });
   }
@@ -1165,17 +1343,25 @@ export function buildSeparatedLeaderboard(params: {
       currentStreak: u.currentStreak || 0,
       winterCookies: u.winterCookies || 0,
       equippedFrame: u.equippedFrame || null,
+      equippedBorder: u.equippedBorder || null,
       badgesCount: u.badgesCount || 0,
     });
   }
 
   const rows = Array.from(rowsMap.values());
-  rows.sort((a, b) => b.xp - a.xp || (b.allTimeXp || 0) - (a.allTimeXp || 0) || a.name.localeCompare(b.name));
+  rows.sort(
+    (a, b) =>
+      b.xp - a.xp ||
+      (b.allTimeXp || 0) - (a.allTimeXp || 0) ||
+      (b.winterCookies || 0) - (a.winterCookies || 0) ||
+      a.name.localeCompare(b.name) ||
+      a.userId.localeCompare(b.userId)
+  );
   return rows.map((row, idx) => ({ ...row, rank: idx + 1 }));
 }
 
 export async function executeSantaGiftClaim(params: {
-  user: { id: string; name: string; email?: string; role: string; grade?: string; section?: string };
+  user: { id: string; name: string; email?: string; role: string; grade?: string; section?: string; isVerifiedJwt?: boolean; authToken?: string };
   idempotencyKey: string;
   nowMs?: number;
   isPreview?: boolean;
@@ -1191,6 +1377,7 @@ export async function executeSantaGiftClaim(params: {
   const endH = Number(santaFeature?.config?.windowEndHour ?? 21);
 
   const windowStatus = getSantaWindowStatus(nowMs, tz, startH, endH);
+  const badgesEnabled = isFeatureAccessibleForActor('winter_badges', params.user.role, true);
 
   const userEmail = (params.user.email || '').toLowerCase().trim();
   const isSuperAdmin =
@@ -1225,8 +1412,9 @@ export async function executeSantaGiftClaim(params: {
       cookiesBonus: roll.cookiesBonus,
       aiBonusQueries: roll.aiBonusQueries,
       streakShield: roll.streakShield,
-      badgeId: roll.badgeId,
-      frameId: roll.frameId,
+      badgeId: badgesEnabled ? roll.badgeId : undefined,
+      frameId: badgesEnabled ? roll.frameId : undefined,
+      borderId: badgesEnabled ? roll.borderId : undefined,
       createdAt: new Date(nowMs).toISOString(),
       appliedAt: new Date(nowMs).toISOString(),
     };
@@ -1276,7 +1464,10 @@ export async function executeSantaGiftClaim(params: {
       if (existingByIdemp.status === 'pending_apply') {
         existingByIdemp.status = 'recovered';
         existingByIdemp.appliedAt = new Date(nowMs).toISOString();
-        const saved = await saveUserWinterState(params.getSupabaseServerConfig, state);
+        const saved = await saveUserWinterState(params.getSupabaseServerConfig, state, {
+          actorAuthToken: params.user.authToken,
+          badgesEnabled,
+        });
         if (useDb) {
           await fetchJsonStrict(
             `${cfg.url}/rest/v1/winter_reward_ledger?id=eq.${encodeURIComponent(existingByIdemp.id)}`,
@@ -1333,6 +1524,9 @@ export async function executeSantaGiftClaim(params: {
     const normalizedState = normalizeWinterBonusForToday(cloneWinterState(state), todayKey);
     const availableBonusRoom = Math.max(0, MAX_DAILY_WINTER_AI_BONUS - normalizedState.aiBonusCreditsToday);
     const grantedAiBonus = Math.min(availableBonusRoom, tier.aiBonusQueries);
+    const grantedBadgeId = badgesEnabled ? tier.badgeId : undefined;
+    const grantedFrameId = badgesEnabled ? tier.frameId : undefined;
+    const grantedBorderId = badgesEnabled ? tier.borderId : undefined;
 
     const record = {
       id: rewardId,
@@ -1346,8 +1540,9 @@ export async function executeSantaGiftClaim(params: {
       cookiesBonus: tier.cookiesBonus,
       aiBonusQueries: grantedAiBonus,
       streakShield: tier.streakShield,
-      badgeId: tier.badgeId,
-      frameId: tier.frameId,
+      badgeId: grantedBadgeId,
+      frameId: grantedFrameId,
+      borderId: grantedBorderId,
       createdAt: appliedAtIso,
       appliedAt: appliedAtIso,
     };
@@ -1370,8 +1565,9 @@ export async function executeSantaGiftClaim(params: {
           cookies_bonus: tier.cookiesBonus,
           ai_bonus_queries: grantedAiBonus,
           streak_shield: tier.streakShield,
-          badge_id: tier.badgeId || null,
-          frame_id: tier.frameId || null,
+          badge_id: grantedBadgeId || null,
+          frame_id: grantedFrameId || null,
+          border_id: grantedBorderId || null,
           metadata: record,
           created_at: appliedAtIso,
         },
@@ -1453,11 +1649,14 @@ export async function executeSantaGiftClaim(params: {
         normalizedState.aiBonusCreditsToday + grantedAiBonus
       );
     }
-    if (tier.badgeId && !normalizedState.earnedWinterBadges[tier.badgeId]) {
-      normalizedState.earnedWinterBadges[tier.badgeId] = appliedAtIso;
+    if (grantedBadgeId && !normalizedState.earnedWinterBadges[grantedBadgeId]) {
+      normalizedState.earnedWinterBadges[grantedBadgeId] = appliedAtIso;
     }
-    if (tier.frameId && !normalizedState.unlockedFrames.includes(tier.frameId)) {
-      normalizedState.unlockedFrames.push(tier.frameId);
+    if (grantedFrameId && !normalizedState.unlockedFrames.includes(grantedFrameId)) {
+      normalizedState.unlockedFrames.push(grantedFrameId);
+    }
+    if (grantedBorderId && !normalizedState.unlockedBorders.includes(grantedBorderId)) {
+      normalizedState.unlockedBorders.push(grantedBorderId);
     }
     normalizedState.santaClaimedNights[windowStatus.eventNightKey] = rewardId;
 
@@ -1466,7 +1665,10 @@ export async function executeSantaGiftClaim(params: {
 
     let persistedState: UserWinterState;
     try {
-      persistedState = await saveUserWinterState(params.getSupabaseServerConfig, normalizedState);
+      persistedState = await saveUserWinterState(params.getSupabaseServerConfig, normalizedState, {
+        actorAuthToken: params.user.authToken,
+        badgesEnabled,
+      });
     } catch (saveErr) {
       if (useDb) {
         await fetchJsonStrict(
@@ -1533,9 +1735,10 @@ export async function executeSantaGiftClaim(params: {
 }
 
 export async function executeSpinWheel(params: {
-  user: { id: string; name: string; role: string; grade?: string; section?: string };
+  user: { id: string; name: string; email?: string; role: string; grade?: string; section?: string; isVerifiedJwt?: boolean; authToken?: string };
   idempotencyKey?: string;
   nowMs?: number;
+  isPreview?: boolean;
   getSupabaseServerConfig: WinterModuleDeps['getSupabaseServerConfig'];
 }): Promise<{
   statusCode: number;
@@ -1544,6 +1747,63 @@ export async function executeSpinWheel(params: {
   const nowMs = params.nowMs ?? Date.now();
   const feature = getFeatureRecord('winter_spin_wheel');
   const cooldownMs = Number(feature?.config?.cooldownMs ?? SPIN_WHEEL_COOLDOWN_MS);
+  const badgesEnabled = isFeatureAccessibleForActor('winter_badges', params.user.role, true);
+
+  const userEmail = (params.user.email || '').toLowerCase().trim();
+  const isSuperAdmin =
+    String(params.user.role || '').toLowerCase().trim() === 'super_admin' ||
+    [
+      'naitik.kashyap0015@gmail.com',
+      'naitik.kashyap5205@gmail.com',
+      'superadmin@studentos.edu',
+      'superadmin@veylentra.edu',
+    ].includes(userEmail);
+
+  if (params.isPreview) {
+    if (!isSuperAdmin) {
+      return {
+        statusCode: 403,
+        body: {
+          success: false,
+          error: 'Only Super Admins can run a Spin Wheel preview.',
+        },
+      };
+    }
+    const segment = rollSpinWheelSegment();
+    const nowIso = new Date(nowMs).toISOString();
+    const previewReward = {
+      id: `preview_spin_${nowMs}`,
+      featureType: 'spin_wheel' as const,
+      idempotencyKey: `preview_${nowMs}`,
+      status: 'applied' as const,
+      rarity: segment.rarity,
+      segmentIndex: segment.index,
+      label: segment.label,
+      xpBonus: segment.xpBonus,
+      cookiesBonus: segment.cookiesBonus,
+      aiBonusQueries: segment.aiBonusQueries,
+      streakShield: segment.streakShield,
+      badgeId: badgesEnabled ? segment.badgeId : undefined,
+      frameId: badgesEnabled ? segment.frameId : undefined,
+      borderId: badgesEnabled ? segment.borderId : undefined,
+      createdAt: nowIso,
+      appliedAt: nowIso,
+    };
+    return {
+      statusCode: 200,
+      body: {
+        success: true,
+        isPreview: true,
+        segmentIndex: segment.index,
+        segment,
+        reward: previewReward,
+        cooldownMs,
+        remainingMs: 0,
+        message: 'Super Admin Preview: Simulated Spin Wheel roll without mutating cooldown, XP, or collectibles.',
+      },
+    };
+  }
+
   const lockKey = `spin:${params.user.id}`;
 
   if (inFlightClaimLocks.has(lockKey)) {
@@ -1606,6 +1866,9 @@ export async function executeSpinWheel(params: {
     const normalizedState = normalizeWinterBonusForToday(cloneWinterState(state), todayKey);
     const availableBonusRoom = Math.max(0, MAX_DAILY_WINTER_AI_BONUS - normalizedState.aiBonusCreditsToday);
     const grantedAiBonus = Math.min(availableBonusRoom, segment.aiBonusQueries);
+    const grantedBadgeId = badgesEnabled ? segment.badgeId : undefined;
+    const grantedFrameId = badgesEnabled ? segment.frameId : undefined;
+    const grantedBorderId = badgesEnabled ? segment.borderId : undefined;
 
     const record = {
       id: rewardId,
@@ -1619,8 +1882,9 @@ export async function executeSpinWheel(params: {
       cookiesBonus: segment.cookiesBonus,
       aiBonusQueries: grantedAiBonus,
       streakShield: segment.streakShield,
-      badgeId: segment.badgeId,
-      frameId: segment.frameId,
+      badgeId: grantedBadgeId,
+      frameId: grantedFrameId,
+      borderId: grantedBorderId,
       createdAt: nowIso,
       appliedAt: nowIso,
     };
@@ -1641,8 +1905,9 @@ export async function executeSpinWheel(params: {
           cookies_bonus: segment.cookiesBonus,
           ai_bonus_queries: grantedAiBonus,
           streak_shield: segment.streakShield,
-          badge_id: segment.badgeId || null,
-          frame_id: segment.frameId || null,
+          badge_id: grantedBadgeId || null,
+          frame_id: grantedFrameId || null,
+          border_id: grantedBorderId || null,
           metadata: record,
           created_at: nowIso,
           applied_at: nowIso,
@@ -1722,11 +1987,14 @@ export async function executeSpinWheel(params: {
         normalizedState.aiBonusCreditsToday + grantedAiBonus
       );
     }
-    if (segment.badgeId && !normalizedState.earnedWinterBadges[segment.badgeId]) {
-      normalizedState.earnedWinterBadges[segment.badgeId] = nowIso;
+    if (grantedBadgeId && !normalizedState.earnedWinterBadges[grantedBadgeId]) {
+      normalizedState.earnedWinterBadges[grantedBadgeId] = nowIso;
     }
-    if (segment.frameId && !normalizedState.unlockedFrames.includes(segment.frameId)) {
-      normalizedState.unlockedFrames.push(segment.frameId);
+    if (grantedFrameId && !normalizedState.unlockedFrames.includes(grantedFrameId)) {
+      normalizedState.unlockedFrames.push(grantedFrameId);
+    }
+    if (grantedBorderId && !normalizedState.unlockedBorders.includes(grantedBorderId)) {
+      normalizedState.unlockedBorders.push(grantedBorderId);
     }
     normalizedState.lastSpinAt = nowIso;
     normalizedState.spinNextEligibleAt = nextEligibleAt;
@@ -1734,7 +2002,10 @@ export async function executeSpinWheel(params: {
 
     let persistedState: UserWinterState;
     try {
-      persistedState = await saveUserWinterState(params.getSupabaseServerConfig, normalizedState);
+      persistedState = await saveUserWinterState(params.getSupabaseServerConfig, normalizedState, {
+        actorAuthToken: params.user.authToken,
+        badgesEnabled,
+      });
     } catch (saveErr) {
       if (useDb) {
         await fetchJsonStrict(
@@ -1958,6 +2229,7 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
           };
         }),
         frames: WINTER_PROFILE_FRAMES,
+        borders: WINTER_PROFILE_BORDERS,
         quizQuestions: WINTER_QUIZ_QUESTIONS.map(q => ({
           id: q.id,
           prompt: q.prompt,
@@ -1996,7 +2268,10 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
       let state = await loadUserWinterState(getSupabaseServerConfig, actor);
       if (passed && !state.quizCompleted) {
         state.quizCompleted = true;
-        state = await saveUserWinterState(getSupabaseServerConfig, state);
+        state = await saveUserWinterState(getSupabaseServerConfig, state, {
+          actorAuthToken: actor.authToken,
+          badgesEnabled: isFeatureAccessibleForActor('winter_badges', actor.role, true),
+        });
       }
 
       return res.json({
@@ -2086,8 +2361,11 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
 
       const nowIso = new Date().toISOString();
       const claimRowId = `wtc_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+      const claimBearer = actor.isVerifiedJwt && actor.authToken ? actor.authToken : cfg.key;
+      let claimViaRpc = false;
 
-      // Insert winter_task_claims FIRST without merge-duplicates so concurrent requests collide on UNIQUE(user_id, task_id)
+      // Insert winter_task_claims FIRST (with verified JWT if available, or hardened RPC on RLS 42501)
+      // so concurrent requests collide atomically on UNIQUE(user_id, task_id).
       if (useDb) {
         const claimInsertRes = await fetchJsonStrict(
           `${cfg.url}/rest/v1/winter_task_claims`,
@@ -2095,7 +2373,7 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
             method: 'POST',
             headers: {
               apikey: cfg.key,
-              Authorization: `Bearer ${cfg.key}`,
+              Authorization: `Bearer ${claimBearer}`,
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
@@ -2119,20 +2397,77 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
               error: 'You have already claimed rewards for this seasonal task.',
             });
           }
-          throw new WinterPersistenceError(
-            `Failed to record Winter task claim (${claimInsertRes.status}): ${errText || claimInsertRes.statusText}`,
-            503
-          );
+
+          if (isRlsPolicyViolationError(claimInsertRes.status, errText)) {
+            const rpcRes = await fetchJsonStrict(
+              `${cfg.url}/rest/v1/rpc/claim_winter_task_secure`,
+              {
+                method: 'POST',
+                headers: {
+                  apikey: cfg.key,
+                  Authorization: `Bearer ${claimBearer}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  p_claim_id: claimRowId,
+                  p_user_id: actor.id,
+                  p_task_id: taskId,
+                  p_xp_awarded: taskDef.xpReward,
+                  p_cookies_awarded: taskDef.cookiesReward,
+                  p_claimed_at: nowIso,
+                }),
+              },
+              'rpc claim_winter_task_secure'
+            );
+
+            if (!rpcRes.ok) {
+              const rpcErr = await rpcRes.text().catch(() => '');
+              if (isUniqueViolationResponse(rpcRes.status, rpcErr)) {
+                return res.status(409).json({
+                  success: false,
+                  code: 'TASK_ALREADY_CLAIMED',
+                  error: 'You have already claimed rewards for this seasonal task.',
+                });
+              }
+              if (
+                isRlsPolicyViolationError(rpcRes.status, rpcErr) ||
+                isMissingColumnOrRelationError(rpcRes.status, rpcErr)
+              ) {
+                throw new WinterPersistenceError(
+                  'Unable to save this task claim because database security permissions (claim_winter_task_secure) require migration setup. No XP or collectibles were granted.',
+                  503,
+                  'WINTER_TASK_CLAIMS_RLS_BLOCKED'
+                );
+              }
+              throw new WinterPersistenceError(
+                'Unable to record Winter task claim at this time. Please retry in a moment.',
+                503,
+                'WINTER_PERSISTENCE_ERROR'
+              );
+            }
+            claimViaRpc = true;
+          } else {
+            throw new WinterPersistenceError(
+              'Unable to record Winter task claim in database. Please retry in a moment.',
+              503,
+              'WINTER_PERSISTENCE_ERROR'
+            );
+          }
         }
       }
+
+      const badgesEnabled = isFeatureAccessibleForActor('winter_badges', actor.role, true);
+      const grantedBadgeId = badgesEnabled ? taskDef.badgeId : undefined;
+      const grantedBorderId = badgesEnabled ? taskDef.borderId : undefined;
 
       const nextState = cloneWinterState(state);
       nextState.claimedTaskIds.push(taskId);
       nextState.cookiesCount += taskDef.cookiesReward;
-      if (taskDef.badgeId && isFeatureAccessibleForActor('winter_badges', actor.role, true)) {
-        if (!nextState.earnedWinterBadges[taskDef.badgeId]) {
-          nextState.earnedWinterBadges[taskDef.badgeId] = nowIso;
-        }
+      if (grantedBadgeId && !nextState.earnedWinterBadges[grantedBadgeId]) {
+        nextState.earnedWinterBadges[grantedBadgeId] = nowIso;
+      }
+      if (grantedBorderId && !nextState.unlockedBorders.includes(grantedBorderId)) {
+        nextState.unlockedBorders.push(grantedBorderId);
       }
 
       const rewardRecord = {
@@ -2146,7 +2481,8 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
         cookiesBonus: taskDef.cookiesReward,
         aiBonusQueries: 0,
         streakShield: false,
-        badgeId: taskDef.badgeId,
+        badgeId: grantedBadgeId,
+        borderId: grantedBorderId,
         createdAt: nowIso,
         appliedAt: nowIso,
       };
@@ -2154,14 +2490,48 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
 
       let persistedState: UserWinterState;
       try {
-        persistedState = await saveUserWinterState(getSupabaseServerConfig, nextState);
+        persistedState = await saveUserWinterState(getSupabaseServerConfig, nextState, {
+          actorAuthToken: actor.authToken,
+          badgesEnabled,
+        });
       } catch (saveErr) {
         if (useDb) {
-          await fetchJsonStrict(
-            `${cfg.url}/rest/v1/winter_task_claims?id=eq.${encodeURIComponent(claimRowId)}`,
-            { method: 'DELETE', headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } },
-            'rollback winter task claim'
-          ).catch(() => {});
+          if (claimViaRpc) {
+            await fetchJsonStrict(
+              `${cfg.url}/rest/v1/rpc/rollback_winter_task_claim_secure`,
+              {
+                method: 'POST',
+                headers: {
+                  apikey: cfg.key,
+                  Authorization: `Bearer ${claimBearer}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ p_claim_id: claimRowId, p_user_id: actor.id }),
+              },
+              'rpc rollback winter task claim'
+            ).catch(() => {});
+          } else {
+            const delRes = await fetchJsonStrict(
+              `${cfg.url}/rest/v1/winter_task_claims?id=eq.${encodeURIComponent(claimRowId)}`,
+              { method: 'DELETE', headers: { apikey: cfg.key, Authorization: `Bearer ${claimBearer}` } },
+              'rollback winter task claim'
+            ).catch(() => null);
+            if (!delRes || !delRes.ok) {
+              await fetchJsonStrict(
+                `${cfg.url}/rest/v1/rpc/rollback_winter_task_claim_secure`,
+                {
+                  method: 'POST',
+                  headers: {
+                    apikey: cfg.key,
+                    Authorization: `Bearer ${claimBearer}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({ p_claim_id: claimRowId, p_user_id: actor.id }),
+                },
+                'rpc fallback rollback winter task claim'
+              ).catch(() => {});
+            }
+          }
         }
         throw saveErr;
       }
@@ -2244,7 +2614,10 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
 
       pending.status = 'recovered';
       pending.appliedAt = new Date().toISOString();
-      state = await saveUserWinterState(getSupabaseServerConfig, state);
+      state = await saveUserWinterState(getSupabaseServerConfig, state, {
+        actorAuthToken: actor.authToken,
+        badgesEnabled: isFeatureAccessibleForActor('winter_badges', actor.role, true),
+      });
       if (shouldUseSupabase(cfg)) {
         await fetchJsonStrict(
           `${cfg.url}/rest/v1/winter_reward_ledger?id=eq.${encodeURIComponent(pending.id)}`,
@@ -2268,13 +2641,15 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
       if (!actor) return res.status(401).json({ success: false, error: 'Authentication required.' });
 
       const idempotencyKey = req.body?.idempotencyKey ? String(req.body.idempotencyKey) : undefined;
+      const isPreview = Boolean(req.body?.isPreview);
       const result = await executeSpinWheel({
         user: actor,
         idempotencyKey,
+        isPreview,
         getSupabaseServerConfig,
       });
 
-      if (result.statusCode === 200 && !result.body.idempotentHit) {
+      if (result.statusCode === 200 && !result.body.idempotentHit && !result.body.isPreview) {
         broadcastToAllWs({
           type: 'leaderboard:updated',
           userId: actor.id,
@@ -2297,7 +2672,10 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
       let state = await loadUserWinterState(getSupabaseServerConfig, actor);
       if (state.lastWheelNotifiedCycle !== cycleKey) {
         state.lastWheelNotifiedCycle = cycleKey;
-        state = await saveUserWinterState(getSupabaseServerConfig, state);
+        state = await saveUserWinterState(getSupabaseServerConfig, state, {
+          actorAuthToken: actor.authToken,
+          badgesEnabled: isFeatureAccessibleForActor('winter_badges', actor.role, true),
+        });
       }
       return res.json({ success: true, lastWheelNotifiedCycle: state.lastWheelNotifiedCycle });
     } catch (err) {
@@ -2310,17 +2688,134 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
       const actor = await getVerifiedUserFromRequest(req);
       if (!actor) return res.status(401).json({ success: false, error: 'Authentication required.' });
 
-      const frameId = req.body?.frameId ? String(req.body.frameId) : null;
+      const rawFrameId = req.body?.frameId;
+      const frameId = rawFrameId ? String(rawFrameId).trim() : null;
+      if (frameId !== null && !isValidWinterFrameId(frameId)) {
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_FRAME_ID',
+          error: 'Invalid Winter profile frame selection.',
+        });
+      }
+
+      if (frameId !== null && !isFeatureAccessibleForActor('winter_badges', actor.role, true)) {
+        return res.status(403).json({
+          success: false,
+          code: 'FEATURE_DISABLED',
+          error: 'Winter collectibles are currently unavailable.',
+        });
+      }
+
       let state = await loadUserWinterState(getSupabaseServerConfig, actor);
       if (frameId && !state.unlockedFrames.includes(frameId)) {
-        return res.status(403).json({ success: false, error: 'Frame not unlocked yet.' });
+        return res.status(403).json({
+          success: false,
+          code: 'COLLECTIBLE_NOT_OWNED',
+          error: 'Frame not unlocked yet.',
+        });
       }
 
       state.equippedFrame = frameId;
-      state = await saveUserWinterState(getSupabaseServerConfig, state);
+      state = await saveUserWinterState(getSupabaseServerConfig, state, {
+        actorAuthToken: actor.authToken,
+        badgesEnabled: isFeatureAccessibleForActor('winter_badges', actor.role, true),
+        syncLeaderboardCosmetics: true,
+      });
       return res.json({ success: true, equippedFrame: state.equippedFrame, winterState: state });
     } catch (err) {
       return handleWinterRouteError(res, err, 'Failed to equip profile frame.');
+    }
+  });
+
+  app.post('/api/winter/profile/border', async (req, res) => {
+    try {
+      const actor = await getVerifiedUserFromRequest(req);
+      if (!actor) return res.status(401).json({ success: false, error: 'Authentication required.' });
+
+      const rawBorderId = req.body?.borderId;
+      const borderId = rawBorderId ? String(rawBorderId).trim() : null;
+      if (borderId !== null && !isValidWinterBorderId(borderId)) {
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_BORDER_ID',
+          error: 'Invalid Winter border selection.',
+        });
+      }
+
+      if (borderId !== null && !isFeatureAccessibleForActor('winter_badges', actor.role, true)) {
+        return res.status(403).json({
+          success: false,
+          code: 'FEATURE_DISABLED',
+          error: 'Winter collectibles are currently unavailable.',
+        });
+      }
+
+      let state = await loadUserWinterState(getSupabaseServerConfig, actor);
+      if (borderId && !state.unlockedBorders.includes(borderId)) {
+        return res.status(403).json({
+          success: false,
+          code: 'COLLECTIBLE_NOT_OWNED',
+          error: 'Winter border not unlocked yet.',
+        });
+      }
+
+      state.equippedBorder = borderId;
+      state = await saveUserWinterState(getSupabaseServerConfig, state, {
+        actorAuthToken: actor.authToken,
+        badgesEnabled: isFeatureAccessibleForActor('winter_badges', actor.role, true),
+        syncLeaderboardCosmetics: true,
+      });
+      return res.json({ success: true, equippedBorder: state.equippedBorder, winterState: state });
+    } catch (err) {
+      return handleWinterRouteError(res, err, 'Failed to equip Winter border.');
+    }
+  });
+
+  app.get('/api/winter/profile/cosmetics/:userId', async (req, res) => {
+    try {
+      const targetId = String(req.params.userId || '').trim();
+      if (!targetId) {
+        return res.status(400).json({ success: false, error: 'User ID is required.' });
+      }
+      const mem = memoryWinterStates.get(targetId);
+      if (mem) {
+        return res.json({
+          success: true,
+          userId: targetId,
+          equippedFrame: mem.equippedFrame || null,
+          equippedBorder: mem.equippedBorder || null,
+        });
+      }
+
+      const cfg = getSupabaseServerConfig();
+      if (shouldUseSupabase(cfg)) {
+        const headers = { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` };
+        const wpRes = await fetchJsonStrict(
+          `${cfg.url}/rest/v1/winter_user_profiles?user_id=eq.${encodeURIComponent(targetId)}&select=equipped_frame,state_json&limit=1`,
+          { headers },
+          'load public winter cosmetics'
+        ).catch(() => null);
+        if (wpRes && wpRes.ok) {
+          const rows = await wpRes.json().catch(() => []);
+          const row = rows?.[0];
+          const sJson = row?.state_json && typeof row.state_json === 'object' ? row.state_json : {};
+          return res.json({
+            success: true,
+            userId: targetId,
+            equippedFrame: row?.equipped_frame ?? sJson.equippedFrame ?? null,
+            equippedBorder: sJson.equippedBorder ?? null,
+          });
+        }
+      }
+
+      return res.json({
+        success: true,
+        userId: targetId,
+        equippedFrame: null,
+        equippedBorder: null,
+      });
+    } catch (err) {
+      return handleWinterRouteError(res, err, 'Failed to load profile cosmetics.');
     }
   });
 
@@ -2468,14 +2963,10 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
 
       const allUsersMap = new Map<string, any>();
       const aliasToCanonicalId = new Map<string, string>();
-      const winterProfilesByUser = new Map<string, { cookiesCount: number; equippedFrame: string | null; badgesCount: number }>();
 
       memoryWinterStates.forEach((w, uid) => {
-        winterProfilesByUser.set(uid, {
-          cookiesCount: Number(w.cookiesCount || 0),
-          equippedFrame: w.equippedFrame || null,
-          badgesCount: Object.keys(w.earnedWinterBadges || {}).length,
-        });
+        // Hydrate cosmetics/cookies cleanly when user has active server memory state
+        aliasToCanonicalId.set(uid, uid);
       });
 
       let ledgerSnapshot = [...memoryXpLedger];
@@ -2510,10 +3001,12 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
           avatar: String(g.avatar || g.photoURL || existing?.avatar || ''),
           xp: mergedXp,
           currentStreak: Math.max(Number(g.currentStreak || 0), existing?.currentStreak || 0),
-          winterCookies: wState?.cookiesCount ?? existing?.winterCookies ?? 0,
-          equippedFrame: wState?.equippedFrame ?? existing?.equippedFrame ?? null,
+          winterCookies: wState?.cookiesCount ?? g.winterCookies ?? existing?.winterCookies ?? 0,
+          equippedFrame: wState?.equippedFrame ?? g.equippedFrame ?? existing?.equippedFrame ?? null,
+          equippedBorder: wState?.equippedBorder ?? g.equippedBorder ?? existing?.equippedBorder ?? null,
           badgesCount: Math.max(
             Object.keys(g.earnedBadges || {}).length + Object.keys(wState?.earnedWinterBadges || {}).length,
+            Number(g.badgesCount || 0),
             existing?.badgesCount || 0
           ),
           updatedAt: newerUpdatedAt,
@@ -2528,6 +3021,10 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
             : `created_at=gte.${encodeURIComponent(
                 new Date(Date.now() - (period === 'weekly' ? 7 : 30) * 24 * 60 * 60 * 1000).toISOString()
               )}&`;
+        const cohortRoleFilter =
+          lbType === 'faculty'
+            ? 'role=in.(teacher,coordinator,hod,admin,super_admin)&'
+            : 'role=eq.student&';
 
         const fetchOptionalStoreRows = async (url: string, label: string): Promise<any[] | null> => {
           const controller = new AbortController();
@@ -2544,23 +3041,32 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
           }
         };
 
-        // Query gamification_xp_ledger (limit 50) AND existing account XP stores in parallel.
-        // Failures in user_profiles or global_data are non-fatal so the leaderboard never blocks.
-        const [ledRes, profRows, gdRows] = await Promise.all([
-          fetchJsonStrict(
-            `${cfg.url}/rest/v1/gamification_xp_ledger?${sinceClause}select=id,user_id,user_name,user_role,xp_delta,label,created_at&order=created_at.desc&limit=50`,
-            { headers },
-            'leaderboard gamification_xp_ledger'
-          ),
-          fetchOptionalStoreRows(
-            `${cfg.url}/rest/v1/user_profiles?points=gt.0&select=id,uid,name,role,points,grade,section,updated_at&order=points.desc.nullslast&limit=50`,
-            'leaderboard user_profiles'
-          ),
-          fetchOptionalStoreRows(
-            `${cfg.url}/rest/v1/global_data?or=(id.like.gamification_user_*,id.eq.__studentos_gamification_default_school__)&select=id,data,updated_at&limit=50`,
-            'leaderboard global_data'
-          ),
-        ]);
+        const ledController = new AbortController();
+        const ledTimer = setTimeout(() => ledController.abort(), 6500);
+        let ledRes: Response;
+        let profRows: any[] | null;
+        let gdRows: any[] | null;
+        try {
+          // Query gamification_xp_ledger (limit 50) AND cohort-filtered account XP stores in parallel.
+          // Failures in user_profiles or global_data are non-fatal so the leaderboard never blocks.
+          [ledRes, profRows, gdRows] = await Promise.all([
+            fetchJsonStrict(
+              `${cfg.url}/rest/v1/gamification_xp_ledger?${sinceClause}select=id,user_id,user_name,user_role,xp_delta,label,created_at&order=created_at.desc&limit=50`,
+              { headers, signal: ledController.signal },
+              'leaderboard gamification_xp_ledger'
+            ),
+            fetchOptionalStoreRows(
+              `${cfg.url}/rest/v1/user_profiles?${cohortRoleFilter}points=gt.0&select=id,uid,name,role,points,grade,section,updated_at&order=points.desc.nullslast&limit=50`,
+              'leaderboard user_profiles'
+            ),
+            fetchOptionalStoreRows(
+              `${cfg.url}/rest/v1/global_data?or=(id.like.gamification_user_*,id.eq.__studentos_gamification_default_school__)&select=id,data,updated_at&limit=100`,
+              'leaderboard global_data'
+            ),
+          ]);
+        } finally {
+          clearTimeout(ledTimer);
+        }
 
         if (!ledRes.ok) {
           const errText = await ledRes.text().catch(() => '');
@@ -2602,6 +3108,7 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
               currentStreak: 0,
               winterCookies: wState?.cookiesCount || 0,
               equippedFrame: wState?.equippedFrame || null,
+              equippedBorder: wState?.equippedBorder || null,
               badgesCount: Object.keys(wState?.earnedWinterBadges || {}).length,
               updatedAt: p?.updated_at ?? null,
             });
@@ -2675,6 +3182,7 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
                 currentStreak: 0,
                 winterCookies: wState?.cookiesCount || 0,
                 equippedFrame: wState?.equippedFrame || null,
+                equippedBorder: wState?.equippedBorder || null,
                 badgesCount: Object.keys(wState?.earnedWinterBadges || {}).length,
                 updatedAt: r.created_at || null,
               });
@@ -2689,6 +3197,7 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
             ...v,
             winterCookies: wState?.cookiesCount || 0,
             equippedFrame: wState?.equippedFrame || null,
+            equippedBorder: wState?.equippedBorder || null,
             badgesCount:
               Object.keys(v.earnedBadges || {}).length +
               Object.keys(wState?.earnedWinterBadges || {}).length,

@@ -25,6 +25,9 @@ import {
   sendTestFCMNotification
 } from '../lib/fcmNotifications';
 import { soundService } from '../lib/soundService';
+import { fetchPublicWinterCosmetics } from '../lib/winterFestivalService';
+import { WinterCosmeticAvatar } from './winter/WinterCosmeticAvatar';
+import { getWinterBorderVisual, getWinterFrameVisual } from '../lib/winterCosmetics';
 
 export type SettingsSubSection = 'customization' | 'info' | 'theme' | 'verification' | 'environment' | 'notifications';
 
@@ -79,6 +82,32 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
   const [customStatus, setCustomStatus] = useState<string>(currentUser.customStatus || rawData.customStatus || '');
   const [avatarFrame, setAvatarFrame] = useState<ProfileFrameStyle>((currentUser.avatarFrame || rawData.avatarFrame || 'none') as ProfileFrameStyle);
   const [accentColor, setAccentColor] = useState<string>(currentUser.accentColor || rawData.accentColor || 'indigo');
+  const [winterCosmetics, setWinterCosmetics] = useState<{ equippedFrame: string | null; equippedBorder: string | null }>({
+    equippedFrame: null,
+    equippedBorder: null,
+  });
+
+  useEffect(() => {
+    const uid = currentUser?.uid;
+    if (!uid) return;
+    let active = true;
+    const syncCosmetics = () => {
+      fetchPublicWinterCosmetics(uid, currentUser).then((cos) => {
+        if (active && cos) {
+          setWinterCosmetics({
+            equippedFrame: cos.equippedFrame || null,
+            equippedBorder: cos.equippedBorder || null,
+          });
+        }
+      });
+    };
+    syncCosmetics();
+    window.addEventListener('veylentra-winter-updated', syncCosmetics);
+    return () => {
+      active = false;
+      window.removeEventListener('veylentra-winter-updated', syncCosmetics);
+    };
+  }, [currentUser?.uid]);
 
   // Custom Cards state
   const [customCards, setCustomCards] = useState<CustomCardItem[]>(() => {
@@ -650,13 +679,15 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
               </h3>
 
               <div className="flex flex-col sm:flex-row items-center gap-4">
-                <div className={`w-16 h-16 rounded-full ${activeFrame.className} shrink-0 bg-slate-950 flex items-center justify-center overflow-hidden`}>
-                  {photoURL ? (
-                    <img src={photoURL} alt="Avatar" className="w-full h-full object-cover rounded-full" />
-                  ) : (
-                    <div className="text-xl font-bold text-white">{(currentUser.name || 'U').charAt(0)}</div>
-                  )}
-                </div>
+                <WinterCosmeticAvatar
+                  name={currentUser.name || 'User'}
+                  avatarUrl={photoURL}
+                  equippedBorder={winterCosmetics.equippedBorder}
+                  equippedFrame={winterCosmetics.equippedFrame}
+                  permanentFrameClass={activeFrame.className}
+                  size="lg"
+                  fallbackBgClass="bg-slate-950 text-white font-bold"
+                />
 
                 <div className="space-y-1 text-center sm:text-left">
                   <label className="cursor-pointer inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all border border-white/10">
@@ -665,6 +696,15 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                     <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" disabled={uploadingAvatar} />
                   </label>
                   <p className="text-[10px] text-slate-400">JPG, PNG, GIF up to 5MB.</p>
+                  {(winterCosmetics.equippedBorder || winterCosmetics.equippedFrame) && (
+                    <p className="text-[10px] text-sky-400 font-medium">
+                      Active Winter Cosmetics:{' '}
+                      {getWinterBorderVisual(winterCosmetics.equippedBorder)?.name || 'No Border'}
+                      {winterCosmetics.equippedFrame
+                        ? ` · ${getWinterFrameVisual(winterCosmetics.equippedFrame)?.name}`
+                        : ''}
+                    </p>
+                  )}
                 </div>
               </div>
 

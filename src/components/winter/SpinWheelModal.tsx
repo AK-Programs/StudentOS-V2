@@ -293,7 +293,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
     }, SPIN_TOTAL_DURATION_MS + 50);
 
     // Fire server-authoritative spin request immediately in parallel with visual launch
-    Promise.race([spinWinterWheel(currentUser, idempotencyKey), apiTimeout])
+    Promise.race([spinWinterWheel(currentUser, idempotencyKey, isPreviewOnly), apiTimeout])
       .then((res: any) => {
         if (!mountedRef.current || apiFailed) return;
         if (!res.ok || !res.data?.success) {
@@ -765,9 +765,21 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
                       <FrostShieldSvg size={13} /> +1 Streak Shield
                     </span>
                   )}
+                  {resultReward.frameId && (
+                    <span className="px-2.5 py-1 rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-200 font-bold">
+                      +Frame Unlocked
+                    </span>
+                  )}
+                  {resultReward.borderId && (
+                    <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-200 font-bold">
+                      +Winter Border Unlocked
+                    </span>
+                  )}
                 </div>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Rewards have been authoritatively recorded to your Scholar XP ledger and synced with your school profile.
+                  {isPreviewOnly
+                    ? 'Preview Mode simulation only — no XP or permanent inventory was modified.'
+                    : 'Rewards have been authoritatively recorded to your Scholar XP ledger and synced with your school profile.'}
                 </p>
               </motion.div>
             ) : (

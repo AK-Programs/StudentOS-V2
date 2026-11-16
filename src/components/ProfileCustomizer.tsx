@@ -14,6 +14,8 @@ import {
   getFCMStatus 
 } from '../lib/fcmNotifications';
 import { soundService } from '../lib/soundService';
+import { fetchPublicWinterCosmetics } from '../lib/winterFestivalService';
+import { WinterCosmeticAvatar } from './winter/WinterCosmeticAvatar';
 
 interface ProfileCustomizerProps {
   currentUser: UserProfile;
@@ -66,6 +68,32 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
   const [customStatus, setCustomStatus] = useState<string>(currentUser.customStatus || '');
   const [avatarFrame, setAvatarFrame] = useState<ProfileFrameStyle>((currentUser.avatarFrame as ProfileFrameStyle) || 'none');
   const [accentColor, setAccentColor] = useState<string>(currentUser.accentColor || 'indigo');
+  const [winterCosmetics, setWinterCosmetics] = useState<{ equippedFrame: string | null; equippedBorder: string | null }>({
+    equippedFrame: null,
+    equippedBorder: null,
+  });
+
+  React.useEffect(() => {
+    const uid = currentUser?.uid;
+    if (!uid) return;
+    let active = true;
+    const syncCosmetics = () => {
+      fetchPublicWinterCosmetics(uid, currentUser).then((cos) => {
+        if (active && cos) {
+          setWinterCosmetics({
+            equippedFrame: cos.equippedFrame || null,
+            equippedBorder: cos.equippedBorder || null,
+          });
+        }
+      });
+    };
+    syncCosmetics();
+    window.addEventListener('veylentra-winter-updated', syncCosmetics);
+    return () => {
+      active = false;
+      window.removeEventListener('veylentra-winter-updated', syncCosmetics);
+    };
+  }, [currentUser?.uid]);
   
   // FCM Web Push state
   const [enableWebPush, setEnableWebPush] = useState<boolean>(() => {
@@ -592,21 +620,16 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
             {/* Avatar & Floating Frame */}
             <div className="px-6 relative -mt-10 flex items-end justify-between">
               <div className="relative">
-                {/* Avatar with Frame */}
-                <div className={selectedFrameObj.className}>
-                  {photoURL ? (
-                    <img
-                      src={photoURL}
-                      alt={currentUser.name}
-                      className="w-20 h-20 rounded-full object-cover bg-slate-900"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <div className="w-20 h-20 rounded-full bg-indigo-600 flex items-center justify-center text-white text-2xl font-black shadow-inner">
-                      {currentUser.name ? currentUser.name[0] : 'S'}
-                    </div>
-                  )}
-                </div>
+                {/* Avatar with Stackable Winter Border + Frame */}
+                <WinterCosmeticAvatar
+                  name={currentUser.name || 'Scholar'}
+                  avatarUrl={photoURL}
+                  equippedBorder={winterCosmetics.equippedBorder}
+                  equippedFrame={winterCosmetics.equippedFrame}
+                  permanentFrameClass={selectedFrameObj.className}
+                  size="lg"
+                  fallbackBgClass="bg-indigo-600 text-white font-black shadow-inner"
+                />
 
                 {/* Online Indicator */}
                 <span className="absolute bottom-0 right-0 w-5 h-5 bg-emerald-500 rounded-full border-4 border-slate-950 shadow-md" />

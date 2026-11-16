@@ -8,7 +8,7 @@
  * level progression bars, private field exclusion, and sticky current-user rank footer.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { Trophy, RefreshCw, Flame, ShieldAlert, GraduationCap, Users } from 'lucide-react';
 import { UserProfile } from '../../types';
@@ -25,6 +25,7 @@ import {
   TactileButton,
 } from '../ui/animatedComponents';
 import { WinterCookieSvg } from '../winter/WinterArtwork';
+import { WinterCosmeticAvatar } from '../winter/WinterCosmeticAvatar';
 
 interface XpLeaderboardPanelProps {
   type: 'student' | 'faculty';
@@ -33,12 +34,6 @@ interface XpLeaderboardPanelProps {
   maxRows?: number;
   onViewFull?: () => void;
 }
-
-const FRAME_RING_MAP: Record<string, string> = {
-  frame_frost_halo: 'ring-2 ring-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.45)]',
-  frame_aurora_crown: 'ring-2 ring-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.45)]',
-  frame_starlight_crest: 'ring-2 ring-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.5)]',
-};
 
 export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
   type,
@@ -55,10 +50,22 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
   const [currentUserEntry, setCurrentUserEntry] = useState<LeaderboardEntry | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const requestSeqRef = useRef<number>(0);
+  const mountedRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const loadLeaderboard = useCallback(async () => {
+    const seq = ++requestSeqRef.current;
     if (!access.accessible) {
-      setLoading(false);
+      if (mountedRef.current && seq === requestSeqRef.current) {
+        setLoading(false);
+      }
       return;
     }
     setLoading(true);
@@ -69,18 +76,22 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
         period,
         user: currentUser,
       });
+      if (!mountedRef.current || seq !== requestSeqRef.current) return;
       if (!res.ok || !res.data) {
         setError(res.error || 'Unable to load leaderboard.');
         setRankings([]);
         setCurrentUserEntry(null);
       } else {
-        setRankings(res.data.rankings || []);
+        setRankings(Array.isArray(res.data.rankings) ? res.data.rankings : []);
         setCurrentUserEntry(res.data.currentUserEntry || null);
       }
     } catch (err: any) {
+      if (!mountedRef.current || seq !== requestSeqRef.current) return;
       setError(err?.message || 'Unable to load leaderboard.');
     } finally {
-      setLoading(false);
+      if (mountedRef.current && seq === requestSeqRef.current) {
+        setLoading(false);
+      }
     }
   }, [access.accessible, type, period, currentUser?.uid, currentUser?.email, currentUser?.role]);
 
@@ -206,7 +217,6 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
                 {podiumOrder.map((entry) => {
                   const isFirst = entry.rank === 1;
-                  const frameClass = entry.equippedFrame ? FRAME_RING_MAP[entry.equippedFrame] || '' : '';
                   const rankColors =
                     entry.rank === 1
                       ? 'border-amber-400/50 bg-amber-500/10'
@@ -226,15 +236,13 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
                       <span className="text-xs font-mono font-bold tabular-nums text-slate-600 dark:text-slate-300">
                         Rank #{entry.rank}
                       </span>
-                      <div
-                        className={`w-12 h-12 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-sm font-bold text-slate-800 dark:text-slate-100 overflow-hidden ${frameClass}`}
-                      >
-                        {entry.avatar && entry.avatar.startsWith('http') ? (
-                          <img src={entry.avatar} alt={entry.name} className="w-full h-full object-cover" />
-                        ) : (
-                          entry.name.slice(0, 2).toUpperCase()
-                        )}
-                      </div>
+                      <WinterCosmeticAvatar
+                        name={entry.name}
+                        avatarUrl={entry.avatar}
+                        equippedBorder={entry.equippedBorder}
+                        equippedFrame={entry.equippedFrame}
+                        size="md"
+                      />
                       <div className="min-w-0 w-full">
                         <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{entry.name}</p>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
@@ -259,7 +267,6 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
             <div className="divide-y divide-slate-200 dark:divide-slate-800 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
               {visibleRankings.map((entry, idx) => {
                 const isSelf = entry.userId === currentUser.uid;
-                const frameClass = entry.equippedFrame ? FRAME_RING_MAP[entry.equippedFrame] || '' : '';
                 const progressPct = entry.nextLevelXp
                   ? Math.min(100, Math.round((entry.xp / entry.nextLevelXp) * 100))
                   : 100;
@@ -291,15 +298,13 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
                         #{entry.rank}
                       </span>
 
-                      <div
-                        className={`w-9 h-9 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-800 dark:text-slate-100 shrink-0 overflow-hidden ${frameClass}`}
-                      >
-                        {entry.avatar && entry.avatar.startsWith('http') ? (
-                          <img src={entry.avatar} alt={entry.name} className="w-full h-full object-cover" />
-                        ) : (
-                          entry.name.slice(0, 2).toUpperCase()
-                        )}
-                      </div>
+                      <WinterCosmeticAvatar
+                        name={entry.name}
+                        avatarUrl={entry.avatar}
+                        equippedBorder={entry.equippedBorder}
+                        equippedFrame={entry.equippedFrame}
+                        size="sm"
+                      />
 
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">

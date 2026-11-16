@@ -66,7 +66,19 @@ export interface WinterProfileFrame {
   id: string;
   name: string;
   description: string;
+  borderClass?: string;
   cssRing?: string;
+  rarity?: 'rare' | 'legendary' | 'secret';
+  unlockRequirement?: string;
+}
+
+export interface WinterProfileBorder {
+  id: string;
+  name: string;
+  description: string;
+  unlockRequirement: string;
+  rarity: 'seasonal' | 'rare' | 'legendary';
+  accentColor: string;
 }
 
 export interface WinterRewardRecord {
@@ -84,6 +96,7 @@ export interface WinterRewardRecord {
   streakShield: boolean;
   badgeId?: string;
   frameId?: string;
+  borderId?: string;
   createdAt: string;
   appliedAt?: string;
 }
@@ -98,6 +111,8 @@ export interface WinterStatusResponse {
     streakShields: number;
     unlockedFrames: string[];
     equippedFrame: string | null;
+    unlockedBorders: string[];
+    equippedBorder: string | null;
     spinNextEligibleAt: string | null;
     lastSpinAt: string | null;
     lastWheelNotifiedCycle: string | null;
@@ -135,6 +150,7 @@ export interface WinterStatusResponse {
   tasks: WinterTaskItem[];
   badges: WinterBadgeItem[];
   frames: WinterProfileFrame[];
+  borders: WinterProfileBorder[];
   quizQuestions: Array<{ id: string; prompt: string; options: string[] }>;
   serverTime: string;
 }
@@ -155,6 +171,7 @@ export interface LeaderboardEntry {
   currentStreak: number;
   winterCookies: number;
   equippedFrame: string | null;
+  equippedBorder: string | null;
   badgesCount: number;
 }
 
@@ -193,12 +210,16 @@ export async function claimSantaGift(
   return { ok: res.ok, status: res.status, data };
 }
 
-export async function spinWinterWheel(user: Partial<UserProfile> | null | undefined, idempotencyKey: string) {
+export async function spinWinterWheel(
+  user: Partial<UserProfile> | null | undefined,
+  idempotencyKey: string,
+  isPreview: boolean = false
+) {
   const headers = await buildAuthHeadersForUser(user);
   const res = await fetch('/api/winter/spin', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ idempotencyKey }),
+    body: JSON.stringify({ idempotencyKey, isPreview }),
   });
   const data = await res.json();
   return { ok: res.ok, status: res.status, data };
@@ -245,6 +266,47 @@ export async function equipWinterFrame(user: Partial<UserProfile> | null | undef
   });
   const data = await res.json();
   return { ok: res.ok, status: res.status, data };
+}
+
+export async function equipWinterBorder(user: Partial<UserProfile> | null | undefined, borderId: string | null) {
+  const headers = await buildAuthHeadersForUser(user);
+  const res = await fetch('/api/winter/profile/border', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ borderId }),
+  });
+  const data = await res.json();
+  return { ok: res.ok, status: res.status, data };
+}
+
+export interface PublicWinterCosmetics {
+  userId: string;
+  equippedFrame: string | null;
+  equippedBorder: string | null;
+  unlockedFrames: string[];
+  unlockedBorders: string[];
+  cookiesCount: number;
+  badgesCount: number;
+}
+
+export async function fetchPublicWinterCosmetics(
+  userId: string,
+  requester?: Partial<UserProfile> | null
+): Promise<PublicWinterCosmetics | null> {
+  if (!userId) return null;
+  try {
+    const headers = requester ? await buildAuthHeadersForUser(requester) : { 'Content-Type': 'application/json' };
+    const res = await fetch(`/api/winter/profile/cosmetics/${encodeURIComponent(userId)}`, {
+      headers,
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data?.success || !data?.cosmetics) return null;
+    return data.cosmetics as PublicWinterCosmetics;
+  } catch {
+    return null;
+  }
 }
 
 export async function awardServerActionXp(
