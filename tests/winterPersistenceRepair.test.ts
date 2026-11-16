@@ -40,7 +40,7 @@ import {
   getSantaPreloadMetrics,
   resetSantaModelCacheForTests,
 } from '../src/lib/santaModelCache';
-import { WORKING_ANON_KEY } from '../server/supabaseKeyManager';
+import { WORKING_ANON_KEY, supabaseFetchWithAnonRetry } from '../server/supabaseKeyManager';
 
 let passed = 0;
 async function runTest(name: string, fn: () => Promise<void> | void) {
@@ -607,10 +607,23 @@ async function main() {
       assert.equal(retryLb.data.success, true);
 
       // Verify empty ledger returns 200 with rankings: [] and does not fail with an error
-      const emptyLedgerRes = await apiJson(baseUrl, '/api/leaderboard?type=student&period=weekly&now=9999999999999', { headers: stuHeaders });
-      assert.equal(emptyLedgerRes.status, 200);
-      assert.equal(emptyLedgerRes.data.success, true);
-      assert.deepEqual(emptyLedgerRes.data.rankings, []);
+      const savedLedger = [...mockDb.tables.gamification_xp_ledger];
+      const savedProfiles = [...mockDb.tables.user_profiles];
+      const savedWinterProfiles = [...mockDb.tables.winter_user_profiles];
+      mockDb.tables.gamification_xp_ledger = [];
+      mockDb.tables.user_profiles = [];
+      mockDb.tables.winter_user_profiles = [];
+      clearWinterMemoryCacheOnlyForTests();
+      try {
+        const emptyLedgerRes = await apiJson(baseUrl, '/api/leaderboard?type=student&period=weekly', { headers: stuHeaders });
+        assert.equal(emptyLedgerRes.status, 200);
+        assert.equal(emptyLedgerRes.data.success, true);
+        assert.deepEqual(emptyLedgerRes.data.rankings, []);
+      } finally {
+        mockDb.tables.gamification_xp_ledger = savedLedger;
+        mockDb.tables.user_profiles = savedProfiles;
+        mockDb.tables.winter_user_profiles = savedWinterProfiles;
+      }
 
       // Fail loudly with 503 only when core gamification_xp_ledger table errors completely
       mockDb.setFailure({ table: 'gamification_xp_ledger', method: 'GET', status: 500, message: 'DB error' });
@@ -618,6 +631,31 @@ async function main() {
       mockDb.setFailure(null);
       assert.equal(errLb.status, 503);
       assert.equal(errLb.data.success, false);
+    });
+
+    await runTest('Part 2.3: supabaseFetchWithAnonRetry reads key from Headers instance, tuple array, and plain object on 401 Invalid API key', async () => {
+      mockDb.setFailure({ table: 'winter_user_profiles', method: 'GET', status: 401, message: 'Invalid API key', onlyIfNotAnon: true } as any);
+      try {
+        const resHeadersObj = await supabaseFetchWithAnonRetry(
+          `${mockSupabaseUrl}/rest/v1/winter_user_profiles?select=user_id&limit=1`,
+          { headers: new Headers({ apikey: 'invalid_service_role_key_123456', Authorization: 'Bearer invalid_service_role_key_123456' }) }
+        );
+        assert.equal(resHeadersObj.status, 200, 'Should retry with WORKING_ANON_KEY when init.headers is a Headers instance');
+
+        const resTuple = await supabaseFetchWithAnonRetry(
+          `${mockSupabaseUrl}/rest/v1/winter_user_profiles?select=user_id&limit=1`,
+          { headers: [['apikey', 'invalid_tuple_key_1234567890'], ['Authorization', 'Bearer invalid_tuple_key_1234567890']] }
+        );
+        assert.equal(resTuple.status, 200, 'Should retry with WORKING_ANON_KEY when init.headers is a tuple array');
+
+        const resPlain = await supabaseFetchWithAnonRetry(
+          `${mockSupabaseUrl}/rest/v1/winter_user_profiles?select=user_id&limit=1`,
+          { headers: { ApiKey: 'invalid_plain_key_1234567890', Authorization: 'Bearer invalid_plain_key_1234567890' } }
+        );
+        assert.equal(resPlain.status, 200, 'Should retry with WORKING_ANON_KEY when init.headers is a plain object');
+      } finally {
+        mockDb.setFailure(null);
+      }
     });
 
     // ------------------------------------------------------------------

@@ -19,7 +19,12 @@ import {
   FeatureCategory,
   PlatformFeatureRecord,
 } from './featureRegistry';
-import { WORKING_ANON_KEY, markSupabaseKeyInvalid } from './supabaseKeyManager';
+import {
+  WORKING_ANON_KEY,
+  markSupabaseKeyInvalid,
+  supabaseFetchWithAnonRetry,
+  getFeatureAndWinterSupabaseKey,
+} from './supabaseKeyManager';
 
 export interface FeatureModuleDeps {
   getSupabaseServerConfig: () => { url: string; key: string };
@@ -85,6 +90,7 @@ function mapRowToRecord(row: any): PlatformFeatureRecord | null {
 }
 
 async function persistAllToPlatformFeaturesTable(url: string, key: string): Promise<boolean> {
+  const effectiveKey = getFeatureAndWinterSupabaseKey(url, key);
   const payload = Array.from(memoryFeaturesMap.values()).map(rec => ({
     key: rec.key,
     display_name: rec.displayName,
@@ -102,11 +108,11 @@ async function persistAllToPlatformFeaturesTable(url: string, key: string): Prom
     updated_at: rec.updatedAt,
   }));
 
-  const res = await fetch(`${url}/rest/v1/platform_features?on_conflict=key`, {
+  const res = await supabaseFetchWithAnonRetry(`${url}/rest/v1/platform_features?on_conflict=key`, {
     method: 'POST',
     headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
+      apikey: effectiveKey,
+      Authorization: `Bearer ${effectiveKey}`,
       'Content-Type': 'application/json',
       Prefer: 'resolution=merge-duplicates',
     },
@@ -120,11 +126,13 @@ async function hydrateRegistryFromSupabase(
 ): Promise<boolean> {
   ensureDefaultsSeeded();
   if (process.env.NODE_ENV === 'test') return true;
-  const { url, key } = getSupabaseServerConfig();
+  const rawCfg = getSupabaseServerConfig();
+  const url = rawCfg.url;
+  const key = getFeatureAndWinterSupabaseKey(url, rawCfg.key);
   if (!url || !key) return false;
 
   try {
-    const tableRes = await fetch(`${url}/rest/v1/platform_features?select=*`, {
+    const tableRes = await supabaseFetchWithAnonRetry(`${url}/rest/v1/platform_features?select=*`, {
       headers: { apikey: key, Authorization: `Bearer ${key}` },
     });
 
@@ -141,7 +149,7 @@ async function hydrateRegistryFromSupabase(
       return true;
     }
 
-    const docRes = await fetch(
+    const docRes = await supabaseFetchWithAnonRetry(
       `${url}/rest/v1/global_data?id=eq.${encodeURIComponent(REGISTRY_GLOBAL_DOC_ID)}&select=*`,
       { headers: { apikey: key, Authorization: `Bearer ${key}` } }
     );
@@ -175,19 +183,19 @@ async function persistSingleFeature(
     return { ok: true };
   }
 
-  const { url, key } = getSupabaseServerConfig();
+  const rawCfg = getSupabaseServerConfig();
+  const url = rawCfg.url;
+  const key = getFeatureAndWinterSupabaseKey(url, rawCfg.key);
   if (!url || !key) {
     return { ok: true };
   }
 
-  const WORKING_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
-
-  const makeFeatureRequest = async (apiKey: string) => {
-    return await fetch(`${url}/rest/v1/platform_features?on_conflict=key`, {
+  try {
+    const tableRes = await supabaseFetchWithAnonRetry(`${url}/rest/v1/platform_features?on_conflict=key`, {
       method: 'POST',
       headers: {
-        apikey: apiKey,
-        Authorization: `Bearer ${apiKey}`,
+        apikey: key,
+        Authorization: `Bearer ${key}`,
         'Content-Type': 'application/json',
         Prefer: 'resolution=merge-duplicates',
       },
@@ -208,21 +216,9 @@ async function persistSingleFeature(
         updated_at: record.updatedAt,
       }),
     });
-  };
-
-  try {
-    let tableRes = await makeFeatureRequest(key);
-    let errText = tableRes.ok ? '' : await tableRes.text();
-
-    if (!tableRes.ok && (errText.includes('Invalid API key') || tableRes.status === 401) && key !== WORKING_ANON_KEY) {
-      markSupabaseKeyInvalid(key);
-      tableRes = await makeFeatureRequest(WORKING_ANON_KEY);
-      if (!tableRes.ok) {
-        errText = await tableRes.text();
-      }
-    }
 
     if (!tableRes.ok) {
+      const errText = await tableRes.text().catch(() => '');
       if (prevSnapshot) memoryFeaturesMap.set(record.key, prevSnapshot);
       else memoryFeaturesMap.delete(record.key);
       if (errText.includes('relation') && errText.includes('does not exist')) {
@@ -234,13 +230,12 @@ async function persistSingleFeature(
       return { ok: false, error: `Database persistence failed while saving feature configuration: ${errText}` };
     }
 
-    const activeKey = tableRes.ok ? key : WORKING_ANON_KEY;
-    // Persist audit log
-    await fetch(`${url}/rest/v1/platform_feature_audit_logs`, {
+    // Persist audit log using the same WORKING_ANON_KEY-capable retry helper
+    await supabaseFetchWithAnonRetry(`${url}/rest/v1/platform_feature_audit_logs`, {
       method: 'POST',
       headers: {
-        apikey: activeKey,
-        Authorization: `Bearer ${activeKey}`,
+        apikey: key,
+        Authorization: `Bearer ${key}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -269,11 +264,13 @@ async function fetchAuditLogs(
   getSupabaseServerConfig: FeatureModuleDeps['getSupabaseServerConfig']
 ): Promise<FeatureAuditLogEntry[]> {
   if (process.env.NODE_ENV === 'test') return [...memoryAuditLogs];
-  const { url, key } = getSupabaseServerConfig();
+  const rawCfg = getSupabaseServerConfig();
+  const url = rawCfg.url;
+  const key = getFeatureAndWinterSupabaseKey(url, rawCfg.key);
   if (!url || !key) return [...memoryAuditLogs];
 
   try {
-    const res = await fetch(
+    const res = await supabaseFetchWithAnonRetry(
       `${url}/rest/v1/platform_feature_audit_logs?select=*&order=created_at.desc&limit=100`,
       { headers: { apikey: key, Authorization: `Bearer ${key}` } }
     );
@@ -297,7 +294,7 @@ async function fetchAuditLogs(
       }
     }
 
-    const docRes = await fetch(
+    const docRes = await supabaseFetchWithAnonRetry(
       `${url}/rest/v1/global_data?id=eq.${encodeURIComponent(AUDIT_GLOBAL_DOC_ID)}&select=*`,
       { headers: { apikey: key, Authorization: `Bearer ${key}` } }
     );

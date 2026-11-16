@@ -29,7 +29,12 @@ import {
   rollSpinWheelSegment,
 } from './rewardEngine';
 import { getFeatureRecord, isFeatureAccessibleForActor } from './featureManagementModule';
-import { WORKING_ANON_KEY, markSupabaseKeyInvalid } from './supabaseKeyManager';
+import {
+  WORKING_ANON_KEY,
+  markSupabaseKeyInvalid,
+  supabaseFetchWithAnonRetry,
+  getFeatureAndWinterSupabaseKey,
+} from './supabaseKeyManager';
 
 export interface WinterModuleDeps {
   getSupabaseServerConfig: () => { url: string; key: string };
@@ -239,30 +244,20 @@ function isUniqueViolationResponse(status: number, bodyText: string): boolean {
   return lower.includes('23505') || lower.includes('duplicate key') || lower.includes('already exists');
 }
 
+function resolveWinterSupabaseConfig(
+  getCfg: WinterModuleDeps['getSupabaseServerConfig']
+): { url: string; key: string } {
+  const cfg = getCfg();
+  if (!cfg.url) return cfg;
+  return {
+    url: cfg.url,
+    key: getFeatureAndWinterSupabaseKey(cfg.url, cfg.key),
+  };
+}
+
 async function fetchJsonStrict(url: string, init: RequestInit, contextLabel: string): Promise<Response> {
   try {
-    let res = await fetch(url, init);
-    if (res.status === 401) {
-      const clone = res.clone();
-      const bodyText = await clone.text().catch(() => '');
-      if (bodyText.includes('Invalid API key') || res.status === 401) {
-        const headers = (init.headers || {}) as Record<string, string>;
-        const apiKey = headers['apikey'] || headers['ApiKey'] || '';
-        if (apiKey && apiKey !== WORKING_ANON_KEY) {
-          markSupabaseKeyInvalid(apiKey);
-          const retryHeaders = {
-            ...headers,
-            apikey: WORKING_ANON_KEY,
-            Authorization: `Bearer ${WORKING_ANON_KEY}`,
-          };
-          res = await fetch(url, {
-            ...init,
-            headers: retryHeaders,
-          });
-        }
-      }
-    }
-    return res;
+    return await supabaseFetchWithAnonRetry(url, init);
   } catch (err: any) {
     throw new WinterPersistenceError(
       `Supabase network failure (${contextLabel}): ${err?.message || String(err)}`,
@@ -284,7 +279,7 @@ export async function getUserWinterAiBonusCreditsAsync(
   userId: string,
   nowMs: number = Date.now()
 ): Promise<number> {
-  const cfg = getSupabaseServerConfig();
+  const cfg = resolveWinterSupabaseConfig(getSupabaseServerConfig);
   if (!shouldUseSupabase(cfg)) {
     return getUserWinterAiBonusCredits(userId, nowMs);
   }
@@ -349,7 +344,7 @@ export async function loadUserWinterState(
   getSupabaseServerConfig: WinterModuleDeps['getSupabaseServerConfig'],
   user: { id: string; name: string; role: string }
 ): Promise<UserWinterState> {
-  const cfg = getSupabaseServerConfig();
+  const cfg = resolveWinterSupabaseConfig(getSupabaseServerConfig);
   if (!shouldUseSupabase(cfg)) {
     const cached = memoryWinterStates.get(user.id);
     if (cached) return cloneWinterState(cached);
@@ -553,7 +548,7 @@ export async function saveUserWinterState(
   nextState.updatedAt = new Date().toISOString();
   evaluateSecretWinterBadges(nextState, nextState.updatedAt);
 
-  const cfg = getSupabaseServerConfig();
+  const cfg = resolveWinterSupabaseConfig(getSupabaseServerConfig);
   if (!shouldUseSupabase(cfg)) {
     memoryWinterStates.set(nextState.userId, cloneWinterState(nextState));
     return nextState;
@@ -612,7 +607,7 @@ export async function appendXpLedgerEntry(
   entry: XpLedgerEntry,
   options?: { alreadyAddedToProfile?: boolean }
 ): Promise<{ accepted: boolean; deduplicated: boolean; totalXp: number; level: number; levelTitle: string }> {
-  const cfg = getSupabaseServerConfig();
+  const cfg = resolveWinterSupabaseConfig(getSupabaseServerConfig);
 
   if (!shouldUseSupabase(cfg)) {
     const alreadyExists = memoryXpLedger.some(
@@ -705,12 +700,12 @@ export async function appendXpLedgerEntry(
       `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encUid},uid.eq.${encUid})&select=id,uid,points&limit=2`,
       { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } },
       'read user_profiles points'
-    ),
+    ).catch(() => null),
     fetchJsonStrict(
       `${cfg.url}/rest/v1/global_data?id=eq.${encodeURIComponent(`gamification_user_${entry.userId}`)}&select=id,data`,
       { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } },
       'read global_data gamification doc'
-    ),
+    ).catch(() => null),
   ]);
 
   if (!ledRowsRes.ok) {
@@ -723,7 +718,7 @@ export async function appendXpLedgerEntry(
     : entry.xpDelta;
 
   let profilePoints = 0;
-  if (profRes.ok) {
+  if (profRes && profRes.ok) {
     const profRows = await profRes.json();
     if (Array.isArray(profRows)) {
       for (const p of profRows) {
@@ -734,7 +729,7 @@ export async function appendXpLedgerEntry(
 
   let existingDoc: any = null;
   let docXp = 0;
-  if (gdRes.ok) {
+  if (gdRes && gdRes.ok) {
     const gdRows = await gdRes.json();
     if (gdRows?.[0]?.data && typeof gdRows[0].data === 'object') {
       existingDoc = gdRows[0].data;
@@ -749,7 +744,7 @@ export async function appendXpLedgerEntry(
   const lvl = computeLevelFromXp(newTotalXp);
 
   // 3. Persist updated total points back to user_profiles (matching either id or uid) & gamification_user_* doc
-  const [patchProfRes, upsertGdRes] = await Promise.all([
+  const [patchProfRes] = await Promise.all([
     fetchJsonStrict(
       `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encUid},uid.eq.${encUid})`,
       {
@@ -761,7 +756,7 @@ export async function appendXpLedgerEntry(
         }),
       },
       'patch user_profiles points'
-    ),
+    ).catch(() => null),
     fetchJsonStrict(
       `${cfg.url}/rest/v1/global_data?on_conflict=id`,
       {
@@ -787,11 +782,11 @@ export async function appendXpLedgerEntry(
         }),
       },
       'upsert gamification_user doc'
-    ),
+    ).catch(() => null),
   ]);
 
-  // Note: user_profiles.points is the canonical sync target; if global_data fails, continue safely
-  if (!patchProfRes.ok) {
+  // Note: user_profiles.points is the canonical sync target; if global_data or user_profiles fails, continue safely
+  if (patchProfRes && !patchProfRes.ok) {
     const errText = await patchProfRes.text().catch(() => '');
     // If user_profiles was missing or failed, non-fatal since gamification_xp_ledger is already authoritative
     console.warn(`[XP LEDGER] user_profiles sync warning (${patchProfRes.status}): ${errText || patchProfRes.statusText}`);
@@ -822,24 +817,24 @@ async function fetchAuthoritativeUserTotalXp(cfg: { url: string; key: string }, 
   const headers = { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` };
   const encUid = encodeURIComponent(userId);
   const [ledRes, profRes, gdRes] = await Promise.all([
-    fetchJsonStrict(`${cfg.url}/rest/v1/gamification_xp_ledger?user_id=eq.${encUid}&select=xp_delta`, { headers }, 'fetch user ledger'),
-    fetchJsonStrict(`${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encUid},uid.eq.${encUid})&select=points&limit=2`, { headers }, 'fetch user points'),
-    fetchJsonStrict(`${cfg.url}/rest/v1/global_data?id=eq.${encodeURIComponent(`gamification_user_${userId}`)}&select=data`, { headers }, 'fetch user gdoc'),
+    fetchJsonStrict(`${cfg.url}/rest/v1/gamification_xp_ledger?user_id=eq.${encUid}&select=xp_delta`, { headers }, 'fetch user ledger').catch(() => null),
+    fetchJsonStrict(`${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encUid},uid.eq.${encUid})&select=points&limit=2`, { headers }, 'fetch user points').catch(() => null),
+    fetchJsonStrict(`${cfg.url}/rest/v1/global_data?id=eq.${encodeURIComponent(`gamification_user_${userId}`)}&select=data`, { headers }, 'fetch user gdoc').catch(() => null),
   ]);
   let maxXp = 0;
-  if (ledRes.ok) {
+  if (ledRes && ledRes.ok) {
     const rows = await ledRes.json();
     if (Array.isArray(rows)) {
       maxXp = Math.max(maxXp, rows.reduce((s: number, r: any) => s + Math.max(0, Number(r?.xp_delta || 0)), 0));
     }
   }
-  if (profRes.ok) {
+  if (profRes && profRes.ok) {
     const rows = await profRes.json();
     if (Array.isArray(rows)) {
       for (const p of rows) maxXp = Math.max(maxXp, Number(p?.points || 0));
     }
   }
-  if (gdRes.ok) {
+  if (gdRes && gdRes.ok) {
     const rows = await gdRes.json();
     maxXp = Math.max(maxXp, Number(rows?.[0]?.data?.xp || 0));
   }
@@ -1127,7 +1122,7 @@ export async function executeSantaGiftClaim(params: {
 
   inFlightClaimLocks.add(lockKey);
   try {
-    const cfg = params.getSupabaseServerConfig();
+    const cfg = resolveWinterSupabaseConfig(params.getSupabaseServerConfig);
     const useDb = shouldUseSupabase(cfg);
     const state = await loadUserWinterState(params.getSupabaseServerConfig, params.user);
     const idemp = String(params.idempotencyKey || `santa_${windowStatus.eventNightKey}`).trim();
@@ -1310,9 +1305,10 @@ export async function executeSantaGiftClaim(params: {
       persistedState = await saveUserWinterState(params.getSupabaseServerConfig, normalizedState);
     } catch (saveErr) {
       if (useDb) {
-        await fetch(
+        await fetchJsonStrict(
           `${cfg.url}/rest/v1/winter_reward_ledger?id=eq.${encodeURIComponent(rewardId)}`,
-          { method: 'DELETE', headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+          { method: 'DELETE', headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } },
+          'rollback santa reward ledger'
         ).catch(() => {});
       }
       throw saveErr;
@@ -1391,7 +1387,7 @@ export async function executeSpinWheel(params: {
 
   inFlightClaimLocks.add(lockKey);
   try {
-    const cfg = params.getSupabaseServerConfig();
+    const cfg = resolveWinterSupabaseConfig(params.getSupabaseServerConfig);
     const useDb = shouldUseSupabase(cfg);
     const state = await loadUserWinterState(params.getSupabaseServerConfig, params.user);
     const idemp = String(params.idempotencyKey || `spin_${Math.floor(nowMs / 1000)}`).trim();
@@ -1553,9 +1549,10 @@ export async function executeSpinWheel(params: {
       persistedState = await saveUserWinterState(params.getSupabaseServerConfig, normalizedState);
     } catch (saveErr) {
       if (useDb) {
-        await fetch(
+        await fetchJsonStrict(
           `${cfg.url}/rest/v1/winter_reward_ledger?id=eq.${encodeURIComponent(rewardId)}`,
-          { method: 'DELETE', headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+          { method: 'DELETE', headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } },
+          'rollback spin reward ledger'
         ).catch(() => {});
       }
       throw saveErr;
@@ -1651,12 +1648,12 @@ async function hasAcademicEngagementInDb(cfg: { url: string; key: string }, user
       `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encUid},uid.eq.${encUid})&select=points&limit=2`,
       { headers },
       'check academic user_profiles'
-    ),
+    ).catch(() => null),
     fetchJsonStrict(
       `${cfg.url}/rest/v1/global_data?id=eq.${encodeURIComponent(`gamification_user_${userId}`)}&select=data`,
       { headers },
       'check academic global_data'
-    ),
+    ).catch(() => null),
   ]);
 
   if (!ledRes.ok) {
@@ -1665,12 +1662,12 @@ async function hasAcademicEngagementInDb(cfg: { url: string; key: string }, user
   const ledRows = await ledRes.json();
   if (Array.isArray(ledRows) && ledRows.length > 0) return true;
 
-  if (profRes.ok) {
+  if (profRes && profRes.ok) {
     const profRows = await profRes.json();
     if (Array.isArray(profRows) && profRows.some((p: any) => Number(p?.points || 0) > 0)) return true;
   }
 
-  if (gdRes.ok) {
+  if (gdRes && gdRes.ok) {
     const gdRows = await gdRes.json();
     if (Number(gdRows?.[0]?.data?.xp || 0) > 0) return true;
   }
@@ -1679,7 +1676,8 @@ async function hasAcademicEngagementInDb(cfg: { url: string; key: string }, user
 }
 
 export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express, deps: WinterModuleDeps) {
-  const { getSupabaseServerConfig, getVerifiedUserFromRequest, requireFeatureAccess, broadcastToAllWs } = deps;
+  const { getVerifiedUserFromRequest, requireFeatureAccess, broadcastToAllWs } = deps;
+  const getSupabaseServerConfig = () => resolveWinterSupabaseConfig(deps.getSupabaseServerConfig);
 
   app.get('/api/winter/status', async (req, res) => {
     try {
@@ -1969,9 +1967,10 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
         persistedState = await saveUserWinterState(getSupabaseServerConfig, nextState);
       } catch (saveErr) {
         if (useDb) {
-          await fetch(
+          await fetchJsonStrict(
             `${cfg.url}/rest/v1/winter_task_claims?id=eq.${encodeURIComponent(claimRowId)}`,
-            { method: 'DELETE', headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+            { method: 'DELETE', headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } },
+            'rollback winter task claim'
           ).catch(() => {});
         }
         throw saveErr;

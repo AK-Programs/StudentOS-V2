@@ -11,7 +11,12 @@
 
 import crypto from 'crypto';
 import { MAX_DAILY_WINTER_AI_BONUS } from './rewardEngine';
-import { WORKING_ANON_KEY, markSupabaseKeyInvalid } from './supabaseKeyManager';
+import {
+  WORKING_ANON_KEY,
+  markSupabaseKeyInvalid,
+  supabaseFetchWithAnonRetry,
+  getFeatureAndWinterSupabaseKey,
+} from './supabaseKeyManager';
 
 export interface SupabaseConfig {
   url: string;
@@ -124,26 +129,16 @@ function isMissingRelationError(status: number, bodyText: string): boolean {
   );
 }
 
+function normalizeQuotaCfg(cfg: SupabaseConfig): SupabaseConfig {
+  if (!cfg.url) return cfg;
+  return {
+    url: cfg.url,
+    key: getFeatureAndWinterSupabaseKey(cfg.url, cfg.key),
+  };
+}
+
 async function fetchQuotaSupabase(url: string, init: RequestInit): Promise<Response> {
-  let res = await fetch(url, init);
-  if (res.status === 401) {
-    const clone = res.clone();
-    const bodyText = await clone.text().catch(() => '');
-    if (bodyText.includes('Invalid API key') || res.status === 401) {
-      const headers = (init.headers || {}) as Record<string, string>;
-      const apiKey = headers['apikey'] || headers['ApiKey'] || '';
-      if (apiKey && apiKey !== WORKING_ANON_KEY) {
-        markSupabaseKeyInvalid(apiKey);
-        const retryHeaders = {
-          ...headers,
-          apikey: WORKING_ANON_KEY,
-          Authorization: `Bearer ${WORKING_ANON_KEY}`,
-        };
-        res = await fetch(url, { ...init, headers: retryHeaders });
-      }
-    }
-  }
-  return res;
+  return await supabaseFetchWithAnonRetry(url, init);
 }
 
 interface GlobalQuotaDoc {
@@ -220,11 +215,12 @@ async function saveGlobalQuotaDoc(cfg: SupabaseConfig, userId: string, doc: Glob
 }
 
 export async function getWinterAiBonusCreditsFromDb(
-  cfg: SupabaseConfig,
+  rawCfg: SupabaseConfig,
   userId: string,
   nowMs: number = Date.now(),
   memoryFallback?: (uid: string, nowMs: number) => number
 ): Promise<number> {
+  const cfg = normalizeQuotaCfg(rawCfg);
   if (!shouldUseSupabaseQuota(cfg)) {
     return memoryFallback ? memoryFallback(userId, nowMs) : 0;
   }
@@ -259,7 +255,8 @@ export async function getWinterAiBonusCreditsFromDb(
   return Math.min(MAX_DAILY_WINTER_AI_BONUS, Math.max(0, Number.isFinite(rawCredits) ? rawCredits : 0));
 }
 
-export async function getRoleLimitsAsync(cfg: SupabaseConfig): Promise<Record<string, number>> {
+export async function getRoleLimitsAsync(rawCfg: SupabaseConfig): Promise<Record<string, number>> {
+  const cfg = normalizeQuotaCfg(rawCfg);
   if (!shouldUseSupabaseQuota(cfg)) {
     return { ...memoryRoleLimits };
   }
@@ -301,9 +298,10 @@ export async function getRoleLimitsAsync(cfg: SupabaseConfig): Promise<Record<st
 }
 
 export async function updateRoleLimitsAsync(
-  cfg: SupabaseConfig,
+  rawCfg: SupabaseConfig,
   limits: Record<string, number>
 ): Promise<Record<string, number>> {
+  const cfg = normalizeQuotaCfg(rawCfg);
   const sanitized: Record<string, number> = { ...memoryRoleLimits };
   for (const [k, v] of Object.entries(limits || {})) {
     const num = Number(v);
@@ -371,7 +369,8 @@ export async function getRolling24hUsageAsync(params: {
   nowMs?: number;
   memoryWinterBonusFn?: (uid: string, nowMs: number) => number;
 }): Promise<RollingAIUsageStatus> {
-  const { cfg, userId, role, nowMs = Date.now(), memoryWinterBonusFn } = params;
+  const { cfg: rawCfg, userId, role, nowMs = Date.now(), memoryWinterBonusFn } = params;
+  const cfg = normalizeQuotaCfg(rawCfg);
   const normRole = String(role || 'student').toLowerCase().trim() || 'student';
   const windowStart = nowMs - 24 * 60 * 60 * 1000;
 
@@ -504,7 +503,8 @@ export async function recordAiUsageAsync(params: {
   feature: string;
   nowMs?: number;
 }): Promise<void> {
-  const { cfg, userId, role, feature, nowMs = Date.now() } = params;
+  const { cfg: rawCfg, userId, role, feature, nowMs = Date.now() } = params;
+  const cfg = normalizeQuotaCfg(rawCfg);
   const entryId = `use_${nowMs}_${crypto.randomBytes(4).toString('hex')}`;
 
   if (!shouldUseSupabaseQuota(cfg)) {
@@ -558,7 +558,8 @@ export async function redeemAiVoucherAsync(params: {
   statusCode: number;
   body: Record<string, any>;
 }> {
-  const { cfg, userId, userRole, code, memoryWinterBonusFn } = params;
+  const { cfg: rawCfg, userId, userRole, code, memoryWinterBonusFn } = params;
+  const cfg = normalizeQuotaCfg(rawCfg);
   const cleanCode = String(code || '').trim().toUpperCase();
   const voucher = VALID_AI_VOUCHERS[cleanCode];
 

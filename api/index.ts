@@ -1593,33 +1593,89 @@ const SERVERLESS_ROLE_AI_LIMITS: Record<string, number> = {
   super_admin: 150,
 };
 
+const DEFAULT_SERVERLESS_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+const serverlessInvalidKeys = new Set<string>();
+const serverlessVerifiedServiceKeys = new Set<string>();
+
+function isServerlessKeyInvalid(k?: string | null): boolean {
+  if (!k) return true;
+  const t = k.trim();
+  if (t.length < 20) return true;
+  if (serverlessInvalidKeys.has(t)) return true;
+  const l = t.toLowerCase();
+  return l.includes('your_') || l.includes('placeholder');
+}
+
 function getServerlessSupabaseConfig(): { url: string; key: string } {
   const url = (
     process.env.VITE_SUPABASE_URL ||
     process.env.SUPABASE_URL ||
     'https://zwpoutanhsujezglbson.supabase.co'
   ).trim();
-  const DEFAULT_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
-  const isInvalid = (k?: string | null) => {
-    if (!k) return true;
-    const t = k.trim();
-    const l = t.toLowerCase();
-    return t.length < 20 || l.includes('your_') || l.includes('placeholder');
-  };
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (serviceRoleKey && !isServerlessKeyInvalid(serviceRoleKey) && serverlessVerifiedServiceKeys.has(serviceRoleKey)) {
+    return { url, key: serviceRoleKey };
+  }
   const candidates = [
-    process.env.SUPABASE_SERVICE_ROLE_KEY,
     process.env.SUPABASE_ANON_KEY,
     process.env.VITE_SUPABASE_ANON_KEY,
     process.env.SUPABASE_KEY,
   ];
-  let key = DEFAULT_ANON_KEY;
+  let key = DEFAULT_SERVERLESS_ANON_KEY;
   for (const cand of candidates) {
-    if (!isInvalid(cand)) {
+    if (!isServerlessKeyInvalid(cand)) {
       key = cand!.trim();
       break;
     }
   }
   return { url, key };
+}
+
+function extractServerlessApiKeyFromHeaders(headersInit?: HeadersInit): string {
+  if (!headersInit) return '';
+  if (typeof Headers !== 'undefined' && headersInit instanceof Headers) {
+    return (headersInit.get('apikey') || (headersInit.get('authorization') || '').replace(/^Bearer\s+/i, '')).trim();
+  }
+  if (Array.isArray(headersInit)) {
+    for (const entry of headersInit) {
+      if (Array.isArray(entry) && String(entry[0]).toLowerCase() === 'apikey' && entry[1]) {
+        return String(entry[1]).trim();
+      }
+    }
+    return '';
+  }
+  const rec = headersInit as Record<string, string>;
+  for (const k of Object.keys(rec)) {
+    if (k.toLowerCase() === 'apikey' && rec[k]) return String(rec[k]).trim();
+  }
+  return '';
+}
+
+async function fetchServerlessSupabaseWithAnonRetry(url: string, init: RequestInit = {}): Promise<Response> {
+  let res = await fetch(url, init);
+  if (res.status === 401 || !res.ok) {
+    let shouldRetry = res.status === 401;
+    if (!shouldRetry) {
+      const txt = await res.clone().text().catch(() => '');
+      if (txt.toLowerCase().includes('invalid api key')) {
+        shouldRetry = true;
+      }
+    }
+    if (shouldRetry) {
+      const usedKey = extractServerlessApiKeyFromHeaders(init.headers);
+      if (usedKey && usedKey !== DEFAULT_SERVERLESS_ANON_KEY) {
+        serverlessInvalidKeys.add(usedKey);
+        serverlessVerifiedServiceKeys.delete(usedKey);
+      }
+      if (usedKey !== DEFAULT_SERVERLESS_ANON_KEY) {
+        const retryHeaders = new Headers(init.headers || {});
+        retryHeaders.set('apikey', DEFAULT_SERVERLESS_ANON_KEY);
+        retryHeaders.set('Authorization', `Bearer ${DEFAULT_SERVERLESS_ANON_KEY}`);
+        res = await fetch(url, { ...init, headers: retryHeaders });
+      }
+    }
+  }
+  return res;
 }
 
 function getServerlessIstDayKey(nowMs: number = Date.now()): string {
@@ -1653,10 +1709,10 @@ async function getServerlessQuotaStatus(userId: string, role: string) {
   const headers = { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` };
 
   const [limitsRes, winterRes, logsRes, vouchersRes] = await Promise.all([
-    fetch(`${cfg.url}/rest/v1/ai_role_limits?select=role,daily_limit`, { headers }).catch(() => null),
-    fetch(`${cfg.url}/rest/v1/winter_user_profiles?user_id=eq.${encUid}&select=ai_bonus_date,ai_bonus_credits_today&limit=1`, { headers }),
-    fetch(`${cfg.url}/rest/v1/ai_usage_logs?user_id=eq.${encUid}&created_at=gte.${encodeURIComponent(sinceIso)}&select=id,created_at&order=created_at.asc`, { headers }),
-    fetch(`${cfg.url}/rest/v1/ai_user_vouchers?user_id=eq.${encUid}&select=voucher_code,bonus_queries`, { headers }),
+    fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/ai_role_limits?select=role,daily_limit`, { headers }).catch(() => null),
+    fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/winter_user_profiles?user_id=eq.${encUid}&select=ai_bonus_date,ai_bonus_credits_today&limit=1`, { headers }),
+    fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/ai_usage_logs?user_id=eq.${encUid}&created_at=gte.${encodeURIComponent(sinceIso)}&select=id,created_at&order=created_at.asc`, { headers }),
+    fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/ai_user_vouchers?user_id=eq.${encUid}&select=voucher_code,bonus_queries`, { headers }),
   ]);
 
   const roleLimits = { ...SERVERLESS_ROLE_AI_LIMITS };
@@ -1719,7 +1775,7 @@ async function getServerlessQuotaStatus(userId: string, role: string) {
 
   if (needGlobalDoc) {
     const docId = `__veylentra_ai_quota_${userId}__`;
-    const gRes = await fetch(`${cfg.url}/rest/v1/global_data?id=eq.${encodeURIComponent(docId)}&select=data&limit=1`, { headers });
+    const gRes = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/global_data?id=eq.${encodeURIComponent(docId)}&select=data&limit=1`, { headers });
     if (gRes.ok) {
       const rows = await gRes.json();
       const doc = rows?.[0]?.data;
@@ -1762,7 +1818,7 @@ async function recordServerlessAiUsage(userId: string, role: string, feature: st
   const cfg = getServerlessSupabaseConfig();
   const nowMs = Date.now();
   const entryId = `use_${nowMs}_${Math.random().toString(36).substring(2, 10)}`;
-  const res = await fetch(`${cfg.url}/rest/v1/ai_usage_logs`, {
+  const res = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/ai_usage_logs`, {
     method: 'POST',
     headers: {
       apikey: cfg.key,
@@ -1782,7 +1838,7 @@ async function recordServerlessAiUsage(userId: string, role: string, feature: st
     if (isMissingRelServerless(res.status, errText)) {
       const docId = `__veylentra_ai_quota_${userId}__`;
       const headers = { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` };
-      const gRes = await fetch(`${cfg.url}/rest/v1/global_data?id=eq.${encodeURIComponent(docId)}&select=data&limit=1`, { headers });
+      const gRes = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/global_data?id=eq.${encodeURIComponent(docId)}&select=data&limit=1`, { headers });
       let current = { timestamps: [] as number[], voucherBonus: 0, redeemedCodes: [] as string[] };
       if (gRes.ok) {
         const rows = await gRes.json();
@@ -1796,7 +1852,7 @@ async function recordServerlessAiUsage(userId: string, role: string, feature: st
       }
       current.timestamps = current.timestamps.filter(ts => ts >= nowMs - 24 * 60 * 60 * 1000);
       current.timestamps.push(nowMs);
-      await fetch(`${cfg.url}/rest/v1/global_data?on_conflict=id`, {
+      await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/global_data?on_conflict=id`, {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' },
         body: JSON.stringify({ id: docId, data: current, updated_at: new Date().toISOString() }),

@@ -61,8 +61,10 @@ const serverStartTime = Date.now();
 import {
   WORKING_ANON_KEY,
   knownInvalidSupabaseKeys,
+  verifiedServiceRoleKeys,
   markSupabaseKeyInvalid,
   isKnownInvalidSupabaseKey,
+  probeServiceRoleKey,
 } from './server/supabaseKeyManager';
 
 export { WORKING_ANON_KEY, markSupabaseKeyInvalid };
@@ -74,15 +76,24 @@ export function getSupabaseServerConfig(): { url: string; key: string } {
     'https://zwpoutanhsujezglbson.supabase.co'
   ).trim();
 
-  const candidateKeys = [
-    process.env.SUPABASE_SERVICE_ROLE_KEY,
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (serviceRoleKey && !isKnownInvalidSupabaseKey(serviceRoleKey, url)) {
+    if (verifiedServiceRoleKeys.has(serviceRoleKey)) {
+      return { url, key: serviceRoleKey };
+    }
+    if (process.env.NODE_ENV !== 'test') {
+      void probeServiceRoleKey(url, serviceRoleKey);
+    }
+  }
+
+  const candidateAnonKeys = [
     process.env.SUPABASE_ANON_KEY,
     process.env.VITE_SUPABASE_ANON_KEY,
     process.env.SUPABASE_KEY,
   ];
 
   let selectedKey = WORKING_ANON_KEY;
-  for (const cand of candidateKeys) {
+  for (const cand of candidateAnonKeys) {
     if (!isKnownInvalidSupabaseKey(cand, url)) {
       selectedKey = cand!.trim();
       break;
