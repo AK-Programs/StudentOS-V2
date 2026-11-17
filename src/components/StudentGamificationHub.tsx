@@ -48,15 +48,19 @@ import { UserProfile } from '../types';
 import { soundService } from '../lib/soundService';
 import { XpLeaderboardPanel } from './gamification/XpLeaderboardPanel';
 import {
+  equipWinterBanner,
   equipWinterBorder,
-  equipWinterFrame,
   fetchWinterStatus,
   WinterBadgeItem,
+  WinterProfileBanner,
   WinterProfileBorder,
-  WinterProfileFrame,
   WinterStatusResponse,
 } from '../lib/winterFestivalService';
-import { WinterCosmeticAvatar } from './winter/WinterCosmeticAvatar';
+import {
+  ProfileBannerBackdrop,
+  ProfileCosmeticAvatar,
+} from './winter/ProfileCosmeticRenderer';
+import { winterAudio } from '../lib/winterAudio';
 
 interface ToastEventDetail {
   xpAdded: number;
@@ -388,7 +392,7 @@ export const StudentGamificationHub: React.FC<{
   );
   const [leaderboard, setLeaderboard] = useState<StudentGamificationStats[]>([]);
   const [winterBadges, setWinterBadges] = useState<WinterBadgeItem[]>([]);
-  const [winterFrames, setWinterFrames] = useState<WinterProfileFrame[]>([]);
+  const [winterBanners, setWinterBanners] = useState<WinterProfileBanner[]>([]);
   const [winterBorders, setWinterBorders] = useState<WinterProfileBorder[]>([]);
   const [winterState, setWinterState] = useState<WinterStatusResponse['winterState'] | null>(null);
   const [winterCookies, setWinterCookies] = useState<number>(0);
@@ -414,7 +418,7 @@ export const StudentGamificationHub: React.FC<{
     if (authProf) setProfile(authProf);
     if (Array.isArray(lb)) setLeaderboard(lb);
     if (wStatus?.badges) setWinterBadges(wStatus.badges);
-    if (wStatus?.frames) setWinterFrames(wStatus.frames);
+    if (wStatus?.banners) setWinterBanners(wStatus.banners);
     if (wStatus?.borders) setWinterBorders(wStatus.borders);
     if (wStatus?.winterState) setWinterState(wStatus.winterState);
     if (typeof wStatus?.winterState?.cookiesCount === 'number') {
@@ -422,13 +426,15 @@ export const StudentGamificationHub: React.FC<{
     }
   };
 
-  const handleToggleWinterFrame = async (frameId: string | null) => {
-    setEquippingCosmetic(frameId || 'frame_none');
-    const res = await equipWinterFrame(currentUser, frameId);
+  const handleToggleWinterBanner = async (bannerId: string | null) => {
+    setEquippingCosmetic(bannerId || 'banner_none');
+    const res = await equipWinterBanner(currentUser, bannerId);
     setEquippingCosmetic(null);
     if (res.ok && res.data?.success) {
+      winterAudio.playBannerEquipped();
       await loadData();
       window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
+      window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated'));
     }
   };
 
@@ -437,8 +443,10 @@ export const StudentGamificationHub: React.FC<{
     const res = await equipWinterBorder(currentUser, borderId);
     setEquippingCosmetic(null);
     if (res.ok && res.data?.success) {
+      winterAudio.playBorderEquipped();
       await loadData();
       window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
+      window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated'));
     }
   };
 
@@ -447,9 +455,11 @@ export const StudentGamificationHub: React.FC<{
     const handleUpdate = () => loadData();
     window.addEventListener('studentos-gamification-updated', handleUpdate);
     window.addEventListener('veylentra-winter-updated', handleUpdate);
+    window.addEventListener('veylentra-cosmetics-updated', handleUpdate);
     return () => {
       window.removeEventListener('studentos-gamification-updated', handleUpdate);
       window.removeEventListener('veylentra-winter-updated', handleUpdate);
+      window.removeEventListener('veylentra-cosmetics-updated', handleUpdate);
     };
   }, [currentUser?.uid]);
 
@@ -849,13 +859,20 @@ export const StudentGamificationHub: React.FC<{
           {/* Winter Festival Collectibles */}
           {(badgeCategory === 'all' || badgeCategory === 'winter') &&
             (filteredWinterBadges.length > 0 ||
-              winterFrames.length > 0 ||
+              winterBanners.length > 0 ||
               winterBorders.length > 0 ||
               (winterState?.rewardHistory || []).length > 0) && (
             <div className="space-y-4 pt-2">
-              <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-sky-300">
-                <Snowflake className="w-4 h-4" />
-                <span>Seasonal Winter Festival Collectibles</span>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-sky-300">
+                  <Snowflake className="w-4 h-4" />
+                  <span>Seasonal Winter Festival Collectibles</span>
+                </div>
+                {winterState && (
+                  <span className="px-2.5 py-1 rounded-lg bg-cyan-500/15 border border-cyan-400/30 text-cyan-300 font-mono text-[11px] font-bold tabular-nums">
+                    Seasonal Balance: {winterState.frostXp || 0} Frost XP (Separate from Scholar XP)
+                  </span>
+                )}
               </div>
               {filteredWinterBadges.length > 0 && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -921,7 +938,7 @@ export const StudentGamificationHub: React.FC<{
                           }`}
                         >
                           <div className="flex items-center gap-3 min-w-0">
-                            <WinterCosmeticAvatar
+                            <ProfileCosmeticAvatar
                               name={currentUser.name}
                               avatarUrl={currentUser.photoURL || currentUser.avatar}
                               equippedBorder={border.id}
@@ -937,7 +954,7 @@ export const StudentGamificationHub: React.FC<{
                               type="button"
                               disabled={equippingCosmetic === border.id}
                               onClick={() => handleToggleWinterBorder(isEquipped ? null : border.id)}
-                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold shrink-0 cursor-pointer ${
+                              className={`min-h-[36px] px-2.5 py-1 rounded-lg text-[10px] font-bold shrink-0 cursor-pointer ${
                                 isEquipped
                                   ? 'bg-amber-500/20 text-amber-300 border border-amber-400/40'
                                   : 'bg-sky-500 text-slate-950 hover:bg-sky-400'
@@ -955,52 +972,59 @@ export const StudentGamificationHub: React.FC<{
                 </div>
               )}
 
-              {winterFrames.length > 0 && (
+              {winterBanners.length > 0 && (
                 <div className="space-y-2 pt-1">
                   <p className="text-xs font-bold text-sky-300 uppercase tracking-wider">
-                    Seasonal Avatar Frames
+                    Winter Profile Banners (Background Artwork)
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {winterFrames.map((frame) => {
-                      const isUnlocked = Boolean(winterState?.unlockedFrames?.includes(frame.id));
-                      const isEquipped = winterState?.equippedFrame === frame.id;
+                    {winterBanners.map((banner) => {
+                      const isUnlocked = Boolean(winterState?.unlockedBanners?.includes(banner.id));
+                      const isEquipped = winterState?.equippedBanner === banner.id;
                       return (
                         <div
-                          key={frame.id}
-                          className={`p-3.5 rounded-2xl border flex items-center justify-between gap-3 ${
+                          key={banner.id}
+                          className={`rounded-2xl border overflow-hidden flex flex-col justify-between ${
                             isUnlocked
                               ? 'bg-sky-950/50 border-sky-400/50'
                               : 'bg-slate-950/60 border-white/10 opacity-75'
                           }`}
                         >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <WinterCosmeticAvatar
-                              name={currentUser.name}
-                              avatarUrl={currentUser.photoURL || currentUser.avatar}
-                              equippedFrame={frame.id}
-                              size="sm"
-                            />
-                            <div className="min-w-0">
-                              <p className="text-xs font-bold text-white truncate">{frame.name}</p>
-                              <p className="text-[11px] text-slate-400 truncate">{frame.description}</p>
+                          <ProfileBannerBackdrop equippedBanner={banner.id} className="h-16 w-full">
+                            <div className="p-2.5 h-full flex items-end justify-between">
+                              <ProfileCosmeticAvatar
+                                name={currentUser.name}
+                                avatarUrl={currentUser.photoURL || currentUser.avatar}
+                                equippedBorder={winterState?.equippedBorder}
+                                size="xs"
+                              />
+                              <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-slate-950/75 text-slate-100 border border-white/15">
+                                {banner.rarity}
+                              </span>
                             </div>
+                          </ProfileBannerBackdrop>
+                          <div className="p-3.5 flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-white truncate">{banner.name}</p>
+                              <p className="text-[11px] text-slate-400 truncate">{banner.description}</p>
+                            </div>
+                            {isUnlocked ? (
+                              <button
+                                type="button"
+                                disabled={equippingCosmetic === banner.id}
+                                onClick={() => handleToggleWinterBanner(isEquipped ? null : banner.id)}
+                                className={`min-h-[36px] px-2.5 py-1 rounded-lg text-[10px] font-bold shrink-0 cursor-pointer ${
+                                  isEquipped
+                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-400/40'
+                                    : 'bg-sky-500 text-slate-950 hover:bg-sky-400'
+                                }`}
+                              >
+                                {isEquipped ? 'Unequip' : 'Equip'}
+                              </button>
+                            ) : (
+                              <span className="text-[10px] font-bold text-slate-500 shrink-0">Locked</span>
+                            )}
                           </div>
-                          {isUnlocked ? (
-                            <button
-                              type="button"
-                              disabled={equippingCosmetic === frame.id}
-                              onClick={() => handleToggleWinterFrame(isEquipped ? null : frame.id)}
-                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold shrink-0 cursor-pointer ${
-                                isEquipped
-                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-400/40'
-                                  : 'bg-sky-500 text-slate-950 hover:bg-sky-400'
-                              }`}
-                            >
-                              {isEquipped ? 'Unequip' : 'Equip'}
-                            </button>
-                          ) : (
-                            <span className="text-[10px] font-bold text-slate-500 shrink-0">Locked</span>
-                          )}
                         </div>
                       );
                     })}
@@ -1010,7 +1034,12 @@ export const StudentGamificationHub: React.FC<{
 
               {(() => {
                 const rewards = (winterState?.rewardHistory || []).filter(
-                  (r) => r.featureType === 'santa_gift' || r.featureType === 'spin_wheel'
+                  (r) =>
+                    r.featureType === 'santa_gift' ||
+                    r.featureType === 'spin_wheel' ||
+                    r.featureType === 'winter_shop' ||
+                    r.featureType === 'admin_grant' ||
+                    r.featureType === 'cookie_exchange'
                 );
                 if (rewards.length === 0) return null;
                 return (
@@ -1023,15 +1052,16 @@ export const StudentGamificationHub: React.FC<{
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-xs font-bold text-white truncate">{item.label}</span>
                           <span className="text-[10px] font-mono uppercase text-amber-300 shrink-0">
-                            {item.featureType === 'santa_gift' ? 'Santa Gift' : 'Spin Wheel'}
+                            {item.featureType.replace('_', ' ')}
                           </span>
                         </div>
-                        <p className="text-[11px] font-mono text-emerald-400">
+                        <p className="text-[11px] font-mono text-emerald-400 tabular-nums">
                           {item.xpBonus > 0 ? `+${item.xpBonus} XP ` : ''}
+                          {(item.frostXpBonus || 0) > 0 ? `+${item.frostXpBonus} Frost XP ` : ''}
                           {item.cookiesBonus > 0 ? `+${item.cookiesBonus} Cookies ` : ''}
                           {item.aiBonusQueries > 0 ? `+${item.aiBonusQueries} AI ` : ''}
                           {item.streakShield ? '+1 Shield ' : ''}
-                          {item.frameId ? '+Frame ' : ''}
+                          {item.bannerId ? '+Banner ' : ''}
                           {item.borderId ? '+Border' : ''}
                         </p>
                       </div>

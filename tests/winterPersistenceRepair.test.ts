@@ -58,6 +58,8 @@ function createMockSupabaseServer() {
     winter_task_claims: [],
     winter_user_badges: [],
     winter_reward_ledger: [],
+    winter_frost_xp_ledger: [],
+    winter_admin_grant_audit: [],
     gamification_xp_ledger: [],
     user_profiles: [],
     global_data: [],
@@ -411,7 +413,7 @@ async function main() {
       assert.equal(mockDb.tables.winter_task_claims.filter(c => c.user_id === 'stu-persist-1').length, 1);
     });
 
-    await runTest('Part 1.3: Spin Wheel, Winter Quiz, & Frame survive full cold-start memory wipe', async () => {
+    await runTest('Part 1.3: Spin Wheel, Winter Quiz, & Profile Banner survive full cold-start memory wipe', async () => {
       const spinRes = await apiJson(baseUrl, '/api/winter/spin', {
         method: 'POST',
         headers: stuHeaders,
@@ -434,28 +436,28 @@ async function main() {
       });
       assert.equal(quizTaskRes.status, 200);
 
-      // Simulate an unlocked frame in persisted DB row then equip via API & check unowned frame returns 403
+      // Simulate an unlocked banner in persisted DB row then equip via API & check unowned banner returns 403
       const profRow = mockDb.tables.winter_user_profiles.find(r => r.user_id === 'stu-persist-1');
       assert.ok(profRow);
-      profRow.unlocked_frames = Array.from(new Set([...(profRow.unlocked_frames || []), 'frosted_aurora']));
+      profRow.unlocked_banners = Array.from(new Set([...(profRow.unlocked_banners || []), 'frosted_aurora']));
       if (profRow.state_json) {
-        profRow.state_json.unlockedFrames = profRow.unlocked_frames;
+        profRow.state_json.unlockedBanners = profRow.unlocked_banners;
       }
       clearWinterMemoryCacheOnlyForTests();
 
-      const lockedFrameRes = await apiJson(baseUrl, '/api/winter/profile/frame', {
+      const lockedBannerRes = await apiJson(baseUrl, '/api/winter/profile/banner', {
         method: 'POST',
         headers: stuHeaders,
-        body: JSON.stringify({ frameId: 'aurora_crown' }),
+        body: JSON.stringify({ bannerId: 'aurora_crown' }),
       });
-      assert.equal(lockedFrameRes.status, 403);
+      assert.equal(lockedBannerRes.status, 403);
 
-      const frameRes = await apiJson(baseUrl, '/api/winter/profile/frame', {
+      const bannerRes = await apiJson(baseUrl, '/api/winter/profile/banner', {
         method: 'POST',
         headers: stuHeaders,
-        body: JSON.stringify({ frameId: 'frosted_aurora' }),
+        body: JSON.stringify({ bannerId: 'frosted_aurora' }),
       });
-      assert.equal(frameRes.status, 200);
+      assert.equal(bannerRes.status, 200);
 
       // Wipe all server in-memory caches (simulating another Vercel cold-started instance)
       clearWinterMemoryCacheOnlyForTests();
@@ -463,7 +465,7 @@ async function main() {
       const afterRestart = await apiJson(baseUrl, '/api/winter/status', { headers: stuHeaders });
       assert.equal(afterRestart.status, 200);
       assert.equal(afterRestart.data.winterState.quizCompleted, true);
-      assert.equal(afterRestart.data.winterState.equippedFrame, 'frosted_aurora');
+      assert.equal(afterRestart.data.winterState.equippedBanner, 'frosted_aurora');
       assert.ok(afterRestart.data.winterState.claimedTaskIds.includes('task_visit_festival'));
       assert.ok(afterRestart.data.winterState.claimedTaskIds.includes('task_winter_quiz'));
       assert.ok(afterRestart.data.winterState.earnedWinterBadges.snowflake_explorer);

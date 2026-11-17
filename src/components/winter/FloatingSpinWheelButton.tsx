@@ -92,7 +92,7 @@ export const FloatingSpinWheelButton: React.FC<FloatingSpinWheelButtonProps> = (
 
   return (
     <>
-      <div className="fixed bottom-24 right-5 z-40">
+      <div className="fixed bottom-20 right-3 sm:bottom-24 sm:right-5 z-40 max-w-[calc(100vw-1.5rem)]">
         <motion.button
           type="button"
           onClick={() => {
@@ -101,18 +101,18 @@ export const FloatingSpinWheelButton: React.FC<FloatingSpinWheelButtonProps> = (
           }}
           whileHover={prefersReduced ? undefined : { scale: 1.04 }}
           whileTap={prefersReduced ? undefined : { scale: 0.96 }}
-          className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-2xl border shadow-lg backdrop-blur-md transition-all cursor-pointer ${
+          className={`flex items-center gap-2 sm:gap-2.5 min-h-[44px] px-3 py-2 sm:px-3.5 sm:py-2.5 rounded-2xl border shadow-lg backdrop-blur-md transition-all cursor-pointer ${
             isReady
               ? 'bg-slate-900/95 border-sky-400/60 text-white shadow-sky-500/20'
-              : 'bg-slate-900/80 border-slate-700/80 text-slate-300 opacity-75 hover:opacity-100'
+              : 'bg-slate-900/80 border-slate-700/80 text-slate-300 opacity-85 hover:opacity-100'
           }`}
           aria-label={isReady ? 'Open Winter Spin Wheel (Ready)' : `Winter Spin Wheel cooldown ${formatCountdownMs(remainingMs)}`}
         >
           <svg
-            width="24"
-            height="24"
+            width="22"
+            height="22"
             viewBox="0 0 24 24"
-            className={isReady && !prefersReduced ? 'animate-spin' : ''}
+            className={`${isReady && !prefersReduced ? 'animate-spin' : ''} shrink-0`}
             style={isReady && !prefersReduced ? { animationDuration: '9s' } : undefined}
             aria-hidden="true"
           >
@@ -126,7 +126,7 @@ export const FloatingSpinWheelButton: React.FC<FloatingSpinWheelButtonProps> = (
 
           <div className="text-left leading-tight">
             <p className="text-[11px] font-bold whitespace-nowrap">
-              {isReady ? 'Winter Wheel Ready' : 'Wheel Cooldown'}
+              {isReady ? 'Winter Wheel' : 'Wheel Cooldown'}
             </p>
             <p className="text-[10px] font-mono tabular-nums text-sky-300 whitespace-nowrap">
               {isReady ? 'Tap to Spin' : formatCountdownMs(remainingMs)}

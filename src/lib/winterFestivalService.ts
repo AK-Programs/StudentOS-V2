@@ -2,8 +2,11 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Client API service for Veylentra Winter Festival, Nightly Santa Gift,
- * 2-Hour Spin Wheel, Hardened XP Actions, and Separated Student/Faculty Leaderboards.
+ * Client API service for Veylentra Winter Festival 3.1:
+ * - Winter Profile Banners & Perimeter Borders
+ * - Isolated Seasonal Frost XP Economy & Collectible Shop
+ * - Winter Cookie Exchange
+ * - Nightly Santa Gift, 2-Hour Spin Wheel, Hardened XP Actions & Separated Leaderboards
  */
 
 import { UserProfile } from '../types';
@@ -33,11 +36,32 @@ export const DEFAULT_SPIN_SEGMENTS: SpinWheelSegmentSpec[] = [
   { index: 1, id: 'cookies_3', label: '3 Winter Cookies', shortLabel: '3 Cookies', oddsPercent: 20, rarity: 'standard', color: '#e11d48', textColor: '#ffffff' },
   { index: 2, id: 'xp_50', label: '+50 Scholar XP', shortLabel: '+50 XP', oddsPercent: 18, rarity: 'standard', color: '#0f766e', textColor: '#f0fdfa' },
   { index: 3, id: 'ai_boost_2', label: '+2 Daily AI Queries', shortLabel: '+2 AI Boost', oddsPercent: 11, rarity: 'rare', color: '#1d4ed8', textColor: '#eff6ff' },
-  { index: 4, id: 'xp_100', label: '+100 Frost XP', shortLabel: '+100 XP', oddsPercent: 10, rarity: 'rare', color: '#0369a1', textColor: '#e0f2fe' },
+  { index: 4, id: 'xp_100', label: '+100 Scholar XP + 30 Frost XP', shortLabel: '+100 XP & Frost', oddsPercent: 10, rarity: 'rare', color: '#0369a1', textColor: '#e0f2fe' },
   { index: 5, id: 'streak_shield', label: 'Streak Freeze Shield', shortLabel: 'Shield', oddsPercent: 8, rarity: 'rare', color: '#334155', textColor: '#f8fafc' },
   { index: 6, id: 'cookies_6', label: '6 Cocoa Cookies', shortLabel: '6 Cookies', oddsPercent: 6, rarity: 'rare', color: '#be123c', textColor: '#fff1f2' },
-  { index: 7, id: 'frost_jackpot', label: 'Frost Jackpot (+200 XP)', shortLabel: 'Jackpot!', oddsPercent: 3, rarity: 'jackpot', color: '#d97706', textColor: '#ffffff' },
+  { index: 7, id: 'frost_jackpot', label: 'Frost Jackpot (+200 XP & Banner)', shortLabel: 'Jackpot!', oddsPercent: 3, rarity: 'jackpot', color: '#d97706', textColor: '#ffffff' },
 ];
+
+export interface CookieExchangeOption {
+  id: 'frost_xp_pack' | 'ai_bonus_query';
+  title: string;
+  description: string;
+  cookieCost: number;
+  frostXpGrant: number;
+  aiBonusGrant: number;
+}
+
+export interface FrostXpTransaction {
+  id: string;
+  userId: string;
+  amount: number;
+  balanceAfter: number;
+  reason: string;
+  referenceType?: string;
+  referenceId?: string;
+  idempotencyKey: string;
+  createdAt: string;
+}
 
 export interface WinterTaskItem {
   id: string;
@@ -45,8 +69,10 @@ export interface WinterTaskItem {
   description: string;
   verificationMode: 'hub_visit' | 'academic_action' | 'winter_quiz' | 'spin_or_santa' | 'study_check';
   xpReward: number;
+  frostXpReward: number;
   cookiesReward: number;
   badgeId?: string;
+  borderId?: string;
   actionTab?: string;
   actionLabel?: string;
   claimed: boolean;
@@ -57,19 +83,23 @@ export interface WinterBadgeItem {
   name: string;
   description: string;
   unlockRequirement: string;
+  purpose?: string;
   rarity: string;
   isHiddenUntilUnlocked?: boolean;
   unlockedAt: string | null;
 }
 
-export interface WinterProfileFrame {
+export interface WinterProfileBanner {
   id: string;
   name: string;
   description: string;
-  borderClass?: string;
-  cssRing?: string;
-  rarity?: 'rare' | 'legendary' | 'secret';
-  unlockRequirement?: string;
+  rarity: 'seasonal' | 'rare' | 'legendary' | 'secret';
+  unlockRequirement: string;
+  purpose: string;
+  frostXpCost: number;
+  purchasableWithFrostXp: boolean;
+  vfxType: 'aurora' | 'peppermint' | 'starlight' | 'crown' | 'snowfall' | 'hearth';
+  accentColor: string;
 }
 
 export interface WinterProfileBorder {
@@ -77,13 +107,17 @@ export interface WinterProfileBorder {
   name: string;
   description: string;
   unlockRequirement: string;
+  purpose?: string;
   rarity: 'seasonal' | 'rare' | 'legendary';
   accentColor: string;
+  frostXpCost: number;
+  purchasableWithFrostXp: boolean;
+  vfxType?: 'ice' | 'snowflake' | 'glow' | 'peppermint' | 'gilded' | 'prism';
 }
 
 export interface WinterRewardRecord {
   id: string;
-  featureType: 'santa_gift' | 'spin_wheel' | 'winter_task';
+  featureType: 'santa_gift' | 'spin_wheel' | 'winter_task' | 'winter_shop' | 'cookie_exchange' | 'admin_grant';
   idempotencyKey: string;
   eventNightKey?: string;
   status: 'pending_apply' | 'applied' | 'recovered';
@@ -91,11 +125,12 @@ export interface WinterRewardRecord {
   segmentIndex?: number;
   label: string;
   xpBonus: number;
+  frostXpBonus?: number;
   cookiesBonus: number;
   aiBonusQueries: number;
   streakShield: boolean;
   badgeId?: string;
-  frameId?: string;
+  bannerId?: string;
   borderId?: string;
   createdAt: string;
   appliedAt?: string;
@@ -103,14 +138,16 @@ export interface WinterRewardRecord {
 
 export interface WinterStatusResponse {
   success: boolean;
+  isSuperAdmin?: boolean;
   winterState: {
     userId: string;
     userName: string;
     userRole: string;
+    frostXp: number;
     cookiesCount: number;
     streakShields: number;
-    unlockedFrames: string[];
-    equippedFrame: string | null;
+    unlockedBanners: string[];
+    equippedBanner: string | null;
     unlockedBorders: string[];
     equippedBorder: string | null;
     spinNextEligibleAt: string | null;
@@ -123,6 +160,7 @@ export interface WinterStatusResponse {
     earnedWinterBadges: Record<string, string>;
     santaClaimedNights: Record<string, string>;
     rewardHistory: WinterRewardRecord[];
+    frostXpTransactions?: FrostXpTransaction[];
   };
   santa: {
     enabled: boolean;
@@ -149,8 +187,9 @@ export interface WinterStatusResponse {
   };
   tasks: WinterTaskItem[];
   badges: WinterBadgeItem[];
-  frames: WinterProfileFrame[];
+  banners: WinterProfileBanner[];
   borders: WinterProfileBorder[];
+  cookieExchangeOptions: CookieExchangeOption[];
   quizQuestions: Array<{ id: string; prompt: string; options: string[] }>;
   serverTime: string;
 }
@@ -170,7 +209,7 @@ export interface LeaderboardEntry {
   nextLevelXp: number | null;
   currentStreak: number;
   winterCookies: number;
-  equippedFrame: string | null;
+  equippedBanner: string | null;
   equippedBorder: string | null;
   badgesCount: number;
 }
@@ -257,12 +296,12 @@ export async function claimWinterTask(user: Partial<UserProfile> | null | undefi
   return { ok: res.ok, status: res.status, data };
 }
 
-export async function equipWinterFrame(user: Partial<UserProfile> | null | undefined, frameId: string | null) {
+export async function equipWinterBanner(user: Partial<UserProfile> | null | undefined, bannerId: string | null) {
   const headers = await buildAuthHeadersForUser(user);
-  const res = await fetch('/api/winter/profile/frame', {
+  const res = await fetch('/api/winter/profile/banner', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ frameId }),
+    body: JSON.stringify({ bannerId }),
   });
   const data = await res.json();
   return { ok: res.ok, status: res.status, data };
@@ -279,14 +318,77 @@ export async function equipWinterBorder(user: Partial<UserProfile> | null | unde
   return { ok: res.ok, status: res.status, data };
 }
 
+export async function purchaseWinterCollectible(
+  user: Partial<UserProfile> | null | undefined,
+  params: { itemType: 'banner' | 'border'; itemId: string; adminGrant?: boolean; idempotencyKey?: string }
+) {
+  const headers = await buildAuthHeadersForUser(user);
+  const res = await fetch('/api/winter/shop/purchase', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(params),
+  });
+  const data = await res.json();
+  return { ok: res.ok, status: res.status, data };
+}
+
+export async function exchangeWinterCookies(
+  user: Partial<UserProfile> | null | undefined,
+  optionId: 'frost_xp_pack' | 'ai_bonus_query'
+) {
+  const headers = await buildAuthHeadersForUser(user);
+  const res = await fetch('/api/winter/cookies/exchange', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ optionId }),
+  });
+  const data = await res.json();
+  return { ok: res.ok, status: res.status, data };
+}
+
+export async function fetchFrostXpHistory(user: Partial<UserProfile> | null | undefined): Promise<{
+  ok: boolean;
+  frostXp: number;
+  transactions: FrostXpTransaction[];
+}> {
+  if (!user) return { ok: false, frostXp: 0, transactions: [] };
+  const headers = await buildAuthHeadersForUser(user);
+  const res = await fetch('/api/winter/frost-xp/history', { headers, cache: 'no-store' });
+  const data = await res.json().catch(() => ({}));
+  return {
+    ok: res.ok && Boolean(data?.success),
+    frostXp: Number(data?.frostXp || 0),
+    transactions: Array.isArray(data?.transactions) ? data.transactions : [],
+  };
+}
+
 export interface PublicWinterCosmetics {
   userId: string;
-  equippedFrame: string | null;
+  equippedBanner: string | null;
   equippedBorder: string | null;
-  unlockedFrames: string[];
+  unlockedBanners: string[];
   unlockedBorders: string[];
   cookiesCount: number;
   badgesCount: number;
+  frostXp?: number;
+  publicProfile?: {
+    uid: string;
+    name: string;
+    role: string;
+    photoURL?: string;
+    bio?: string;
+    house?: string;
+    grade?: string;
+    section?: string;
+    points?: number;
+    bannerUrl?: string;
+    bannerPreset?: string;
+    avatarFrame?: string;
+    accentColor?: string;
+    pronouns?: string;
+    customStatus?: string;
+    badges?: any[];
+  } | null;
 }
 
 export async function fetchPublicWinterCosmetics(

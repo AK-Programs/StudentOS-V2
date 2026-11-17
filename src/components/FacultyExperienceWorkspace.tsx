@@ -50,6 +50,8 @@ import {
 import { OfficialClassTimetable } from '../types/syllabusTimetable';
 import { soundService } from '../lib/soundService';
 import { VeylentraIcon } from './ui/VeylentraIcon';
+import { fetchPublicWinterCosmetics } from '../lib/winterFestivalService';
+import { ProfileBannerBackdrop, ProfileCosmeticAvatar } from './winter/ProfileCosmeticRenderer';
 import {
   getFacultyRoleConfig,
   hasFacultyCapability,
@@ -144,6 +146,34 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
   const [subSection, setSubSection] = useState<FacultySubSection>(() =>
     roleConfig.defaultSubTab === 'coordination' && isCoordinatorPlus ? 'coordination' : 'overview'
   );
+  const [winterCosmetics, setWinterCosmetics] = useState<{ equippedBanner: string | null; equippedBorder: string | null }>({
+    equippedBanner: null,
+    equippedBorder: null,
+  });
+
+  useEffect(() => {
+    const uid = currentUser?.uid;
+    if (!uid) return;
+    let active = true;
+    const syncCosmetics = () => {
+      fetchPublicWinterCosmetics(uid, currentUser).then((cos) => {
+        if (active && cos) {
+          setWinterCosmetics({
+            equippedBanner: cos.equippedBanner || null,
+            equippedBorder: cos.equippedBorder || null,
+          });
+        }
+      });
+    };
+    syncCosmetics();
+    window.addEventListener('veylentra-winter-updated', syncCosmetics);
+    window.addEventListener('veylentra-cosmetics-updated', syncCosmetics);
+    return () => {
+      active = false;
+      window.removeEventListener('veylentra-winter-updated', syncCosmetics);
+      window.removeEventListener('veylentra-cosmetics-updated', syncCosmetics);
+    };
+  }, [currentUser?.uid]);
 
   // Real data states
   const [scopedStudents, setScopedStudents] = useState<UserProfile[]>([]);
@@ -923,25 +953,39 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bento-card p-6 bg-slate-900 border border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-6"
+            className="bento-card relative overflow-hidden p-6 bg-slate-900 border border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-6"
           >
-            <div className="space-y-1.5">
-              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                <span className="font-semibold text-sky-400">{roleConfig.label}</span>
-                <span aria-hidden="true">·</span>
-                <span>{currentUser.department || 'Academic Department'}</span>
-                <span aria-hidden="true">·</span>
-                <span>{authorizedGrades.join(', ')}</span>
+            {winterCosmetics.equippedBanner && (
+              <div className="pointer-events-none absolute inset-0 opacity-35" aria-hidden="true">
+                <ProfileBannerBackdrop equippedBanner={winterCosmetics.equippedBanner} className="w-full h-full" />
+                <div className="absolute inset-0 bg-gradient-to-r from-slate-950/80 via-slate-950/65 to-slate-950/85" />
               </div>
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-                {roleConfig.workspaceTitle}
-              </h1>
-              <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
-                {roleConfig.workspaceSubtitle}
-              </p>
+            )}
+            <div className="relative z-10 flex items-center gap-4 min-w-0">
+              <ProfileCosmeticAvatar
+                name={currentUser.name || 'Faculty'}
+                avatarUrl={currentUser.photoURL || currentUser.avatar}
+                equippedBorder={winterCosmetics.equippedBorder}
+                size="md"
+              />
+              <div className="space-y-1.5 min-w-0">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+                  <span className="font-semibold text-sky-400">{roleConfig.label}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>{currentUser.department || 'Academic Department'}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>{authorizedGrades.join(', ')}</span>
+                </div>
+                <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight truncate">
+                  {roleConfig.workspaceTitle}
+                </h1>
+                <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
+                  {roleConfig.workspaceSubtitle}
+                </p>
+              </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            <div className="relative z-10 flex flex-wrap items-center gap-2.5 shrink-0">
               <button
                 type="button"
                 onClick={() => {

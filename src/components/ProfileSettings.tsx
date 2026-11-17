@@ -25,9 +25,10 @@ import {
   sendTestFCMNotification
 } from '../lib/fcmNotifications';
 import { soundService } from '../lib/soundService';
-import { fetchPublicWinterCosmetics } from '../lib/winterFestivalService';
-import { WinterCosmeticAvatar } from './winter/WinterCosmeticAvatar';
-import { getWinterBorderVisual, getWinterFrameVisual } from '../lib/winterCosmetics';
+import { fetchWinterStatus, WinterStatusResponse } from '../lib/winterFestivalService';
+import { ProfileBannerBackdrop, ProfileCosmeticAvatar } from './winter/ProfileCosmeticRenderer';
+import { WinterCosmeticsStudioSection } from './winter/WinterCosmeticsStudioSection';
+import { getWinterBannerVisual, getWinterBorderVisual } from '../lib/winterCosmetics';
 
 export type SettingsSubSection = 'customization' | 'info' | 'theme' | 'verification' | 'environment' | 'notifications';
 
@@ -82,32 +83,32 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
   const [customStatus, setCustomStatus] = useState<string>(currentUser.customStatus || rawData.customStatus || '');
   const [avatarFrame, setAvatarFrame] = useState<ProfileFrameStyle>((currentUser.avatarFrame || rawData.avatarFrame || 'none') as ProfileFrameStyle);
   const [accentColor, setAccentColor] = useState<string>(currentUser.accentColor || rawData.accentColor || 'indigo');
-  const [winterCosmetics, setWinterCosmetics] = useState<{ equippedFrame: string | null; equippedBorder: string | null }>({
-    equippedFrame: null,
-    equippedBorder: null,
-  });
+  const [winterStatus, setWinterStatus] = useState<WinterStatusResponse | null>(null);
+  const [winterLoading, setWinterLoading] = useState<boolean>(false);
+  const [previewBannerId, setPreviewBannerId] = useState<string | null>(null);
+  const [previewBorderId, setPreviewBorderId] = useState<string | null>(null);
+
+  const loadWinterCosmetics = React.useCallback(async () => {
+    if (!currentUser?.uid) return;
+    setWinterLoading(true);
+    try {
+      const data = await fetchWinterStatus(currentUser);
+      if (data) setWinterStatus(data);
+    } finally {
+      setWinterLoading(false);
+    }
+  }, [currentUser?.uid]);
 
   useEffect(() => {
-    const uid = currentUser?.uid;
-    if (!uid) return;
-    let active = true;
-    const syncCosmetics = () => {
-      fetchPublicWinterCosmetics(uid, currentUser).then((cos) => {
-        if (active && cos) {
-          setWinterCosmetics({
-            equippedFrame: cos.equippedFrame || null,
-            equippedBorder: cos.equippedBorder || null,
-          });
-        }
-      });
-    };
-    syncCosmetics();
+    void loadWinterCosmetics();
+    const syncCosmetics = () => { void loadWinterCosmetics(); };
     window.addEventListener('veylentra-winter-updated', syncCosmetics);
+    window.addEventListener('veylentra-cosmetics-updated', syncCosmetics);
     return () => {
-      active = false;
       window.removeEventListener('veylentra-winter-updated', syncCosmetics);
+      window.removeEventListener('veylentra-cosmetics-updated', syncCosmetics);
     };
-  }, [currentUser?.uid]);
+  }, [loadWinterCosmetics]);
 
   // Custom Cards state
   const [customCards, setCustomCards] = useState<CustomCardItem[]>(() => {
@@ -476,8 +477,12 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
     }
   };
 
-  // Active frame object
+  // Active frame & Winter cosmetics lookup
   const activeFrame = AVATAR_FRAMES.find(f => f.id === avatarFrame) || AVATAR_FRAMES[0];
+  const equippedWinterBanner = winterStatus?.winterState?.equippedBanner || null;
+  const equippedWinterBorder = winterStatus?.winterState?.equippedBorder || null;
+  const activePreviewBanner = previewBannerId ?? equippedWinterBanner;
+  const activePreviewBorder = previewBorderId ?? equippedWinterBorder;
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -606,102 +611,169 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
           {/* Left Column: Customization Controls */}
           <div className="lg:col-span-7 space-y-6">
             
-            {/* Banner Customization */}
-            <div className="smart-glass p-4 sm:p-5 rounded-2xl sm:rounded-3xl space-y-4">
-              <div className="flex items-center justify-between">
+            {/* 1. Profile Banners */}
+            <div className="smart-glass p-4 sm:p-5 rounded-2xl sm:rounded-3xl space-y-5">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <h3 className="text-sm font-black font-display text-white uppercase tracking-wider">
-                  Profile Banner
+                  1. Profile Banners (Background Artwork)
                 </h3>
                 <label className="cursor-pointer text-xs text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1">
                   <Camera className="w-3.5 h-3.5" />
-                  <span>{uploadingBanner ? 'Uploading...' : 'Upload Image'}</span>
+                  <span>{uploadingBanner ? 'Uploading...' : 'Upload Custom Image'}</span>
                   <input type="file" accept="image/*" onChange={handleBannerUpload} className="hidden" disabled={uploadingBanner} />
                 </label>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                {BANNER_PRESETS.map(preset => (
-                  <button
-                    key={preset.id}
-                    onClick={() => {
-                      setBannerPreset(preset.gradient);
-                      setBannerUrl('');
-                    }}
-                    className={`h-14 rounded-xl relative overflow-hidden border transition-all ${
-                      bannerPreset === preset.gradient && !bannerUrl ? 'border-white ring-2 ring-indigo-500 scale-95' : 'border-white/10 hover:border-white/30'
-                    }`}
-                  >
-                    <div className={`w-full h-full ${preset.gradient}`} />
-                    <span className="absolute bottom-1 left-2 text-[9px] font-bold text-white drop-shadow">
-                      {preset.name}
-                    </span>
-                  </button>
-                ))}
+              <WinterCosmeticsStudioSection
+                currentUser={currentUser}
+                winterStatus={winterStatus}
+                loading={winterLoading}
+                previewBannerId={previewBannerId}
+                previewBorderId={previewBorderId}
+                onPreviewBannerChange={setPreviewBannerId}
+                onPreviewBorderChange={setPreviewBorderId}
+                onRefreshWinterStatus={loadWinterCosmetics}
+                mode="banners"
+                onStatusFeedback={(msg, isErr) => {
+                  if (isErr) setErrorMsg(msg);
+                  else {
+                    setErrorMsg(null);
+                    setSaveSuccess(true);
+                    setTimeout(() => setSaveSuccess(false), 3000);
+                  }
+                }}
+              />
+
+              <div className="pt-2 border-t border-white/5 space-y-2">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Standard Gradient Themes (used when no Winter Banner is equipped)
+                </span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  {BANNER_PRESETS.map(preset => (
+                    <button
+                      key={preset.id}
+                      onClick={() => {
+                        setBannerPreset(preset.gradient);
+                        setBannerUrl('');
+                      }}
+                      className={`h-14 rounded-xl relative overflow-hidden border transition-all ${
+                        bannerPreset === preset.gradient && !bannerUrl ? 'border-white ring-2 ring-indigo-500 scale-95' : 'border-white/10 hover:border-white/30'
+                      }`}
+                    >
+                      <div className={`w-full h-full ${preset.gradient}`} />
+                      <span className="absolute bottom-1 left-2 text-[9px] font-bold text-white drop-shadow">
+                        {preset.name}
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
-            {/* Avatar Frame / Border Selector */}
-            <div className="smart-glass p-4 sm:p-5 rounded-2xl sm:rounded-3xl space-y-4">
-              <div className="flex items-center justify-between">
+            {/* 2. Profile Borders */}
+            <div className="smart-glass p-4 sm:p-5 rounded-2xl sm:rounded-3xl space-y-5">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <h3 className="text-sm font-black font-display text-white uppercase tracking-wider">
-                  Avatar Border / Frame
+                  2. Profile Borders (Avatar Perimeter)
                 </h3>
-                <span className="text-[10px] text-slate-400">9 Styles</span>
+                <span className="text-[10px] text-slate-400">Winter + 9 Permanent Styles</span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                {AVATAR_FRAMES.map(f => (
-                  <button
-                    key={f.id}
-                    onClick={() => setAvatarFrame(f.id)}
-                    className={`p-3 rounded-2xl border text-left flex items-center gap-3 transition-all ${
-                      avatarFrame === f.id
-                        ? 'bg-indigo-600/20 border-indigo-500 ring-1 ring-indigo-500'
-                        : 'bg-slate-900/60 border-white/5 hover:border-white/15'
-                    }`}
-                  >
-                    <div className={`w-8 h-8 rounded-full ${f.className} shrink-0 bg-slate-950 flex items-center justify-center text-xs`}>
-                      👑
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-white truncate">{f.name}</p>
-                      <p className="text-[10px] text-slate-400 truncate">{f.description}</p>
-                    </div>
-                  </button>
-                ))}
+              <WinterCosmeticsStudioSection
+                currentUser={currentUser}
+                winterStatus={winterStatus}
+                loading={winterLoading}
+                previewBannerId={previewBannerId}
+                previewBorderId={previewBorderId}
+                onPreviewBannerChange={setPreviewBannerId}
+                onPreviewBorderChange={setPreviewBorderId}
+                onRefreshWinterStatus={loadWinterCosmetics}
+                mode="borders"
+                onStatusFeedback={(msg, isErr) => {
+                  if (isErr) setErrorMsg(msg);
+                  else {
+                    setErrorMsg(null);
+                    setSaveSuccess(true);
+                    setTimeout(() => setSaveSuccess(false), 3000);
+                  }
+                }}
+              />
+
+              <div className="pt-2 border-t border-white/5 space-y-2.5">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Permanent Perimeter Styles (Always Available)
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  {AVATAR_FRAMES.map(f => (
+                    <button
+                      key={f.id}
+                      onClick={() => setAvatarFrame(f.id)}
+                      className={`p-3 rounded-2xl border text-left flex items-center gap-3 transition-all ${
+                        avatarFrame === f.id
+                          ? 'bg-indigo-600/20 border-indigo-500 ring-1 ring-indigo-500'
+                          : 'bg-slate-900/60 border-white/5 hover:border-white/15'
+                      }`}
+                    >
+                      <div className={`w-8 h-8 rounded-full ${f.className} shrink-0 bg-slate-950 flex items-center justify-center text-xs`}>
+                        👑
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-white truncate">{f.name}</p>
+                        <p className="text-[10px] text-slate-400 truncate">{f.description}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
-            {/* Avatar Upload & Profile Accent */}
+            {/* 3. Badges */}
             <div className="smart-glass p-4 sm:p-5 rounded-2xl sm:rounded-3xl space-y-4">
               <h3 className="text-sm font-black font-display text-white uppercase tracking-wider">
-                Avatar & Accent Color
+                3. Badges Collection
+              </h3>
+              <WinterCosmeticsStudioSection
+                currentUser={currentUser}
+                winterStatus={winterStatus}
+                loading={winterLoading}
+                previewBannerId={previewBannerId}
+                previewBorderId={previewBorderId}
+                onPreviewBannerChange={setPreviewBannerId}
+                onPreviewBorderChange={setPreviewBorderId}
+                onRefreshWinterStatus={loadWinterCosmetics}
+                mode="badges"
+              />
+            </div>
+
+            {/* 4. Bio & Other Cosmetics: Avatar Photo, Accent Aura, Pronouns, Status, Bio */}
+            <div className="smart-glass p-4 sm:p-5 rounded-2xl sm:rounded-3xl space-y-4">
+              <h3 className="text-sm font-black font-display text-white uppercase tracking-wider">
+                4. Bio &amp; Other Cosmetics
               </h3>
 
               <div className="flex flex-col sm:flex-row items-center gap-4">
-                <WinterCosmeticAvatar
+                <ProfileCosmeticAvatar
                   name={currentUser.name || 'User'}
                   avatarUrl={photoURL}
-                  equippedBorder={winterCosmetics.equippedBorder}
-                  equippedFrame={winterCosmetics.equippedFrame}
+                  equippedBorder={activePreviewBorder}
                   permanentFrameClass={activeFrame.className}
                   size="lg"
                   fallbackBgClass="bg-slate-950 text-white font-bold"
                 />
 
                 <div className="space-y-1 text-center sm:text-left">
-                  <label className="cursor-pointer inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all border border-white/10">
+                  <label className="cursor-pointer min-h-[44px] inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all border border-white/10">
                     <Camera className="w-3.5 h-3.5" />
                     <span>{uploadingAvatar ? 'Uploading...' : 'Change Avatar Photo'}</span>
                     <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" disabled={uploadingAvatar} />
                   </label>
                   <p className="text-[10px] text-slate-400">JPG, PNG, GIF up to 5MB.</p>
-                  {(winterCosmetics.equippedBorder || winterCosmetics.equippedFrame) && (
+                  {(activePreviewBorder || activePreviewBanner) && (
                     <p className="text-[10px] text-sky-400 font-medium">
                       Active Winter Cosmetics:{' '}
-                      {getWinterBorderVisual(winterCosmetics.equippedBorder)?.name || 'No Border'}
-                      {winterCosmetics.equippedFrame
-                        ? ` · ${getWinterFrameVisual(winterCosmetics.equippedFrame)?.name}`
+                      {getWinterBorderVisual(activePreviewBorder)?.name || 'No Border'}
+                      {activePreviewBanner
+                        ? ` · ${getWinterBannerVisual(activePreviewBanner)?.name}`
                         : ''}
                     </p>
                   )}
@@ -724,13 +796,11 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                   ))}
                 </div>
               </div>
-            </div>
 
-            {/* Bio, Pronouns, and Custom Status */}
-            <div className="smart-glass p-4 sm:p-5 rounded-2xl sm:rounded-3xl space-y-4">
-              <h3 className="text-sm font-black font-display text-white uppercase tracking-wider">
-                Identity & Status
-              </h3>
+              <div className="pt-2 border-t border-white/5 space-y-4">
+                <h4 className="text-xs font-black font-display text-slate-300 uppercase tracking-wider">
+                  Identity &amp; Status
+                </h4>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
@@ -765,6 +835,7 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                   placeholder="Share a short bio with teachers and classmates..."
                   className="w-full bg-slate-900 border border-white/10 rounded-xl p-3 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 />
+              </div>
               </div>
             </div>
 
@@ -904,30 +975,31 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
 
               <div className="bg-slate-900 border border-white/10 rounded-3xl overflow-hidden shadow-2xl">
                 {/* Banner preview */}
-                <div className="relative h-28 w-full overflow-hidden">
-                  {bannerUrl ? (
-                    <img src={bannerUrl} alt="Banner" className="w-full h-full object-cover" />
-                  ) : (
-                    <div className={`w-full h-full ${bannerPreset}`} />
-                  )}
+                <ProfileBannerBackdrop
+                  equippedBanner={activePreviewBanner}
+                  bannerUrl={bannerUrl}
+                  bannerPresetClass={bannerPreset}
+                  className="h-28 w-full"
+                >
                   <span className="absolute bottom-2 right-3 px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-black/60 text-white border border-white/10 backdrop-blur-sm">
                     {currentUser.role || 'Student'}
                   </span>
-                </div>
+                </ProfileBannerBackdrop>
 
                 {/* Avatar and Info */}
                 <div className="p-5 pt-0 space-y-3">
-                  <div className="-mt-10 flex items-end justify-between">
+                  <div className="-mt-10 flex items-end justify-between relative z-10">
                     <div className="relative">
-                      <div className={`w-20 h-20 rounded-full ${activeFrame.className} bg-slate-900 flex items-center justify-center overflow-hidden`}>
-                        {photoURL ? (
-                          <img src={photoURL} alt="Avatar" className="w-full h-full object-cover rounded-full" />
-                        ) : (
-                          <div className="text-2xl font-bold text-white">{(currentUser.name || 'U').charAt(0)}</div>
-                        )}
-                      </div>
+                      <ProfileCosmeticAvatar
+                        name={currentUser.name || 'User'}
+                        avatarUrl={photoURL}
+                        equippedBorder={activePreviewBorder}
+                        permanentFrameClass={activeFrame.className}
+                        size="lg"
+                        fallbackBgClass="bg-slate-900 text-white font-bold"
+                      />
                       {verification.isVerified && (
-                        <div className="absolute bottom-0 right-0 w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs shadow-md border-2 border-slate-900">
+                        <div className="absolute bottom-0 right-0 w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xs shadow-md border-2 border-slate-900 z-10">
                           <ShieldCheck className="w-3.5 h-3.5" />
                         </div>
                       )}

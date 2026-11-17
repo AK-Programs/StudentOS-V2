@@ -25,7 +25,10 @@ import {
   TactileButton,
 } from '../ui/animatedComponents';
 import { WinterCookieSvg } from '../winter/WinterArtwork';
-import { WinterCosmeticAvatar } from '../winter/WinterCosmeticAvatar';
+import {
+  ProfileBannerBackdrop,
+  ProfileCosmeticAvatar,
+} from '../winter/ProfileCosmeticRenderer';
 
 interface XpLeaderboardPanelProps {
   type: 'student' | 'faculty';
@@ -105,9 +108,11 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
     };
     window.addEventListener('studentos-gamification-updated', onSync);
     window.addEventListener('veylentra-winter-updated', onSync);
+    window.addEventListener('veylentra-cosmetics-updated', onSync);
     return () => {
       window.removeEventListener('studentos-gamification-updated', onSync);
       window.removeEventListener('veylentra-winter-updated', onSync);
+      window.removeEventListener('veylentra-cosmetics-updated', onSync);
     };
   }, [loadLeaderboard]);
 
@@ -229,34 +234,50 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.25, delay: entry.rank * 0.05 }}
-                      className={`rounded-xl border p-4 text-center flex flex-col items-center gap-2 ${rankColors} ${
-                        isFirst ? 'sm:order-2 sm:py-5' : entry.rank === 2 ? 'sm:order-1' : 'sm:order-3'
+                      className={`rounded-xl border overflow-hidden text-center flex flex-col items-center ${rankColors} ${
+                        isFirst ? 'sm:order-2' : entry.rank === 2 ? 'sm:order-1' : 'sm:order-3'
                       }`}
                     >
-                      <span className="text-xs font-mono font-bold tabular-nums text-slate-600 dark:text-slate-300">
-                        Rank #{entry.rank}
-                      </span>
-                      <WinterCosmeticAvatar
-                        name={entry.name}
-                        avatarUrl={entry.avatar}
-                        equippedBorder={entry.equippedBorder}
-                        equippedFrame={entry.equippedFrame}
-                        size="md"
-                      />
-                      <div className="min-w-0 w-full">
-                        <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{entry.name}</p>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                          {entry.grade || entry.role}
-                          {entry.section ? ` · ${entry.section}` : ''}
+                      {entry.equippedBanner ? (
+                        <ProfileBannerBackdrop
+                          equippedBanner={entry.equippedBanner}
+                          className="w-full h-14 flex items-center justify-center relative"
+                        >
+                          <div className="absolute inset-0 bg-slate-950/35 pointer-events-none" aria-hidden="true" />
+                          <span className="relative z-10 text-xs font-mono font-bold tabular-nums text-white drop-shadow">
+                            Rank #{entry.rank}
+                          </span>
+                        </ProfileBannerBackdrop>
+                      ) : (
+                        <div className="pt-3.5 px-4">
+                          <span className="text-xs font-mono font-bold tabular-nums text-slate-600 dark:text-slate-300">
+                            Rank #{entry.rank}
+                          </span>
+                        </div>
+                      )}
+
+                      <div className={`px-4 pb-4 w-full flex flex-col items-center gap-2 ${entry.equippedBanner ? '-mt-5 relative z-10' : 'pt-2'} ${isFirst && !entry.equippedBanner ? 'sm:pb-5' : ''}`}>
+                        <ProfileCosmeticAvatar
+                          name={entry.name}
+                          avatarUrl={entry.avatar}
+                          equippedBorder={entry.equippedBorder}
+                          size="md"
+                        />
+                        <div className="min-w-0 w-full">
+                          <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{entry.name}</p>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                            {entry.grade || entry.role}
+                            {entry.section ? ` · ${entry.section}` : ''}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-sm font-bold font-mono tabular-nums text-sky-600 dark:text-sky-400">
+                          <NumberTicker value={entry.xp} />
+                          <span className="text-xs">XP</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Lv.{entry.level} {entry.levelTitle}
                         </p>
                       </div>
-                      <div className="flex items-center gap-1.5 text-sm font-bold font-mono tabular-nums text-sky-600 dark:text-sky-400">
-                        <NumberTicker value={entry.xp} />
-                        <span className="text-xs">XP</span>
-                      </div>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                        Lv.{entry.level} {entry.levelTitle}
-                      </p>
                     </motion.div>
                   );
                 })}
@@ -277,15 +298,21 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
                     initial={{ opacity: 0, y: 4 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.16, delay: Math.min(idx * 0.02, 0.2) }}
-                    className={`flex items-center justify-between gap-3 px-3.5 py-2.5 transition-colors ${
+                    className={`relative overflow-hidden flex items-center justify-between gap-2 sm:gap-3 px-3 sm:px-3.5 py-2.5 transition-colors ${
                       isSelf
                         ? 'bg-sky-500/10 dark:bg-sky-500/15'
                         : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
                     }`}
                   >
-                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                    {entry.equippedBanner && (
+                      <div className="pointer-events-none absolute inset-0 opacity-20" aria-hidden="true">
+                        <ProfileBannerBackdrop equippedBanner={entry.equippedBanner} className="w-full h-full" />
+                        <div className="absolute inset-0 bg-gradient-to-r from-white/75 via-white/60 to-white/80 dark:from-slate-950/75 dark:via-slate-950/60 dark:to-slate-950/85" />
+                      </div>
+                    )}
+                    <div className="relative z-10 flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
                       <span
-                        className={`w-7 text-center font-mono text-xs font-bold tabular-nums shrink-0 ${
+                        className={`w-6 sm:w-7 text-center font-mono text-xs font-bold tabular-nums shrink-0 ${
                           entry.rank === 1
                             ? 'text-amber-500'
                             : entry.rank === 2
@@ -298,11 +325,10 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
                         #{entry.rank}
                       </span>
 
-                      <WinterCosmeticAvatar
+                      <ProfileCosmeticAvatar
                         name={entry.name}
                         avatarUrl={entry.avatar}
                         equippedBorder={entry.equippedBorder}
-                        equippedFrame={entry.equippedFrame}
                         size="sm"
                       />
 
@@ -343,7 +369,7 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-3 shrink-0">
+                    <div className="relative z-10 flex items-center gap-2 sm:gap-3 shrink-0">
                       {entry.currentStreak > 0 && (
                         <span
                           className="hidden sm:inline-flex items-center gap-1 text-xs font-mono tabular-nums text-amber-600 dark:text-amber-400"
@@ -362,7 +388,7 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
                           {entry.winterCookies}
                         </span>
                       )}
-                      <span className="text-sm font-bold font-mono tabular-nums text-slate-900 dark:text-white min-w-[64px] text-right">
+                      <span className="text-xs sm:text-sm font-bold font-mono tabular-nums text-slate-900 dark:text-white min-w-[54px] sm:min-w-[64px] text-right">
                         {entry.xp.toLocaleString()} XP
                       </span>
                     </div>

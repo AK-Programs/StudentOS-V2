@@ -14,8 +14,9 @@ import {
   getFCMStatus 
 } from '../lib/fcmNotifications';
 import { soundService } from '../lib/soundService';
-import { fetchPublicWinterCosmetics } from '../lib/winterFestivalService';
-import { WinterCosmeticAvatar } from './winter/WinterCosmeticAvatar';
+import { fetchWinterStatus, WinterStatusResponse } from '../lib/winterFestivalService';
+import { ProfileBannerBackdrop, ProfileCosmeticAvatar } from './winter/ProfileCosmeticRenderer';
+import { WinterCosmeticsStudioSection } from './winter/WinterCosmeticsStudioSection';
 
 interface ProfileCustomizerProps {
   currentUser: UserProfile;
@@ -68,32 +69,32 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
   const [customStatus, setCustomStatus] = useState<string>(currentUser.customStatus || '');
   const [avatarFrame, setAvatarFrame] = useState<ProfileFrameStyle>((currentUser.avatarFrame as ProfileFrameStyle) || 'none');
   const [accentColor, setAccentColor] = useState<string>(currentUser.accentColor || 'indigo');
-  const [winterCosmetics, setWinterCosmetics] = useState<{ equippedFrame: string | null; equippedBorder: string | null }>({
-    equippedFrame: null,
-    equippedBorder: null,
-  });
+  const [winterStatus, setWinterStatus] = useState<WinterStatusResponse | null>(null);
+  const [winterLoading, setWinterLoading] = useState<boolean>(false);
+  const [previewBannerId, setPreviewBannerId] = useState<string | null>(null);
+  const [previewBorderId, setPreviewBorderId] = useState<string | null>(null);
+
+  const loadWinterCosmetics = React.useCallback(async () => {
+    if (!currentUser?.uid) return;
+    setWinterLoading(true);
+    try {
+      const data = await fetchWinterStatus(currentUser);
+      if (data) setWinterStatus(data);
+    } finally {
+      setWinterLoading(false);
+    }
+  }, [currentUser?.uid]);
 
   React.useEffect(() => {
-    const uid = currentUser?.uid;
-    if (!uid) return;
-    let active = true;
-    const syncCosmetics = () => {
-      fetchPublicWinterCosmetics(uid, currentUser).then((cos) => {
-        if (active && cos) {
-          setWinterCosmetics({
-            equippedFrame: cos.equippedFrame || null,
-            equippedBorder: cos.equippedBorder || null,
-          });
-        }
-      });
-    };
-    syncCosmetics();
+    void loadWinterCosmetics();
+    const syncCosmetics = () => { void loadWinterCosmetics(); };
     window.addEventListener('veylentra-winter-updated', syncCosmetics);
+    window.addEventListener('veylentra-cosmetics-updated', syncCosmetics);
     return () => {
-      active = false;
       window.removeEventListener('veylentra-winter-updated', syncCosmetics);
+      window.removeEventListener('veylentra-cosmetics-updated', syncCosmetics);
     };
-  }, [currentUser?.uid]);
+  }, [loadWinterCosmetics]);
   
   // FCM Web Push state
   const [enableWebPush, setEnableWebPush] = useState<boolean>(() => {
@@ -353,6 +354,9 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
   // Frame styling lookup
   const selectedFrameObj = AVATAR_FRAMES.find(f => f.id === avatarFrame) || AVATAR_FRAMES[0];
   const selectedAccent = ACCENT_COLORS.find(a => a.id === accentColor) || ACCENT_COLORS[0];
+  const activeWinterBanner = previewBannerId ?? winterStatus?.winterState?.equippedBanner ?? null;
+  const activeWinterBorder = previewBorderId ?? winterStatus?.winterState?.equippedBorder ?? null;
+  const earnedWinterBadgeCount = (winterStatus?.badges || []).filter(b => Boolean(b.unlockedAt)).length;
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -410,72 +414,94 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
         {/* LEFT COLUMN: Controls (7 cols) */}
         <div className="lg:col-span-7 space-y-6">
 
-          {/* SECTION 1: Banner Customization */}
-          <div className="p-5 bg-slate-950/60 border border-white/10 rounded-2xl space-y-4">
-            <div className="flex items-center justify-between">
+          {/* SECTION 1: Profile Banners */}
+          <div className="p-5 bg-slate-950/60 border border-white/10 rounded-2xl space-y-5">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <label className="text-xs font-black uppercase tracking-wider text-slate-300 flex items-center gap-2">
                 <Image className="w-4 h-4 text-indigo-400" />
-                Profile Banner
+                1. Profile Banners (Background Artwork)
               </label>
               {bannerUrl && (
                 <button
                   onClick={() => setBannerUrl('')}
-                  className="text-[11px] text-rose-400 hover:underline"
+                  className="text-[11px] text-rose-400 hover:underline cursor-pointer"
                 >
                   Clear Custom Image
                 </button>
               )}
             </div>
 
-            {/* Upload Custom Banner */}
-            <div className="flex items-center gap-3">
-              <label className="flex-1 py-3 px-4 rounded-xl bg-slate-900 border border-dashed border-white/20 hover:border-indigo-400 text-slate-300 text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer transition-all hover:bg-slate-900/80">
-                <Camera className="w-4 h-4 text-slate-400" />
-                <span>{uploadingBanner ? 'Uploading...' : 'Upload Banner Image (Max 8MB)'}</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleBannerUpload}
-                  disabled={uploadingBanner}
-                  className="hidden"
-                />
-              </label>
-            </div>
+            <WinterCosmeticsStudioSection
+              currentUser={currentUser}
+              winterStatus={winterStatus}
+              loading={winterLoading}
+              previewBannerId={previewBannerId}
+              previewBorderId={previewBorderId}
+              onPreviewBannerChange={setPreviewBannerId}
+              onPreviewBorderChange={setPreviewBorderId}
+              onRefreshWinterStatus={loadWinterCosmetics}
+              mode="banners"
+              onStatusFeedback={(msg, isErr) => {
+                if (isErr) setErrorMsg(msg);
+                else {
+                  setErrorMsg(null);
+                  setSaveSuccess(true);
+                  setTimeout(() => setSaveSuccess(false), 3000);
+                }
+              }}
+            />
 
-            {/* Curated Discord-style Presets */}
-            <div>
-              <span className="text-[11px] text-slate-400 font-bold uppercase tracking-wider block mb-2">
-                Or Select Discord Gradient Theme:
-              </span>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {BANNER_PRESETS.map(preset => (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    onClick={() => {
-                      setBannerPreset(preset.gradient);
-                      setBannerUrl('');
-                    }}
-                    className={`h-14 rounded-xl ${preset.gradient} p-2 flex flex-col justify-end text-left border transition-all relative overflow-hidden group ${bannerPreset === preset.gradient && !bannerUrl ? 'ring-2 ring-white border-white scale-[1.02]' : 'border-white/10 opacity-75 hover:opacity-100'}`}
-                  >
-                    <span className="text-[9px] font-black text-white drop-shadow truncate">{preset.name}</span>
-                    {bannerPreset === preset.gradient && !bannerUrl && (
-                      <span className="absolute top-1 right-1 w-3.5 h-3.5 bg-white rounded-full flex items-center justify-center text-slate-900 text-[8px] font-black">
-                        ✓
-                      </span>
-                    )}
-                  </button>
-                ))}
+            {/* Upload Custom Banner */}
+            <div className="pt-2 border-t border-white/5 space-y-3">
+              <div className="flex items-center gap-3">
+                <label className="flex-1 min-h-[44px] py-3 px-4 rounded-xl bg-slate-900 border border-dashed border-white/20 hover:border-indigo-400 text-slate-300 text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer transition-all hover:bg-slate-900/80">
+                  <Camera className="w-4 h-4 text-slate-400" />
+                  <span>{uploadingBanner ? 'Uploading...' : 'Upload Custom Banner Image (Max 8MB)'}</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleBannerUpload}
+                    disabled={uploadingBanner}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {/* Curated Discord-style Presets */}
+              <div>
+                <span className="text-[11px] text-slate-400 font-bold uppercase tracking-wider block mb-2">
+                  Or Select Gradient Theme (when no Winter Banner is equipped):
+                </span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {BANNER_PRESETS.map(preset => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => {
+                        setBannerPreset(preset.gradient);
+                        setBannerUrl('');
+                      }}
+                      className={`h-14 rounded-xl ${preset.gradient} p-2 flex flex-col justify-end text-left border transition-all relative overflow-hidden group ${bannerPreset === preset.gradient && !bannerUrl ? 'ring-2 ring-white border-white scale-[1.02]' : 'border-white/10 opacity-75 hover:opacity-100'}`}
+                    >
+                      <span className="text-[9px] font-black text-white drop-shadow truncate">{preset.name}</span>
+                      {bannerPreset === preset.gradient && !bannerUrl && (
+                        <span className="absolute top-1 right-1 w-3.5 h-3.5 bg-white rounded-full flex items-center justify-center text-slate-900 text-[8px] font-black">
+                          ✓
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
 
-          {/* SECTION 2: Avatar & Frame Styles */}
-          <div className="p-5 bg-slate-950/60 border border-white/10 rounded-2xl space-y-4">
-            <div className="flex items-center justify-between">
+          {/* SECTION 2: Profile Borders */}
+          <div className="p-5 bg-slate-950/60 border border-white/10 rounded-2xl space-y-5">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <label className="text-xs font-black uppercase tracking-wider text-slate-300 flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-indigo-400" />
-                Avatar Frame & Border
+                2. Profile Borders (Avatar Perimeter)
               </label>
               <label className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 cursor-pointer">
                 <Camera className="w-3.5 h-3.5" />
@@ -490,29 +516,73 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
               </label>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-              {AVATAR_FRAMES.map(frame => (
-                <button
-                  key={frame.id}
-                  type="button"
-                  onClick={() => setAvatarFrame(frame.id)}
-                  className={`p-3 rounded-xl border text-left transition-all ${avatarFrame === frame.id ? 'bg-indigo-600/15 border-indigo-500 ring-1 ring-indigo-500' : 'bg-slate-900/50 border-white/5 hover:border-white/20'}`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-bold text-white">{frame.name}</span>
-                    <span className={`w-3.5 h-3.5 rounded-full border-2 ${frame.previewBorder} ${avatarFrame === frame.id ? 'bg-indigo-500' : 'bg-transparent'}`} />
-                  </div>
-                  <p className="text-[10px] text-slate-400 leading-tight">{frame.description}</p>
-                </button>
-              ))}
+            <WinterCosmeticsStudioSection
+              currentUser={currentUser}
+              winterStatus={winterStatus}
+              loading={winterLoading}
+              previewBannerId={previewBannerId}
+              previewBorderId={previewBorderId}
+              onPreviewBannerChange={setPreviewBannerId}
+              onPreviewBorderChange={setPreviewBorderId}
+              onRefreshWinterStatus={loadWinterCosmetics}
+              mode="borders"
+              onStatusFeedback={(msg, isErr) => {
+                if (isErr) setErrorMsg(msg);
+                else {
+                  setErrorMsg(null);
+                  setSaveSuccess(true);
+                  setTimeout(() => setSaveSuccess(false), 3000);
+                }
+              }}
+            />
+
+            <div className="pt-2 border-t border-white/5 space-y-2">
+              <span className="text-[11px] text-slate-400 font-bold uppercase tracking-wider block">
+                Permanent Perimeter Styles (9 Classic Presets)
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                {AVATAR_FRAMES.map(frame => (
+                  <button
+                    key={frame.id}
+                    type="button"
+                    onClick={() => setAvatarFrame(frame.id)}
+                    className={`p-3 rounded-xl border text-left transition-all ${avatarFrame === frame.id ? 'bg-indigo-600/15 border-indigo-500 ring-1 ring-indigo-500' : 'bg-slate-900/50 border-white/5 hover:border-white/20'}`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-bold text-white">{frame.name}</span>
+                      <span className={`w-3.5 h-3.5 rounded-full border-2 ${frame.previewBorder} ${avatarFrame === frame.id ? 'bg-indigo-500' : 'bg-transparent'}`} />
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-tight">{frame.description}</p>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
-          {/* SECTION 3: Bio, Pronouns & Custom Status */}
+          {/* SECTION 3: Badges */}
+          <div className="p-5 bg-slate-950/60 border border-white/10 rounded-2xl space-y-4">
+            <label className="text-xs font-black uppercase tracking-wider text-slate-300 flex items-center gap-2">
+              <Award className="w-4 h-4 text-sky-400" />
+              3. Badges Collection
+            </label>
+            <WinterCosmeticsStudioSection
+              currentUser={currentUser}
+              winterStatus={winterStatus}
+              loading={winterLoading}
+              previewBannerId={previewBannerId}
+              previewBorderId={previewBorderId}
+              onPreviewBannerChange={setPreviewBannerId}
+              onPreviewBorderChange={setPreviewBorderId}
+              onRefreshWinterStatus={loadWinterCosmetics}
+              mode="badges"
+            />
+          </div>
+
+          {/* SECTION 4: Bio & Other Cosmetics */}
           <div className="p-5 bg-slate-950/60 border border-white/10 rounded-2xl space-y-4">
             <label className="text-xs font-black uppercase tracking-wider text-slate-300 flex items-center gap-2">
               <User className="w-4 h-4 text-indigo-400" />
-              Bio & About Me
+              4. Bio &amp; Other Cosmetics
             </label>
 
             {/* Pronouns & Status in a row */}
@@ -593,17 +663,12 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
           {/* Discord-style Card Container */}
           <div className="w-full rounded-3xl bg-slate-950 border border-white/10 shadow-2xl overflow-hidden relative">
             {/* Banner Section */}
-            <div className="relative h-28 w-full overflow-hidden">
-              {bannerUrl ? (
-                <img
-                  src={bannerUrl}
-                  alt="Profile Banner"
-                  className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                <div className={`w-full h-full ${bannerPreset}`} />
-              )}
+            <ProfileBannerBackdrop
+              equippedBanner={activeWinterBanner}
+              bannerUrl={bannerUrl}
+              bannerPresetClass={bannerPreset}
+              className="h-28 w-full"
+            >
               {/* Optional House/Role Tag on Banner */}
               <div className="absolute top-3 right-3 flex items-center gap-1.5">
                 {currentUser.house && (
@@ -615,17 +680,16 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
                   {currentUser.role}
                 </span>
               </div>
-            </div>
+            </ProfileBannerBackdrop>
 
-            {/* Avatar & Floating Frame */}
-            <div className="px-6 relative -mt-10 flex items-end justify-between">
+            {/* Avatar & Floating Perimeter Border */}
+            <div className="px-6 relative -mt-10 flex items-end justify-between z-10">
               <div className="relative">
-                {/* Avatar with Stackable Winter Border + Frame */}
-                <WinterCosmeticAvatar
+                {/* Avatar with Stackable Winter Border + Permanent Perimeter Frame */}
+                <ProfileCosmeticAvatar
                   name={currentUser.name || 'Scholar'}
                   avatarUrl={photoURL}
-                  equippedBorder={winterCosmetics.equippedBorder}
-                  equippedFrame={winterCosmetics.equippedFrame}
+                  equippedBorder={activeWinterBorder}
                   permanentFrameClass={selectedFrameObj.className}
                   size="lg"
                   fallbackBgClass="bg-indigo-600 text-white font-black shadow-inner"
@@ -640,6 +704,11 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
                 <span title="StudentOS Scholar" className="text-sm">🏆</span>
                 {currentUser.role === 'teacher' && <span title="Verified Faculty" className="text-sm">🎓</span>}
                 {(currentUser.role === 'admin' || currentUser.role === 'super_admin') && <span title="System Administrator" className="text-sm">🛡️</span>}
+                {earnedWinterBadgeCount > 0 && (
+                  <span title={`${earnedWinterBadgeCount} Winter Badges`} className="text-[10px] font-mono font-bold text-sky-300 px-1">
+                    ❄️{earnedWinterBadgeCount}
+                  </span>
+                )}
                 <span title="Early Adopter" className="text-sm">⚡</span>
               </div>
             </div>

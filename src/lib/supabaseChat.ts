@@ -7,32 +7,54 @@ import {
 let cachedProfiles: UserProfile[] = [];
 let lastFetchTime = 0;
 
-export async function getAllUserProfiles(): Promise<UserProfile[]> {
+export function invalidateChatProfilesCache() {
+  lastFetchTime = 0;
+  cachedProfiles = [];
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('studentos-profile-updated', () => {
+    invalidateChatProfilesCache();
+  });
+}
+
+export async function getAllUserProfiles(forceRefresh: boolean = false): Promise<UserProfile[]> {
   const now = Date.now();
-  if (cachedProfiles.length > 0 && now - lastFetchTime < 10000) {
+  if (!forceRefresh && cachedProfiles.length > 0 && now - lastFetchTime < 10000) {
     return cachedProfiles;
   }
 
   try {
     const { data, error } = await supabase.from('user_profiles').select('*');
     if (!error && data && data.length > 0) {
-      cachedProfiles = data.map(item => ({
-        uid: item.uid || item.id,
-        name: item.name || 'StudentOS Member',
-        email: item.email || '',
-        role: item.role || 'student',
-        avatar: item.photo_url || '',
-        photoURL: item.photo_url || '',
-        grade: item.grade || '',
-        section: item.section || '',
-        house: item.house || '',
-        department: item.department || '',
-        specialtySubject: item.specialty_subject || '',
-        designation: item.designation || '',
-        phone: item.raw_data?.phone || (item as any).phone || '',
-        bio: item.bio || '',
-        lastLogin: item.updated_at ? new Date(item.updated_at).getTime() : Date.now()
-      }));
+      cachedProfiles = data.map(item => {
+        const raw = item.raw_data && typeof item.raw_data === 'object' ? item.raw_data : {};
+        return {
+          uid: item.uid || item.id,
+          name: item.name || raw.name || 'StudentOS Member',
+          email: item.email || '',
+          role: item.role || raw.role || 'student',
+          avatar: item.photo_url || raw.photoURL || '',
+          photoURL: item.photo_url || raw.photoURL || '',
+          grade: item.grade || raw.grade || '',
+          section: item.section || raw.section || '',
+          house: item.house || raw.house || '',
+          department: item.department || raw.department || '',
+          specialtySubject: item.specialty_subject || raw.specialtySubject || '',
+          designation: item.designation || raw.designation || '',
+          phone: raw.phone || (item as any).phone || '',
+          bio: item.bio || raw.bio || '',
+          bannerUrl: raw.bannerUrl || undefined,
+          bannerPreset: raw.bannerPreset || undefined,
+          avatarFrame: raw.avatarFrame || undefined,
+          accentColor: raw.accentColor || undefined,
+          customStatus: raw.customStatus || undefined,
+          pronouns: raw.pronouns || undefined,
+          badges: Array.isArray(item.badges) ? item.badges : Array.isArray(raw.badges) ? raw.badges : [],
+          raw_data: raw,
+          lastLogin: item.updated_at ? new Date(item.updated_at).getTime() : Date.now(),
+        };
+      });
       lastFetchTime = now;
       return cachedProfiles;
     }

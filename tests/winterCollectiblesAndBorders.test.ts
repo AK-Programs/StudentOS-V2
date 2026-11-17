@@ -20,13 +20,14 @@ import {
   setForceWinterSupabaseForTests,
 } from '../server/winterFestivalModule';
 import {
+  COOKIE_EXCHANGE_OPTIONS,
   getAllWinterCollectibleIds,
   SANTA_REWARD_TIERS,
   SPIN_WHEEL_SEGMENTS,
   WINTER_FESTIVAL_BADGES,
   WINTER_FESTIVAL_TASKS,
+  WINTER_PROFILE_BANNERS,
   WINTER_PROFILE_BORDERS,
-  WINTER_PROFILE_FRAMES,
 } from '../server/rewardEngine';
 import { WORKING_ANON_KEY } from '../server/supabaseKeyManager';
 
@@ -43,6 +44,8 @@ function createExtendedMockSupabaseServer() {
     winter_task_claims: [],
     winter_user_badges: [],
     winter_reward_ledger: [],
+    winter_frost_xp_ledger: [],
+    winter_admin_grant_audit: [],
     gamification_xp_ledger: [],
     user_profiles: [],
     global_data: [],
@@ -132,6 +135,9 @@ function createExtendedMockSupabaseServer() {
           (r.user_id === row.user_id && r.feature_type === row.feature_type && r.idempotency_key === row.idempotency_key) ||
           (r.feature_type === 'santa_gift' && r.user_id === row.user_id && r.event_night_key && r.event_night_key === row.event_night_key)
       );
+    }
+    if (tableName === 'winter_frost_xp_ledger') {
+      return existing.some(r => r.id === row.id || (r.user_id === row.user_id && r.idempotency_key && r.idempotency_key === row.idempotency_key));
     }
     if (tableName === 'gamification_xp_ledger') {
       return existing.some(r => r.id === row.id || (r.user_id === row.user_id && r.action_key === row.action_key));
@@ -429,6 +435,7 @@ async function main() {
         assert.equal((r as any).email, undefined);
         assert.equal((r as any).phone, undefined);
         assert.equal((r as any).raw_data, undefined);
+        assert.ok(r.equippedBanner === null || typeof r.equippedBanner === 'string');
         assert.ok(r.equippedBorder === null || typeof r.equippedBorder === 'string');
       }
     });
@@ -546,15 +553,23 @@ async function main() {
       assert.equal(mockDb.tables.gamification_xp_ledger.length, 0, 'No XP mutation when claim blocked');
     });
 
-    // 3. Complete Collectibles Unlock Matrix (4 Frames, 9 Badges, 5 Borders)
-    await runTest('Part 3 & 4: Full Collectibles Matrix — 4 Frames, 9 Badges, 5 Borders have real unlock paths & persist across refresh', async () => {
+    // 3. Complete Collectibles Unlock Matrix (6 Banners, 9 Badges, 6 Borders)
+    await runTest('Part 3 & 4: Full Collectibles Matrix — 6 Banners, 9 Badges, 6 Borders have real unlock paths & persist across refresh', async () => {
       mockDb.resetAll();
       resetWinterAndLeaderboardMemoryForTests();
 
       const ids = getAllWinterCollectibleIds();
-      assert.deepEqual(ids.frameIds.sort(), ['aurora_crown', 'candy_ribbon', 'frosted_aurora', 'starlight_gold']);
+      assert.deepEqual(ids.bannerIds.sort(), [
+        'aurora_crown',
+        'candy_ribbon',
+        'frosted_aurora',
+        'midnight_snowfall_banner',
+        'solstice_hearth_banner',
+        'starlight_gold',
+      ]);
       assert.equal(ids.badgeIds.length, 9);
       assert.deepEqual(ids.borderIds.sort(), [
+        'aurora_prism_border',
         'candy_cane_border',
         'frosted_ice_border',
         'golden_festival_border',
@@ -564,14 +579,14 @@ async function main() {
 
       const uid = 'stu_collector_1';
       // Path A: Unlock all 5 tasks cleanly
-      // 1) task_visit_festival -> snowflake_explorer + frosted_ice_border
+      // 1) task_visit_festival -> snowflake_explorer + frosted_ice_border (+25 Frost XP)
       let r = await fetch(`${apiBase}/api/winter/tasks/task_visit_festival/claim`, {
         method: 'POST',
         headers: actorHeaders(uid, 'Aarav', 'student'),
       });
       assert.equal(r.status, 200);
 
-      // 2) Pass Quiz + claim task_winter_quiz -> winter_scholar + snowflake_border
+      // 2) Pass Quiz + claim task_winter_quiz -> winter_scholar + snowflake_border (+40 Frost XP)
       const qRes = await fetch(`${apiBase}/api/winter/quiz/submit`, {
         method: 'POST',
         headers: actorHeaders(uid, 'Aarav', 'student'),
@@ -584,21 +599,21 @@ async function main() {
       });
       assert.equal(r.status, 200);
 
-      // 3) task_academic_engagement -> frosty_focus + winter_glow_border
+      // 3) task_academic_engagement -> frosty_focus + winter_glow_border (+35 Frost XP)
       r = await fetch(`${apiBase}/api/winter/tasks/task_academic_engagement/claim`, {
         method: 'POST',
         headers: actorHeaders(uid, 'Aarav', 'student'),
       });
       assert.equal(r.status, 200);
 
-      // 4) task_collect_cookies (already 2+3+3=8 cookies >= 5!) -> cookie_collector + candy_cane_border
+      // 4) task_collect_cookies (already 2+3+3=8 cookies >= 5!) -> cookie_collector + candy_cane_border (+45 Frost XP)
       r = await fetch(`${apiBase}/api/winter/tasks/task_collect_cookies/claim`, {
         method: 'POST',
         headers: actorHeaders(uid, 'Aarav', 'student'),
       });
       assert.equal(r.status, 200);
 
-      // 5) Spin Wheel (Jackpot -> winter_wheel_ace + candy_ribbon + golden_festival_border) + Santa Rare/Legendary/Insane via deterministic crypto.randomInt
+      // 5) Spin Wheel (Jackpot -> winter_wheel_ace + candy_ribbon Banner + golden_festival_border + 75 Frost XP) + Santa Rare/Legendary/Insane
       const origRandomInt = crypto.randomInt;
       const stubRandomInt = (val: number) => {
         (crypto as any).randomInt = () => val;
@@ -613,21 +628,21 @@ async function main() {
           idempotencyKey: 'spin_jackpot_matrix',
         });
         assert.equal(spinRes.statusCode, 200);
-        assert.equal(spinRes.body.reward.frameId, 'candy_ribbon');
+        assert.equal(spinRes.body.reward.bannerId, 'candy_ribbon');
         assert.equal(spinRes.body.reward.borderId, 'golden_festival_border');
 
-        // 6) Claim task_seasonal_wheel_or_gift -> winter_champion
+        // 6) Claim task_seasonal_wheel_or_gift -> winter_champion (+30 Frost XP)
         r = await fetch(`${apiBase}/api/winter/tasks/task_seasonal_wheel_or_gift/claim`, {
           method: 'POST',
           headers: actorHeaders(uid, 'Aarav', 'student'),
         });
         assert.equal(r.status, 200);
 
-        // 7) Claim Santa Rare / Legendary / Insane tiers across distinct nights
+        // 7) Claim Santa Rare / Legendary / Insane tiers across distinct nights (+45 +90 +160 = +295 Frost XP)
         const santaNights = [
-          { key: '2026-12-20', rollVal: 7000 }, // rare -> frosted_aurora + winter_glow_border
-          { key: '2026-12-21', rollVal: 9000 }, // legendary -> sleigh_keeper + starlight_gold + golden_festival_border
-          { key: '2026-12-22', rollVal: 9800 }, // insane -> aurora_miracle + aurora_crown + golden_festival_border
+          { key: '2026-12-20', rollVal: 7000 }, // rare -> frosted_aurora Banner + winter_glow_border
+          { key: '2026-12-21', rollVal: 9000 }, // legendary -> sleigh_keeper + starlight_gold Banner + golden_festival_border
+          { key: '2026-12-22', rollVal: 9800 }, // insane -> aurora_miracle + aurora_crown Banner + golden_festival_border
         ];
         for (const sn of santaNights) {
           stubRandomInt(sn.rollVal);
@@ -643,23 +658,39 @@ async function main() {
         (crypto as any).randomInt = origRandomInt;
       }
 
-      // Also verify every Frame, Badge, & Border has a documented unlock path in rewardEngine
-      for (const f of WINTER_PROFILE_FRAMES) {
+      // 8) Purchase Shop-unlockable Banners (midnight_snowfall_banner=90, solstice_hearth_banner=160) & Border (aurora_prism_border=175) using earned Frost XP
+      for (const item of [
+        { itemType: 'banner', itemId: 'midnight_snowfall_banner' },
+        { itemType: 'banner', itemId: 'solstice_hearth_banner' },
+        { itemType: 'border', itemId: 'aurora_prism_border' },
+      ]) {
+        const buyRes = await fetch(`${apiBase}/api/winter/shop/purchase`, {
+          method: 'POST',
+          headers: actorHeaders(uid, 'Aarav', 'student'),
+          body: JSON.stringify(item),
+        });
+        assert.equal(buyRes.status, 200, `Expected shop purchase 200 for ${item.itemId}`);
+      }
+
+      // Verify every Banner & Border has a real unlock path in rewardEngine
+      for (const b of WINTER_PROFILE_BANNERS) {
         const reachable =
-          SANTA_REWARD_TIERS.some(t => t.frameId === f.id) ||
-          SPIN_WHEEL_SEGMENTS.some(s => s.frameId === f.id);
-        assert.ok(reachable, `Frame ${f.id} must have a reachable unlock path`);
+          SANTA_REWARD_TIERS.some(t => t.bannerId === b.id) ||
+          SPIN_WHEEL_SEGMENTS.some(s => s.bannerId === b.id) ||
+          b.purchasableWithFrostXp;
+        assert.ok(reachable, `Banner ${b.id} must have a reachable unlock path`);
       }
       for (const b of WINTER_PROFILE_BORDERS) {
         const reachable =
           WINTER_FESTIVAL_TASKS.some(t => t.borderId === b.id) ||
           SANTA_REWARD_TIERS.some(t => t.borderId === b.id) ||
           SPIN_WHEEL_SEGMENTS.some(s => s.borderId === b.id) ||
+          b.purchasableWithFrostXp ||
           b.id === 'golden_festival_border';
         assert.ok(reachable, `Border ${b.id} must have a reachable unlock path`);
       }
 
-      // Clear memory cache to simulate full browser refresh / cold server restart!
+      // Clear memory cache to simulate full browser refresh / cold server restart
       clearWinterMemoryCacheOnlyForTests();
 
       const statusRes = await fetch(`${apiBase}/api/winter/status`, {
@@ -668,11 +699,11 @@ async function main() {
       assert.equal(statusRes.status, 200);
       const statusBody = await statusRes.json();
 
-      // Verify all 4 Frames unlocked
-      for (const f of WINTER_PROFILE_FRAMES) {
-        assert.ok(statusBody.winterState.unlockedFrames.includes(f.id), `Expected frame unlocked: ${f.id}`);
+      // Verify all 6 Banners unlocked
+      for (const b of WINTER_PROFILE_BANNERS) {
+        assert.ok(statusBody.winterState.unlockedBanners.includes(b.id), `Expected banner unlocked: ${b.id}`);
       }
-      // Verify all 5 Borders unlocked
+      // Verify all 6 Borders unlocked
       for (const b of WINTER_PROFILE_BORDERS) {
         assert.ok(statusBody.winterState.unlockedBorders.includes(b.id), `Expected border unlocked: ${b.id}`);
       }
@@ -683,7 +714,7 @@ async function main() {
     });
 
     // 4. Equip/Unequip Ownership & Stacking + Negative Tests
-    await runTest('Part 5 & 6: Stackable Frame + Border equip/unequip, 403 unowned, 400 invalid ID, 401 unauthenticated, and Leaderboard display', async () => {
+    await runTest('Part 5 & 6: Stackable Banner + Border equip/unequip, 403 unowned, 400 invalid ID, 401 unauthenticated, and Leaderboard display', async () => {
       // Unauthenticated -> 401
       const unauthBorder = await fetch(`${apiBase}/api/winter/profile/border`, {
         method: 'POST',
@@ -693,14 +724,26 @@ async function main() {
       assert.equal(unauthBorder.status, 401);
 
       const freshUid = 'stu_cos_test';
+      mockDb.tables.user_profiles.push({
+        id: freshUid,
+        uid: freshUid,
+        name: 'Mira',
+        email: 'mira@private.edu',
+        phone: '+91-88888-00000',
+        role: 'student',
+        bio: 'Quantum Club Lead',
+        points: 350,
+      });
+
       await saveUserWinterState(() => ({ url: mockUrl, key: WORKING_ANON_KEY }), {
         userId: freshUid,
         userName: 'Mira',
         userRole: 'student',
         cookiesCount: 3,
+        frostXp: 50,
         streakShields: 0,
-        unlockedFrames: ['frosted_aurora'],
-        equippedFrame: null,
+        unlockedBanners: ['frosted_aurora'],
+        equippedBanner: null,
         unlockedBorders: ['frosted_ice_border', 'candy_cane_border'],
         equippedBorder: null,
         spinNextEligibleAt: null,
@@ -713,6 +756,7 @@ async function main() {
         earnedWinterBadges: {},
         santaClaimedNights: {},
         rewardHistory: [],
+        frostXpTransactions: [],
         updatedAt: new Date().toISOString(),
       });
 
@@ -724,13 +768,13 @@ async function main() {
       });
       assert.equal(badBorder.status, 400);
 
-      // 400 Invalid frame ID
-      const badFrame = await fetch(`${apiBase}/api/winter/profile/frame`, {
+      // 400 Invalid banner ID
+      const badBanner = await fetch(`${apiBase}/api/winter/profile/banner`, {
         method: 'POST',
         headers: actorHeaders(freshUid, 'Mira', 'student'),
-        body: JSON.stringify({ frameId: 'nonexistent_frame' }),
+        body: JSON.stringify({ bannerId: 'nonexistent_banner' }),
       });
-      assert.equal(badFrame.status, 400);
+      assert.equal(badBanner.status, 400);
 
       // 403 Unowned border
       const lockedBorder = await fetch(`${apiBase}/api/winter/profile/border`, {
@@ -740,21 +784,21 @@ async function main() {
       });
       assert.equal(lockedBorder.status, 403);
 
-      // 403 Unowned frame
-      const lockedFrame = await fetch(`${apiBase}/api/winter/profile/frame`, {
+      // 403 Unowned banner
+      const lockedBanner = await fetch(`${apiBase}/api/winter/profile/banner`, {
         method: 'POST',
         headers: actorHeaders(freshUid, 'Mira', 'student'),
-        body: JSON.stringify({ frameId: 'aurora_crown' }),
+        body: JSON.stringify({ bannerId: 'aurora_crown' }),
       });
-      assert.equal(lockedFrame.status, 403);
+      assert.equal(lockedBanner.status, 403);
 
-      // Equip BOTH Frame + Border simultaneously (stacking!)
-      const eqF = await fetch(`${apiBase}/api/winter/profile/frame`, {
+      // Equip BOTH Banner + Border simultaneously (strict Banner = background, Border = perimeter)
+      const eqBanner = await fetch(`${apiBase}/api/winter/profile/banner`, {
         method: 'POST',
         headers: actorHeaders(freshUid, 'Mira', 'student'),
-        body: JSON.stringify({ frameId: 'frosted_aurora' }),
+        body: JSON.stringify({ bannerId: 'frosted_aurora' }),
       });
-      assert.equal(eqF.status, 200);
+      assert.equal(eqBanner.status, 200);
 
       const eqB = await fetch(`${apiBase}/api/winter/profile/border`, {
         method: 'POST',
@@ -763,32 +807,29 @@ async function main() {
       });
       assert.equal(eqB.status, 200);
 
-      // Verify after memory clear via public cosmetics endpoint
+      // Verify after memory clear via public cosmetics endpoint (cross-account Chat preview path, zero PII)
       clearWinterMemoryCacheOnlyForTests();
       const cosRes = await fetch(`${apiBase}/api/winter/profile/cosmetics/${freshUid}`);
       assert.equal(cosRes.status, 200);
       const cosBody = await cosRes.json();
-      assert.equal(cosBody.cosmetics.equippedFrame, 'frosted_aurora');
+      assert.equal(cosBody.cosmetics.equippedBanner, 'frosted_aurora');
       assert.equal(cosBody.cosmetics.equippedBorder, 'candy_cane_border');
+      assert.equal(cosBody.cosmetics.publicProfile?.name, 'Mira');
+      assert.equal(cosBody.cosmetics.publicProfile?.bio, 'Quantum Club Lead');
+      assert.equal(cosBody.cosmetics.publicProfile?.email, undefined);
+      assert.equal(cosBody.cosmetics.publicProfile?.phone, undefined);
 
-      // Seed XP so Mira appears on Student Leaderboard and verify leaderboard shows BOTH equippedFrame + equippedBorder
-      mockDb.tables.user_profiles.push({
-        id: freshUid,
-        uid: freshUid,
-        name: 'Mira',
-        role: 'student',
-        points: 350,
-      });
+      // Verify Student Leaderboard shows BOTH equippedBanner + equippedBorder
       const lbRes = await fetch(`${apiBase}/api/leaderboard?type=student&period=all_time`, {
         headers: actorHeaders(freshUid, 'Mira', 'student'),
       });
       const lbBody = await lbRes.json();
       const miraEntry = lbBody.rankings.find((r: any) => r.userId === freshUid);
       assert.ok(miraEntry);
-      assert.equal(miraEntry.equippedFrame, 'frosted_aurora');
+      assert.equal(miraEntry.equippedBanner, 'frosted_aurora');
       assert.equal(miraEntry.equippedBorder, 'candy_cane_border');
 
-      // Unequip border cleanly
+      // Unequip border cleanly while keeping Banner equipped
       const unB = await fetch(`${apiBase}/api/winter/profile/border`, {
         method: 'POST',
         headers: actorHeaders(freshUid, 'Mira', 'student'),
@@ -800,7 +841,7 @@ async function main() {
         { id: freshUid, name: 'Mira', role: 'student' }
       );
       assert.equal(reloaded.equippedBorder, null);
-      assert.equal(reloaded.equippedFrame, 'frosted_aurora', 'Unequipping border must preserve equipped frame');
+      assert.equal(reloaded.equippedBanner, 'frosted_aurora', 'Unequipping border must preserve equipped banner');
     });
 
     // 5. Feature Flags & Super Admin Preview Isolation
@@ -871,7 +912,169 @@ async function main() {
       assert.equal(Object.keys(saStateAfterSanta.santaClaimedNights).length, 0);
     });
 
-    console.log(`\n🎉 All ${passed} Winter Collectibles, Borders, RLS & Faculty Leaderboard tests passed!`);
+    // 6. Winter 3.1 Economy: Cookie Exchange, Frost XP Isolation, Shop Purchase & Super Admin Audit
+    await runTest('Part 8: Winter 3.1 Frost XP Isolation, Cookie Exchange, Shop Purchase & Super Admin Audited Claim', async () => {
+      mockDb.resetAll();
+      resetWinterAndLeaderboardMemoryForTests();
+
+      assert.equal(COOKIE_EXCHANGE_OPTIONS.length, 2);
+      const econUid = 'stu_frost_econ';
+
+      // Seed existing academic XP on leaderboard & user_profiles
+      mockDb.tables.user_profiles.push({
+        id: econUid,
+        uid: econUid,
+        name: 'Kabir Frost',
+        role: 'student',
+        points: 500,
+      });
+      mockDb.tables.gamification_xp_ledger.push({
+        id: 'acad_500',
+        user_id: econUid,
+        user_name: 'Kabir Frost',
+        user_role: 'student',
+        xp_delta: 500,
+        source_type: 'xp_action',
+        action_key: 'init_500',
+        created_at: new Date().toISOString(),
+      });
+
+      await saveUserWinterState(() => ({ url: mockUrl, key: WORKING_ANON_KEY }), {
+        userId: econUid,
+        userName: 'Kabir Frost',
+        userRole: 'student',
+        cookiesCount: 15,
+        frostXp: 70,
+        streakShields: 0,
+        unlockedBanners: [],
+        equippedBanner: null,
+        unlockedBorders: [],
+        equippedBorder: null,
+        spinNextEligibleAt: null,
+        lastSpinAt: null,
+        lastWheelNotifiedCycle: null,
+        aiBonusDate: '2026-12-20',
+        aiBonusCreditsToday: 0,
+        quizCompleted: false,
+        claimedTaskIds: [],
+        earnedWinterBadges: {},
+        santaClaimedNights: {},
+        rewardHistory: [],
+        frostXpTransactions: [],
+        updatedAt: new Date().toISOString(),
+      });
+
+      // Exchange 5 cookies -> +30 Frost XP (frostXp: 70 -> 100, cookies: 15 -> 10)
+      const exFrost = await fetch(`${apiBase}/api/winter/cookies/exchange`, {
+        method: 'POST',
+        headers: actorHeaders(econUid, 'Kabir Frost', 'student'),
+        body: JSON.stringify({ optionId: 'frost_xp_pack' }),
+      });
+      assert.equal(exFrost.status, 200);
+      const exFrostBody = await exFrost.json();
+      assert.equal(exFrostBody.winterState.cookiesCount, 10);
+      assert.equal(exFrostBody.winterState.frostXp, 100);
+
+      // Exchange 6 cookies -> +1 AI Query (cookies: 10 -> 4)
+      const exAi = await fetch(`${apiBase}/api/winter/cookies/exchange`, {
+        method: 'POST',
+        headers: actorHeaders(econUid, 'Kabir Frost', 'student'),
+        body: JSON.stringify({ optionId: 'ai_bonus_query' }),
+      });
+      assert.equal(exAi.status, 200);
+      const exAiBody = await exAi.json();
+      assert.equal(exAiBody.winterState.cookiesCount, 4);
+      assert.equal(exAiBody.winterState.aiBonusCreditsToday, 1);
+
+      // Insufficient cookies now (4 < 5) -> 400 INSUFFICIENT_COOKIES
+      const exFail = await fetch(`${apiBase}/api/winter/cookies/exchange`, {
+        method: 'POST',
+        headers: actorHeaders(econUid, 'Kabir Frost', 'student'),
+        body: JSON.stringify({ optionId: 'frost_xp_pack' }),
+      });
+      assert.equal(exFail.status, 400);
+      const exFailBody = await exFail.json();
+      assert.equal(exFailBody.code, 'INSUFFICIENT_COOKIES');
+
+      // Insufficient Frost XP (100 < 175) -> 400 INSUFFICIENT_FROST_XP
+      const tooExpensive = await fetch(`${apiBase}/api/winter/shop/purchase`, {
+        method: 'POST',
+        headers: actorHeaders(econUid, 'Kabir Frost', 'student'),
+        body: JSON.stringify({ itemType: 'border', itemId: 'aurora_prism_border' }),
+      });
+      assert.equal(tooExpensive.status, 400);
+      const tooExpensiveBody = await tooExpensive.json();
+      assert.equal(tooExpensiveBody.code, 'INSUFFICIENT_FROST_XP');
+
+      // Valid Shop Purchase: midnight_snowfall_banner (90 Frost XP -> remaining 10 Frost XP)
+      const buyBanner = await fetch(`${apiBase}/api/winter/shop/purchase`, {
+        method: 'POST',
+        headers: actorHeaders(econUid, 'Kabir Frost', 'student'),
+        body: JSON.stringify({ itemType: 'banner', itemId: 'midnight_snowfall_banner' }),
+      });
+      assert.equal(buyBanner.status, 200);
+      const buyBannerBody = await buyBanner.json();
+      assert.equal(buyBannerBody.winterState.frostXp, 10);
+      assert.ok(buyBannerBody.winterState.unlockedBanners.includes('midnight_snowfall_banner'));
+      assert.equal(buyBannerBody.winterState.equippedBanner, 'midnight_snowfall_banner');
+
+      // Duplicate shop purchase -> 409 COLLECTIBLE_ALREADY_OWNED
+      const dupBuy = await fetch(`${apiBase}/api/winter/shop/purchase`, {
+        method: 'POST',
+        headers: actorHeaders(econUid, 'Kabir Frost', 'student'),
+        body: JSON.stringify({ itemType: 'banner', itemId: 'midnight_snowfall_banner' }),
+      });
+      assert.equal(dupBuy.status, 409);
+
+      // Verify Frost XP ledger history recorded both earn (+30) and spend (-90)
+      const histRes = await fetch(`${apiBase}/api/winter/frost-xp/history`, {
+        headers: actorHeaders(econUid, 'Kabir Frost', 'student'),
+      });
+      assert.equal(histRes.status, 200);
+      const histBody = await histRes.json();
+      assert.equal(histBody.frostXp, 10);
+      assert.ok(histBody.transactions.some((t: any) => t.amount === 30));
+      assert.ok(histBody.transactions.some((t: any) => t.amount === -90));
+
+      // CRITICAL ISOLATION CHECK: Frost XP gain & spending MUST NEVER alter Scholar XP or Leaderboard!
+      const lbRes = await fetch(`${apiBase}/api/leaderboard?type=student&period=all_time`, {
+        headers: actorHeaders(econUid, 'Kabir Frost', 'student'),
+      });
+      const lbBody = await lbRes.json();
+      const kabirRank = lbBody.rankings.find((r: any) => r.userId === econUid);
+      assert.equal(kabirRank.xp, 500, 'Frost XP exchange/spend must NEVER alter Scholar XP on leaderboard');
+      assert.equal(mockDb.tables.gamification_xp_ledger.length, 1, 'No Scholar XP ledger entry should be created by Cookie Exchange or Frost Shop');
+
+      // Super Admin Free Claim RBAC & Audit verification
+      const stuAdminClaim = await fetch(`${apiBase}/api/winter/shop/purchase`, {
+        method: 'POST',
+        headers: actorHeaders(econUid, 'Kabir Frost', 'student'),
+        body: JSON.stringify({ itemType: 'banner', itemId: 'starlight_gold', adminGrant: true }),
+      });
+      assert.equal(stuAdminClaim.status, 403);
+
+      const facAdminClaim = await fetch(`${apiBase}/api/winter/shop/purchase`, {
+        method: 'POST',
+        headers: actorHeaders('fac_no_admin', 'Teacher Bob', 'teacher'),
+        body: JSON.stringify({ itemType: 'banner', itemId: 'starlight_gold', adminGrant: true }),
+      });
+      assert.equal(facAdminClaim.status, 403);
+
+      const saAdminClaim = await fetch(`${apiBase}/api/winter/shop/purchase`, {
+        method: 'POST',
+        headers: actorHeaders('sa_auditor_1', 'Root Admin', 'super_admin', 'root@veylentra.edu'),
+        body: JSON.stringify({ itemType: 'banner', itemId: 'starlight_gold', adminGrant: true }),
+      });
+      assert.equal(saAdminClaim.status, 200);
+      const saAdminBody = await saAdminClaim.json();
+      assert.equal(saAdminBody.adminGranted, true);
+      assert.ok(saAdminBody.auditId);
+      assert.equal(mockDb.tables.winter_admin_grant_audit.length, 1);
+      assert.equal(mockDb.tables.winter_admin_grant_audit[0].item_id, 'starlight_gold');
+      assert.equal(mockDb.tables.winter_admin_grant_audit[0].admin_user_id, 'sa_auditor_1');
+    });
+
+    console.log(`\n🎉 All ${passed} Winter 3.1 Collectibles, Banners, Borders, Frost XP & Leaderboard tests passed!`);
   } finally {
     setForceWinterSupabaseForTests(false);
     if (prevUrl === undefined) delete process.env.VITE_SUPABASE_URL;

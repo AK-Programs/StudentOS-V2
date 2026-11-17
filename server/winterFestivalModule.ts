@@ -15,6 +15,8 @@ import express from 'express';
 import crypto from 'crypto';
 import {
   ALLOWED_GAMIFICATION_ACTION_XP,
+  COOKIE_EXCHANGE_OPTIONS,
+  LEGACY_WINTER_BANNER_IDS,
   MAX_DAILY_WINTER_AI_BONUS,
   MAX_STREAK_SHIELDS,
   SANTA_REWARD_TIERS,
@@ -22,12 +24,14 @@ import {
   SPIN_WHEEL_SEGMENTS,
   WINTER_FESTIVAL_BADGES,
   WINTER_FESTIVAL_TASKS,
+  WINTER_PROFILE_BANNERS,
   WINTER_PROFILE_BORDERS,
-  WINTER_PROFILE_FRAMES,
   WINTER_QUIZ_QUESTIONS,
   getSantaWindowStatus,
+  getWinterBannerById,
+  getWinterBorderById,
+  isValidWinterBannerId,
   isValidWinterBorderId,
-  isValidWinterFrameId,
   rollSantaRewardTier,
   rollSpinWheelSegment,
 } from './rewardEngine';
@@ -84,14 +88,38 @@ export interface XpLedgerEntry {
   createdAt: string;
 }
 
+export interface FrostXpTransaction {
+  id: string;
+  userId: string;
+  amount: number;
+  balanceAfter: number;
+  reason: string;
+  referenceType?: string;
+  referenceId?: string;
+  idempotencyKey: string;
+  createdAt: string;
+}
+
+export interface AdminGrantAuditEntry {
+  id: string;
+  adminUserId: string;
+  adminEmail: string;
+  targetUserId: string;
+  itemType: 'banner' | 'border';
+  itemId: string;
+  reason: string;
+  createdAt: string;
+}
+
 export interface UserWinterState {
   userId: string;
   userName: string;
   userRole: string;
+  frostXp: number;
   cookiesCount: number;
   streakShields: number;
-  unlockedFrames: string[];
-  equippedFrame: string | null;
+  unlockedBanners: string[];
+  equippedBanner: string | null;
   unlockedBorders: string[];
   equippedBorder: string | null;
   spinNextEligibleAt: string | null;
@@ -105,7 +133,7 @@ export interface UserWinterState {
   santaClaimedNights: Record<string, string>;
   rewardHistory: Array<{
     id: string;
-    featureType: 'santa_gift' | 'spin_wheel' | 'winter_task';
+    featureType: 'santa_gift' | 'spin_wheel' | 'winter_task' | 'winter_shop' | 'cookie_exchange' | 'admin_grant';
     idempotencyKey: string;
     eventNightKey?: string;
     status: 'pending_apply' | 'applied' | 'recovered';
@@ -113,15 +141,17 @@ export interface UserWinterState {
     segmentIndex?: number;
     label: string;
     xpBonus: number;
+    frostXpBonus?: number;
     cookiesBonus: number;
     aiBonusQueries: number;
     streakShield: boolean;
     badgeId?: string;
-    frameId?: string;
+    bannerId?: string;
     borderId?: string;
     createdAt: string;
     appliedAt?: string;
   }>;
+  frostXpTransactions?: FrostXpTransaction[];
   updatedAt: string;
 }
 
@@ -137,6 +167,20 @@ const SCHOLAR_LEVELS = [
   { level: 9, title: 'Master Scholar', minXp: 2500 },
   { level: 10, title: 'Campus Legend', minXp: 3200 },
 ];
+
+const SUPER_ADMIN_EMAIL_WHITELIST = new Set([
+  'naitik.kashyap0015@gmail.com',
+  'naitik.kashyap5205@gmail.com',
+  'superadmin@studentos.edu',
+  'superadmin@veylentra.edu',
+]);
+
+function isSuperAdminActor(actor?: { role?: string; email?: string } | null): boolean {
+  if (!actor) return false;
+  const role = String(actor.role || '').toLowerCase().trim();
+  const email = String(actor.email || '').toLowerCase().trim();
+  return role === 'super_admin' || SUPER_ADMIN_EMAIL_WHITELIST.has(email);
+}
 
 function computeLevelFromXp(xp: number): { level: number; levelTitle: string; nextLevelXp: number | null } {
   let current = SCHOLAR_LEVELS[0];
@@ -155,6 +199,8 @@ function computeLevelFromXp(xp: number): { level: number; levelTitle: string; ne
 }
 
 const memoryWinterStates = new Map<string, UserWinterState>();
+const memoryFrostXpLedger: FrostXpTransaction[] = [];
+const memoryAdminGrantAudit: AdminGrantAuditEntry[] = [];
 const memoryXpLedger: XpLedgerEntry[] = [];
 const memoryUserTotalXp = new Map<
   string,
@@ -184,9 +230,15 @@ export function setForceWinterSupabaseForTests(enabled: boolean) {
 export function clearWinterMemoryCacheOnlyForTests() {
   if (process.env.NODE_ENV !== 'test') return;
   memoryWinterStates.clear();
+  memoryFrostXpLedger.length = 0;
+  memoryAdminGrantAudit.length = 0;
   memoryXpLedger.length = 0;
   memoryUserTotalXp.clear();
   inFlightClaimLocks.clear();
+}
+
+export function getAdminGrantAuditForTests(): AdminGrantAuditEntry[] {
+  return [...memoryAdminGrantAudit];
 }
 
 function shouldUseSupabase(cfg: { url: string; key: string }): boolean {
@@ -205,10 +257,11 @@ function getDefaultWinterState(user: { id: string; name: string; role: string })
     userId: user.id,
     userName: user.name || 'Member',
     userRole: user.role || 'student',
+    frostXp: 0,
     cookiesCount: 0,
     streakShields: 0,
-    unlockedFrames: [],
-    equippedFrame: null,
+    unlockedBanners: [],
+    equippedBanner: null,
     unlockedBorders: [],
     equippedBorder: null,
     spinNextEligibleAt: null,
@@ -221,6 +274,7 @@ function getDefaultWinterState(user: { id: string; name: string; role: string })
     earnedWinterBadges: {},
     santaClaimedNights: {},
     rewardHistory: [],
+    frostXpTransactions: [],
     updatedAt: new Date().toISOString(),
   };
 }
@@ -228,12 +282,14 @@ function getDefaultWinterState(user: { id: string; name: string; role: string })
 function cloneWinterState(state: UserWinterState): UserWinterState {
   return {
     ...state,
-    unlockedFrames: [...(state.unlockedFrames || [])],
+    frostXp: Math.max(0, Number(state.frostXp || 0)),
+    unlockedBanners: [...(state.unlockedBanners || [])],
     unlockedBorders: [...(state.unlockedBorders || [])],
     claimedTaskIds: [...(state.claimedTaskIds || [])],
     earnedWinterBadges: { ...(state.earnedWinterBadges || {}) },
     santaClaimedNights: { ...(state.santaClaimedNights || {}) },
     rewardHistory: (state.rewardHistory || []).map(r => ({ ...r })),
+    frostXpTransactions: (state.frostXpTransactions || []).map(t => ({ ...t })),
   };
 }
 
@@ -369,9 +425,11 @@ function mapLedgerRowToHistoryItem(r: any): UserWinterState['rewardHistory'][num
   const extra =
     (r.metadata && typeof r.metadata === 'object' ? r.metadata : null) ||
     (r.reward_payload && typeof r.reward_payload === 'object' ? r.reward_payload : {});
+  const rawBanner =
+    r.banner_id || extra.bannerId || (isValidWinterBannerId(r.frame_id) ? r.frame_id : isValidWinterBannerId(extra.frameId) ? extra.frameId : undefined);
   return {
     id: String(r.id),
-    featureType: (r.feature_type || 'spin_wheel') as 'santa_gift' | 'spin_wheel' | 'winter_task',
+    featureType: (r.feature_type || 'spin_wheel') as UserWinterState['rewardHistory'][number]['featureType'],
     idempotencyKey: String(r.idempotency_key || r.id),
     eventNightKey: r.event_night_key
       ? String(r.event_night_key)
@@ -388,11 +446,12 @@ function mapLedgerRowToHistoryItem(r: any): UserWinterState['rewardHistory'][num
         : undefined,
     label: String(r.reward_label || extra.label || extra.reward_label || ''),
     xpBonus: Number(r.xp_bonus ?? extra.xpBonus ?? 0),
+    frostXpBonus: Number(r.frost_xp_bonus ?? extra.frostXpBonus ?? 0),
     cookiesBonus: Number(r.cookies_bonus ?? extra.cookiesBonus ?? 0),
     aiBonusQueries: Number(r.ai_bonus_queries ?? extra.aiBonusQueries ?? 0),
     streakShield: Boolean(r.streak_shield ?? extra.streakShield),
     badgeId: r.badge_id ? String(r.badge_id) : extra.badgeId ? String(extra.badgeId) : undefined,
-    frameId: r.frame_id ? String(r.frame_id) : extra.frameId ? String(extra.frameId) : undefined,
+    bannerId: rawBanner ? String(rawBanner) : undefined,
     borderId: r.border_id ? String(r.border_id) : extra.borderId ? String(extra.borderId) : undefined,
     createdAt: String(r.created_at || new Date().toISOString()),
     appliedAt: r.applied_at ? String(r.applied_at) : undefined,
@@ -480,9 +539,8 @@ export async function loadUserWinterState(
       : headers;
   const encUid = encodeURIComponent(user.id);
 
-  // Use select=* on winter_reward_ledger so missing optional columns (like reward_label or border_id before SQL migration)
-  // never cause a 400 error, and keep ledger/task/badge auxiliary reads non-fatal so winter status always returns.
-  const [wpRes, claimsRes, badgesRes, ledgerRes] = await Promise.all([
+  // Use select=* on winter_reward_ledger & optional frost_xp ledger read safely so older schemas never crash status
+  const [wpRes, claimsRes, badgesRes, ledgerRes, frostLedgerRes] = await Promise.all([
     fetchJsonStrict(`${cfg.url}/rest/v1/winter_user_profiles?user_id=eq.${encUid}&select=*`, { headers }, 'load winter_user_profiles'),
     fetchJsonStrict(`${cfg.url}/rest/v1/winter_task_claims?user_id=eq.${encUid}&select=task_id,claimed_at`, { headers: actorAuthHeaders }, 'load winter_task_claims').catch(() => null),
     fetchJsonStrict(`${cfg.url}/rest/v1/winter_user_badges?user_id=eq.${encUid}&select=badge_id,unlocked_at`, { headers: actorAuthHeaders }, 'load winter_user_badges').catch(() => null),
@@ -490,6 +548,11 @@ export async function loadUserWinterState(
       `${cfg.url}/rest/v1/winter_reward_ledger?user_id=eq.${encUid}&select=*&order=created_at.desc&limit=60`,
       { headers },
       'load winter_reward_ledger'
+    ).catch(() => null),
+    fetchJsonStrict(
+      `${cfg.url}/rest/v1/winter_frost_xp_ledger?user_id=eq.${encUid}&select=id,user_id,amount,balance_after,reason,reference_type,reference_id,idempotency_key,created_at&order=created_at.desc&limit=40`,
+      { headers },
+      'load winter_frost_xp_ledger'
     ).catch(() => null),
   ]);
 
@@ -521,14 +584,37 @@ export async function loadUserWinterState(
     const errText = await ledgerRes.text().catch(() => '');
     console.warn(`[WINTER] Non-fatal winter_reward_ledger read warning (${ledgerRes.status}): ${errText || ledgerRes.statusText}`);
   }
+  let frostLedgerRows: FrostXpTransaction[] = [];
+  if (frostLedgerRes && frostLedgerRes.ok) {
+    const parsedFrost = await frostLedgerRes.json().catch(() => []);
+    if (Array.isArray(parsedFrost)) {
+      frostLedgerRows = parsedFrost.map((fr: any) => ({
+        id: String(fr.id),
+        userId: String(fr.user_id || user.id),
+        amount: Number(fr.amount || 0),
+        balanceAfter: Number(fr.balance_after || 0),
+        reason: String(fr.reason || ''),
+        referenceType: fr.reference_type ? String(fr.reference_type) : undefined,
+        referenceId: fr.reference_id ? String(fr.reference_id) : undefined,
+        idempotencyKey: String(fr.idempotency_key || fr.id),
+        createdAt: String(fr.created_at || new Date().toISOString()),
+      }));
+    }
+  }
 
   let merged: UserWinterState = getDefaultWinterState(user);
 
   if (Array.isArray(wpRows) && wpRows[0]) {
     const r = wpRows[0];
     const storedState = r.state_json && typeof r.state_json === 'object' ? r.state_json : {};
-    const dbFrames = Array.isArray(r.unlocked_frames) ? r.unlocked_frames : [];
-    const storedFrames = Array.isArray(storedState.unlockedFrames) ? storedState.unlockedFrames : [];
+    const dbBanners = Array.isArray(r.unlocked_banners) ? r.unlocked_banners : [];
+    const storedBanners = Array.isArray(storedState.unlockedBanners) ? storedState.unlockedBanners : [];
+    const legacyDbFrames = Array.isArray(r.unlocked_frames)
+      ? r.unlocked_frames.filter((id: string) => LEGACY_WINTER_BANNER_IDS.has(id) || isValidWinterBannerId(id))
+      : [];
+    const legacyStoredFrames = Array.isArray(storedState.unlockedFrames)
+      ? storedState.unlockedFrames.filter((id: string) => LEGACY_WINTER_BANNER_IDS.has(id) || isValidWinterBannerId(id))
+      : [];
     const dbBorders = Array.isArray(r.unlocked_borders) ? r.unlocked_borders : [];
     const storedBorders = Array.isArray(storedState.unlockedBorders) ? storedState.unlockedBorders : [];
     const dbTasks = Array.isArray(r.claimed_task_ids) ? r.claimed_task_ids : [];
@@ -536,16 +622,34 @@ export async function loadUserWinterState(
     const dbHistory = Array.isArray(r.reward_history) ? r.reward_history : [];
     const storedHistory = Array.isArray(storedState.rewardHistory) ? storedState.rewardHistory : [];
 
+    const candidateEquippedBanner =
+      r.equipped_banner !== undefined
+        ? r.equipped_banner
+        : storedState.equippedBanner !== undefined
+        ? storedState.equippedBanner
+        : isValidWinterBannerId(r.equipped_frame)
+        ? r.equipped_frame
+        : isValidWinterBannerId(storedState.equippedFrame)
+        ? storedState.equippedFrame
+        : null;
+
+    const mergedHistoryRaw = dbHistory.length >= storedHistory.length ? dbHistory : storedHistory;
+    const normalizedHistory = mergedHistoryRaw.map((h: any) => ({
+      ...h,
+      bannerId: h.bannerId || (isValidWinterBannerId(h.frameId) ? h.frameId : undefined),
+    }));
+
     merged = {
       ...merged,
       ...storedState,
       userId: user.id,
       userName: user.name || r.user_name || storedState.userName || 'Member',
       userRole: user.role || r.user_role || storedState.userRole || 'student',
+      frostXp: Math.max(0, Number(r.frost_xp ?? storedState.frostXp ?? 0)),
       cookiesCount: Number(r.cookies_count ?? storedState.cookiesCount ?? 0),
       streakShields: Number(r.streak_shields ?? storedState.streakShields ?? 0),
-      unlockedFrames: Array.from(new Set([...storedFrames, ...dbFrames])),
-      equippedFrame: r.equipped_frame !== undefined ? r.equipped_frame : (storedState.equippedFrame || null),
+      unlockedBanners: Array.from(new Set([...storedBanners, ...dbBanners, ...legacyStoredFrames, ...legacyDbFrames])),
+      equippedBanner: candidateEquippedBanner ? String(candidateEquippedBanner) : null,
       unlockedBorders: Array.from(new Set([...storedBorders, ...dbBorders])),
       equippedBorder: r.equipped_border !== undefined ? r.equipped_border : (storedState.equippedBorder || null),
       spinNextEligibleAt: r.spin_next_eligible_at || storedState.spinNextEligibleAt || null,
@@ -563,7 +667,13 @@ export async function loadUserWinterState(
         ...(storedState.santaClaimedNights && typeof storedState.santaClaimedNights === 'object' ? storedState.santaClaimedNights : {}),
         ...(r.santa_claimed_nights && typeof r.santa_claimed_nights === 'object' ? r.santa_claimed_nights : {}),
       },
-      rewardHistory: dbHistory.length >= storedHistory.length ? dbHistory : storedHistory,
+      rewardHistory: normalizedHistory,
+      frostXpTransactions:
+        frostLedgerRows.length > 0
+          ? frostLedgerRows
+          : Array.isArray(storedState.frostXpTransactions)
+          ? storedState.frostXpTransactions
+          : [],
       updatedAt: String(r.updated_at || storedState.updatedAt || new Date().toISOString()),
     };
   } else {
@@ -579,12 +689,18 @@ export async function loadUserWinterState(
         const gdRows = await gdRes.json();
         const remote = gdRows?.[0]?.data;
         if (remote && typeof remote === 'object') {
+          const legFrames = Array.isArray(remote.unlockedFrames)
+            ? remote.unlockedFrames.filter((id: string) => isValidWinterBannerId(id))
+            : [];
           merged = {
             ...merged,
             ...remote,
             userId: user.id,
             userName: user.name || remote.userName || 'Member',
             userRole: user.role || remote.userRole || 'student',
+            frostXp: Math.max(0, Number(remote.frostXp ?? 0)),
+            unlockedBanners: Array.from(new Set([...(Array.isArray(remote.unlockedBanners) ? remote.unlockedBanners : []), ...legFrames])),
+            equippedBanner: remote.equippedBanner ?? (isValidWinterBannerId(remote.equippedFrame) ? remote.equippedFrame : null),
             unlockedBorders: Array.isArray(remote.unlockedBorders) ? remote.unlockedBorders : [],
             equippedBorder: remote.equippedBorder ?? null,
           };
@@ -617,7 +733,7 @@ export async function loadUserWinterState(
   if (Array.isArray(ledgerRows) && ledgerRows.length > 0) {
     const nightsMap = { ...(merged.santaClaimedNights || {}) };
     const badgesMap = { ...(merged.earnedWinterBadges || {}) };
-    const framesSet = new Set<string>(merged.unlockedFrames || []);
+    const bannersSet = new Set<string>(merged.unlockedBanners || []);
     const bordersSet = new Set<string>(merged.unlockedBorders || []);
     const historyById = new Map<string, UserWinterState['rewardHistory'][number]>();
     for (const h of merged.rewardHistory || []) {
@@ -631,8 +747,8 @@ export async function loadUserWinterState(
       if (r?.status === 'applied' && mapped.badgeId && !badgesMap[mapped.badgeId]) {
         badgesMap[mapped.badgeId] = String(r.applied_at || r.created_at || new Date().toISOString());
       }
-      if (r?.status === 'applied' && mapped.frameId) {
-        framesSet.add(mapped.frameId);
+      if (r?.status === 'applied' && mapped.bannerId) {
+        bannersSet.add(mapped.bannerId);
       }
       if (r?.status === 'applied' && mapped.borderId) {
         bordersSet.add(mapped.borderId);
@@ -643,11 +759,16 @@ export async function loadUserWinterState(
     }
     merged.santaClaimedNights = nightsMap;
     merged.earnedWinterBadges = badgesMap;
-    merged.unlockedFrames = Array.from(framesSet);
+    merged.unlockedBanners = Array.from(bannersSet);
     merged.unlockedBorders = Array.from(bordersSet);
     merged.rewardHistory = Array.from(historyById.values())
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
       .slice(0, 60);
+  }
+
+  if (!merged.frostXpTransactions || merged.frostXpTransactions.length === 0) {
+    const memTxs = memoryFrostXpLedger.filter(t => t.userId === user.id).slice(0, 40);
+    if (memTxs.length > 0) merged.frostXpTransactions = memTxs;
   }
 
   memoryWinterStates.set(user.id, cloneWinterState(merged));
@@ -759,7 +880,7 @@ async function syncCosmeticsToLeaderboardDoc(
             userId: state.userId,
             userName: state.userName || existingDoc.userName || 'Member',
             role: state.userRole || existingDoc.role || 'student',
-            equippedFrame: state.equippedFrame,
+            equippedBanner: state.equippedBanner,
             equippedBorder: state.equippedBorder,
             winterCookies: state.cookiesCount,
             badgesCount: Math.max(
@@ -797,10 +918,11 @@ export async function saveUserWinterState(
     user_id: nextState.userId,
     user_name: nextState.userName,
     user_role: nextState.userRole,
+    frost_xp: nextState.frostXp,
     cookies_count: nextState.cookiesCount,
     streak_shields: nextState.streakShields,
-    unlocked_frames: nextState.unlockedFrames,
-    equipped_frame: nextState.equippedFrame,
+    unlocked_banners: nextState.unlockedBanners,
+    equipped_banner: nextState.equippedBanner,
     unlocked_borders: nextState.unlockedBorders,
     equipped_border: nextState.equippedBorder,
     spin_next_eligible_at: nextState.spinNextEligibleAt,
@@ -837,12 +959,20 @@ export async function saveUserWinterState(
   if (!res.ok) {
     let errText = await res.text().catch(() => '');
     const lowerErr = errText.toLowerCase();
-    // Graceful additive fallback ONLY if the new border columns aren't added yet; state_json preserves unlockedBorders & equippedBorder cleanly
+    // Graceful additive fallback ONLY for optional cosmetic/frost_xp columns if the 3.1 migration hasn't run yet;
+    // state_json still durably preserves frostXp, unlockedBanners, equippedBanner, unlockedBorders, equippedBorder.
     if (
       isMissingColumnOrRelationError(res.status, errText) &&
-      (lowerErr.includes('unlocked_borders') || lowerErr.includes('equipped_border'))
+      (lowerErr.includes('frost_xp') ||
+        lowerErr.includes('unlocked_banners') ||
+        lowerErr.includes('equipped_banner') ||
+        lowerErr.includes('unlocked_borders') ||
+        lowerErr.includes('equipped_border'))
     ) {
       const legacyPayload = { ...basePayload };
+      delete legacyPayload.frost_xp;
+      delete legacyPayload.unlocked_banners;
+      delete legacyPayload.equipped_banner;
       delete legacyPayload.unlocked_borders;
       delete legacyPayload.equipped_border;
       res = await fetchJsonStrict(
@@ -852,7 +982,7 @@ export async function saveUserWinterState(
           headers,
           body: JSON.stringify(legacyPayload),
         },
-        'save winter_user_profiles (state_json border fallback)'
+        'save winter_user_profiles (state_json 3.1 column fallback)'
       );
       if (!res.ok) {
         errText = await res.text().catch(() => errText);
@@ -880,6 +1010,77 @@ export async function saveUserWinterState(
   }
   memoryWinterStates.set(nextState.userId, cloneWinterState(nextState));
   return nextState;
+}
+
+async function recordFrostXpLedgerEntry(
+  getSupabaseServerConfig: WinterModuleDeps['getSupabaseServerConfig'],
+  params: {
+    userId: string;
+    amount: number;
+    balanceAfter: number;
+    reason: string;
+    referenceType: string;
+    referenceId: string;
+    idempotencyKey: string;
+    createdAt: string;
+  }
+): Promise<FrostXpTransaction> {
+  const tx: FrostXpTransaction = {
+    id: `fxp_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
+    userId: params.userId,
+    amount: params.amount,
+    balanceAfter: Math.max(0, params.balanceAfter),
+    reason: params.reason,
+    referenceType: params.referenceType,
+    referenceId: params.referenceId,
+    idempotencyKey: params.idempotencyKey,
+    createdAt: params.createdAt,
+  };
+
+  memoryFrostXpLedger.unshift(tx);
+  if (memoryFrostXpLedger.length > 5000) memoryFrostXpLedger.pop();
+
+  const cachedState = memoryWinterStates.get(params.userId);
+  if (cachedState) {
+    cachedState.frostXp = tx.balanceAfter;
+    cachedState.frostXpTransactions = [tx, ...(cachedState.frostXpTransactions || []).filter(t => t.idempotencyKey !== tx.idempotencyKey)].slice(0, 40);
+  }
+
+  const cfg = resolveWinterSupabaseConfig(getSupabaseServerConfig);
+  if (shouldUseSupabase(cfg)) {
+    const headers = {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+      'Content-Type': 'application/json',
+    };
+    const res = await fetchJsonStrict(
+      `${cfg.url}/rest/v1/winter_frost_xp_ledger`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          id: tx.id,
+          user_id: tx.userId,
+          amount: tx.amount,
+          balance_after: tx.balanceAfter,
+          reason: tx.reason,
+          reference_type: tx.referenceType,
+          reference_id: tx.referenceId,
+          idempotency_key: tx.idempotencyKey,
+          created_at: tx.createdAt,
+        }),
+      },
+      'insert winter_frost_xp_ledger'
+    ).catch(() => null);
+    if (res && !res.ok) {
+      const errText = await res.text().catch(() => '');
+      if (!isUniqueViolationResponse(res.status, errText) && !isMissingColumnOrRelationError(res.status, errText)) {
+        console.warn(`[FROST_XP] Non-fatal ledger insert warning (${res.status}): ${errText}`);
+      }
+    }
+  }
+
+  return tx;
 }
 
 export async function appendXpLedgerEntry(
@@ -1174,7 +1375,7 @@ export function buildSeparatedLeaderboard(params: {
     xp: number;
     currentStreak?: number;
     winterCookies?: number;
-    equippedFrame?: string | null;
+    equippedBanner?: string | null;
     equippedBorder?: string | null;
     badgesCount?: number;
     updatedAt?: string | number | null;
@@ -1226,7 +1427,7 @@ export function buildSeparatedLeaderboard(params: {
           xp: Math.max(0, Math.round(agg.xp)),
           currentStreak: 0,
           winterCookies: 0,
-          equippedFrame: null,
+          equippedBanner: null,
           equippedBorder: null,
           badgesCount: 0,
         });
@@ -1251,7 +1452,7 @@ export function buildSeparatedLeaderboard(params: {
         nextLevelXp: lvl.nextLevelXp,
         currentStreak: u.currentStreak || 0,
         winterCookies: u.winterCookies || 0,
-        equippedFrame: u.equippedFrame || null,
+        equippedBanner: u.equippedBanner || null,
         equippedBorder: u.equippedBorder || null,
         badgesCount: u.badgesCount || 0,
       };
@@ -1303,7 +1504,7 @@ export function buildSeparatedLeaderboard(params: {
       nextLevelXp: lvl.nextLevelXp,
       currentStreak: profile?.currentStreak || 0,
       winterCookies: profile?.winterCookies || 0,
-      equippedFrame: profile?.equippedFrame || null,
+      equippedBanner: profile?.equippedBanner || null,
       equippedBorder: profile?.equippedBorder || null,
       badgesCount: profile?.badgesCount || 0,
     });
@@ -1342,7 +1543,7 @@ export function buildSeparatedLeaderboard(params: {
       nextLevelXp: lvl.nextLevelXp,
       currentStreak: u.currentStreak || 0,
       winterCookies: u.winterCookies || 0,
-      equippedFrame: u.equippedFrame || null,
+      equippedBanner: u.equippedBanner || null,
       equippedBorder: u.equippedBorder || null,
       badgesCount: u.badgesCount || 0,
     });
@@ -1379,15 +1580,7 @@ export async function executeSantaGiftClaim(params: {
   const windowStatus = getSantaWindowStatus(nowMs, tz, startH, endH);
   const badgesEnabled = isFeatureAccessibleForActor('winter_badges', params.user.role, true);
 
-  const userEmail = (params.user.email || '').toLowerCase().trim();
-  const isSuperAdmin =
-    String(params.user.role || '').toLowerCase().trim() === 'super_admin' ||
-    [
-      'naitik.kashyap0015@gmail.com',
-      'naitik.kashyap5205@gmail.com',
-      'superadmin@studentos.edu',
-      'superadmin@veylentra.edu',
-    ].includes(userEmail);
+  const isSuperAdmin = isSuperAdminActor(params.user);
 
   if (params.isPreview) {
     if (!isSuperAdmin) {
@@ -1409,11 +1602,12 @@ export async function executeSantaGiftClaim(params: {
       rarity: roll.rarity,
       label: roll.label,
       xpBonus: roll.xpBonus,
+      frostXpBonus: roll.frostXpBonus,
       cookiesBonus: roll.cookiesBonus,
       aiBonusQueries: roll.aiBonusQueries,
       streakShield: roll.streakShield,
       badgeId: badgesEnabled ? roll.badgeId : undefined,
-      frameId: badgesEnabled ? roll.frameId : undefined,
+      bannerId: badgesEnabled ? roll.bannerId : undefined,
       borderId: badgesEnabled ? roll.borderId : undefined,
       createdAt: new Date(nowMs).toISOString(),
       appliedAt: new Date(nowMs).toISOString(),
@@ -1424,7 +1618,7 @@ export async function executeSantaGiftClaim(params: {
         success: true,
         isPreview: true,
         reward: previewReward,
-        message: 'Super Admin Preview: Simulated Santa gift unwrap without mutating real claims or XP.',
+        message: 'Super Admin Preview: Simulated Santa gift unwrap without mutating real claims, Frost XP, or collectibles.',
         windowStatus,
       },
     };
@@ -1525,7 +1719,7 @@ export async function executeSantaGiftClaim(params: {
     const availableBonusRoom = Math.max(0, MAX_DAILY_WINTER_AI_BONUS - normalizedState.aiBonusCreditsToday);
     const grantedAiBonus = Math.min(availableBonusRoom, tier.aiBonusQueries);
     const grantedBadgeId = badgesEnabled ? tier.badgeId : undefined;
-    const grantedFrameId = badgesEnabled ? tier.frameId : undefined;
+    const grantedBannerId = badgesEnabled ? tier.bannerId : undefined;
     const grantedBorderId = badgesEnabled ? tier.borderId : undefined;
 
     const record = {
@@ -1537,11 +1731,12 @@ export async function executeSantaGiftClaim(params: {
       rarity: tier.rarity,
       label: tier.label,
       xpBonus: tier.xpBonus,
+      frostXpBonus: tier.frostXpBonus,
       cookiesBonus: tier.cookiesBonus,
       aiBonusQueries: grantedAiBonus,
       streakShield: tier.streakShield,
       badgeId: grantedBadgeId,
-      frameId: grantedFrameId,
+      bannerId: grantedBannerId,
       borderId: grantedBorderId,
       createdAt: appliedAtIso,
       appliedAt: appliedAtIso,
@@ -1562,11 +1757,12 @@ export async function executeSantaGiftClaim(params: {
           rarity: tier.rarity,
           reward_label: tier.label,
           xp_bonus: tier.xpBonus,
+          frost_xp_bonus: tier.frostXpBonus,
           cookies_bonus: tier.cookiesBonus,
           ai_bonus_queries: grantedAiBonus,
           streak_shield: tier.streakShield,
           badge_id: grantedBadgeId || null,
-          frame_id: grantedFrameId || null,
+          banner_id: grantedBannerId || null,
           border_id: grantedBorderId || null,
           metadata: record,
           created_at: appliedAtIso,
@@ -1639,6 +1835,7 @@ export async function executeSantaGiftClaim(params: {
       }
     }
 
+    normalizedState.frostXp = Math.max(0, (normalizedState.frostXp || 0) + tier.frostXpBonus);
     normalizedState.cookiesCount += tier.cookiesBonus;
     if (tier.streakShield) {
       normalizedState.streakShields = Math.min(MAX_STREAK_SHIELDS, normalizedState.streakShields + 1);
@@ -1652,8 +1849,8 @@ export async function executeSantaGiftClaim(params: {
     if (grantedBadgeId && !normalizedState.earnedWinterBadges[grantedBadgeId]) {
       normalizedState.earnedWinterBadges[grantedBadgeId] = appliedAtIso;
     }
-    if (grantedFrameId && !normalizedState.unlockedFrames.includes(grantedFrameId)) {
-      normalizedState.unlockedFrames.push(grantedFrameId);
+    if (grantedBannerId && !normalizedState.unlockedBanners.includes(grantedBannerId)) {
+      normalizedState.unlockedBanners.push(grantedBannerId);
     }
     if (grantedBorderId && !normalizedState.unlockedBorders.includes(grantedBorderId)) {
       normalizedState.unlockedBorders.push(grantedBorderId);
@@ -1679,6 +1876,17 @@ export async function executeSantaGiftClaim(params: {
       }
       throw saveErr;
     }
+
+    await recordFrostXpLedgerEntry(params.getSupabaseServerConfig, {
+      userId: params.user.id,
+      amount: tier.frostXpBonus,
+      balanceAfter: persistedState.frostXp,
+      reason: `Santa Gift (${tier.label})`,
+      referenceType: 'santa_gift',
+      referenceId: rewardId,
+      idempotencyKey: `frost_santa:${windowStatus.eventNightKey}:${idemp}`,
+      createdAt: appliedAtIso,
+    });
 
     if (useDb && ledgerRowPersisted) {
       const markRes = await fetchJsonStrict(
@@ -1749,15 +1957,7 @@ export async function executeSpinWheel(params: {
   const cooldownMs = Number(feature?.config?.cooldownMs ?? SPIN_WHEEL_COOLDOWN_MS);
   const badgesEnabled = isFeatureAccessibleForActor('winter_badges', params.user.role, true);
 
-  const userEmail = (params.user.email || '').toLowerCase().trim();
-  const isSuperAdmin =
-    String(params.user.role || '').toLowerCase().trim() === 'super_admin' ||
-    [
-      'naitik.kashyap0015@gmail.com',
-      'naitik.kashyap5205@gmail.com',
-      'superadmin@studentos.edu',
-      'superadmin@veylentra.edu',
-    ].includes(userEmail);
+  const isSuperAdmin = isSuperAdminActor(params.user);
 
   if (params.isPreview) {
     if (!isSuperAdmin) {
@@ -1780,11 +1980,12 @@ export async function executeSpinWheel(params: {
       segmentIndex: segment.index,
       label: segment.label,
       xpBonus: segment.xpBonus,
+      frostXpBonus: segment.frostXpBonus,
       cookiesBonus: segment.cookiesBonus,
       aiBonusQueries: segment.aiBonusQueries,
       streakShield: segment.streakShield,
       badgeId: badgesEnabled ? segment.badgeId : undefined,
-      frameId: badgesEnabled ? segment.frameId : undefined,
+      bannerId: badgesEnabled ? segment.bannerId : undefined,
       borderId: badgesEnabled ? segment.borderId : undefined,
       createdAt: nowIso,
       appliedAt: nowIso,
@@ -1799,7 +2000,7 @@ export async function executeSpinWheel(params: {
         reward: previewReward,
         cooldownMs,
         remainingMs: 0,
-        message: 'Super Admin Preview: Simulated Spin Wheel roll without mutating cooldown, XP, or collectibles.',
+        message: 'Super Admin Preview: Simulated Spin Wheel roll without mutating cooldown, Frost XP, Scholar XP, or collectibles.',
       },
     };
   }
@@ -1867,7 +2068,7 @@ export async function executeSpinWheel(params: {
     const availableBonusRoom = Math.max(0, MAX_DAILY_WINTER_AI_BONUS - normalizedState.aiBonusCreditsToday);
     const grantedAiBonus = Math.min(availableBonusRoom, segment.aiBonusQueries);
     const grantedBadgeId = badgesEnabled ? segment.badgeId : undefined;
-    const grantedFrameId = badgesEnabled ? segment.frameId : undefined;
+    const grantedBannerId = badgesEnabled ? segment.bannerId : undefined;
     const grantedBorderId = badgesEnabled ? segment.borderId : undefined;
 
     const record = {
@@ -1879,11 +2080,12 @@ export async function executeSpinWheel(params: {
       segmentIndex: segment.index,
       label: segment.label,
       xpBonus: segment.xpBonus,
+      frostXpBonus: segment.frostXpBonus,
       cookiesBonus: segment.cookiesBonus,
       aiBonusQueries: grantedAiBonus,
       streakShield: segment.streakShield,
       badgeId: grantedBadgeId,
-      frameId: grantedFrameId,
+      bannerId: grantedBannerId,
       borderId: grantedBorderId,
       createdAt: nowIso,
       appliedAt: nowIso,
@@ -1902,11 +2104,12 @@ export async function executeSpinWheel(params: {
           segment_index: segment.index,
           reward_label: segment.label,
           xp_bonus: segment.xpBonus,
+          frost_xp_bonus: segment.frostXpBonus,
           cookies_bonus: segment.cookiesBonus,
           ai_bonus_queries: grantedAiBonus,
           streak_shield: segment.streakShield,
           badge_id: grantedBadgeId || null,
-          frame_id: grantedFrameId || null,
+          banner_id: grantedBannerId || null,
           border_id: grantedBorderId || null,
           metadata: record,
           created_at: nowIso,
@@ -1977,6 +2180,7 @@ export async function executeSpinWheel(params: {
       }
     }
 
+    normalizedState.frostXp = Math.max(0, (normalizedState.frostXp || 0) + segment.frostXpBonus);
     normalizedState.cookiesCount += segment.cookiesBonus;
     if (segment.streakShield) {
       normalizedState.streakShields = Math.min(MAX_STREAK_SHIELDS, normalizedState.streakShields + 1);
@@ -1990,8 +2194,8 @@ export async function executeSpinWheel(params: {
     if (grantedBadgeId && !normalizedState.earnedWinterBadges[grantedBadgeId]) {
       normalizedState.earnedWinterBadges[grantedBadgeId] = nowIso;
     }
-    if (grantedFrameId && !normalizedState.unlockedFrames.includes(grantedFrameId)) {
-      normalizedState.unlockedFrames.push(grantedFrameId);
+    if (grantedBannerId && !normalizedState.unlockedBanners.includes(grantedBannerId)) {
+      normalizedState.unlockedBanners.push(grantedBannerId);
     }
     if (grantedBorderId && !normalizedState.unlockedBorders.includes(grantedBorderId)) {
       normalizedState.unlockedBorders.push(grantedBorderId);
@@ -2016,6 +2220,17 @@ export async function executeSpinWheel(params: {
       }
       throw saveErr;
     }
+
+    await recordFrostXpLedgerEntry(params.getSupabaseServerConfig, {
+      userId: params.user.id,
+      amount: segment.frostXpBonus,
+      balanceAfter: persistedState.frostXp,
+      reason: `Spin Wheel: ${segment.label}`,
+      referenceType: 'spin_wheel',
+      referenceId: rewardId,
+      idempotencyKey: `frost_spin:${rewardId}`,
+      createdAt: nowIso,
+    });
 
     const xpRes = await appendXpLedgerEntry(params.getSupabaseServerConfig, {
       id: `xp_${rewardId}`,
@@ -2055,6 +2270,8 @@ export async function executeSpinWheel(params: {
 export function resetWinterAndLeaderboardMemoryForTests() {
   if (process.env.NODE_ENV !== 'test') return;
   memoryWinterStates.clear();
+  memoryFrostXpLedger.length = 0;
+  memoryAdminGrantAudit.length = 0;
   memoryXpLedger.length = 0;
   memoryUserTotalXp.clear();
   inFlightClaimLocks.clear();
@@ -2176,6 +2393,7 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
 
       return res.json({
         success: true,
+        isSuperAdmin: isSuperAdminActor(actor),
         winterState: state,
         santa: {
           enabled: isFeatureAccessibleForActor('winter_santa_gifts', role, true),
@@ -2218,6 +2436,7 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
               name: 'Mystery Winter Collectible',
               description: 'Keep participating in Winter Festival events to reveal this secret collectible.',
               unlockRequirement: 'Hidden Secret Requirement',
+              purpose: 'Revealed upon unlock',
               rarity: b.rarity,
               isHiddenUntilUnlocked: true,
               unlockedAt: null,
@@ -2228,8 +2447,9 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
             unlockedAt,
           };
         }),
-        frames: WINTER_PROFILE_FRAMES,
+        banners: WINTER_PROFILE_BANNERS,
         borders: WINTER_PROFILE_BORDERS,
+        cookieExchangeOptions: COOKIE_EXCHANGE_OPTIONS,
         quizQuestions: WINTER_QUIZ_QUESTIONS.map(q => ({
           id: q.id,
           prompt: q.prompt,
@@ -2462,6 +2682,7 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
 
       const nextState = cloneWinterState(state);
       nextState.claimedTaskIds.push(taskId);
+      nextState.frostXp = Math.max(0, (nextState.frostXp || 0) + (taskDef.frostXpReward || 0));
       nextState.cookiesCount += taskDef.cookiesReward;
       if (grantedBadgeId && !nextState.earnedWinterBadges[grantedBadgeId]) {
         nextState.earnedWinterBadges[grantedBadgeId] = nowIso;
@@ -2478,6 +2699,7 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
         rarity: 'seasonal',
         label: taskDef.title,
         xpBonus: taskDef.xpReward,
+        frostXpBonus: taskDef.frostXpReward,
         cookiesBonus: taskDef.cookiesReward,
         aiBonusQueries: 0,
         streakShield: false,
@@ -2536,6 +2758,19 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
         throw saveErr;
       }
 
+      if ((taskDef.frostXpReward || 0) > 0) {
+        await recordFrostXpLedgerEntry(getSupabaseServerConfig, {
+          userId: actor.id,
+          amount: taskDef.frostXpReward,
+          balanceAfter: persistedState.frostXp,
+          reason: `Task: ${taskDef.title}`,
+          referenceType: 'winter_task',
+          referenceId: taskId,
+          idempotencyKey: `frost_task:${taskId}`,
+          createdAt: nowIso,
+        });
+      }
+
       const xpRes = await appendXpLedgerEntry(getSupabaseServerConfig, {
         id: `xp_${rewardRecord.id}`,
         userId: actor.id,
@@ -2556,12 +2791,14 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
         role: actor.role,
       });
 
+      const refreshedState = await loadUserWinterState(getSupabaseServerConfig, actor);
+
       return res.json({
         success: true,
         taskId,
         reward: rewardRecord,
         xpSummary: xpRes,
-        winterState: persistedState,
+        winterState: refreshedState || persistedState,
       });
     } catch (err) {
       return handleWinterRouteError(res, err, 'Failed to claim Winter task reward.');
@@ -2683,22 +2920,22 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
     }
   });
 
-  app.post('/api/winter/profile/frame', async (req, res) => {
+  app.post('/api/winter/profile/banner', async (req, res) => {
     try {
       const actor = await getVerifiedUserFromRequest(req);
       if (!actor) return res.status(401).json({ success: false, error: 'Authentication required.' });
 
-      const rawFrameId = req.body?.frameId;
-      const frameId = rawFrameId ? String(rawFrameId).trim() : null;
-      if (frameId !== null && !isValidWinterFrameId(frameId)) {
+      const rawBannerId = req.body?.bannerId;
+      const bannerId = rawBannerId ? String(rawBannerId).trim() : null;
+      if (bannerId !== null && !isValidWinterBannerId(bannerId)) {
         return res.status(400).json({
           success: false,
-          code: 'INVALID_FRAME_ID',
-          error: 'Invalid Winter profile frame selection.',
+          code: 'INVALID_BANNER_ID',
+          error: 'Invalid Winter profile banner selection.',
         });
       }
 
-      if (frameId !== null && !isFeatureAccessibleForActor('winter_badges', actor.role, true)) {
+      if (bannerId !== null && !isFeatureAccessibleForActor('winter_badges', actor.role, true)) {
         return res.status(403).json({
           success: false,
           code: 'FEATURE_DISABLED',
@@ -2707,23 +2944,31 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
       }
 
       let state = await loadUserWinterState(getSupabaseServerConfig, actor);
-      if (frameId && !state.unlockedFrames.includes(frameId)) {
+      if (bannerId && !state.unlockedBanners.includes(bannerId)) {
         return res.status(403).json({
           success: false,
           code: 'COLLECTIBLE_NOT_OWNED',
-          error: 'Frame not unlocked yet.',
+          error: 'Profile banner not unlocked yet.',
         });
       }
 
-      state.equippedFrame = frameId;
+      state.equippedBanner = bannerId;
       state = await saveUserWinterState(getSupabaseServerConfig, state, {
         actorAuthToken: actor.authToken,
         badgesEnabled: isFeatureAccessibleForActor('winter_badges', actor.role, true),
         syncLeaderboardCosmetics: true,
       });
-      return res.json({ success: true, equippedFrame: state.equippedFrame, winterState: state });
+
+      broadcastToAllWs({
+        type: 'winter:cosmetics_updated',
+        userId: actor.id,
+        equippedBanner: state.equippedBanner,
+        equippedBorder: state.equippedBorder,
+      });
+
+      return res.json({ success: true, equippedBanner: state.equippedBanner, winterState: state });
     } catch (err) {
-      return handleWinterRouteError(res, err, 'Failed to equip profile frame.');
+      return handleWinterRouteError(res, err, 'Failed to equip profile banner.');
     }
   });
 
@@ -2765,34 +3010,440 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
         badgesEnabled: isFeatureAccessibleForActor('winter_badges', actor.role, true),
         syncLeaderboardCosmetics: true,
       });
+
+      broadcastToAllWs({
+        type: 'winter:cosmetics_updated',
+        userId: actor.id,
+        equippedBanner: state.equippedBanner,
+        equippedBorder: state.equippedBorder,
+      });
+
       return res.json({ success: true, equippedBorder: state.equippedBorder, winterState: state });
     } catch (err) {
       return handleWinterRouteError(res, err, 'Failed to equip Winter border.');
     }
   });
 
+  app.post('/api/winter/shop/purchase', async (req, res) => {
+    const actor = await getVerifiedUserFromRequest(req);
+    if (!actor) return res.status(401).json({ success: false, error: 'Authentication required.' });
+
+    const itemType = String(req.body?.itemType || '').trim();
+    const itemId = String(req.body?.itemId || '').trim();
+    const adminGrant = Boolean(req.body?.adminGrant);
+    const idempotencyKey = String(req.body?.idempotencyKey || `shop_${itemType}_${itemId}_${Date.now()}`).trim();
+
+    if (itemType !== 'banner' && itemType !== 'border') {
+      return res.status(400).json({ success: false, error: 'Invalid collectible itemType. Must be banner or border.' });
+    }
+
+    const bannerDef = itemType === 'banner' ? getWinterBannerById(itemId) : undefined;
+    const borderDef = itemType === 'border' ? getWinterBorderById(itemId) : undefined;
+    const itemDef = bannerDef || borderDef;
+    if (!itemDef) {
+      return res.status(404).json({ success: false, error: 'Requested Winter collectible does not exist.' });
+    }
+
+    if (adminGrant && !isSuperAdminActor(actor)) {
+      return res.status(403).json({
+        success: false,
+        code: 'SUPER_ADMIN_ONLY',
+        error: 'Only verified Super Admins can directly claim collectibles without Frost XP.',
+      });
+    }
+
+    const lockKey = `shop:${actor.id}:${itemType}:${itemId}`;
+    if (inFlightClaimLocks.has(lockKey)) {
+      return res.status(409).json({ success: false, code: 'PURCHASE_IN_PROGRESS', error: 'Purchase already in progress.' });
+    }
+
+    inFlightClaimLocks.add(lockKey);
+    try {
+      const state = await loadUserWinterState(getSupabaseServerConfig, actor);
+      const ownedList = itemType === 'banner' ? state.unlockedBanners : state.unlockedBorders;
+      if (ownedList.includes(itemId)) {
+        return res.status(409).json({
+          success: false,
+          code: 'COLLECTIBLE_ALREADY_OWNED',
+          error: `${itemDef.name} is already unlocked in your inventory.`,
+          winterState: state,
+        });
+      }
+
+      const nowIso = new Date().toISOString();
+
+      if (adminGrant) {
+        const auditEntry: AdminGrantAuditEntry = {
+          id: `wgrant_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
+          adminUserId: actor.id,
+          adminEmail: String(actor.email || ''),
+          targetUserId: actor.id,
+          itemType,
+          itemId,
+          reason: 'super_admin_direct_claim',
+          createdAt: nowIso,
+        };
+        memoryAdminGrantAudit.unshift(auditEntry);
+
+        const cfg = getSupabaseServerConfig();
+        if (shouldUseSupabase(cfg)) {
+          await fetchJsonStrict(
+            `${cfg.url}/rest/v1/winter_admin_grant_audit`,
+            {
+              method: 'POST',
+              headers: {
+                apikey: cfg.key,
+                Authorization: `Bearer ${cfg.key}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                id: auditEntry.id,
+                admin_user_id: auditEntry.adminUserId,
+                admin_email: auditEntry.adminEmail,
+                target_user_id: auditEntry.targetUserId,
+                item_type: auditEntry.itemType,
+                item_id: auditEntry.itemId,
+                reason: auditEntry.reason,
+                created_at: auditEntry.createdAt,
+              }),
+            },
+            'insert winter_admin_grant_audit'
+          ).catch(() => {});
+        }
+
+        const nextState = cloneWinterState(state);
+        if (itemType === 'banner') {
+          nextState.unlockedBanners.push(itemId);
+          nextState.equippedBanner = itemId;
+        } else {
+          nextState.unlockedBorders.push(itemId);
+          nextState.equippedBorder = itemId;
+        }
+        nextState.rewardHistory = [
+          {
+            id: auditEntry.id,
+            featureType: 'admin_grant',
+            idempotencyKey: auditEntry.id,
+            status: 'applied',
+            rarity: itemDef.rarity,
+            label: `Super Admin Claim: ${itemDef.name}`,
+            xpBonus: 0,
+            frostXpBonus: 0,
+            cookiesBonus: 0,
+            aiBonusQueries: 0,
+            streakShield: false,
+            bannerId: itemType === 'banner' ? itemId : undefined,
+            borderId: itemType === 'border' ? itemId : undefined,
+            createdAt: nowIso,
+            appliedAt: nowIso,
+          },
+          ...nextState.rewardHistory,
+        ].slice(0, 60);
+
+        const saved = await saveUserWinterState(getSupabaseServerConfig, nextState, {
+          actorAuthToken: actor.authToken,
+          badgesEnabled: true,
+          syncLeaderboardCosmetics: true,
+        });
+
+        broadcastToAllWs({
+          type: 'winter:cosmetics_updated',
+          userId: actor.id,
+          equippedBanner: saved.equippedBanner,
+          equippedBorder: saved.equippedBorder,
+        });
+
+        return res.json({
+          success: true,
+          adminGranted: true,
+          auditId: auditEntry.id,
+          itemType,
+          itemId,
+          item: itemDef,
+          winterState: saved,
+        });
+      }
+
+      if (!itemDef.purchasableWithFrostXp || itemDef.frostXpCost <= 0) {
+        return res.status(400).json({
+          success: false,
+          code: 'NOT_PURCHASABLE',
+          error: `${itemDef.name} is an achievement/drop-exclusive collectible (${itemDef.unlockRequirement}).`,
+        });
+      }
+
+      const cost = itemDef.frostXpCost;
+      if ((state.frostXp || 0) < cost) {
+        return res.status(400).json({
+          success: false,
+          code: 'INSUFFICIENT_FROST_XP',
+          error: `Insufficient Frost XP: needs ${cost} Frost XP (you have ${state.frostXp || 0}).`,
+          requiredFrostXp: cost,
+          currentFrostXp: state.frostXp || 0,
+        });
+      }
+
+      const nextBalance = Math.max(0, (state.frostXp || 0) - cost);
+      const nextState = cloneWinterState(state);
+      nextState.frostXp = nextBalance;
+      if (itemType === 'banner') {
+        nextState.unlockedBanners.push(itemId);
+        nextState.equippedBanner = itemId;
+      } else {
+        nextState.unlockedBorders.push(itemId);
+        nextState.equippedBorder = itemId;
+      }
+      const purchaseId = `shop_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+      nextState.rewardHistory = [
+        {
+          id: purchaseId,
+          featureType: 'winter_shop',
+          idempotencyKey,
+          status: 'applied',
+          rarity: itemDef.rarity,
+          label: `Shop Unlock: ${itemDef.name} (-${cost} Frost XP)`,
+          xpBonus: 0,
+          frostXpBonus: -cost,
+          cookiesBonus: 0,
+          aiBonusQueries: 0,
+          streakShield: false,
+          bannerId: itemType === 'banner' ? itemId : undefined,
+          borderId: itemType === 'border' ? itemId : undefined,
+          createdAt: nowIso,
+          appliedAt: nowIso,
+        },
+        ...nextState.rewardHistory,
+      ].slice(0, 60);
+
+      const saved = await saveUserWinterState(getSupabaseServerConfig, nextState, {
+        actorAuthToken: actor.authToken,
+        badgesEnabled: true,
+        syncLeaderboardCosmetics: true,
+      });
+
+      await recordFrostXpLedgerEntry(getSupabaseServerConfig, {
+        userId: actor.id,
+        amount: -cost,
+        balanceAfter: saved.frostXp,
+        reason: `Unlocked ${itemDef.name}`,
+        referenceType: itemType,
+        referenceId: itemId,
+        idempotencyKey: `shop_spend:${actor.id}:${itemType}:${itemId}:${idempotencyKey}`,
+        createdAt: nowIso,
+      });
+
+      broadcastToAllWs({
+        type: 'winter:cosmetics_updated',
+        userId: actor.id,
+        equippedBanner: saved.equippedBanner,
+        equippedBorder: saved.equippedBorder,
+      });
+
+      const refreshed = await loadUserWinterState(getSupabaseServerConfig, actor);
+
+      return res.json({
+        success: true,
+        purchased: true,
+        costFrostXp: cost,
+        itemType,
+        itemId,
+        item: itemDef,
+        winterState: refreshed || saved,
+      });
+    } catch (err) {
+      return handleWinterRouteError(res, err, 'Failed to process Winter collectible unlock.');
+    } finally {
+      inFlightClaimLocks.delete(lockKey);
+    }
+  });
+
+  app.post('/api/winter/cookies/exchange', async (req, res) => {
+    const actor = await getVerifiedUserFromRequest(req);
+    if (!actor) return res.status(401).json({ success: false, error: 'Authentication required.' });
+
+    const optionId = String(req.body?.optionId || '').trim();
+    const option = COOKIE_EXCHANGE_OPTIONS.find(o => o.id === optionId);
+    if (!option) {
+      return res.status(400).json({ success: false, error: 'Invalid cookie exchange option.' });
+    }
+
+    const lockKey = `cookie_exchange:${actor.id}`;
+    if (inFlightClaimLocks.has(lockKey)) {
+      return res.status(409).json({ success: false, code: 'EXCHANGE_IN_PROGRESS', error: 'Cookie exchange already in progress.' });
+    }
+
+    inFlightClaimLocks.add(lockKey);
+    try {
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const todayKey = getLocalDayKey(nowMs, 'Asia/Kolkata');
+      const state = normalizeWinterBonusForToday(await loadUserWinterState(getSupabaseServerConfig, actor), todayKey);
+
+      if ((state.cookiesCount || 0) < option.cookieCost) {
+        return res.status(400).json({
+          success: false,
+          code: 'INSUFFICIENT_COOKIES',
+          error: `Need ${option.cookieCost} Winter Cookies (you currently have ${state.cookiesCount || 0}).`,
+        });
+      }
+
+      if (option.aiBonusGrant > 0 && state.aiBonusCreditsToday >= MAX_DAILY_WINTER_AI_BONUS) {
+        return res.status(400).json({
+          success: false,
+          code: 'AI_BONUS_CAP_REACHED',
+          error: `Daily AI bonus query cap (${MAX_DAILY_WINTER_AI_BONUS}) already reached today.`,
+        });
+      }
+
+      const nextState = cloneWinterState(state);
+      nextState.cookiesCount = Math.max(0, nextState.cookiesCount - option.cookieCost);
+      nextState.frostXp = Math.max(0, (nextState.frostXp || 0) + option.frostXpGrant);
+      if (option.aiBonusGrant > 0) {
+        nextState.aiBonusCreditsToday = Math.min(
+          MAX_DAILY_WINTER_AI_BONUS,
+          nextState.aiBonusCreditsToday + option.aiBonusGrant
+        );
+      }
+
+      const exId = `ex_${nowMs}_${crypto.randomBytes(4).toString('hex')}`;
+      nextState.rewardHistory = [
+        {
+          id: exId,
+          featureType: 'cookie_exchange',
+          idempotencyKey: exId,
+          status: 'applied',
+          rarity: 'seasonal',
+          label: `${option.title} (-${option.cookieCost} Cookies)`,
+          xpBonus: 0,
+          frostXpBonus: option.frostXpGrant,
+          cookiesBonus: -option.cookieCost,
+          aiBonusQueries: option.aiBonusGrant,
+          streakShield: false,
+          createdAt: nowIso,
+          appliedAt: nowIso,
+        },
+        ...nextState.rewardHistory,
+      ].slice(0, 60);
+
+      const saved = await saveUserWinterState(getSupabaseServerConfig, nextState, {
+        actorAuthToken: actor.authToken,
+        badgesEnabled: true,
+      });
+
+      if (option.frostXpGrant > 0) {
+        await recordFrostXpLedgerEntry(getSupabaseServerConfig, {
+          userId: actor.id,
+          amount: option.frostXpGrant,
+          balanceAfter: saved.frostXp,
+          reason: `Cookie Exchange (${option.cookieCost} Cookies -> +${option.frostXpGrant} Frost XP)`,
+          referenceType: 'cookie_exchange',
+          referenceId: exId,
+          idempotencyKey: `frost_exchange:${exId}`,
+          createdAt: nowIso,
+        });
+      }
+
+      const refreshed = await loadUserWinterState(getSupabaseServerConfig, actor);
+
+      return res.json({
+        success: true,
+        option,
+        winterState: refreshed || saved,
+      });
+    } catch (err) {
+      return handleWinterRouteError(res, err, 'Failed to exchange Winter Cookies.');
+    } finally {
+      inFlightClaimLocks.delete(lockKey);
+    }
+  });
+
+  app.get('/api/winter/frost-xp/history', async (req, res) => {
+    try {
+      const actor = await getVerifiedUserFromRequest(req);
+      if (!actor) return res.status(401).json({ success: false, error: 'Authentication required.' });
+
+      const state = await loadUserWinterState(getSupabaseServerConfig, actor);
+      return res.json({
+        success: true,
+        frostXp: state.frostXp || 0,
+        transactions: state.frostXpTransactions || [],
+      });
+    } catch (err) {
+      return handleWinterRouteError(res, err, 'Failed to load Frost XP history.');
+    }
+  });
+
   app.get('/api/winter/profile/cosmetics/:userId', async (req, res) => {
     try {
-      const targetId = String(req.params.userId || '').trim();
-      if (!targetId) {
+      const rawTarget = String(req.params.userId || '').trim();
+      if (!rawTarget) {
         return res.status(400).json({ success: false, error: 'User ID is required.' });
       }
+
+      const cfg = getSupabaseServerConfig();
+      let resolvedUserId = rawTarget;
+      let publicProfile: Record<string, any> | null = null;
+      const aliasIds = new Set<string>([rawTarget]);
+
+      if (shouldUseSupabase(cfg)) {
+        const headers = { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` };
+        const encTarget = encodeURIComponent(rawTarget);
+        const profRes = await fetchJsonStrict(
+          `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encTarget},uid.eq.${encTarget},email.eq.${encodeURIComponent(rawTarget.toLowerCase())})&select=id,uid,name,role,avatar,bio,house,grade,section,points,raw_data&limit=2`,
+          { headers },
+          'resolve public profile for cosmetics'
+        ).catch(() => null);
+
+        if (profRes && profRes.ok) {
+          const profRows = await profRes.json().catch(() => []);
+          const p = Array.isArray(profRows) ? profRows[0] : null;
+          if (p) {
+            if (p.uid) aliasIds.add(String(p.uid).trim());
+            if (p.id) aliasIds.add(String(p.id).trim());
+            resolvedUserId = String(p.uid || p.id || rawTarget).trim();
+            const rawData = p.raw_data && typeof p.raw_data === 'object' ? p.raw_data : {};
+            // Public customization fields only — NEVER expose email, phone, or credentials
+            publicProfile = {
+              uid: resolvedUserId,
+              name: String(p.name || rawData.name || 'Member'),
+              role: String(p.role || rawData.role || 'student'),
+              photoURL: String(p.avatar || rawData.photoURL || ''),
+              bio: String(p.bio || rawData.bio || ''),
+              house: String(p.house || rawData.house || ''),
+              grade: String(p.grade || rawData.grade || ''),
+              section: String(p.section || rawData.section || ''),
+              points: Number(p.points || rawData.points || 0),
+              bannerUrl: rawData.bannerUrl || undefined,
+              bannerPreset: rawData.bannerPreset || undefined,
+              avatarFrame: rawData.avatarFrame || undefined,
+              accentColor: rawData.accentColor || undefined,
+              pronouns: rawData.pronouns || undefined,
+              customStatus: rawData.customStatus || undefined,
+              badges: Array.isArray(rawData.badges) ? rawData.badges : [],
+            };
+          }
+        }
+      }
+
       const buildCosmeticsResponse = (
-        ef: string | null,
         eb: string | null,
-        uf: string[] = [],
+        eborder: string | null,
         ub: string[] = [],
+        uborder: string[] = [],
         cookies: number = 0,
-        badges: number = 0
+        badges: number = 0,
+        frostXp: number = 0
       ) => {
         const payload = {
-          userId: targetId,
-          equippedFrame: ef,
-          equippedBorder: eb,
-          unlockedFrames: uf,
-          unlockedBorders: ub,
+          userId: resolvedUserId,
+          equippedBanner: eb,
+          equippedBorder: eborder,
+          unlockedBanners: ub,
+          unlockedBorders: uborder,
           cookiesCount: cookies,
           badgesCount: badges,
+          frostXp,
+          publicProfile,
         };
         return res.json({
           success: true,
@@ -2801,42 +3452,56 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
         });
       };
 
-      const mem = memoryWinterStates.get(targetId);
-      if (mem) {
-        return buildCosmeticsResponse(
-          mem.equippedFrame || null,
-          mem.equippedBorder || null,
-          mem.unlockedFrames || [],
-          mem.unlockedBorders || [],
-          mem.cookiesCount || 0,
-          Object.keys(mem.earnedWinterBadges || {}).length
-        );
+      for (const candidateId of aliasIds) {
+        const mem = memoryWinterStates.get(candidateId);
+        if (mem) {
+          return buildCosmeticsResponse(
+            mem.equippedBanner || null,
+            mem.equippedBorder || null,
+            mem.unlockedBanners || [],
+            mem.unlockedBorders || [],
+            mem.cookiesCount || 0,
+            Object.keys(mem.earnedWinterBadges || {}).length,
+            mem.frostXp || 0
+          );
+        }
       }
 
-      const cfg = getSupabaseServerConfig();
       if (shouldUseSupabase(cfg)) {
         const headers = { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` };
+        const candidateList = Array.from(aliasIds).map(id => encodeURIComponent(id)).join(',');
         const wpRes = await fetchJsonStrict(
-          `${cfg.url}/rest/v1/winter_user_profiles?user_id=eq.${encodeURIComponent(targetId)}&select=equipped_frame,equipped_border,unlocked_frames,unlocked_borders,cookies_count,earned_winter_badges,state_json&limit=1`,
+          `${cfg.url}/rest/v1/winter_user_profiles?user_id=in.(${candidateList})&select=*&limit=2`,
           { headers },
           'load public winter cosmetics'
         ).catch(() => null);
         if (wpRes && wpRes.ok) {
           const rows = await wpRes.json().catch(() => []);
-          const row = rows?.[0];
-          const sJson = row?.state_json && typeof row.state_json === 'object' ? row.state_json : {};
-          const ef = row?.equipped_frame ?? sJson.equippedFrame ?? null;
-          const eb = row?.equipped_border ?? sJson.equippedBorder ?? null;
-          const uf = Array.isArray(row?.unlocked_frames) ? row.unlocked_frames : Array.isArray(sJson.unlockedFrames) ? sJson.unlockedFrames : [];
-          const ub = Array.isArray(row?.unlocked_borders) ? row.unlocked_borders : Array.isArray(sJson.unlockedBorders) ? sJson.unlockedBorders : [];
-          const cookies = Number(row?.cookies_count ?? sJson.cookiesCount ?? 0);
-          const badgesObj = row?.earned_winter_badges || sJson.earnedWinterBadges || {};
-          const badges = Object.keys(badgesObj).length;
-          return buildCosmeticsResponse(ef, eb, uf, ub, cookies, badges);
+          const row = Array.isArray(rows) ? rows[0] : null;
+          if (row) {
+            const sJson = row.state_json && typeof row.state_json === 'object' ? row.state_json : {};
+            const rawBanner =
+              row.equipped_banner ??
+              sJson.equippedBanner ??
+              (isValidWinterBannerId(row.equipped_frame) ? row.equipped_frame : isValidWinterBannerId(sJson.equippedFrame) ? sJson.equippedFrame : null);
+            const eb = rawBanner ? String(rawBanner) : null;
+            const eborder = row.equipped_border ?? sJson.equippedBorder ?? null;
+            const ub = Array.from(new Set([
+              ...(Array.isArray(row.unlocked_banners) ? row.unlocked_banners : []),
+              ...(Array.isArray(sJson.unlockedBanners) ? sJson.unlockedBanners : []),
+              ...(Array.isArray(row.unlocked_frames) ? row.unlocked_frames.filter((id: string) => isValidWinterBannerId(id)) : []),
+            ]));
+            const uborder = Array.isArray(row.unlocked_borders) ? row.unlocked_borders : Array.isArray(sJson.unlockedBorders) ? sJson.unlockedBorders : [];
+            const cookies = Number(row.cookies_count ?? sJson.cookiesCount ?? 0);
+            const badgesObj = row.earned_winter_badges || sJson.earnedWinterBadges || {};
+            const badges = Object.keys(badgesObj).length;
+            const frostXp = Number(row.frost_xp ?? sJson.frostXp ?? 0);
+            return buildCosmeticsResponse(eb, eborder, ub, uborder, cookies, badges, frostXp);
+          }
         }
       }
 
-      return buildCosmeticsResponse(null, null, [], [], 0, 0);
+      return buildCosmeticsResponse(null, null, [], [], 0, 0, 0);
     } catch (err) {
       return handleWinterRouteError(res, err, 'Failed to load profile cosmetics.');
     }
@@ -3025,7 +3690,7 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
           xp: mergedXp,
           currentStreak: Math.max(Number(g.currentStreak || 0), existing?.currentStreak || 0),
           winterCookies: wState?.cookiesCount ?? g.winterCookies ?? existing?.winterCookies ?? 0,
-          equippedFrame: wState?.equippedFrame ?? g.equippedFrame ?? existing?.equippedFrame ?? null,
+          equippedBanner: wState?.equippedBanner ?? g.equippedBanner ?? existing?.equippedBanner ?? null,
           equippedBorder: wState?.equippedBorder ?? g.equippedBorder ?? existing?.equippedBorder ?? null,
           badgesCount: Math.max(
             Object.keys(g.earnedBadges || {}).length + Object.keys(wState?.earnedWinterBadges || {}).length,
@@ -3130,7 +3795,7 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
               xp: pts,
               currentStreak: 0,
               winterCookies: wState?.cookiesCount || 0,
-              equippedFrame: wState?.equippedFrame || null,
+              equippedBanner: wState?.equippedBanner || null,
               equippedBorder: wState?.equippedBorder || null,
               badgesCount: Object.keys(wState?.earnedWinterBadges || {}).length,
               updatedAt: p?.updated_at ?? null,
@@ -3204,7 +3869,7 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
                 xp: 0,
                 currentStreak: 0,
                 winterCookies: wState?.cookiesCount || 0,
-                equippedFrame: wState?.equippedFrame || null,
+                equippedBanner: wState?.equippedBanner || null,
                 equippedBorder: wState?.equippedBorder || null,
                 badgesCount: Object.keys(wState?.earnedWinterBadges || {}).length,
                 updatedAt: r.created_at || null,
@@ -3219,7 +3884,7 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
           allUsersMap.set(k, {
             ...v,
             winterCookies: wState?.cookiesCount || 0,
-            equippedFrame: wState?.equippedFrame || null,
+            equippedBanner: wState?.equippedBanner || null,
             equippedBorder: wState?.equippedBorder || null,
             badgesCount:
               Object.keys(v.earnedBadges || {}).length +

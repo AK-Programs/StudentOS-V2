@@ -171,7 +171,7 @@ import { FloatingSpinWheelButton } from './components/winter/FloatingSpinWheelBu
 import { XpLeaderboardPanel } from './components/gamification/XpLeaderboardPanel';
 import { SnowflakeVector } from './components/winter/WinterArtwork';
 import { scheduleSantaModelIdlePreload } from './lib/santaModelCache';
-import { WinterCosmeticAvatar } from './components/winter/WinterCosmeticAvatar';
+import { ProfileBannerBackdrop, ProfileCosmeticAvatar } from './components/winter/ProfileCosmeticRenderer';
 import { fetchPublicWinterCosmetics } from './lib/winterFestivalService';
 
 // Stub Integrations
@@ -570,15 +570,15 @@ export default function App() {
     winterSantaAccess.accessible ||
     winterSpinAccess.accessible;
 
-  const [sidebarWinterCosmetics, setSidebarWinterCosmetics] = useState<{ equippedFrame: string | null; equippedBorder: string | null }>({
-    equippedFrame: null,
+  const [sidebarWinterCosmetics, setSidebarWinterCosmetics] = useState<{ equippedBanner: string | null; equippedBorder: string | null }>({
+    equippedBanner: null,
     equippedBorder: null,
   });
 
   useEffect(() => {
     const uid = currentUser?.uid;
     if (!uid) {
-      setSidebarWinterCosmetics({ equippedFrame: null, equippedBorder: null });
+      setSidebarWinterCosmetics({ equippedBanner: null, equippedBorder: null });
       return;
     }
     let active = true;
@@ -586,7 +586,7 @@ export default function App() {
       const cos = await fetchPublicWinterCosmetics(uid, currentUser);
       if (active && cos) {
         setSidebarWinterCosmetics({
-          equippedFrame: cos.equippedFrame || null,
+          equippedBanner: cos.equippedBanner || null,
           equippedBorder: cos.equippedBorder || null,
         });
       }
@@ -594,9 +594,11 @@ export default function App() {
     void syncCosmetics();
     const onWinterUpdate = () => { void syncCosmetics(); };
     window.addEventListener('veylentra-winter-updated', onWinterUpdate);
+    window.addEventListener('veylentra-cosmetics-updated', onWinterUpdate);
     return () => {
       active = false;
       window.removeEventListener('veylentra-winter-updated', onWinterUpdate);
+      window.removeEventListener('veylentra-cosmetics-updated', onWinterUpdate);
     };
   }, [currentUser?.uid]);
 
@@ -9020,26 +9022,32 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                 <button
                   type="button"
                   onClick={() => setAccountSwitcherExpanded(prev => !prev)}
-                  className="w-full p-2.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/15 flex items-center gap-3 text-left transition-colors cursor-pointer group"
+                  className="relative overflow-hidden w-full p-2.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/15 flex items-center gap-3 text-left transition-colors cursor-pointer group"
                   title="Click to switch accounts or manage profile"
                 >
-                  <WinterCosmeticAvatar
+                  {sidebarWinterCosmetics.equippedBanner && (
+                    <div className="pointer-events-none absolute inset-0 opacity-45" aria-hidden="true">
+                      <ProfileBannerBackdrop equippedBanner={sidebarWinterCosmetics.equippedBanner} className="w-full h-full" />
+                      <div className="absolute inset-0 bg-slate-950/55" />
+                    </div>
+                  )}
+                  <ProfileCosmeticAvatar
                     name={currentUser.name || 'Veylentra User'}
                     avatarUrl={currentUser.photoURL}
                     equippedBorder={sidebarWinterCosmetics.equippedBorder}
-                    equippedFrame={sidebarWinterCosmetics.equippedFrame}
                     size="sm"
+                    className="relative z-10"
                     fallbackBgClass={currentUser.house ? `${getHouseBadgeColor(currentUser.house)} text-white` : 'bg-slate-700 text-white'}
                   />
-                  <div className="flex flex-col min-w-0 flex-1">
+                  <div className="relative z-10 flex flex-col min-w-0 flex-1">
                     <span className="text-xs font-bold text-white truncate leading-tight group-hover:text-indigo-200 transition-colors">
                       {currentUser.name || 'Veylentra User'}
                     </span>
-                    <span className="text-[10px] text-slate-400 truncate mt-0.5 font-medium">
+                    <span className="text-[10px] text-slate-300 truncate mt-0.5 font-medium">
                       {presentationMode ? 'Presenter Mode' : getUserProfileTitle(currentUser, effectiveRole)}
                     </span>
                   </div>
-                  <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 shrink-0 ${accountSwitcherExpanded ? 'rotate-180 text-white' : ''}`} />
+                  <ChevronDown className={`relative z-10 w-3.5 h-3.5 text-slate-300 transition-transform duration-200 shrink-0 ${accountSwitcherExpanded ? 'rotate-180 text-white' : ''}`} />
                 </button>
               ) : (
                 <button
@@ -9048,11 +9056,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                   className="w-full flex items-center justify-center p-1.5 rounded-xl hover:bg-white/5 transition-colors cursor-pointer"
                   title={`${currentUser.name || 'User'} — Click to switch accounts`}
                 >
-                  <WinterCosmeticAvatar
+                  <ProfileCosmeticAvatar
                     name={currentUser.name || 'Veylentra User'}
                     avatarUrl={currentUser.photoURL}
                     equippedBorder={sidebarWinterCosmetics.equippedBorder}
-                    equippedFrame={sidebarWinterCosmetics.equippedFrame}
                     size="xs"
                     fallbackBgClass={currentUser.house ? `${getHouseBadgeColor(currentUser.house)} text-white` : 'bg-slate-700 text-white'}
                   />
@@ -10958,18 +10965,22 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                               <p>Profile details are locked. Only Teachers, Coordinators, and Admins can modify your core details, including your assigned House and Section.</p>
                             </div>
                           )}
-                          <div className="flex flex-col sm:flex-row items-center gap-5 p-5 bg-white/5 rounded-2xl border border-white/5">
-                            {profileAvatar ? (
-                              <img 
-                                src={profileAvatar} 
-                                alt="Profile Avatar" 
-                                className="w-20 h-20 rounded-2xl border-2 border-indigo-500 object-cover shadow-md"
-                              />
-                            ) : (
-                              <div className="w-20 h-20 rounded-2xl border-2 border-indigo-500 bg-slate-800 flex items-center justify-center font-black font-mono text-indigo-400 text-xl">
-                                {currentUser?.name ? currentUser.name.split(',').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase() : '?'}
+                          <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5">
+                            {sidebarWinterCosmetics.equippedBanner && (
+                              <div className="pointer-events-none absolute inset-0 opacity-45" aria-hidden="true">
+                                <ProfileBannerBackdrop equippedBanner={sidebarWinterCosmetics.equippedBanner} className="w-full h-full" />
+                                <div className="absolute inset-0 bg-gradient-to-r from-slate-950/75 via-slate-950/65 to-slate-950/80" />
                               </div>
                             )}
+                            <div className="relative z-10 flex flex-col sm:flex-row items-center gap-5 p-5">
+                              <ProfileCosmeticAvatar
+                                name={currentUser?.name || 'User'}
+                                avatarUrl={profileAvatar}
+                                equippedBorder={sidebarWinterCosmetics.equippedBorder}
+                                size="xl"
+                                shape="rounded"
+                                fallbackBgClass="bg-slate-800 text-indigo-400 font-black font-mono"
+                              />
                             <div className="space-y-2 text-center sm:text-left flex-1">
                               <label className="text-[11px] font-bold text-slate-400 block p-0.5 mb-1.5 uppercase tracking-wider">Profile Picture Integration</label>
                               <div className="flex flex-wrap gap-2 justify-center sm:justify-start items-center">
@@ -11010,8 +11021,9 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                                   </button>
                                 )}
                               </div>
-                              <p className="text-[10px] text-slate-500">Supports PNG, JPG, or WEBP images uploaded to secure school storage.</p>
+                              <p className="text-[10px] text-slate-400">Supports PNG, JPG, or WEBP images uploaded to secure school storage.</p>
                             </div>
+                          </div>
                           </div>
 
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -453,6 +453,9 @@ export async function saveSupabaseUserProfile(profile: UserProfile): Promise<Use
     saveLocalProfileBackup(savedProfile);
     if (savedProfile.uid) profileCache.set(savedProfile.uid, { profile: savedProfile, timestamp: Date.now() });
     if (savedProfile.email) profileCache.set(savedProfile.email.toLowerCase(), { profile: savedProfile, timestamp: Date.now() });
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('studentos-profile-updated', { detail: { uid: savedProfile.uid } }));
+    }
     return savedProfile;
   } catch (error) {
     console.warn('[SUPABASE-USERS] Supabase save notice, persisted to local profile backup:', error);
@@ -460,6 +463,9 @@ export async function saveSupabaseUserProfile(profile: UserProfile): Promise<Use
     saveLocalProfileBackup(localSaved);
     if (localSaved.uid) profileCache.set(localSaved.uid, { profile: localSaved, timestamp: Date.now() });
     if (localSaved.email) profileCache.set(localSaved.email.toLowerCase(), { profile: localSaved, timestamp: Date.now() });
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('studentos-profile-updated', { detail: { uid: localSaved.uid } }));
+    }
     return localSaved;
   }
 }

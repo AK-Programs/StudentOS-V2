@@ -58,6 +58,8 @@ import {
 } from '../types/syllabusTimetable';
 import { SyllabusTimetableService } from '../lib/syllabusTimetableService';
 import { getVaultNotes } from '../lib/supabaseNotes';
+import { fetchPublicWinterCosmetics } from '../lib/winterFestivalService';
+import { ProfileBannerBackdrop, ProfileCosmeticAvatar } from './winter/ProfileCosmeticRenderer';
 import { fetchSupabaseDecks, getCanonicalUserId } from '../lib/flashcardStorage';
 import { getSupabaseMaterials } from '../lib/supabaseResources';
 import { saveSupabaseHomework } from '../lib/supabaseHomework';
@@ -139,6 +141,34 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
 
   const [subTab, setSubTab] = useState<StudentSubTab>('home');
   const [loading, setLoading] = useState<boolean>(true);
+  const [winterCosmetics, setWinterCosmetics] = useState<{ equippedBanner: string | null; equippedBorder: string | null }>({
+    equippedBanner: null,
+    equippedBorder: null,
+  });
+
+  useEffect(() => {
+    const uid = currentUser?.uid;
+    if (!uid) return;
+    let active = true;
+    const syncCosmetics = () => {
+      fetchPublicWinterCosmetics(uid, currentUser).then((cos) => {
+        if (active && cos) {
+          setWinterCosmetics({
+            equippedBanner: cos.equippedBanner || null,
+            equippedBorder: cos.equippedBorder || null,
+          });
+        }
+      });
+    };
+    syncCosmetics();
+    window.addEventListener('veylentra-winter-updated', syncCosmetics);
+    window.addEventListener('veylentra-cosmetics-updated', syncCosmetics);
+    return () => {
+      active = false;
+      window.removeEventListener('veylentra-winter-updated', syncCosmetics);
+      window.removeEventListener('veylentra-cosmetics-updated', syncCosmetics);
+    };
+  }, [currentUser?.uid]);
 
   // Live Domain State
   const [syllabuses, setSyllabuses] = useState<OfficialSubjectSyllabus[]>([]);
@@ -683,28 +713,42 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
       className="max-w-7xl mx-auto space-y-5 pb-12"
     >
       {/* Clean Student Workspace Header */}
-      <div className="bento-card rounded-2xl p-5 sm:p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
-            <span className="font-semibold text-blue-400">Student Workspace</span>
-            <span aria-hidden="true">·</span>
-            <span className="text-slate-200 font-medium">{grade}{currentUser.section ? ` (${currentUser.section})` : ''}</span>
-            {currentUser.house && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span>{currentUser.house} House</span>
-              </>
-            )}
+      <div className="bento-card relative overflow-hidden rounded-2xl p-5 sm:p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        {winterCosmetics.equippedBanner && (
+          <div className="pointer-events-none absolute inset-0 opacity-35" aria-hidden="true">
+            <ProfileBannerBackdrop equippedBanner={winterCosmetics.equippedBanner} className="w-full h-full" />
+            <div className="absolute inset-0 bg-gradient-to-r from-slate-950/80 via-slate-950/65 to-slate-950/85" />
           </div>
-          <h1 className="text-xl sm:text-2xl font-bold font-display text-white tracking-tight">
-            Welcome back, {currentUser.name || 'Student'}
-          </h1>
-          <p className="text-xs text-slate-400">
-            Track today&apos;s classes, syllabus progress, pending deadlines, attendance standing, and exam readiness.
-          </p>
+        )}
+        <div className="relative z-10 flex items-center gap-3.5 min-w-0">
+          <ProfileCosmeticAvatar
+            name={currentUser.name || 'Student'}
+            avatarUrl={currentUser.photoURL || currentUser.avatar}
+            equippedBorder={winterCosmetics.equippedBorder}
+            size="md"
+          />
+          <div className="space-y-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+              <span className="font-semibold text-blue-400">Student Workspace</span>
+              <span aria-hidden="true">·</span>
+              <span className="text-slate-200 font-medium">{grade}{currentUser.section ? ` (${currentUser.section})` : ''}</span>
+              {currentUser.house && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span>{currentUser.house} House</span>
+                </>
+              )}
+            </div>
+            <h1 className="text-xl sm:text-2xl font-bold font-display text-white tracking-tight truncate">
+              Welcome back, {currentUser.name || 'Student'}
+            </h1>
+            <p className="text-xs text-slate-300">
+              Track today&apos;s classes, syllabus progress, pending deadlines, attendance standing, and exam readiness.
+            </p>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="relative z-10 flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => onNavigateTab('notes')}

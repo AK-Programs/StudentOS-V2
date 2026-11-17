@@ -259,8 +259,12 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
 
     if (!payload.isPreview) {
       await onRewardClaimed();
+      if ((payload.reward?.frostXpBonus || 0) > 0 && isGlobalSoundEnabled()) {
+        import('../../lib/winterAudio').then((m) => m.winterAudio.playFrostXpEarned()).catch(() => {});
+      }
       void fetchAIUsageStatus(currentUser?.uid || 'guest', currentUser?.role || 'student');
       window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
+      window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated'));
       window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
     }
   }, [onRewardClaimed]);
@@ -351,7 +355,7 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
           <div className="winter-candy-divider" />
 
           {/* Immersive 3D Santa & Hinged Gift Box Canvas */}
-          <div className="w-full h-64 relative rounded-xl overflow-hidden bg-gradient-to-b from-slate-900/50 to-slate-950/85 border border-slate-800/60 shadow-inner">
+          <div className="w-full h-48 min-[375px]:h-56 sm:h-64 relative rounded-xl overflow-hidden bg-gradient-to-b from-slate-900/50 to-slate-950/85 border border-slate-800/60 shadow-inner">
             <Santa3DCanvas
               phase={scenePhase}
               isOpen={isOpen}
@@ -407,6 +411,9 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
               <p className="text-sm font-bold text-white">{savedTonightReward.label}</p>
               <div className="flex flex-wrap items-center gap-3 text-xs font-mono tabular-nums pt-1">
                 {savedTonightReward.xpBonus > 0 && <span>+{savedTonightReward.xpBonus} XP</span>}
+                {(savedTonightReward.frostXpBonus || 0) > 0 && (
+                  <span className="text-cyan-300">+{savedTonightReward.frostXpBonus} Frost XP</span>
+                )}
                 {savedTonightReward.cookiesBonus > 0 && (
                   <span className="inline-flex items-center gap-1">
                     <WinterCookieSvg size={14} /> +{savedTonightReward.cookiesBonus} Cookies
@@ -419,6 +426,12 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
                   <span className="inline-flex items-center gap-1 text-sky-300">
                     <FrostShieldSvg size={14} /> +1 Streak Shield
                   </span>
+                )}
+                {savedTonightReward.bannerId && (
+                  <span className="text-cyan-200">+Profile Banner Unlocked</span>
+                )}
+                {savedTonightReward.borderId && (
+                  <span className="text-amber-200">+Profile Border Unlocked</span>
                 )}
               </div>
               {wasSimulatedPreview && (
@@ -440,6 +453,7 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
               <TactileButton
                 variant="primary"
                 size="lg"
+                className="min-h-[44px]"
                 onClick={() => handleUnwrap(false)}
                 disabled={claiming}
                 icon={<RefreshCw className={`w-4 h-4 ${claiming ? 'animate-spin' : ''}`} />}
@@ -456,6 +470,7 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
                   <TactileButton
                     variant="secondary"
                     size="md"
+                    className="min-h-[44px]"
                     onClick={() => handleUnwrap(true)}
                     disabled={claiming}
                     icon={<Eye className="w-4 h-4" />}
@@ -468,6 +483,7 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
               <TactileButton
                 variant="primary"
                 size="lg"
+                className="min-h-[44px]"
                 onClick={() => handleUnwrap(false)}
                 disabled={claiming}
                 icon={<Sparkles className="w-4 h-4" />}
@@ -478,6 +494,7 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
               <TactileButton
                 variant="primary"
                 size="lg"
+                className="min-h-[44px]"
                 onClick={() => handleUnwrap(true)}
                 disabled={claiming}
                 icon={<Eye className="w-4 h-4" />}
@@ -488,6 +505,7 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
               <TactileButton
                 variant="primary"
                 size="lg"
+                className="min-h-[44px]"
                 onClick={() => {}}
                 disabled={true}
                 icon={<Clock className="w-4 h-4" />}

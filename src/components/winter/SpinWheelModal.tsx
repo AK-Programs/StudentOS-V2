@@ -447,9 +447,13 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
           );
         }
         playWheelCelebrateCue(wheelAudioRef.current);
+        if ((resolvedReward?.frostXpBonus || 0) > 0 && wheelAudioRef.current) {
+          import('../../lib/winterAudio').then((m) => m.winterAudio.playFrostXpEarned()).catch(() => {});
+        }
         void Promise.resolve(onSpinComplete()).catch(() => {});
         void fetchAIUsageStatus(currentUser?.uid || 'guest', currentUser?.role || 'student');
         window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
+        window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated'));
         window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
       }
     };
@@ -483,7 +487,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
       subtitle="Refreshes every 2 hours · Pure academic perks & seasonal collectibles"
       maxWidth="max-w-2xl"
     >
-      <div className="space-y-5 relative">
+      <div className="space-y-5 relative overflow-x-hidden">
         <ConfettiBurst
           active={Boolean(resultReward)}
           isLegendary={resultReward?.rarity === 'legendary' || resultReward?.rarity === 'insane' || resultReward?.rarity === 'jackpot'}
@@ -502,8 +506,8 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
           {/* Wheel Assembly */}
-          <div className="flex flex-col items-center gap-4">
-            <div className="relative w-72 h-72 sm:w-80 sm:h-80 flex items-center justify-center select-none">
+          <div className="flex flex-col items-center gap-4 min-w-0">
+            <div className="relative w-[224px] h-[224px] min-[375px]:w-[260px] min-[375px]:h-[260px] sm:w-80 sm:h-80 flex items-center justify-center select-none">
               {/* Outer Ambient Halo */}
               <motion.div
                 className="absolute inset-0 rounded-full bg-gradient-to-tr from-sky-500/25 via-cyan-400/10 to-amber-400/25 blur-xl pointer-events-none"
@@ -701,12 +705,13 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
             </div>
 
             {/* Spin CTA Controls */}
-            <div className="flex items-center gap-3 w-full justify-center">
+            <div className="flex flex-wrap items-center gap-2.5 w-full justify-center">
               <TactileButton
                 variant="primary"
                 size="lg"
                 onClick={handleSpin}
                 disabled={!isReady || segments.length === 0}
+                className="min-h-[44px]"
                 icon={<RotateCw className={`w-4 h-4 ${spinning ? 'animate-spin' : ''}`} />}
               >
                 {spinning
@@ -719,7 +724,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
               <button
                 type="button"
                 onClick={() => setWheelAudioEnabled((v) => !v)}
-                className="p-3 rounded-2xl border border-slate-800 bg-slate-900/80 hover:bg-slate-800 text-slate-300 transition-colors cursor-pointer"
+                className="min-w-[44px] min-h-[44px] p-3 rounded-2xl border border-slate-800 bg-slate-900/80 hover:bg-slate-800 text-slate-300 transition-colors cursor-pointer flex items-center justify-center"
                 aria-label={wheelAudioEnabled ? 'Mute wheel audio cues' : 'Enable wheel audio cues'}
                 title={wheelAudioEnabled ? 'Wheel audio cues ON' : 'Wheel audio cues silent'}
               >
@@ -729,7 +734,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
           </div>
 
           {/* Right Column: Status, Won Reward, and Pre-Spin Odds */}
-          <div className="space-y-4">
+          <div className="space-y-4 min-w-0">
             {resultReward ? (
               <motion.div
                 initial={prefersReduced ? { opacity: 0 } : { opacity: 0, scale: 0.94, y: 10 }}
@@ -744,10 +749,15 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
                   <CheckCircle2 className="w-5 h-5 text-emerald-400" />
                 </div>
                 <h4 className="text-base font-black text-white">{resultReward.label}</h4>
-                <div className="flex flex-wrap gap-2.5 text-xs font-mono tabular-nums text-slate-200">
+                <div className="flex flex-wrap gap-2 text-xs font-mono tabular-nums text-slate-200">
                   {resultReward.xpBonus > 0 && (
                     <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold">
                       +{resultReward.xpBonus} XP
+                    </span>
+                  )}
+                  {(resultReward.frostXpBonus || 0) > 0 && (
+                    <span className="px-2.5 py-1 rounded-lg bg-cyan-500/20 border border-cyan-400/40 text-cyan-200 font-bold">
+                      +{resultReward.frostXpBonus} Frost XP
                     </span>
                   )}
                   {resultReward.cookiesBonus > 0 && (
@@ -765,14 +775,14 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
                       <FrostShieldSvg size={13} /> +1 Streak Shield
                     </span>
                   )}
-                  {resultReward.frameId && (
-                    <span className="px-2.5 py-1 rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-200 font-bold">
-                      +Frame Unlocked
+                  {resultReward.bannerId && (
+                    <span className="px-2.5 py-1 rounded-lg bg-cyan-500/20 border border-cyan-400/40 text-cyan-200 font-bold">
+                      +Profile Banner Unlocked
                     </span>
                   )}
                   {resultReward.borderId && (
                     <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-200 font-bold">
-                      +Winter Border Unlocked
+                      +Profile Border Unlocked
                     </span>
                   )}
                 </div>

@@ -9,16 +9,38 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Award, CheckCircle2, Gift, HelpCircle, Lock, RotateCw, ShieldAlert, Sparkles } from 'lucide-react';
+import {
+  Award,
+  CheckCircle2,
+  Coins,
+  Eye,
+  Gift,
+  HelpCircle,
+  History,
+  Lock,
+  Music,
+  RotateCw,
+  ShieldAlert,
+  ShoppingBag,
+  Sparkles,
+  VolumeX,
+} from 'lucide-react';
 import { UserProfile } from '../../types';
-import { useFeatureAccess } from '../../lib/featureAccessService';
+import { isSuperAdminRole, useFeatureAccess } from '../../lib/featureAccessService';
 import {
   claimWinterTask,
+  CookieExchangeOption,
+  equipWinterBanner,
   equipWinterBorder,
-  equipWinterFrame,
+  exchangeWinterCookies,
+  fetchFrostXpHistory,
   fetchWinterStatus,
   formatCountdownMs,
+  FrostXpTransaction,
+  purchaseWinterCollectible,
   submitWinterQuiz,
+  WinterProfileBanner,
+  WinterProfileBorder,
   WinterStatusResponse,
   WinterTaskItem,
 } from '../../lib/winterFestivalService';
@@ -31,8 +53,14 @@ import {
 import { XpLeaderboardPanel } from '../gamification/XpLeaderboardPanel';
 import { SantaGiftModal } from './SantaGiftModal';
 import { SpinWheelModal } from './SpinWheelModal';
-import { WinterCosmeticAvatar } from './WinterCosmeticAvatar';
-import { getWinterBorderVisual, getWinterFrameVisual } from '../../lib/winterCosmetics';
+import {
+  ProfileBannerBackdrop,
+  ProfileCosmeticAvatar,
+  ProfileCosmeticCard,
+} from './ProfileCosmeticRenderer';
+import { TargetedWinterSnowOverlay } from './WinterThemeLayer';
+import { getWinterBannerVisual, getWinterBorderVisual } from '../../lib/winterCosmetics';
+import { WINTER_AUDIO_ATTRIBUTIONS, winterAudio } from '../../lib/winterAudio';
 import {
   CandyCaneAccent,
   FrostShieldSvg,
@@ -132,9 +160,10 @@ export const WinterDashboardBanner: React.FC<WinterHubProps> = ({
   if (!anyWinterVisible) return null;
 
   return (
-    <div className="rounded-2xl border border-sky-400/30 bg-slate-900/85 text-white overflow-hidden shadow-sm">
+    <div className="relative rounded-2xl border border-sky-400/30 bg-slate-900/85 text-white overflow-hidden shadow-sm">
+      <TargetedWinterSnowOverlay variant="hero" />
       <SnowCapAccent />
-      <div className="p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+      <div className="relative z-10 p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="flex items-start gap-3.5 min-w-0">
           <div className="w-11 h-11 rounded-xl bg-sky-500/15 border border-sky-400/30 flex items-center justify-center shrink-0">
             <SnowflakeVector size={22} className="text-sky-300" />
@@ -151,10 +180,14 @@ export const WinterDashboardBanner: React.FC<WinterHubProps> = ({
               )}
             </div>
             <p className="text-xs text-slate-300">
-              Complete verified study tasks, unwrap nightly Santa Drops (7–9 PM IST), and spin the 2-hour Reward Wheel.
+              Complete verified study tasks, earn Frost XP for Profile Banners &amp; Borders, unwrap Santa Drops (7–9 PM IST), and spin the Wheel.
             </p>
             {status && (
-              <div className="flex items-center gap-4 pt-1 text-xs font-mono tabular-nums text-sky-200 flex-wrap">
+              <div className="flex items-center gap-x-4 gap-y-1 pt-1 text-xs font-mono tabular-nums text-sky-200 flex-wrap">
+                <span className="inline-flex items-center gap-1 text-cyan-300 font-bold">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  {status.winterState.frostXp || 0} Frost XP
+                </span>
                 <span className="inline-flex items-center gap-1.5">
                   <WinterCookieSvg size={14} />
                   {status.winterState.cookiesCount} Cookies
@@ -174,6 +207,7 @@ export const WinterDashboardBanner: React.FC<WinterHubProps> = ({
             <TactileButton
               variant="secondary"
               size="sm"
+              className="min-h-[44px]"
               onClick={() => {
                 load();
                 setSantaOpen(true);
@@ -187,6 +221,7 @@ export const WinterDashboardBanner: React.FC<WinterHubProps> = ({
             <TactileButton
               variant="outline"
               size="sm"
+              className="min-h-[44px]"
               onClick={() => {
                 load();
                 setWheelOpen(true);
@@ -201,6 +236,7 @@ export const WinterDashboardBanner: React.FC<WinterHubProps> = ({
             <TactileButton
               variant="primary"
               size="sm"
+              className="min-h-[44px]"
               onClick={() => onNavigateTab('winter_festival')}
             >
               Open Winter Hub
@@ -259,9 +295,24 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
     results: Array<{ id: string; isCorrect: boolean; explanation: string }>;
   } | null>(null);
   const [submittingQuiz, setSubmittingQuiz] = useState<boolean>(false);
-  const [equippingFrame, setEquippingFrame] = useState<string | null>(null);
+  const [equippingBanner, setEquippingBanner] = useState<string | null>(null);
   const [equippingBorder, setEquippingBorder] = useState<string | null>(null);
+  const [previewBannerId, setPreviewBannerId] = useState<string | null>(null);
+  const [previewBorderId, setPreviewBorderId] = useState<string | null>(null);
 
+  const [purchaseConfirm, setPurchaseConfirm] = useState<{
+    itemType: 'banner' | 'border';
+    item: WinterProfileBanner | WinterProfileBorder;
+  } | null>(null);
+  const [purchasingKey, setPurchasingKey] = useState<string | null>(null);
+  const [exchangingOptionId, setExchangingOptionId] = useState<string | null>(null);
+
+  const [ledgerOpen, setLedgerOpen] = useState<boolean>(false);
+  const [ledgerLoading, setLedgerLoading] = useState<boolean>(false);
+  const [frostXpTransactions, setFrostXpTransactions] = useState<FrostXpTransaction[]>([]);
+  const [ambientOn, setAmbientOn] = useState<boolean>(() => winterAudio.isAmbientPlaying());
+
+  const isSuperAdmin = isSuperAdminRole(currentUser?.role);
   const isFacultyRole = ['teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes(
     String(currentUser.role || '').toLowerCase()
   );
@@ -274,6 +325,9 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
       if (data) {
         hasStatusRef.current = true;
         setStatus(data);
+        if (Array.isArray(data.winterState?.frostXpTransactions)) {
+          setFrostXpTransactions(data.winterState.frostXpTransactions);
+        }
       } else if (!hasStatusRef.current) {
         setStatusError('Could not load Winter Festival status. Please retry.');
       }
@@ -293,8 +347,30 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
   useEffect(() => {
     const onSync = () => loadWinterData();
     window.addEventListener('veylentra-winter-updated', onSync);
-    return () => window.removeEventListener('veylentra-winter-updated', onSync);
+    window.addEventListener('veylentra-cosmetics-updated', onSync);
+    return () => {
+      window.removeEventListener('veylentra-winter-updated', onSync);
+      window.removeEventListener('veylentra-cosmetics-updated', onSync);
+    };
   }, [loadWinterData]);
+
+  useEffect(() => {
+    return () => {
+      if (winterAudio.isAmbientPlaying()) {
+        winterAudio.stopAmbient();
+      }
+    };
+  }, []);
+
+  const handleOpenLedger = async () => {
+    setLedgerOpen(true);
+    setLedgerLoading(true);
+    const res = await fetchFrostXpHistory(currentUser);
+    setLedgerLoading(false);
+    if (res.ok) {
+      setFrostXpTransactions(res.transactions);
+    }
+  };
 
   const handleClaimTask = async (task: WinterTaskItem) => {
     setBusyTaskId(task.id);
@@ -304,9 +380,14 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
       showNotification?.(res.data?.error || 'Could not claim Winter task yet.', 'error');
       return;
     }
-    showNotification?.(`Claimed task reward (+${task.xpReward} XP)!`, 'success');
+    const frostMsg = (task.frostXpReward || 0) > 0 ? ` & +${task.frostXpReward} Frost XP` : '';
+    showNotification?.(`Claimed task reward (+${task.xpReward} XP${frostMsg})!`, 'success');
+    if ((task.frostXpReward || 0) > 0) {
+      winterAudio.playFrostXpEarned();
+    }
     await loadWinterData();
     window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
+    window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated'));
     window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
   };
 
@@ -326,22 +407,26 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
       results: Array.isArray(res.data.results) ? res.data.results : [],
     });
     if (res.data.passed) {
+      winterAudio.playFrostXpEarned();
       showNotification?.('Winter Knowledge Check passed! You can now claim the task reward.', 'success');
       await loadWinterData();
     }
   };
 
-  const handleEquipFrame = async (frameId: string | null) => {
-    setEquippingFrame(frameId || 'none');
-    const res = await equipWinterFrame(currentUser, frameId);
-    setEquippingFrame(null);
+  const handleEquipBanner = async (bannerId: string | null) => {
+    setEquippingBanner(bannerId || 'none');
+    const res = await equipWinterBanner(currentUser, bannerId);
+    setEquippingBanner(null);
     if (!res.ok || !res.data?.success) {
-      showNotification?.(res.data?.error || 'Unable to equip profile frame.', 'error');
+      showNotification?.(res.data?.error || 'Unable to equip profile banner.', 'error');
       return;
     }
-    showNotification?.(frameId ? 'Winter profile frame equipped!' : 'Profile frame unequipped.', 'success');
+    setPreviewBannerId(null);
+    winterAudio.playBannerEquipped();
+    showNotification?.(bannerId ? 'Winter profile banner equipped!' : 'Profile banner unequipped.', 'success');
     await loadWinterData();
     window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
+    window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated'));
   };
 
   const handleEquipBorder = async (borderId: string | null) => {
@@ -349,10 +434,61 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
     const res = await equipWinterBorder(currentUser, borderId);
     setEquippingBorder(null);
     if (!res.ok || !res.data?.success) {
-      showNotification?.(res.data?.error || 'Unable to equip winter border.', 'error');
+      showNotification?.(res.data?.error || 'Unable to equip profile border.', 'error');
       return;
     }
-    showNotification?.(borderId ? 'Winter avatar border equipped!' : 'Winter avatar border unequipped.', 'success');
+    setPreviewBorderId(null);
+    winterAudio.playBorderEquipped();
+    showNotification?.(borderId ? 'Winter profile border equipped!' : 'Profile border unequipped.', 'success');
+    await loadWinterData();
+    window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
+    window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated'));
+  };
+
+  const handleConfirmPurchase = async (adminGrant: boolean = false) => {
+    if (!purchaseConfirm) return;
+    const { itemType, item } = purchaseConfirm;
+    const key = `${itemType}:${item.id}`;
+    setPurchasingKey(key);
+    const res = await purchaseWinterCollectible(currentUser, {
+      itemType,
+      itemId: item.id,
+      adminGrant,
+      idempotencyKey: `${adminGrant ? 'adm' : 'buy'}_${itemType}_${item.id}_${Date.now()}`,
+    });
+    setPurchasingKey(null);
+    if (!res.ok || !res.data?.success) {
+      showNotification?.(res.data?.error || 'Unable to complete unlock.', 'error');
+      return;
+    }
+    setPurchaseConfirm(null);
+    winterAudio.playPurchaseSuccess();
+    showNotification?.(
+      adminGrant
+        ? `Super Admin Grant recorded: ${item.name} unlocked.`
+        : `Unlocked ${item.name}! Click Equip to display it on your profile.`,
+      'success'
+    );
+    await loadWinterData();
+    window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
+    window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated'));
+  };
+
+  const handleCookieExchange = async (opt: CookieExchangeOption) => {
+    setExchangingOptionId(opt.id);
+    const res = await exchangeWinterCookies(currentUser, opt.id);
+    setExchangingOptionId(null);
+    if (!res.ok || !res.data?.success) {
+      showNotification?.(res.data?.error || 'Cookie exchange failed.', 'error');
+      return;
+    }
+    winterAudio.playCookieExchange();
+    showNotification?.(
+      opt.frostXpGrant > 0
+        ? `Exchanged ${opt.cookieCost} Cookies for +${opt.frostXpGrant} Frost XP!`
+        : `Exchanged ${opt.cookieCost} Cookies for +${opt.aiBonusGrant} Daily AI Query!`,
+      'success'
+    );
     await loadWinterData();
     window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
   };
@@ -364,8 +500,12 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
     santaAccess.isPreviewOnly ||
     wheelAccess.isPreviewOnly;
 
+  const activeBannerDisplay = previewBannerId !== null ? previewBannerId : (status?.winterState?.equippedBanner || null);
+  const activeBorderDisplay = previewBorderId !== null ? previewBorderId : (status?.winterState?.equippedBorder || null);
+  const isPreviewingCosmetic = previewBannerId !== null || previewBorderId !== null;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 overflow-x-hidden">
       {anyPreview && (
         <div className="p-3.5 rounded-xl border border-amber-500/40 bg-amber-500/15 text-xs text-amber-800 dark:text-amber-200 flex items-center gap-2">
           <ShieldAlert className="w-4 h-4 shrink-0" />
@@ -375,28 +515,50 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
         </div>
       )}
 
-      <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-900 text-white overflow-hidden shadow-sm">
+      <section className="relative rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-900 text-white overflow-hidden shadow-sm">
+        <TargetedWinterSnowOverlay variant="hero" />
         <SnowCapAccent />
-        <div className="p-5 sm:p-6 space-y-5">
+        <div className="relative z-10 p-4 sm:p-6 space-y-5">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2.5">
+            <div className="space-y-1.5 min-w-0">
+              <div className="flex items-center gap-2.5 flex-wrap">
                 <CandyCaneAccent size={22} />
-                <h2 className="text-xl sm:text-2xl font-bold tracking-tight">
-                  Winter Academic Festival &amp; Seasonal Rewards
+                <h2 className="text-lg sm:text-2xl font-bold tracking-tight">
+                  Winter Academic Festival &amp; Frost Economy
                 </h2>
               </div>
               <p className="text-xs sm:text-sm text-slate-300 max-w-2xl">
-                Server-verified academic challenges, nightly Santa gift drops (7:00 PM – 9:00 PM IST),
-                2-hour Reward Spin Wheel, and collectible Winter badges separate from your permanent record.
+                Earn seasonal Frost XP alongside Scholar XP, unlock animated Profile Banners &amp; perimeter Profile Borders,
+                exchange Winter Cookies, and roll verified academic rewards.
               </p>
             </div>
 
-            <div className="flex items-center gap-2.5 flex-wrap">
+            <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap">
+              <button
+                type="button"
+                onClick={() => {
+                  const next = winterAudio.toggleAmbient();
+                  setAmbientOn(next);
+                  if (!next && winterAudio.isAmbientPlaying() === false) {
+                    // Only show notice if user tried enabling while muted
+                  }
+                }}
+                className={`min-h-[44px] px-3 py-2 rounded-xl border text-xs font-semibold flex items-center gap-2 transition-colors cursor-pointer ${
+                  ambientOn
+                    ? 'border-cyan-400/50 bg-cyan-500/20 text-cyan-200'
+                    : 'border-slate-700 bg-slate-950/70 text-slate-300 hover:bg-slate-800'
+                }`}
+                aria-label={ambientOn ? 'Pause Solstice Ambient Audio' : 'Play Solstice Ambient Audio'}
+              >
+                {ambientOn ? <Music className="w-4 h-4 text-cyan-300" /> : <VolumeX className="w-4 h-4" />}
+                <span>{ambientOn ? 'Ambience ON' : 'Solstice Audio'}</span>
+              </button>
+
               {santaAccess.accessible && (
                 <TactileButton
                   variant="secondary"
                   size="md"
+                  className="min-h-[44px]"
                   onClick={() => setSantaOpen(true)}
                   icon={<SantaGiftBoxSvg size={18} />}
                 >
@@ -407,6 +569,7 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
                 <TactileButton
                   variant="primary"
                   size="md"
+                  className="min-h-[44px]"
                   onClick={() => setWheelOpen(true)}
                   icon={<Sparkles className="w-4 h-4" />}
                 >
@@ -419,53 +582,112 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
           <div className="winter-candy-divider" />
 
           {loading && !status ? (
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              {[0, 1, 2, 3].map((i) => (
-                <AnimatedSkeleton key={i} height={74} className="w-full" />
+            <div className="grid grid-cols-1 min-[375px]:grid-cols-2 lg:grid-cols-5 gap-3">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <AnimatedSkeleton key={i} height={78} className="w-full" />
               ))}
             </div>
           ) : !status ? (
             <div className="rounded-xl border border-amber-500/30 bg-slate-950/60 p-4 flex items-center justify-between gap-3 text-xs text-amber-200">
               <span>{statusError || 'Winter collectibles and status are temporarily unavailable.'}</span>
-              <TactileButton variant="outline" size="sm" onClick={loadWinterData}>
+              <TactileButton variant="outline" size="sm" className="min-h-[44px]" onClick={loadWinterData}>
                 Retry
               </TactileButton>
             </div>
           ) : (
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5">
-                <p className="text-[11px] text-slate-400">Winter Cookies</p>
-                <div className="mt-1 flex items-center gap-2 text-xl font-bold font-mono tabular-nums">
-                  <WinterCookieSvg size={20} />
-                  <NumberTicker value={status.winterState.cookiesCount} />
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 min-[375px]:grid-cols-2 lg:grid-cols-5 gap-3">
+                {/* Isolated Frost XP Card */}
+                <div className="rounded-xl border border-cyan-400/35 bg-slate-950/70 p-3.5 flex flex-col justify-between gap-2">
+                  <div>
+                    <p className="text-[11px] text-cyan-300 font-semibold flex items-center justify-between gap-1">
+                      <span>Frost XP Balance</span>
+                      <button
+                        type="button"
+                        onClick={handleOpenLedger}
+                        className="text-[10px] underline text-slate-300 hover:text-white cursor-pointer"
+                      >
+                        Ledger
+                      </button>
+                    </p>
+                    <div className="mt-1 flex items-center gap-2 text-xl font-bold font-mono tabular-nums text-cyan-200">
+                      <Coins className="w-5 h-5 text-cyan-300 shrink-0" />
+                      <NumberTicker value={status.winterState.frostXp || 0} />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-slate-400">Seasonal currency · Separate from Scholar XP</p>
+                </div>
+
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5">
+                  <p className="text-[11px] text-slate-400">Winter Cookies</p>
+                  <div className="mt-1 flex items-center gap-2 text-xl font-bold font-mono tabular-nums">
+                    <WinterCookieSvg size={20} />
+                    <NumberTicker value={status.winterState.cookiesCount} />
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">Exchangeable below</p>
+                </div>
+
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5">
+                  <p className="text-[11px] text-slate-400">Streak Freeze Shields</p>
+                  <div className="mt-1 flex items-center gap-2 text-xl font-bold font-mono tabular-nums">
+                    <FrostShieldSvg size={20} />
+                    <span>{status.winterState.streakShields} / 3</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">Protects study streaks</p>
+                </div>
+
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5">
+                  <p className="text-[11px] text-slate-400">Bonus AI Queries Today</p>
+                  <div className="mt-1 text-xl font-bold font-mono tabular-nums text-sky-300">
+                    +{status.winterState.aiBonusCreditsToday} / 5
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">Orion daily study boost</p>
+                </div>
+
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5 min-[375px]:col-span-2 lg:col-span-1">
+                  <p className="text-[11px] text-slate-400">Winter Collectibles</p>
+                  <div className="mt-1 text-xl font-bold font-mono tabular-nums text-amber-300">
+                    {Object.keys(status.winterState.earnedWinterBadges || {}).length} / {status.badges.length}
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-0.5 font-mono">
+                    {(status.winterState.unlockedBanners || []).length} Banners ·{' '}
+                    {(status.winterState.unlockedBorders || []).length} Borders
+                  </p>
                 </div>
               </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5">
-                <p className="text-[11px] text-slate-400">Streak Freeze Shields</p>
-                <div className="mt-1 flex items-center gap-2 text-xl font-bold font-mono tabular-nums">
-                  <FrostShieldSvg size={20} />
-                  <span>{status.winterState.streakShields} / 3</span>
+
+              {/* Cookie Exchange Bar */}
+              {Array.isArray(status.cookieExchangeOptions) && status.cookieExchangeOptions.length > 0 && (
+                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div className="space-y-0.5 min-w-0">
+                    <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <WinterCookieSvg size={15} />
+                      <span>Winter Cookie Exchange</span>
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      Convert Winter Cookies earned from tasks &amp; drops into Frost XP or bonus daily Orion AI queries.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {status.cookieExchangeOptions.map((opt) => {
+                      const canAfford = (status.winterState.cookiesCount || 0) >= opt.cookieCost;
+                      const busy = exchangingOptionId === opt.id;
+                      return (
+                        <TactileButton
+                          key={opt.id}
+                          variant={canAfford ? 'secondary' : 'outline'}
+                          size="sm"
+                          className="min-h-[44px]"
+                          disabled={!canAfford || busy}
+                          onClick={() => handleCookieExchange(opt)}
+                        >
+                          {busy ? 'Exchanging...' : `${opt.cookieCost} Cookies → ${opt.title}`}
+                        </TactileButton>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5">
-                <p className="text-[11px] text-slate-400">Bonus AI Queries Today</p>
-                <div className="mt-1 text-xl font-bold font-mono tabular-nums text-sky-300">
-                  +{status.winterState.aiBonusCreditsToday} / 5
-                </div>
-              </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5">
-                <p className="text-[11px] text-slate-400">Winter Collectibles</p>
-                <div className="mt-1 text-xl font-bold font-mono tabular-nums text-amber-300">
-                  {Object.keys(status.winterState.earnedWinterBadges || {}).length} /{' '}
-                  {status.badges.length}
-                </div>
-                <p className="text-[10px] text-slate-400 mt-0.5 font-mono">
-                  {(status.winterState.unlockedFrames || []).length} Frames ·{' '}
-                  {(status.winterState.unlockedBorders || []).length} Borders ·{' '}
-                  {(status.winterState.rewardHistory || []).filter((r) => r.featureType === 'santa_gift').length} Santa ·{' '}
-                  {(status.winterState.rewardHistory || []).filter((r) => r.featureType === 'spin_wheel').length} Spins
-                </p>
-              </div>
+              )}
             </div>
           )}
         </div>
@@ -572,58 +794,335 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
       )}
 
       {badgesAccess.accessible && status && (
-        <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 p-5 space-y-6">
-          {/* Active Stackable Cosmetic Loadout Preview */}
-          <div className="rounded-xl border border-sky-500/30 bg-slate-50 dark:bg-slate-950/70 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3.5 min-w-0">
-              <WinterCosmeticAvatar
-                name={currentUser.name}
-                avatarUrl={currentUser.photoURL || currentUser.avatar}
-                equippedBorder={status.winterState.equippedBorder}
-                equippedFrame={status.winterState.equippedFrame}
-                size="lg"
-              />
-              <div className="min-w-0 space-y-0.5">
-                <p className="text-xs font-bold uppercase tracking-wider text-sky-600 dark:text-sky-400">
-                  Active Cosmetic Loadout (Stackable)
-                </p>
-                <p className="text-sm font-bold text-slate-900 dark:text-white truncate">
-                  Border:{' '}
-                  {getWinterBorderVisual(status.winterState.equippedBorder)?.name || 'None Equipped'}{' '}
-                  · Frame:{' '}
-                  {getWinterFrameVisual(status.winterState.equippedFrame)?.name || 'None Equipped'}
-                </p>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Winter Borders enclose your avatar and stack cleanly alongside seasonal or permanent Profile Frames.
+        <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 p-4 sm:p-5 space-y-6">
+          {/* Active Stackable Cosmetic Loadout Preview (Banner behind avatar + Border around avatar perimeter) */}
+          <div className="space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  {isPreviewingCosmetic ? 'Cosmetic Loadout Preview (Unsaved Preview)' : 'Active Profile Cosmetic Loadout'}
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Banner: {getWinterBannerVisual(activeBannerDisplay)?.name || 'None'} · Border:{' '}
+                  {getWinterBorderVisual(activeBorderDisplay)?.name || 'None'}
                 </p>
               </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {isPreviewingCosmetic && (
+                  <TactileButton
+                    variant="secondary"
+                    size="sm"
+                    className="min-h-[44px]"
+                    onClick={() => {
+                      setPreviewBannerId(null);
+                      setPreviewBorderId(null);
+                    }}
+                  >
+                    Exit Preview
+                  </TactileButton>
+                )}
+                {status.winterState.equippedBanner && (
+                  <TactileButton
+                    variant="outline"
+                    size="sm"
+                    className="min-h-[44px]"
+                    disabled={equippingBanner === 'none'}
+                    onClick={() => handleEquipBanner(null)}
+                  >
+                    Unequip Banner
+                  </TactileButton>
+                )}
+                {status.winterState.equippedBorder && (
+                  <TactileButton
+                    variant="outline"
+                    size="sm"
+                    className="min-h-[44px]"
+                    disabled={equippingBorder === 'none'}
+                    onClick={() => handleEquipBorder(null)}
+                  >
+                    Unequip Border
+                  </TactileButton>
+                )}
+              </div>
             </div>
-            <div className="flex items-center gap-2 shrink-0 flex-wrap">
-              {status.winterState.equippedBorder && (
-                <TactileButton
-                  variant="outline"
-                  size="sm"
-                  disabled={equippingBorder === 'none'}
-                  onClick={() => handleEquipBorder(null)}
-                >
-                  Unequip Border
-                </TactileButton>
-              )}
-              {status.winterState.equippedFrame && (
-                <TactileButton
-                  variant="outline"
-                  size="sm"
-                  disabled={equippingFrame === 'none'}
-                  onClick={() => handleEquipFrame(null)}
-                >
-                  Unequip Frame
-                </TactileButton>
-              )}
+
+            <ProfileCosmeticCard
+              name={currentUser.name}
+              avatarUrl={currentUser.photoURL || currentUser.avatar}
+              roleLabel={currentUser.role}
+              equippedBanner={activeBannerDisplay}
+              equippedBorder={activeBorderDisplay}
+              bannerUrl={currentUser.bannerUrl}
+              bannerPresetClass={currentUser.bannerPreset}
+              badgeCount={Object.keys(status.winterState.earnedWinterBadges || {}).length}
+              subtitle={`${status.winterState.frostXp || 0} Frost XP · ${status.winterState.cookiesCount || 0} Cookies`}
+            />
+          </div>
+
+          {/* 1. Winter Profile Banners (Background artwork behind profile avatar & header) */}
+          <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div>
+                <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  Profile Banners &amp; Frost Shop
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Animated background artwork displayed behind your avatar across profiles, chat cards, and podium headers.
+                </p>
+              </div>
+              <span className="text-xs font-mono tabular-nums text-sky-600 dark:text-sky-400 font-semibold">
+                {(status.winterState.unlockedBanners || []).length} / {(status.banners || []).length} Owned
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+              {(status.banners || []).map((banner) => {
+                const isUnlocked = (status.winterState.unlockedBanners || []).includes(banner.id);
+                const isEquipped = status.winterState.equippedBanner === banner.id;
+                const isPreviewing = previewBannerId === banner.id;
+                const canAfford = (status.winterState.frostXp || 0) >= banner.frostXpCost;
+
+                return (
+                  <div
+                    key={banner.id}
+                    className={`rounded-xl border overflow-hidden flex flex-col justify-between transition-colors ${
+                      isUnlocked
+                        ? 'border-sky-500/45 bg-sky-500/5'
+                        : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50'
+                    }`}
+                  >
+                    <div>
+                      <ProfileBannerBackdrop equippedBanner={banner.id} className="h-20 w-full relative">
+                        <div className="absolute inset-x-3 bottom-2 flex items-end justify-between gap-2">
+                          <ProfileCosmeticAvatar
+                            name={currentUser.name}
+                            avatarUrl={currentUser.photoURL || currentUser.avatar}
+                            equippedBorder={activeBorderDisplay}
+                            size="sm"
+                          />
+                          <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-950/75 text-slate-100 border border-white/15">
+                            {banner.rarity}
+                          </span>
+                        </div>
+                      </ProfileBannerBackdrop>
+                      <div className="p-3.5 space-y-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+                            {banner.name}
+                          </p>
+                          <span
+                            className={`text-[10px] font-semibold shrink-0 ${
+                              isEquipped
+                                ? 'text-sky-600 dark:text-sky-400'
+                                : isUnlocked
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-slate-400'
+                            }`}
+                          >
+                            {isEquipped ? 'Equipped' : isUnlocked ? 'Owned' : 'Locked'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-snug">
+                          {banner.description}
+                        </p>
+                        <p className="text-[10px] text-slate-500 pt-0.5">
+                          Unlock: {banner.unlockRequirement} · {banner.purpose}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="px-3.5 pb-3.5 pt-2 border-t border-slate-200/70 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPreviewBannerId(isPreviewing ? null : banner.id)}
+                        className="min-h-[44px] px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>{isPreviewing ? 'Unpreview' : 'Preview'}</span>
+                      </button>
+
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {isUnlocked ? (
+                          <TactileButton
+                            variant={isEquipped ? 'secondary' : 'primary'}
+                            size="sm"
+                            className="min-h-[44px]"
+                            disabled={equippingBanner === banner.id}
+                            onClick={() => handleEquipBanner(isEquipped ? null : banner.id)}
+                          >
+                            {isEquipped ? 'Unequip' : 'Equip Banner'}
+                          </TactileButton>
+                        ) : (
+                          <>
+                            {banner.purchasableWithFrostXp && (
+                              <TactileButton
+                                variant={canAfford ? 'primary' : 'outline'}
+                                size="sm"
+                                className="min-h-[44px]"
+                                disabled={!canAfford || purchasingKey === `banner:${banner.id}`}
+                                onClick={() => setPurchaseConfirm({ itemType: 'banner', item: banner })}
+                                icon={<ShoppingBag className="w-3.5 h-3.5" />}
+                              >
+                                {banner.frostXpCost} Frost XP
+                              </TactileButton>
+                            )}
+                            {isSuperAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => setPurchaseConfirm({ itemType: 'banner', item: banner })}
+                                className="min-h-[44px] px-2.5 py-1.5 rounded-lg border border-amber-400/40 bg-amber-500/15 text-amber-300 text-[11px] font-bold hover:bg-amber-500/25 cursor-pointer"
+                                title="Super Admin Audited Claim"
+                              >
+                                Claim Free
+                              </button>
+                            )}
+                            {!banner.purchasableWithFrostXp && !isSuperAdmin && (
+                              <span className="inline-flex items-center gap-1 text-[11px] text-slate-400 px-2">
+                                <Lock className="w-3 h-3" /> Drop Exclusive
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
-          {/* Winter Badges (Owned vs Locked separation + timestamps + progress) */}
-          <div className="space-y-3">
+          {/* 2. Winter Profile Borders (Contour-aligned perimeter decorations) */}
+          <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div>
+                <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                  Profile Borders (Avatar Perimeter)
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Festive perimeter borders trace your circular avatar contour cleanly at every size and stack with Banners.
+                </p>
+              </div>
+              <span className="text-xs font-mono tabular-nums text-sky-600 dark:text-sky-400 font-semibold">
+                {(status.winterState.unlockedBorders || []).length} / {(status.borders || []).length} Owned
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+              {(status.borders || []).map((border) => {
+                const isUnlocked = (status.winterState.unlockedBorders || []).includes(border.id);
+                const isEquipped = status.winterState.equippedBorder === border.id;
+                const isPreviewing = previewBorderId === border.id;
+                const canAfford = (status.winterState.frostXp || 0) >= border.frostXpCost;
+
+                return (
+                  <div
+                    key={border.id}
+                    className={`rounded-xl border p-3.5 flex flex-col justify-between gap-3 transition-colors ${
+                      isUnlocked
+                        ? 'border-sky-500/40 bg-sky-500/5'
+                        : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <ProfileCosmeticAvatar
+                        name={currentUser.name}
+                        avatarUrl={currentUser.photoURL || currentUser.avatar}
+                        equippedBorder={border.id}
+                        size="sm"
+                      />
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+                            {border.name}
+                          </p>
+                          <span className="text-[10px] font-mono uppercase text-slate-500 dark:text-slate-400 shrink-0">
+                            {border.rarity}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-snug">
+                          {border.description}
+                        </p>
+                        <p className="text-[10px] text-slate-500 pt-0.5">
+                          Unlock: {border.unlockRequirement}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/70 dark:border-slate-800/80">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewBorderId(isPreviewing ? null : border.id)}
+                          className="min-h-[44px] px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-[11px] font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>{isPreviewing ? 'Unpreview' : 'Preview'}</span>
+                        </button>
+                        <span
+                          className={`text-[11px] font-semibold ${
+                            isEquipped
+                              ? 'text-sky-600 dark:text-sky-400'
+                              : isUnlocked
+                              ? 'text-emerald-600 dark:text-emerald-400'
+                              : 'text-slate-400'
+                          }`}
+                        >
+                          {isEquipped ? 'Equipped' : isUnlocked ? 'Owned' : 'Locked'}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {isUnlocked ? (
+                          <TactileButton
+                            variant={isEquipped ? 'secondary' : 'primary'}
+                            size="sm"
+                            className="min-h-[44px]"
+                            disabled={equippingBorder === border.id}
+                            onClick={() => handleEquipBorder(isEquipped ? null : border.id)}
+                          >
+                            {isEquipped ? 'Unequip' : 'Equip Border'}
+                          </TactileButton>
+                        ) : (
+                          <>
+                            {border.purchasableWithFrostXp && (
+                              <TactileButton
+                                variant={canAfford ? 'primary' : 'outline'}
+                                size="sm"
+                                className="min-h-[44px]"
+                                disabled={!canAfford || purchasingKey === `border:${border.id}`}
+                                onClick={() => setPurchaseConfirm({ itemType: 'border', item: border })}
+                                icon={<ShoppingBag className="w-3.5 h-3.5" />}
+                              >
+                                {border.frostXpCost} Frost XP
+                              </TactileButton>
+                            )}
+                            {isSuperAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => setPurchaseConfirm({ itemType: 'border', item: border })}
+                                className="min-h-[44px] px-2.5 py-1.5 rounded-lg border border-amber-400/40 bg-amber-500/15 text-amber-300 text-[11px] font-bold hover:bg-amber-500/25 cursor-pointer"
+                              >
+                                Claim Free
+                              </button>
+                            )}
+                            {!border.purchasableWithFrostXp && !isSuperAdmin && (
+                              <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
+                                <Lock className="w-3 h-3" />
+                                Locked
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 3. Winter Badges (Owned vs Locked separation + timestamps + progress) */}
+          <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div>
                 <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
@@ -690,168 +1189,19 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
             </div>
           </div>
 
-          {/* Winter Borders (5 Collectible Stackable Avatar Borders) */}
-          <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div>
-                <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  Winter Avatar Borders (Stackable Cosmetics)
-                </h4>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Outer festive borders appear on leaderboards, profile headers, and cards alongside your Profile Frame.
-                </p>
-              </div>
-              <span className="text-xs font-mono tabular-nums text-sky-600 dark:text-sky-400 font-semibold">
-                {(status.winterState.unlockedBorders || []).length} / {(status.borders || []).length} Unlocked
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {(status.borders || []).map((border) => {
-                const isUnlocked = (status.winterState.unlockedBorders || []).includes(border.id);
-                const isEquipped = status.winterState.equippedBorder === border.id;
-                return (
-                  <div
-                    key={border.id}
-                    className={`rounded-xl border p-3.5 flex flex-col justify-between gap-3 transition-colors ${
-                      isUnlocked
-                        ? 'border-sky-500/40 bg-sky-500/5'
-                        : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 opacity-85'
-                    }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <WinterCosmeticAvatar
-                        name={currentUser.name}
-                        avatarUrl={currentUser.photoURL || currentUser.avatar}
-                        equippedBorder={border.id}
-                        size="sm"
-                      />
-                      <div className="min-w-0 flex-1 space-y-0.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
-                            {border.name}
-                          </p>
-                          <span className="text-[10px] font-mono uppercase text-slate-500 dark:text-slate-400 shrink-0">
-                            {border.rarity}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-snug">
-                          {border.description}
-                        </p>
-                        <p className="text-[10px] text-slate-500 pt-0.5">
-                          Unlock: {border.unlockRequirement}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/70 dark:border-slate-800/80">
-                      <span
-                        className={`text-[11px] font-semibold ${
-                          isEquipped
-                            ? 'text-sky-600 dark:text-sky-400'
-                            : isUnlocked
-                            ? 'text-emerald-600 dark:text-emerald-400'
-                            : 'text-slate-400'
-                        }`}
-                      >
-                        {isEquipped ? 'Equipped' : isUnlocked ? 'Owned' : 'Locked'}
-                      </span>
-                      {isUnlocked ? (
-                        <TactileButton
-                          variant={isEquipped ? 'secondary' : 'primary'}
-                          size="sm"
-                          disabled={equippingBorder === border.id}
-                          onClick={() => handleEquipBorder(isEquipped ? null : border.id)}
-                        >
-                          {isEquipped ? 'Unequip' : 'Equip Border'}
-                        </TactileButton>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
-                          <Lock className="w-3 h-3" />
-                          Locked
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Seasonal Leaderboard Avatar Frames */}
-          <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                Seasonal Leaderboard Avatar Frames
-              </h4>
-              <span className="text-xs font-mono tabular-nums text-sky-600 dark:text-sky-400 font-semibold">
-                {(status.winterState.unlockedFrames || []).length} / {status.frames.length} Unlocked
-              </span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {status.frames.map((frame) => {
-                const isUnlocked = status.winterState.unlockedFrames.includes(frame.id);
-                const isEquipped = status.winterState.equippedFrame === frame.id;
-                return (
-                  <div
-                    key={frame.id}
-                    className={`rounded-xl border p-3.5 flex items-center justify-between gap-3 ${
-                      isUnlocked
-                        ? 'border-sky-500/40 bg-sky-500/5'
-                        : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 opacity-85'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <WinterCosmeticAvatar
-                        name={currentUser.name}
-                        avatarUrl={currentUser.photoURL || currentUser.avatar}
-                        equippedFrame={frame.id}
-                        size="sm"
-                      />
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
-                            {frame.name}
-                          </p>
-                          {frame.rarity && (
-                            <span className="text-[10px] font-mono uppercase text-slate-500 dark:text-slate-400 shrink-0">
-                              {frame.rarity}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[11px] text-slate-500 truncate">{frame.description}</p>
-                        {frame.unlockRequirement && (
-                          <p className="text-[10px] text-slate-400 truncate">{frame.unlockRequirement}</p>
-                        )}
-                      </div>
-                    </div>
-                    {isUnlocked ? (
-                      <TactileButton
-                        variant={isEquipped ? 'secondary' : 'primary'}
-                        size="sm"
-                        disabled={equippingFrame === frame.id}
-                        onClick={() => handleEquipFrame(isEquipped ? null : frame.id)}
-                      >
-                        {isEquipped ? 'Unequip' : 'Equip Frame'}
-                      </TactileButton>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-[11px] text-slate-400 shrink-0">
-                        <Lock className="w-3 h-3" />
-                        Locked
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
+          {/* 4. Reward History */}
           <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3">
             <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              Claimed Santa Gifts &amp; Spin Rewards
+              Claimed Santa Gifts, Shop &amp; Spin Rewards
             </h4>
             {(() => {
               const historyItems = (status.winterState.rewardHistory || []).filter(
-                (r) => r.featureType === 'santa_gift' || r.featureType === 'spin_wheel'
+                (r) =>
+                  r.featureType === 'santa_gift' ||
+                  r.featureType === 'spin_wheel' ||
+                  r.featureType === 'winter_shop' ||
+                  r.featureType === 'admin_grant' ||
+                  r.featureType === 'cookie_exchange'
               );
               const existingNights = new Set(
                 historyItems
@@ -869,10 +1219,11 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
                   rarity: 'seasonal',
                   label: 'Santa Nightly Gift',
                   xpBonus: 0,
+                  frostXpBonus: 0,
                   cookiesBonus: 0,
                   aiBonusQueries: 0,
                   streakShield: false,
-                  frameId: undefined as string | undefined,
+                  bannerId: undefined as string | undefined,
                   borderId: undefined as string | undefined,
                   createdAt: `${nightKey}T19:00:00.000Z`,
                 }));
@@ -881,7 +1232,7 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
               if (collectedRewards.length === 0) {
                 return (
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    No Santa gifts or Spin rewards claimed yet. Unwrap tonight’s Santa Drop or spin the wheel to collect them here.
+                    No Santa gifts, Spin rewards, or Shop unlocks claimed yet.
                   </p>
                 );
               }
@@ -890,6 +1241,7 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {collectedRewards.map((item) => {
                     const isSanta = item.featureType === 'santa_gift';
+                    const isShop = item.featureType === 'winter_shop' || item.featureType === 'admin_grant';
                     return (
                       <div
                         key={item.id}
@@ -899,10 +1251,12 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
                           <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 min-w-0 truncate">
                             {isSanta ? (
                               <Gift className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                            ) : isShop ? (
+                              <ShoppingBag className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
                             ) : (
                               <RotateCw className="w-3.5 h-3.5 text-sky-500 shrink-0" />
                             )}
-                            <span className="truncate">{item.label || (isSanta ? 'Santa Nightly Gift' : 'Spin Wheel Reward')}</span>
+                            <span className="truncate">{item.label || 'Winter Festival Reward'}</span>
                           </span>
                           <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 capitalize shrink-0">
                             {item.rarity}
@@ -910,14 +1264,15 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
                         </div>
                         <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
                           {item.xpBonus > 0 && <span>+{item.xpBonus} XP</span>}
+                          {(item.frostXpBonus || 0) > 0 && <span className="text-cyan-400">+{item.frostXpBonus} Frost XP</span>}
                           {item.cookiesBonus > 0 && <span>+{item.cookiesBonus} Cookies</span>}
                           {item.aiBonusQueries > 0 && <span>+{item.aiBonusQueries} AI</span>}
                           {item.streakShield && <span>+1 Shield</span>}
-                          {item.frameId && <span className="text-sky-500">+Frame</span>}
-                          {item.borderId && <span className="text-amber-500">+Border</span>}
+                          {item.bannerId && <span className="text-sky-400">+Banner</span>}
+                          {item.borderId && <span className="text-amber-400">+Border</span>}
                         </div>
                         <p className="text-[11px] text-slate-500 font-mono">
-                          {isSanta ? 'Santa Drop' : 'Spin Wheel'} · {item.eventNightKey || String(item.createdAt || '').slice(0, 10)}
+                          {item.featureType.replace('_', ' ')} · {item.eventNightKey || String(item.createdAt || '').slice(0, 10)}
                         </p>
                       </div>
                     );
@@ -1023,6 +1378,150 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
             </TactileButton>
           </div>
         </form>
+      </AnimatedDialog>
+
+      {/* Audio Attribution Footer */}
+      <details className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/60 p-3.5 text-xs text-slate-500 dark:text-slate-400">
+        <summary className="cursor-pointer font-semibold text-slate-700 dark:text-slate-300">
+          Seasonal Audio &amp; Visual Attribution ({WINTER_AUDIO_ATTRIBUTIONS.length} cues)
+        </summary>
+        <div className="mt-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {WINTER_AUDIO_ATTRIBUTIONS.map((item) => (
+            <div key={item.id} className="p-2 rounded-lg bg-slate-100 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
+              <p className="font-semibold text-slate-800 dark:text-slate-200">{item.label}</p>
+              <p className="text-[11px]">{item.source} · {item.license}</p>
+            </div>
+          ))}
+        </div>
+      </details>
+
+      {/* Purchase / Super Admin Claim Confirmation Dialog */}
+      <AnimatedDialog
+        isOpen={Boolean(purchaseConfirm)}
+        onClose={() => !purchasingKey && setPurchaseConfirm(null)}
+        title={purchaseConfirm?.item.name || 'Unlock Collectible'}
+        subtitle={
+          purchaseConfirm?.itemType === 'banner'
+            ? 'Winter Profile Banner (Background Artwork)'
+            : 'Winter Profile Border (Avatar Perimeter)'
+        }
+        maxWidth="max-w-md"
+      >
+        {purchaseConfirm && (
+          <div className="space-y-4">
+            {purchaseConfirm.itemType === 'banner' ? (
+              <ProfileBannerBackdrop equippedBanner={purchaseConfirm.item.id} className="h-24 w-full rounded-xl">
+                <div className="p-3 h-full flex items-end">
+                  <ProfileCosmeticAvatar
+                    name={currentUser.name}
+                    avatarUrl={currentUser.photoURL || currentUser.avatar}
+                    equippedBorder={activeBorderDisplay}
+                    size="md"
+                  />
+                </div>
+              </ProfileBannerBackdrop>
+            ) : (
+              <div className="flex justify-center py-3">
+                <ProfileCosmeticAvatar
+                  name={currentUser.name}
+                  avatarUrl={currentUser.photoURL || currentUser.avatar}
+                  equippedBorder={purchaseConfirm.item.id}
+                  size="lg"
+                />
+              </div>
+            )}
+            <p className="text-xs text-slate-300 leading-relaxed">{purchaseConfirm.item.description}</p>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 flex items-center justify-between text-xs font-mono tabular-nums">
+              <span className="text-slate-400">Your Frost XP</span>
+              <span className="text-cyan-300 font-bold">{status?.winterState?.frostXp || 0} Frost XP</span>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+              <TactileButton
+                variant="outline"
+                size="sm"
+                className="min-h-[44px]"
+                onClick={() => setPurchaseConfirm(null)}
+                disabled={Boolean(purchasingKey)}
+              >
+                Cancel
+              </TactileButton>
+              {purchaseConfirm.item.purchasableWithFrostXp && (
+                <TactileButton
+                  variant="primary"
+                  size="sm"
+                  className="min-h-[44px]"
+                  disabled={
+                    Boolean(purchasingKey) ||
+                    (status?.winterState?.frostXp || 0) < purchaseConfirm.item.frostXpCost
+                  }
+                  onClick={() => handleConfirmPurchase(false)}
+                >
+                  {purchasingKey
+                    ? 'Unlocking...'
+                    : `Confirm Purchase (${purchaseConfirm.item.frostXpCost} Frost XP)`}
+                </TactileButton>
+              )}
+              {isSuperAdmin && (
+                <TactileButton
+                  variant="secondary"
+                  size="sm"
+                  className="min-h-[44px]"
+                  disabled={Boolean(purchasingKey)}
+                  onClick={() => handleConfirmPurchase(true)}
+                >
+                  {purchasingKey ? 'Granting...' : 'Super Admin Claim Free (Audited)'}
+                </TactileButton>
+              )}
+            </div>
+          </div>
+        )}
+      </AnimatedDialog>
+
+      {/* Frost XP Transaction History Modal */}
+      <AnimatedDialog
+        isOpen={ledgerOpen}
+        onClose={() => setLedgerOpen(false)}
+        title="Frost XP Transaction Ledger"
+        subtitle="Seasonal currency earned & spent · Isolated from permanent Scholar XP"
+        maxWidth="max-w-lg"
+      >
+        <div className="space-y-3">
+          <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-3 flex items-center justify-between text-xs font-mono tabular-nums">
+            <span className="text-cyan-200 font-semibold">Current Frost XP Balance</span>
+            <span className="text-lg font-bold text-cyan-100">{status?.winterState?.frostXp || 0} Frost XP</span>
+          </div>
+          {ledgerLoading ? (
+            <div className="space-y-2">
+              {[0, 1, 2].map((i) => (
+                <AnimatedSkeleton key={i} height={46} className="w-full" />
+              ))}
+            </div>
+          ) : frostXpTransactions.length === 0 ? (
+            <div className="p-6 text-center text-xs text-slate-400 rounded-xl border border-slate-800 bg-slate-950/60 flex flex-col items-center gap-2">
+              <History className="w-5 h-5 text-slate-500" />
+              <span>No Frost XP transactions recorded yet. Complete Winter tasks, Cookie Exchanges, Santa drops, or Spin rolls!</span>
+            </div>
+          ) : (
+            <div className="max-h-72 overflow-y-auto divide-y divide-slate-800 rounded-xl border border-slate-800 bg-slate-950/70">
+              {frostXpTransactions.map((tx) => (
+                <div key={tx.id} className="px-3.5 py-2.5 flex items-center justify-between gap-3 text-xs">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-slate-100 truncate">{tx.reason}</p>
+                    <p className="text-[11px] text-slate-400 font-mono">
+                      {tx.createdAt ? new Date(tx.createdAt).toLocaleString() : 'Recorded'}
+                    </p>
+                  </div>
+                  <div className="text-right font-mono tabular-nums shrink-0">
+                    <p className={tx.amount >= 0 ? 'text-cyan-300 font-bold' : 'text-amber-300 font-bold'}>
+                      {tx.amount >= 0 ? `+${tx.amount}` : tx.amount} Frost XP
+                    </p>
+                    <p className="text-[10px] text-slate-500">Bal: {tx.balanceAfter}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </AnimatedDialog>
 
       <SantaGiftModal
