@@ -220,6 +220,14 @@ const memoryUserTotalXp = new Map<
 >();
 
 const inFlightClaimLocks = new Set<string>();
+const capabilityCache = {
+  claimTaskRpcMissingUntil: 0,
+  badgeSyncRpcMissingUntil: 0,
+  winterProfilesLegacySchemaUntil: 0,
+  xpLedgerMinimalSchemaUntil: 0,
+  taskClaimsDirectBlockedUntil: 0,
+};
+const isCapabilityCacheActive = () => process.env.NODE_ENV !== 'test';
 let forceSupabaseInTests = false;
 
 export function setForceWinterSupabaseForTests(enabled: boolean) {
@@ -235,6 +243,11 @@ export function clearWinterMemoryCacheOnlyForTests() {
   memoryXpLedger.length = 0;
   memoryUserTotalXp.clear();
   inFlightClaimLocks.clear();
+  capabilityCache.claimTaskRpcMissingUntil = 0;
+  capabilityCache.badgeSyncRpcMissingUntil = 0;
+  capabilityCache.winterProfilesLegacySchemaUntil = 0;
+  capabilityCache.xpLedgerMinimalSchemaUntil = 0;
+  capabilityCache.taskClaimsDirectBlockedUntil = 0;
 }
 
 export function getAdminGrantAuditForTests(): AdminGrantAuditEntry[] {
@@ -349,13 +362,23 @@ function resolveWinterSupabaseConfig(
 }
 
 async function fetchJsonStrict(url: string, init: RequestInit, contextLabel: string): Promise<Response> {
+  let controller: AbortController | null = null;
+  let timer: any = null;
+  let finalInit = init;
+  if (!init.signal && typeof AbortController !== 'undefined') {
+    controller = new AbortController();
+    timer = setTimeout(() => controller?.abort(), 4500);
+    finalInit = { ...init, signal: controller.signal };
+  }
   try {
-    return await supabaseFetchWithAnonRetry(url, init);
+    return await supabaseFetchWithAnonRetry(url, finalInit);
   } catch (err: any) {
     throw new WinterPersistenceError(
       `Supabase network failure (${contextLabel}): ${err?.message || String(err)}`,
       503
     );
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -779,9 +802,12 @@ async function syncEarnedBadgesTable(
   cfg: { url: string; key: string },
   userId: string,
   badges: Record<string, string>,
-  actorAuthToken?: string
+  actorAuthToken?: string,
+  onlyBadgeIds?: string[]
 ): Promise<void> {
-  const entries = Object.entries(badges || {});
+  const filterSet = Array.isArray(onlyBadgeIds) ? new Set(onlyBadgeIds) : null;
+  if (filterSet && filterSet.size === 0) return;
+  const entries = Object.entries(badges || {}).filter(([badgeId]) => !filterSet || filterSet.has(badgeId));
   if (entries.length === 0) return;
   const bearer = actorAuthToken || cfg.key;
   const payload = entries.map(([badgeId, unlockedAt]) => {
@@ -815,38 +841,45 @@ async function syncEarnedBadgesTable(
   if (isUniqueViolationResponse(res.status, errText)) return;
 
   if (isRlsPolicyViolationError(res.status, errText)) {
-    // Fallback to hardened SECURITY DEFINER RPC (sync_winter_badge_secure)
-    let rpcBlocked = false;
-    for (const row of payload) {
-      const rpcRes = await fetchJsonStrict(
-        `${cfg.url}/rest/v1/rpc/sync_winter_badge_secure`,
-        {
-          method: 'POST',
-          headers: {
-            apikey: cfg.key,
-            Authorization: `Bearer ${bearer}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            p_row_id: row.id,
-            p_user_id: row.user_id,
-            p_badge_id: row.badge_id,
-            p_rarity: row.rarity,
-            p_unlocked_at: row.unlocked_at,
-          }),
-        },
-        'rpc sync_winter_badge_secure'
-      ).catch(() => null);
-      if (!rpcRes || !rpcRes.ok) {
-        const rpcErr = rpcRes ? await rpcRes.text().catch(() => '') : '';
-        if (rpcRes && isUniqueViolationResponse(rpcRes.status, rpcErr)) continue;
-        rpcBlocked = true;
-        console.warn(`[WINTER] winter_user_badges RPC sync warning (${rpcRes?.status || 'net'}): ${rpcErr}`);
-      }
+    if (isCapabilityCacheActive() && capabilityCache.badgeSyncRpcMissingUntil > Date.now()) {
+      return;
     }
-    if (!rpcBlocked) return;
-    // Note: winter_user_profiles.earned_winter_badges is already durably saved cleanly above;
-    // avoid crashing Spin/Santa saves when live SQL migration hasn't created sync_winter_badge_secure yet.
+    // Fallback to hardened SECURITY DEFINER RPC (sync_winter_badge_secure) in parallel
+    let missingRpc = false;
+    await Promise.all(
+      payload.map(async (row) => {
+        const rpcRes = await fetchJsonStrict(
+          `${cfg.url}/rest/v1/rpc/sync_winter_badge_secure`,
+          {
+            method: 'POST',
+            headers: {
+              apikey: cfg.key,
+              Authorization: `Bearer ${bearer}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              p_row_id: row.id,
+              p_user_id: row.user_id,
+              p_badge_id: row.badge_id,
+              p_rarity: row.rarity,
+              p_unlocked_at: row.unlocked_at,
+            }),
+          },
+          'rpc sync_winter_badge_secure'
+        ).catch(() => null);
+        if (!rpcRes || !rpcRes.ok) {
+          const rpcErr = rpcRes ? await rpcRes.text().catch(() => '') : '';
+          if (rpcRes && isUniqueViolationResponse(rpcRes.status, rpcErr)) return;
+          if (rpcRes && isMissingColumnOrRelationError(rpcRes.status, rpcErr)) {
+            missingRpc = true;
+          }
+          console.warn(`[WINTER] winter_user_badges RPC sync warning (${rpcRes?.status || 'net'}): ${rpcErr}`);
+        }
+      })
+    );
+    if (missingRpc && isCapabilityCacheActive()) {
+      capabilityCache.badgeSyncRpcMissingUntil = Date.now() + 60_000;
+    }
     return;
   }
 
@@ -900,7 +933,7 @@ async function syncCosmeticsToLeaderboardDoc(
 export async function saveUserWinterState(
   getSupabaseServerConfig: WinterModuleDeps['getSupabaseServerConfig'],
   state: UserWinterState,
-  options?: { actorAuthToken?: string; badgesEnabled?: boolean; syncLeaderboardCosmetics?: boolean }
+  options?: { actorAuthToken?: string; badgesEnabled?: boolean; syncLeaderboardCosmetics?: boolean; onlySyncBadgeIds?: string[] }
 ): Promise<UserWinterState> {
   const nextState = cloneWinterState(state);
   nextState.updatedAt = new Date().toISOString();
@@ -939,6 +972,16 @@ export async function saveUserWinterState(
     updated_at: nextState.updatedAt,
   };
 
+  const buildLegacyPayload = () => {
+    const legacy = { ...basePayload };
+    delete legacy.frost_xp;
+    delete legacy.unlocked_banners;
+    delete legacy.equipped_banner;
+    delete legacy.unlocked_borders;
+    delete legacy.equipped_border;
+    return legacy;
+  };
+
   const headers = {
     apikey: cfg.key,
     Authorization: `Bearer ${cfg.key}`,
@@ -946,14 +989,15 @@ export async function saveUserWinterState(
     Prefer: 'resolution=merge-duplicates',
   };
 
+  const useLegacyFirst = isCapabilityCacheActive() && capabilityCache.winterProfilesLegacySchemaUntil > Date.now();
   let res = await fetchJsonStrict(
     `${cfg.url}/rest/v1/winter_user_profiles?on_conflict=user_id`,
     {
       method: 'POST',
       headers,
-      body: JSON.stringify(basePayload),
+      body: JSON.stringify(useLegacyFirst ? buildLegacyPayload() : basePayload),
     },
-    'save winter_user_profiles'
+    useLegacyFirst ? 'save winter_user_profiles (cached 3.1 legacy payload)' : 'save winter_user_profiles'
   );
 
   if (!res.ok) {
@@ -962,6 +1006,7 @@ export async function saveUserWinterState(
     // Graceful additive fallback ONLY for optional cosmetic/frost_xp columns if the 3.1 migration hasn't run yet;
     // state_json still durably preserves frostXp, unlockedBanners, equippedBanner, unlockedBorders, equippedBorder.
     if (
+      !useLegacyFirst &&
       isMissingColumnOrRelationError(res.status, errText) &&
       (lowerErr.includes('frost_xp') ||
         lowerErr.includes('unlocked_banners') ||
@@ -969,18 +1014,15 @@ export async function saveUserWinterState(
         lowerErr.includes('unlocked_borders') ||
         lowerErr.includes('equipped_border'))
     ) {
-      const legacyPayload = { ...basePayload };
-      delete legacyPayload.frost_xp;
-      delete legacyPayload.unlocked_banners;
-      delete legacyPayload.equipped_banner;
-      delete legacyPayload.unlocked_borders;
-      delete legacyPayload.equipped_border;
+      if (isCapabilityCacheActive()) {
+        capabilityCache.winterProfilesLegacySchemaUntil = Date.now() + 60_000;
+      }
       res = await fetchJsonStrict(
         `${cfg.url}/rest/v1/winter_user_profiles?on_conflict=user_id`,
         {
           method: 'POST',
           headers,
-          body: JSON.stringify(legacyPayload),
+          body: JSON.stringify(buildLegacyPayload()),
         },
         'save winter_user_profiles (state_json 3.1 column fallback)'
       );
@@ -1004,10 +1046,10 @@ export async function saveUserWinterState(
     }
   }
 
-  await syncEarnedBadgesTable(cfg, nextState.userId, nextState.earnedWinterBadges, options?.actorAuthToken);
-  if (options?.syncLeaderboardCosmetics) {
-    await syncCosmeticsToLeaderboardDoc(cfg, nextState);
-  }
+  await Promise.all([
+    syncEarnedBadgesTable(cfg, nextState.userId, nextState.earnedWinterBadges, options?.actorAuthToken, options?.onlySyncBadgeIds),
+    options?.syncLeaderboardCosmetics ? syncCosmeticsToLeaderboardDoc(cfg, nextState) : Promise.resolve(),
+  ]);
   memoryWinterStates.set(nextState.userId, cloneWinterState(nextState));
   return nextState;
 }
@@ -1130,29 +1172,41 @@ export async function appendXpLedgerEntry(
     'Content-Type': 'application/json',
   };
 
+  const useMinimalXpFirst = isCapabilityCacheActive() && capabilityCache.xpLedgerMinimalSchemaUntil > Date.now();
+  const fullXpRow = {
+    id: entry.id,
+    user_id: entry.userId,
+    user_name: entry.userName,
+    user_role: entry.userRole,
+    grade: entry.grade,
+    section: entry.section,
+    house: entry.house || '',
+    avatar: entry.avatar || '',
+    source_type: entry.sourceType,
+    action_key: entry.actionKey,
+    xp_delta: entry.xpDelta,
+    label: entry.label,
+    created_at: entry.createdAt,
+  };
+  const minimalXpRow = {
+    id: entry.id,
+    user_id: entry.userId,
+    user_name: entry.userName,
+    user_role: entry.userRole,
+    xp_delta: entry.xpDelta,
+    label: entry.label,
+    created_at: entry.createdAt,
+  };
+
   // 1. Authoritative Postgres insert FIRST (no merge-duplicates so UNIQUE(user_id, action_key) rejects duplicates atomically)
   let insertRes = await fetchJsonStrict(
     `${cfg.url}/rest/v1/gamification_xp_ledger`,
     {
       method: 'POST',
       headers,
-      body: JSON.stringify({
-        id: entry.id,
-        user_id: entry.userId,
-        user_name: entry.userName,
-        user_role: entry.userRole,
-        grade: entry.grade,
-        section: entry.section,
-        house: entry.house || '',
-        avatar: entry.avatar || '',
-        source_type: entry.sourceType,
-        action_key: entry.actionKey,
-        xp_delta: entry.xpDelta,
-        label: entry.label,
-        created_at: entry.createdAt,
-      }),
+      body: JSON.stringify(useMinimalXpFirst ? minimalXpRow : fullXpRow),
     },
-    'insert gamification_xp_ledger'
+    useMinimalXpFirst ? 'insert minimal gamification_xp_ledger (cached)' : 'insert gamification_xp_ledger'
   );
 
   const encUid = encodeURIComponent(entry.userId);
@@ -1164,22 +1218,17 @@ export async function appendXpLedgerEntry(
       const lvl = computeLevelFromXp(curTotal);
       return { accepted: false, deduplicated: true, totalXp: curTotal, ...lvl };
     }
-    if (isMissingColumnOrRelationError(insertRes.status, errText)) {
+    if (!useMinimalXpFirst && isMissingColumnOrRelationError(insertRes.status, errText)) {
+      if (isCapabilityCacheActive()) {
+        capabilityCache.xpLedgerMinimalSchemaUntil = Date.now() + 60_000;
+      }
       // Retry insert with the minimal column set in case gamification_xp_ledger uses only core columns
       const minimalInsertRes = await fetchJsonStrict(
         `${cfg.url}/rest/v1/gamification_xp_ledger`,
         {
           method: 'POST',
           headers,
-          body: JSON.stringify({
-            id: entry.id,
-            user_id: entry.userId,
-            user_name: entry.userName,
-            user_role: entry.userRole,
-            xp_delta: entry.xpDelta,
-            label: entry.label,
-            created_at: entry.createdAt,
-          }),
+          body: JSON.stringify(minimalXpRow),
         },
         'insert minimal gamification_xp_ledger'
       );
@@ -2530,7 +2579,16 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
     try {
       const cfg = getSupabaseServerConfig();
       const useDb = shouldUseSupabase(cfg);
-      const state = await loadUserWinterState(getSupabaseServerConfig, actor);
+      const hasMemAcademic =
+        taskDef.verificationMode === 'academic_action' &&
+        (memoryXpLedger.some(x => x.userId === actor.id && x.sourceType === 'academic') ||
+          (memoryUserTotalXp.get(actor.id)?.xp || 0) > 0);
+      const needAcademicDbCheck = taskDef.verificationMode === 'academic_action' && !hasMemAcademic && useDb;
+
+      const [state, hasDbAcademic] = await Promise.all([
+        loadUserWinterState(getSupabaseServerConfig, actor),
+        needAcademicDbCheck ? hasAcademicEngagementInDb(cfg, actor.id) : Promise.resolve(false),
+      ]);
 
       if (state.claimedTaskIds.includes(taskId)) {
         return res.status(409).json({
@@ -2548,10 +2606,6 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
       }
 
       if (taskDef.verificationMode === 'academic_action') {
-        const hasMemAcademic = memoryXpLedger.some(
-          x => x.userId === actor.id && x.sourceType === 'academic'
-        ) || (memoryUserTotalXp.get(actor.id)?.xp || 0) > 0;
-        const hasDbAcademic = useDb ? await hasAcademicEngagementInDb(cfg, actor.id) : false;
         if (!hasMemAcademic && !hasDbAcademic) {
           return res.status(400).json({
             success: false,
@@ -2586,30 +2640,40 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
       let claimViaRpc = false;
 
       // Insert winter_task_claims (with service key or verified JWT if available, or hardened RPC on RLS)
-      // If RLS blocks table and RPC is not yet set up, gracefully persist directly on winter_user_profiles.
-      if (useDb) {
-        let claimInsertRes = await fetchJsonStrict(
-          `${cfg.url}/rest/v1/winter_task_claims`,
-          {
-            method: 'POST',
-            headers: {
-              apikey: serviceKey || cfg.key,
-              Authorization: `Bearer ${claimBearer}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              id: claimRowId,
-              user_id: actor.id,
-              task_id: taskId,
-              xp_awarded: taskDef.xpReward,
-              cookies_awarded: taskDef.cookiesReward,
-              claimed_at: nowIso,
-            }),
-          },
-          'insert winter_task_claims'
-        );
+      // If RLS blocks table and RPC is not yet set up, cache capability for 60s and persist directly on winter_user_profiles.
+      const skipDirectClaims =
+        isCapabilityCacheActive() &&
+        !serviceKey &&
+        capabilityCache.taskClaimsDirectBlockedUntil > Date.now() &&
+        capabilityCache.claimTaskRpcMissingUntil > Date.now();
 
-        if (!claimInsertRes.ok) {
+      if (useDb && !skipDirectClaims) {
+        const directAlreadyBlocked = isCapabilityCacheActive() && !serviceKey && capabilityCache.taskClaimsDirectBlockedUntil > Date.now();
+        let claimInsertRes: Response | null = null;
+        if (!directAlreadyBlocked) {
+          claimInsertRes = await fetchJsonStrict(
+            `${cfg.url}/rest/v1/winter_task_claims`,
+            {
+              method: 'POST',
+              headers: {
+                apikey: serviceKey || cfg.key,
+                Authorization: `Bearer ${claimBearer}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                id: claimRowId,
+                user_id: actor.id,
+                task_id: taskId,
+                xp_awarded: taskDef.xpReward,
+                cookies_awarded: taskDef.cookiesReward,
+                claimed_at: nowIso,
+              }),
+            },
+            'insert winter_task_claims'
+          );
+        }
+
+        if (claimInsertRes && !claimInsertRes.ok) {
           const errText = await claimInsertRes.text().catch(() => '');
           if (isUniqueViolationResponse(claimInsertRes.status, errText)) {
             return res.status(409).json({
@@ -2619,49 +2683,91 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
             });
           }
 
-          // If blocked by RLS, attempt RPC claim_winter_task_secure
           if (isRlsPolicyViolationError(claimInsertRes.status, errText) || claimInsertRes.status === 401 || claimInsertRes.status === 403) {
-            const rpcRes = await fetchJsonStrict(
-              `${cfg.url}/rest/v1/rpc/claim_winter_task_secure`,
-              {
-                method: 'POST',
-                headers: {
-                  apikey: serviceKey || cfg.key,
-                  Authorization: `Bearer ${serviceKey || claimBearer}`,
-                  'Content-Type': 'application/json',
+            if (isCapabilityCacheActive() && !serviceKey) {
+              capabilityCache.taskClaimsDirectBlockedUntil = Date.now() + 60_000;
+            }
+            if (!(isCapabilityCacheActive() && capabilityCache.claimTaskRpcMissingUntil > Date.now())) {
+              const rpcRes = await fetchJsonStrict(
+                `${cfg.url}/rest/v1/rpc/claim_winter_task_secure`,
+                {
+                  method: 'POST',
+                  headers: {
+                    apikey: serviceKey || cfg.key,
+                    Authorization: `Bearer ${serviceKey || claimBearer}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    p_claim_id: claimRowId,
+                    p_user_id: actor.id,
+                    p_task_id: taskId,
+                    p_xp_awarded: taskDef.xpReward,
+                    p_cookies_awarded: taskDef.cookiesReward,
+                    p_claimed_at: nowIso,
+                  }),
                 },
-                body: JSON.stringify({
-                  p_claim_id: claimRowId,
-                  p_user_id: actor.id,
-                  p_task_id: taskId,
-                  p_xp_awarded: taskDef.xpReward,
-                  p_cookies_awarded: taskDef.cookiesReward,
-                  p_claimed_at: nowIso,
-                }),
-              },
-              'rpc claim_winter_task_secure'
-            );
-
-            if (rpcRes.ok) {
-              claimViaRpc = true;
-            } else {
-              const rpcErr = await rpcRes.text().catch(() => '');
-              if (isUniqueViolationResponse(rpcRes.status, rpcErr)) {
-                return res.status(409).json({
-                  success: false,
-                  code: 'TASK_ALREADY_CLAIMED',
-                  error: 'You have already claimed rewards for this seasonal task.',
-                });
-              }
-              // RLS blocked and RPC not deployed: fall back to saving claimedTaskIds on winter_user_profiles
-              console.warn(
-                `[WINTER] winter_task_claims RLS blocked and RPC not set up (${rpcRes.status}): ${rpcErr}. Saving claim directly to winter_user_profiles.`
+                'rpc claim_winter_task_secure'
               );
+
+              if (rpcRes.ok) {
+                claimViaRpc = true;
+              } else {
+                const rpcErr = await rpcRes.text().catch(() => '');
+                if (isUniqueViolationResponse(rpcRes.status, rpcErr)) {
+                  return res.status(409).json({
+                    success: false,
+                    code: 'TASK_ALREADY_CLAIMED',
+                    error: 'You have already claimed rewards for this seasonal task.',
+                  });
+                }
+                if (isCapabilityCacheActive() && isMissingColumnOrRelationError(rpcRes.status, rpcErr)) {
+                  capabilityCache.claimTaskRpcMissingUntil = Date.now() + 60_000;
+                }
+                console.warn(
+                  `[WINTER] winter_task_claims RLS blocked and RPC not set up (${rpcRes.status}): ${rpcErr}. Saving claim directly to winter_user_profiles.`
+                );
+              }
             }
           } else {
             console.warn(
               `[WINTER] winter_task_claims insert failed (${claimInsertRes.status}): ${errText}. Saving claim directly to winter_user_profiles.`
             );
+          }
+        } else if (directAlreadyBlocked && !(isCapabilityCacheActive() && capabilityCache.claimTaskRpcMissingUntil > Date.now())) {
+          const rpcRes = await fetchJsonStrict(
+            `${cfg.url}/rest/v1/rpc/claim_winter_task_secure`,
+            {
+              method: 'POST',
+              headers: {
+                apikey: serviceKey || cfg.key,
+                Authorization: `Bearer ${serviceKey || claimBearer}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                p_claim_id: claimRowId,
+                p_user_id: actor.id,
+                p_task_id: taskId,
+                p_xp_awarded: taskDef.xpReward,
+                p_cookies_awarded: taskDef.cookiesReward,
+                p_claimed_at: nowIso,
+              }),
+            },
+            'rpc claim_winter_task_secure'
+          );
+          if (rpcRes.ok) {
+            claimViaRpc = true;
+          } else {
+            const rpcErr = await rpcRes.text().catch(() => '');
+            if (isUniqueViolationResponse(rpcRes.status, rpcErr)) {
+              return res.status(409).json({
+                success: false,
+                code: 'TASK_ALREADY_CLAIMED',
+                error: 'You have already claimed rewards for this seasonal task.',
+              });
+            }
+            if (isCapabilityCacheActive() && isMissingColumnOrRelationError(rpcRes.status, rpcErr)) {
+              capabilityCache.claimTaskRpcMissingUntil = Date.now() + 60_000;
+            }
           }
         }
       }
@@ -2680,6 +2786,11 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
       if (grantedBorderId && !nextState.unlockedBorders.includes(grantedBorderId)) {
         nextState.unlockedBorders.push(grantedBorderId);
       }
+
+      evaluateSecretWinterBadges(nextState, nowIso, badgesEnabled);
+      const newlyUnlockedBadgeIds = Object.keys(nextState.earnedWinterBadges).filter(
+        id => !state.earnedWinterBadges[id]
+      );
 
       const rewardRecord = {
         id: `wtask_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
@@ -2705,9 +2816,10 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
         persistedState = await saveUserWinterState(getSupabaseServerConfig, nextState, {
           actorAuthToken: actor.authToken,
           badgesEnabled,
+          onlySyncBadgeIds: newlyUnlockedBadgeIds,
         });
       } catch (saveErr) {
-        if (useDb) {
+        if (useDb && !skipDirectClaims) {
           if (claimViaRpc) {
             await fetchJsonStrict(
               `${cfg.url}/rest/v1/rpc/rollback_winter_task_claim_secure`,
@@ -2748,32 +2860,35 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
         throw saveErr;
       }
 
-      if ((taskDef.frostXpReward || 0) > 0) {
-        await recordFrostXpLedgerEntry(getSupabaseServerConfig, {
+      // Execute Frost XP ledger, regular XP ledger, & leaderboard cosmetic sync in parallel for sub-second claim resolution
+      const [xpRes] = await Promise.all([
+        appendXpLedgerEntry(getSupabaseServerConfig, {
+          id: `xp_${rewardRecord.id}`,
           userId: actor.id,
-          amount: taskDef.frostXpReward,
-          balanceAfter: persistedState.frostXp,
-          reason: `Task: ${taskDef.title}`,
-          referenceType: 'winter_task',
-          referenceId: taskId,
-          idempotencyKey: `frost_task:${taskId}`,
+          userName: actor.name,
+          userRole: actor.role,
+          grade: actor.grade || '',
+          section: actor.section || '',
+          sourceType: 'winter_task',
+          actionKey: `winter_task:${taskId}`,
+          xpDelta: taskDef.xpReward,
+          label: `Winter Task: ${taskDef.title}`,
           createdAt: nowIso,
-        });
-      }
-
-      const xpRes = await appendXpLedgerEntry(getSupabaseServerConfig, {
-        id: `xp_${rewardRecord.id}`,
-        userId: actor.id,
-        userName: actor.name,
-        userRole: actor.role,
-        grade: actor.grade || '',
-        section: actor.section || '',
-        sourceType: 'winter_task',
-        actionKey: `winter_task:${taskId}`,
-        xpDelta: taskDef.xpReward,
-        label: `Winter Task: ${taskDef.title}`,
-        createdAt: nowIso,
-      });
+        }),
+        (taskDef.frostXpReward || 0) > 0
+          ? recordFrostXpLedgerEntry(getSupabaseServerConfig, {
+              userId: actor.id,
+              amount: taskDef.frostXpReward,
+              balanceAfter: persistedState.frostXp,
+              reason: `Task: ${taskDef.title}`,
+              referenceType: 'winter_task',
+              referenceId: taskId,
+              idempotencyKey: `frost_task:${taskId}`,
+              createdAt: nowIso,
+            })
+          : Promise.resolve(null),
+        useDb ? syncCosmeticsToLeaderboardDoc(cfg, persistedState) : Promise.resolve(),
+      ]);
 
       broadcastToAllWs({
         type: 'leaderboard:updated',
@@ -2781,14 +2896,13 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
         role: actor.role,
       });
 
-      const refreshedState = await loadUserWinterState(getSupabaseServerConfig, actor);
-
+      // persistedState was atomically validated and persisted; return directly without redundant WAN re-query
       return res.json({
         success: true,
         taskId,
         reward: rewardRecord,
         xpSummary: xpRes,
-        winterState: refreshedState || persistedState,
+        winterState: persistedState,
       });
     } catch (err) {
       return handleWinterRouteError(res, err, 'Failed to claim Winter task reward.');
@@ -3641,10 +3755,32 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
 
       const allUsersMap = new Map<string, any>();
       const aliasToCanonicalId = new Map<string, string>();
+      const profileDirectory = new Map<
+        string,
+        { name: string; role: string; grade: string; section: string; points: number; updatedAt: any }
+      >();
+      const winterProfileById = new Map<
+        string,
+        {
+          cookiesCount: number;
+          equippedBanner: string | null;
+          equippedBorder: string | null;
+          badgesCount: number;
+          userName?: string;
+          userRole?: string;
+        }
+      >();
 
       memoryWinterStates.forEach((w, uid) => {
-        // Hydrate cosmetics/cookies cleanly when user has active server memory state
         aliasToCanonicalId.set(uid, uid);
+        winterProfileById.set(uid, {
+          cookiesCount: Number(w.cookiesCount || 0),
+          equippedBanner: w.equippedBanner || null,
+          equippedBorder: w.equippedBorder || null,
+          badgesCount: Object.keys(w.earnedWinterBadges || {}).length,
+          userName: w.userName,
+          userRole: w.userRole,
+        });
       });
 
       let ledgerSnapshot = [...memoryXpLedger];
@@ -3656,11 +3792,13 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
         if (!rawUid || rawUid.startsWith('__probe_')) return;
         const uid = aliasToCanonicalId.get(rawUid) || rawUid;
         const existing = allUsersMap.get(uid);
+        const dir = profileDirectory.get(uid);
         const gXp = Math.max(0, Number(g.xp || 0));
-        const mergedXp = Math.max(gXp, existing?.xp || 0);
+        const mergedXp = Math.max(gXp, existing?.xp || 0, dir?.points || 0);
         if (mergedXp <= 0 && !existing) return;
 
-        const wState = memoryWinterStates.get(uid);
+        const wDb = winterProfileById.get(uid);
+        const wMem = memoryWinterStates.get(uid);
         const existingTs = existing?.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
         const candidateUpd = g.updatedAt || fallbackUpdatedAt || null;
         const candidateTs = candidateUpd ? new Date(candidateUpd).getTime() : 0;
@@ -3671,19 +3809,19 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
 
         allUsersMap.set(uid, {
           userId: uid,
-          name: String(g.userName || g.name || existing?.name || 'Member').trim() || 'Member',
-          role: String(g.role || existing?.role || 'student').toLowerCase().trim(),
-          grade: String(g.grade || existing?.grade || ''),
-          section: String(g.section || existing?.section || ''),
+          name: String(dir?.name || g.userName || g.name || existing?.name || 'Member').trim() || 'Member',
+          role: String(dir?.role || g.role || existing?.role || 'student').toLowerCase().trim(),
+          grade: String(dir?.grade || g.grade || existing?.grade || ''),
+          section: String(dir?.section || g.section || existing?.section || ''),
           house: String(g.house || existing?.house || ''),
           avatar: String(g.avatar || g.photoURL || existing?.avatar || ''),
           xp: mergedXp,
           currentStreak: Math.max(Number(g.currentStreak || 0), existing?.currentStreak || 0),
-          winterCookies: wState?.cookiesCount ?? g.winterCookies ?? existing?.winterCookies ?? 0,
-          equippedBanner: wState?.equippedBanner ?? g.equippedBanner ?? existing?.equippedBanner ?? null,
-          equippedBorder: wState?.equippedBorder ?? g.equippedBorder ?? existing?.equippedBorder ?? null,
+          winterCookies: wDb?.cookiesCount ?? wMem?.cookiesCount ?? g.winterCookies ?? existing?.winterCookies ?? 0,
+          equippedBanner: wDb?.equippedBanner ?? wMem?.equippedBanner ?? g.equippedBanner ?? existing?.equippedBanner ?? null,
+          equippedBorder: wDb?.equippedBorder ?? wMem?.equippedBorder ?? g.equippedBorder ?? existing?.equippedBorder ?? null,
           badgesCount: Math.max(
-            Object.keys(g.earnedBadges || {}).length + Object.keys(wState?.earnedWinterBadges || {}).length,
+            Object.keys(g.earnedBadges || {}).length + (wDb?.badgesCount ?? Object.keys(wMem?.earnedWinterBadges || {}).length),
             Number(g.badgesCount || 0),
             existing?.badgesCount || 0
           ),
@@ -3692,17 +3830,17 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
       };
 
       if (shouldUseSupabase(cfg)) {
-        const headers = { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` };
+        const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+        const headers = {
+          apikey: serviceKey || cfg.key,
+          Authorization: `Bearer ${serviceKey || cfg.key}`,
+        };
         const sinceClause =
           period === 'all_time'
             ? ''
             : `created_at=gte.${encodeURIComponent(
                 new Date(Date.now() - (period === 'weekly' ? 7 : 30) * 24 * 60 * 60 * 1000).toISOString()
               )}&`;
-        const cohortRoleFilter =
-          lbType === 'faculty'
-            ? 'role=in.(teacher,coordinator,hod,admin,super_admin)&'
-            : 'role=eq.student&';
 
         const fetchOptionalStoreRows = async (url: string, label: string): Promise<any[] | null> => {
           const controller = new AbortController();
@@ -3725,20 +3863,19 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
         let profRows: any[] | null;
         let gdRows: any[] | null;
         try {
-          // Query gamification_xp_ledger (limit 50) AND cohort-filtered account XP stores in parallel.
-          // Failures in user_profiles or global_data are non-fatal so the leaderboard never blocks.
+          // Query gamification_xp_ledger, user_profiles (full alias & role directory), and global_data in parallel.
           [ledRes, profRows, gdRows] = await Promise.all([
             fetchJsonStrict(
-              `${cfg.url}/rest/v1/gamification_xp_ledger?${sinceClause}select=id,user_id,user_name,user_role,xp_delta,label,created_at&order=created_at.desc&limit=50`,
+              `${cfg.url}/rest/v1/gamification_xp_ledger?${sinceClause}select=id,user_id,user_name,user_role,xp_delta,label,created_at&order=created_at.desc&limit=1000`,
               { headers, signal: ledController.signal },
               'leaderboard gamification_xp_ledger'
             ),
             fetchOptionalStoreRows(
-              `${cfg.url}/rest/v1/user_profiles?${cohortRoleFilter}points=gt.0&select=id,uid,name,role,points,grade,section,updated_at&order=points.desc.nullslast&limit=50`,
+              `${cfg.url}/rest/v1/user_profiles?select=id,uid,name,role,points,grade,section,updated_at&order=points.desc.nullslast&limit=500`,
               'leaderboard user_profiles'
             ),
             fetchOptionalStoreRows(
-              `${cfg.url}/rest/v1/global_data?or=(id.like.gamification_user_*,id.eq.__studentos_gamification_default_school__)&select=id,data,updated_at&limit=100`,
+              `${cfg.url}/rest/v1/global_data?or=(id.like.gamification_user_*,id.like.__studentos_gamification_*)&select=id,data,updated_at&limit=500`,
               'leaderboard global_data'
             ),
           ]);
@@ -3762,18 +3899,61 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
           );
         }
 
-        // 1. Seed existing account XP store from user_profiles (only safe public leaderboard fields)
+        // 0. Build complete id <-> uid alias & role directory across ALL user_profiles first
         if (Array.isArray(profRows)) {
           for (const p of profRows) {
             const canonicalId = String(p?.id || p?.uid || '').trim();
             if (!canonicalId || canonicalId.startsWith('__probe_')) continue;
             if (p?.uid) aliasToCanonicalId.set(String(p.uid).trim(), canonicalId);
             if (p?.id) aliasToCanonicalId.set(String(p.id).trim(), canonicalId);
+            const role = String(p?.role || 'student').toLowerCase().trim();
+            const name = String(p?.name || 'Member').trim() || 'Member';
+            const pts = Math.max(0, Number(p?.points || 0));
+            profileDirectory.set(canonicalId, {
+              name,
+              role,
+              grade: String(p?.grade || ''),
+              section: String(p?.section || ''),
+              points: pts,
+              updatedAt: p?.updated_at ?? null,
+            });
+          }
+        }
+
+        // 0b. Pre-index Winter cosmetics & cookies from global_data gamification_user_* docs so all sources stay hydrated
+        if (Array.isArray(gdRows)) {
+          for (const row of gdRows) {
+            const docId = String(row?.id || '');
+            const docData = row?.data;
+            if (!docData || typeof docData !== 'object') continue;
+            if (docId.startsWith('gamification_user_')) {
+              const rawUid = docId.slice('gamification_user_'.length);
+              const uid = aliasToCanonicalId.get(rawUid) || rawUid;
+              if (!winterProfileById.has(uid) && (docData.equippedBanner || docData.equippedBorder || docData.winterCookies || docData.badgesCount)) {
+                winterProfileById.set(uid, {
+                  cookiesCount: Math.max(0, Number(docData.winterCookies || 0)),
+                  equippedBanner: docData.equippedBanner ?? null,
+                  equippedBorder: docData.equippedBorder ?? null,
+                  badgesCount: Math.max(0, Number(docData.badgesCount || 0)),
+                  userName: docData.userName ? String(docData.userName) : undefined,
+                  userRole: docData.role ? String(docData.role).toLowerCase() : undefined,
+                });
+              }
+            }
+          }
+        }
+
+        // 1. Seed existing account XP store from user_profiles (strictly public fields)
+        if (Array.isArray(profRows)) {
+          for (const p of profRows) {
+            const canonicalId = String(p?.id || p?.uid || '').trim();
+            if (!canonicalId || canonicalId.startsWith('__probe_')) continue;
             const pts = Math.max(0, Number(p?.points || 0));
             if (pts <= 0) continue;
             const role = String(p?.role || 'student').toLowerCase().trim();
             const name = String(p?.name || 'Member').trim() || 'Member';
-            const wState = memoryWinterStates.get(canonicalId);
+            const wDb = winterProfileById.get(canonicalId);
+            const wMem = memoryWinterStates.get(canonicalId);
             allUsersMap.set(canonicalId, {
               userId: canonicalId,
               name,
@@ -3784,16 +3964,16 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
               avatar: '',
               xp: pts,
               currentStreak: 0,
-              winterCookies: wState?.cookiesCount || 0,
-              equippedBanner: wState?.equippedBanner || null,
-              equippedBorder: wState?.equippedBorder || null,
-              badgesCount: Object.keys(wState?.earnedWinterBadges || {}).length,
+              winterCookies: wDb?.cookiesCount ?? wMem?.cookiesCount ?? 0,
+              equippedBanner: wDb?.equippedBanner ?? wMem?.equippedBanner ?? null,
+              equippedBorder: wDb?.equippedBorder ?? wMem?.equippedBorder ?? null,
+              badgesCount: wDb?.badgesCount ?? Object.keys(wMem?.earnedWinterBadges || {}).length,
               updatedAt: p?.updated_at ?? null,
             });
           }
         }
 
-        // 2. Merge account XP store documents from global_data (gamification_user_* & school store)
+        // 2. Merge account XP store documents from global_data (gamification_user_* & school stores)
         if (Array.isArray(gdRows)) {
           for (const row of gdRows) {
             const docId = String(row?.id || '');
@@ -3817,7 +3997,23 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
           }
         }
 
-        // 4. Merge authoritative gamification_xp_ledger deltas
+        // 4. Normalize in-memory ledger aliases cleanly before merging DB ledger rows
+        ledgerSnapshot = ledgerSnapshot.map((l) => {
+          const canonUid = aliasToCanonicalId.get(l.userId) || l.userId;
+          const dir = profileDirectory.get(canonUid);
+          return canonUid !== l.userId || dir
+            ? {
+                ...l,
+                userId: canonUid,
+                userName: dir?.name || l.userName,
+                userRole: dir?.role || l.userRole,
+                grade: dir?.grade || l.grade,
+                section: dir?.section || l.section,
+              }
+            : l;
+        });
+
+        // 5. Merge authoritative gamification_xp_ledger deltas
         const ledRows = await ledRes.json().catch(() => []);
         if (Array.isArray(ledRows)) {
           const seenIds = new Set(ledgerSnapshot.map((l) => l.id));
@@ -3827,16 +4023,19 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
             if (!rawUid || rawUid.startsWith('__probe_')) continue;
             const uid = aliasToCanonicalId.get(rawUid) || rawUid;
             const existingUser = allUsersMap.get(uid);
-            const role = String(r.user_role || existingUser?.role || 'student').toLowerCase().trim();
-            const name = String(r.user_name || existingUser?.name || 'Member').trim() || 'Member';
+            const dir = profileDirectory.get(uid);
+            const wDb = winterProfileById.get(uid);
+            const wMem = memoryWinterStates.get(uid);
+            const role = String(dir?.role || r.user_role || existingUser?.role || 'student').toLowerCase().trim();
+            const name = String(dir?.name || r.user_name || existingUser?.name || 'Member').trim() || 'Member';
 
             ledgerSnapshot.push({
               id: String(r.id),
               userId: uid,
               userName: name,
               userRole: role,
-              grade: existingUser?.grade || '',
-              section: existingUser?.section || '',
+              grade: dir?.grade || existingUser?.grade || '',
+              section: dir?.section || existingUser?.section || '',
               house: existingUser?.house || '',
               avatar: existingUser?.avatar || '',
               sourceType: 'academic',
@@ -3847,21 +4046,20 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
             });
 
             if (!existingUser) {
-              const wState = memoryWinterStates.get(uid);
               allUsersMap.set(uid, {
                 userId: uid,
                 name,
                 role,
-                grade: '',
-                section: '',
+                grade: dir?.grade || '',
+                section: dir?.section || '',
                 house: '',
                 avatar: '',
-                xp: 0,
+                xp: Math.max(0, Number(dir?.points || 0)),
                 currentStreak: 0,
-                winterCookies: wState?.cookiesCount || 0,
-                equippedBanner: wState?.equippedBanner || null,
-                equippedBorder: wState?.equippedBorder || null,
-                badgesCount: Object.keys(wState?.earnedWinterBadges || {}).length,
+                winterCookies: wDb?.cookiesCount ?? wMem?.cookiesCount ?? 0,
+                equippedBanner: wDb?.equippedBanner ?? wMem?.equippedBanner ?? null,
+                equippedBorder: wDb?.equippedBorder ?? wMem?.equippedBorder ?? null,
+                badgesCount: wDb?.badgesCount ?? Object.keys(wMem?.earnedWinterBadges || {}).length,
                 updatedAt: r.created_at || null,
               });
             }

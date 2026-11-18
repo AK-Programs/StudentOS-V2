@@ -528,7 +528,10 @@ export async function loadAuthoritativeGamificationProfile(user: {
 /**
  * Save gamification profile locally and sync to server + Supabase
  */
-export async function saveGamificationProfile(profile: StudentGamificationStats): Promise<void> {
+export async function saveGamificationProfile(
+  profile: StudentGamificationStats,
+  syncContext?: { action?: string; label?: string; xpDelta?: number; uniqueItemId?: string; skipLedgerSync?: boolean }
+): Promise<void> {
   if (typeof window !== 'undefined') {
     const storageKey = `s_os_gamification_${profile.userId}`;
     localStorage.setItem(storageKey, JSON.stringify(profile));
@@ -569,7 +572,8 @@ export async function saveGamificationProfile(profile: StudentGamificationStats)
       body: JSON.stringify({
         userId: profile.userId,
         schoolId: profile.schoolId || 'default_school',
-        profile
+        profile,
+        syncContext,
       })
     });
   } catch (_) {}
@@ -801,18 +805,28 @@ export async function awardStudentXP(
   profile.updatedAt = new Date().toISOString();
 
   // 6. Save & sync authoritative XP ledger + dispatch UI reward toast event
-  await saveGamificationProfile(profile);
-  awardServerActionXp(
-    {
-      ...user,
-      role: user.role as UserRole | undefined,
-      section: user.section as SectionType | undefined,
-      house: user.house as HouseType | undefined,
-    },
+  const serverActionResult = await Promise.race([
+    awardServerActionXp(
+      {
+        ...user,
+        role: user.role as UserRole | undefined,
+        section: user.section as SectionType | undefined,
+        house: user.house as HouseType | undefined,
+      },
+      action,
+      options?.uniqueItemId,
+      { syncedFromClientProfile: true }
+    ).catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+  ]);
+
+  await saveGamificationProfile(profile, {
     action,
-    options?.uniqueItemId,
-    { syncedFromClientProfile: true }
-  ).catch(() => {});
+    label: rewardLabel,
+    xpDelta: xpToAdd,
+    uniqueItemId: options?.uniqueItemId,
+    skipLedgerSync: Boolean(serverActionResult?.success),
+  });
 
   if (typeof window !== 'undefined' && !options?.silent) {
     if (leveledUp) {
@@ -892,18 +906,14 @@ export async function fetchGamificationLeaderboard(
         mapped.level = row.level;
         mapped.levelTitle = row.levelTitle;
         mapped.currentStreak = row.currentStreak || 0;
-        mapped.longestStreak = Math.max(row.currentStreak || 0, myProfile.longestStreak);
+        mapped.longestStreak = row.currentStreak || 0;
         entriesMap.set(row.userId, mapped);
       });
     }
   } catch (_) {}
 
-  // 2. Include current student profile if student role
-  const normalizedRole = String(currentUser.role || 'student').toLowerCase();
-  if (normalizedRole === 'student' && !entriesMap.has(myProfile.userId)) {
-    entriesMap.set(myProfile.userId, myProfile);
-  }
-
+  // The leaderboard must be strictly authoritative from the server
+  // to ensure cross-account consistency without local storage artifacts.
   return Array.from(entriesMap.values()).sort((a, b) => {
     if (b.xp !== a.xp) return b.xp - a.xp;
     return b.currentStreak - a.currentStreak;

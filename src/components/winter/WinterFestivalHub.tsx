@@ -9,6 +9,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   Award,
   CheckCircle2,
@@ -47,7 +48,7 @@ import {
 import {
   AnimatedDialog,
   AnimatedSkeleton,
-  NumberTicker,
+  AnimatedTabs,
   TactileButton,
 } from '../ui/animatedComponents';
 import { XpLeaderboardPanel } from '../gamification/XpLeaderboardPanel';
@@ -59,16 +60,128 @@ import {
   ProfileCosmeticCard,
 } from './ProfileCosmeticRenderer';
 import { TargetedWinterSnowOverlay } from './WinterThemeLayer';
+import { SnowAccumulationCap } from './SnowAccumulationCap';
 import { getWinterBannerVisual, getWinterBorderVisual } from '../../lib/winterCosmetics';
 import { WINTER_AUDIO_ATTRIBUTIONS, winterAudio } from '../../lib/winterAudio';
+import { processNewWinterBadges, syncWinterBadgeBaseline } from '../../lib/winterBadgeEvents';
+import {
+  getItemRevealVariants,
+  getStaggerContainerVariants,
+  MOTION_DURATION,
+  MOTION_EASE,
+  useReducedMotionPreference,
+} from '../../lib/motionSystem';
 import {
   CandyCaneAccent,
   FrostShieldSvg,
   SantaGiftBoxSvg,
-  SnowCapAccent,
   SnowflakeVector,
   WinterCookieSvg,
 } from './WinterArtwork';
+
+/**
+ * Animates balance changes ONLY when a real transaction alters the value after initial mount.
+ * Never animates 0 -> N on refresh or initial view.
+ */
+const SmartWinterCounter: React.FC<{
+  value: number;
+  suffix?: string;
+  positiveTone?: string;
+  negativeTone?: string;
+}> = ({
+  value,
+  suffix = '',
+  positiveTone = 'bg-cyan-500/20 text-cyan-200 border-cyan-400/40',
+  negativeTone = 'bg-amber-500/20 text-amber-200 border-amber-400/40',
+}) => {
+  const prefersReduced = useReducedMotionPreference();
+  const prevValueRef = useRef<number | null>(null);
+  const [displayed, setDisplayed] = useState<number>(value);
+  const [deltaBadge, setDeltaBadge] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (prevValueRef.current === null) {
+      prevValueRef.current = value;
+      setDisplayed(value);
+      return;
+    }
+    const prev = prevValueRef.current;
+    if (prev === value) return;
+
+    const diff = value - prev;
+    prevValueRef.current = value;
+    setDeltaBadge(diff);
+
+    const hideTimer = window.setTimeout(() => setDeltaBadge(null), 2600);
+
+    if (prefersReduced) {
+      setDisplayed(value);
+      return () => window.clearTimeout(hideTimer);
+    }
+
+    const start = performance.now();
+    const duration = 420;
+    let rafId = 0;
+
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setDisplayed(Math.round(prev + diff * eased));
+      if (t < 1) {
+        rafId = requestAnimationFrame(tick);
+      }
+    };
+    rafId = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      window.clearTimeout(hideTimer);
+    };
+  }, [value, prefersReduced]);
+
+  return (
+    <span className="inline-flex items-center gap-2 flex-wrap">
+      <span className="tabular-nums font-mono">{displayed.toLocaleString('en-US')}</span>
+      <AnimatePresence>
+        {deltaBadge !== null && deltaBadge !== 0 && (
+          <motion.span
+            initial={prefersReduced ? { opacity: 1 } : { opacity: 0, y: 4, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={prefersReduced ? { opacity: 0 } : { opacity: 0, y: -4, scale: 0.92 }}
+            transition={{ duration: 0.2 }}
+            className={`px-1.5 py-0.5 rounded-md border text-[10px] font-mono font-bold leading-none ${
+              deltaBadge > 0 ? positiveTone : negativeTone
+            }`}
+          >
+            {deltaBadge > 0 ? `+${deltaBadge}` : deltaBadge}
+            {suffix ? ` ${suffix}` : ''}
+          </motion.span>
+        )}
+      </AnimatePresence>
+    </span>
+  );
+};
+
+function mergeWinterStateIntoStatus(
+  prev: WinterStatusResponse | null,
+  nextWinterState: WinterStatusResponse['winterState'] | undefined
+): WinterStatusResponse | null {
+  if (!prev || !nextWinterState) return prev;
+  const claimedSet = new Set(nextWinterState.claimedTaskIds || []);
+  const earnedMap = nextWinterState.earnedWinterBadges || {};
+  return {
+    ...prev,
+    winterState: nextWinterState,
+    tasks: (prev.tasks || []).map((t) => ({
+      ...t,
+      claimed: claimedSet.has(t.id),
+    })),
+    badges: (prev.badges || []).map((b) => ({
+      ...b,
+      unlockedAt: earnedMap[b.id] || b.unlockedAt || null,
+    })),
+  };
+}
 
 interface WinterHubProps {
   currentUser: UserProfile;
@@ -144,15 +257,32 @@ export const WinterDashboardBanner: React.FC<WinterHubProps> = ({
   const load = useCallback(async () => {
     if (!anyWinterVisible || !currentUser?.uid) return;
     const data = await fetchWinterStatus(currentUser);
-    if (data) setStatus(data);
-  }, [anyWinterVisible, currentUser]);
+    if (data) {
+      setStatus(data);
+      syncWinterBadgeBaseline(currentUser.uid, data.winterState?.earnedWinterBadges);
+      processNewWinterBadges({
+        userId: currentUser.uid,
+        earnedWinterBadges: data.winterState?.earnedWinterBadges,
+        badgesCatalog: data.badges,
+        showNotification,
+        silentOnFirstBaseline: true,
+      });
+    }
+  }, [anyWinterVisible, currentUser, showNotification]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   useEffect(() => {
-    const onSync = () => load();
+    const onSync = (e: Event) => {
+      const detail = (e as CustomEvent<{ winterState?: WinterStatusResponse['winterState'] }>).detail;
+      if (detail?.winterState) {
+        setStatus((prev) => mergeWinterStateIntoStatus(prev, detail.winterState));
+        return;
+      }
+      void load();
+    };
     window.addEventListener('veylentra-winter-updated', onSync);
     return () => window.removeEventListener('veylentra-winter-updated', onSync);
   }, [load]);
@@ -162,7 +292,6 @@ export const WinterDashboardBanner: React.FC<WinterHubProps> = ({
   return (
     <div className="relative rounded-2xl border border-sky-400/30 bg-slate-900/85 text-white overflow-hidden shadow-sm">
       <TargetedWinterSnowOverlay variant="hero" />
-      <SnowCapAccent />
       <div className="relative z-10 p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="flex items-start gap-3.5 min-w-0">
           <div className="w-11 h-11 rounded-xl bg-sky-500/15 border border-sky-400/30 flex items-center justify-center shrink-0">
@@ -273,6 +402,7 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
   currentUser,
   showNotification,
 }) => {
+  const prefersReduced = useReducedMotionPreference();
   const tasksAccess = useFeatureAccess('winter_festival_tasks', currentUser);
   const badgesAccess = useFeatureAccess('winter_badges', currentUser);
   const santaAccess = useFeatureAccess('winter_santa_gifts', currentUser);
@@ -311,6 +441,7 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
   const [ledgerLoading, setLedgerLoading] = useState<boolean>(false);
   const [frostXpTransactions, setFrostXpTransactions] = useState<FrostXpTransaction[]>([]);
   const [ambientOn, setAmbientOn] = useState<boolean>(() => winterAudio.isAmbientPlaying());
+  const [collectiblesFilter, setCollectiblesFilter] = useState<'all' | 'banners' | 'borders' | 'badges' | 'history'>('all');
 
   const isSuperAdmin = isSuperAdminRole(currentUser?.role);
   const isFacultyRole = ['teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes(
@@ -328,6 +459,14 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
         if (Array.isArray(data.winterState?.frostXpTransactions)) {
           setFrostXpTransactions(data.winterState.frostXpTransactions);
         }
+        syncWinterBadgeBaseline(currentUser?.uid, data.winterState?.earnedWinterBadges);
+        processNewWinterBadges({
+          userId: currentUser?.uid,
+          earnedWinterBadges: data.winterState?.earnedWinterBadges,
+          badgesCatalog: data.badges,
+          showNotification,
+          silentOnFirstBaseline: true,
+        });
       } else if (!hasStatusRef.current) {
         setStatusError('Could not load Winter Festival status. Please retry.');
       }
@@ -338,14 +477,21 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [currentUser]);
+  }, [currentUser, showNotification]);
 
   useEffect(() => {
     loadWinterData();
   }, [loadWinterData]);
 
   useEffect(() => {
-    const onSync = () => loadWinterData();
+    const onSync = (e: Event) => {
+      const detail = (e as CustomEvent<{ winterState?: WinterStatusResponse['winterState'] }>).detail;
+      if (detail?.winterState) {
+        setStatus((prev) => mergeWinterStateIntoStatus(prev, detail.winterState));
+        return;
+      }
+      void loadWinterData();
+    };
     window.addEventListener('veylentra-winter-updated', onSync);
     window.addEventListener('veylentra-cosmetics-updated', onSync);
     return () => {
@@ -373,22 +519,50 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
   };
 
   const handleClaimTask = async (task: WinterTaskItem) => {
+    if (busyTaskId) return;
     setBusyTaskId(task.id);
-    const res = await claimWinterTask(currentUser, task.id);
-    setBusyTaskId(null);
-    if (!res.ok || !res.data?.success) {
-      showNotification?.(res.data?.error || 'Could not claim Winter task yet.', 'error');
-      return;
+    try {
+      const res = await claimWinterTask(currentUser, task.id);
+      if (!res.ok || !res.data?.success) {
+        showNotification?.(res.data?.error || 'Could not claim Winter task yet.', 'error');
+        return;
+      }
+
+      const nextWinterState = res.data.winterState as WinterStatusResponse['winterState'] | undefined;
+      if (nextWinterState) {
+        setStatus((prev) => mergeWinterStateIntoStatus(prev, nextWinterState));
+        if (Array.isArray(nextWinterState.frostXpTransactions)) {
+          setFrostXpTransactions(nextWinterState.frostXpTransactions);
+        }
+        processNewWinterBadges({
+          userId: currentUser?.uid,
+          earnedWinterBadges: nextWinterState.earnedWinterBadges,
+          badgesCatalog: status?.badges,
+          showNotification,
+          silentOnFirstBaseline: false,
+        });
+      }
+
+      const frostMsg = (task.frostXpReward || 0) > 0 ? ` & +${task.frostXpReward} Frost XP` : '';
+      showNotification?.(`Claimed task reward (+${task.xpReward} XP${frostMsg})!`, 'success');
+      if ((task.frostXpReward || 0) > 0) {
+        winterAudio.playFrostXpEarned();
+      }
+
+      window.dispatchEvent(
+        new CustomEvent('veylentra-winter-updated', { detail: { winterState: nextWinterState, taskId: task.id } })
+      );
+      window.dispatchEvent(
+        new CustomEvent('veylentra-cosmetics-updated', { detail: { winterState: nextWinterState } })
+      );
+      window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
+
+      if (!nextWinterState) {
+        await loadWinterData();
+      }
+    } finally {
+      setBusyTaskId(null);
     }
-    const frostMsg = (task.frostXpReward || 0) > 0 ? ` & +${task.frostXpReward} Frost XP` : '';
-    showNotification?.(`Claimed task reward (+${task.xpReward} XP${frostMsg})!`, 'success');
-    if ((task.frostXpReward || 0) > 0) {
-      winterAudio.playFrostXpEarned();
-    }
-    await loadWinterData();
-    window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
-    window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated'));
-    window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
   };
 
   const handleQuizSubmit = async (e: React.FormEvent) => {
@@ -409,7 +583,11 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
     if (res.data.passed) {
       winterAudio.playFrostXpEarned();
       showNotification?.('Winter Knowledge Check passed! You can now claim the task reward.', 'success');
-      await loadWinterData();
+      if (res.data.winterState) {
+        setStatus((prev) => mergeWinterStateIntoStatus(prev, res.data.winterState));
+      } else {
+        await loadWinterData();
+      }
     }
   };
 
@@ -424,9 +602,14 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
     setPreviewBannerId(null);
     winterAudio.playBannerEquipped();
     showNotification?.(bannerId ? 'Winter profile banner equipped!' : 'Profile banner unequipped.', 'success');
-    await loadWinterData();
-    window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
-    window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated'));
+    const nextState = res.data.winterState;
+    if (nextState) {
+      setStatus((prev) => mergeWinterStateIntoStatus(prev, nextState));
+    } else {
+      await loadWinterData();
+    }
+    window.dispatchEvent(new CustomEvent('veylentra-winter-updated', { detail: { winterState: nextState } }));
+    window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated', { detail: { winterState: nextState } }));
   };
 
   const handleEquipBorder = async (borderId: string | null) => {
@@ -440,9 +623,14 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
     setPreviewBorderId(null);
     winterAudio.playBorderEquipped();
     showNotification?.(borderId ? 'Winter profile border equipped!' : 'Profile border unequipped.', 'success');
-    await loadWinterData();
-    window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
-    window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated'));
+    const nextState = res.data.winterState;
+    if (nextState) {
+      setStatus((prev) => mergeWinterStateIntoStatus(prev, nextState));
+    } else {
+      await loadWinterData();
+    }
+    window.dispatchEvent(new CustomEvent('veylentra-winter-updated', { detail: { winterState: nextState } }));
+    window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated', { detail: { winterState: nextState } }));
   };
 
   const handleConfirmPurchase = async (adminGrant: boolean = false) => {
@@ -469,9 +657,17 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
         : `Unlocked ${item.name}! Click Equip to display it on your profile.`,
       'success'
     );
-    await loadWinterData();
-    window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
-    window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated'));
+    const nextState = res.data.winterState;
+    if (nextState) {
+      setStatus((prev) => mergeWinterStateIntoStatus(prev, nextState));
+      if (Array.isArray(nextState.frostXpTransactions)) {
+        setFrostXpTransactions(nextState.frostXpTransactions);
+      }
+    } else {
+      await loadWinterData();
+    }
+    window.dispatchEvent(new CustomEvent('veylentra-winter-updated', { detail: { winterState: nextState } }));
+    window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated', { detail: { winterState: nextState } }));
   };
 
   const handleCookieExchange = async (opt: CookieExchangeOption) => {
@@ -489,8 +685,23 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
         : `Exchanged ${opt.cookieCost} Cookies for +${opt.aiBonusGrant} Daily AI Query!`,
       'success'
     );
-    await loadWinterData();
-    window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
+    const nextState = res.data.winterState;
+    if (nextState) {
+      setStatus((prev) => mergeWinterStateIntoStatus(prev, nextState));
+      if (Array.isArray(nextState.frostXpTransactions)) {
+        setFrostXpTransactions(nextState.frostXpTransactions);
+      }
+      processNewWinterBadges({
+        userId: currentUser?.uid,
+        earnedWinterBadges: nextState.earnedWinterBadges,
+        badgesCatalog: status?.badges,
+        showNotification,
+        silentOnFirstBaseline: false,
+      });
+    } else {
+      await loadWinterData();
+    }
+    window.dispatchEvent(new CustomEvent('veylentra-winter-updated', { detail: { winterState: nextState } }));
   };
 
   const anyPreview =
@@ -505,7 +716,12 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
   const isPreviewingCosmetic = previewBannerId !== null || previewBorderId !== null;
 
   return (
-    <div className="space-y-6 overflow-x-hidden">
+    <motion.div
+      initial={prefersReduced ? false : { opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: prefersReduced ? 0 : MOTION_DURATION.normal, ease: MOTION_EASE.easeOutExpo }}
+      className="space-y-6 overflow-x-hidden"
+    >
       {anyPreview && (
         <div className="p-3.5 rounded-xl border border-amber-500/40 bg-amber-500/15 text-xs text-amber-800 dark:text-amber-200 flex items-center gap-2">
           <ShieldAlert className="w-4 h-4 shrink-0" />
@@ -517,8 +733,7 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
 
       <section className="relative rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-900 text-white overflow-hidden shadow-sm">
         <TargetedWinterSnowOverlay variant="hero" />
-        <SnowCapAccent />
-        <div className="relative z-10 p-4 sm:p-6 space-y-5">
+        <div className="relative z-10 p-3.5 sm:p-6 space-y-5">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             <div className="space-y-1.5 min-w-0">
               <div className="flex items-center gap-2.5 flex-wrap">
@@ -539,9 +754,6 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
                 onClick={() => {
                   const next = winterAudio.toggleAmbient();
                   setAmbientOn(next);
-                  if (!next && winterAudio.isAmbientPlaying() === false) {
-                    // Only show notice if user tried enabling while muted
-                  }
                 }}
                 className={`min-h-[44px] px-3 py-2 rounded-xl border text-xs font-semibold flex items-center gap-2 transition-colors cursor-pointer ${
                   ambientOn
@@ -596,9 +808,18 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="grid grid-cols-1 min-[375px]:grid-cols-2 lg:grid-cols-5 gap-3">
-                {/* Isolated Frost XP Card */}
-                <div className="rounded-xl border border-cyan-400/35 bg-slate-950/70 p-3.5 flex flex-col justify-between gap-2">
+              <motion.div
+                variants={getStaggerContainerVariants(prefersReduced, 0.04)}
+                initial="hidden"
+                animate="visible"
+                className="grid grid-cols-1 min-[375px]:grid-cols-2 lg:grid-cols-5 gap-3"
+              >
+                {/* Isolated Frost XP Card with organic snow cap */}
+                <motion.div
+                  variants={getItemRevealVariants(prefersReduced, 8)}
+                  className="relative rounded-xl border border-cyan-400/35 bg-slate-950/70 p-3.5 pt-4 flex flex-col justify-between gap-2 overflow-hidden"
+                >
+                  <SnowAccumulationCap variant="compact" />
                   <div>
                     <p className="text-[11px] text-cyan-300 font-semibold flex items-center justify-between gap-1">
                       <span>Frost XP Balance</span>
@@ -612,39 +833,54 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
                     </p>
                     <div className="mt-1 flex items-center gap-2 text-xl font-bold font-mono tabular-nums text-cyan-200">
                       <Coins className="w-5 h-5 text-cyan-300 shrink-0" />
-                      <NumberTicker value={status.winterState.frostXp || 0} />
+                      <SmartWinterCounter value={status.winterState.frostXp || 0} suffix="Frost XP" />
                     </div>
                   </div>
                   <p className="text-[10px] text-slate-400">Seasonal currency · Separate from Scholar XP</p>
-                </div>
+                </motion.div>
 
-                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5">
+                <motion.div
+                  variants={getItemRevealVariants(prefersReduced, 8)}
+                  className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5"
+                >
                   <p className="text-[11px] text-slate-400">Winter Cookies</p>
                   <div className="mt-1 flex items-center gap-2 text-xl font-bold font-mono tabular-nums">
                     <WinterCookieSvg size={20} />
-                    <NumberTicker value={status.winterState.cookiesCount} />
+                    <SmartWinterCounter
+                      value={status.winterState.cookiesCount}
+                      positiveTone="bg-emerald-500/20 text-emerald-200 border-emerald-400/40"
+                    />
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">Exchangeable below</p>
-                </div>
+                </motion.div>
 
-                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5">
+                <motion.div
+                  variants={getItemRevealVariants(prefersReduced, 8)}
+                  className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5"
+                >
                   <p className="text-[11px] text-slate-400">Streak Freeze Shields</p>
                   <div className="mt-1 flex items-center gap-2 text-xl font-bold font-mono tabular-nums">
                     <FrostShieldSvg size={20} />
                     <span>{status.winterState.streakShields} / 3</span>
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">Protects study streaks</p>
-                </div>
+                </motion.div>
 
-                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5">
+                <motion.div
+                  variants={getItemRevealVariants(prefersReduced, 8)}
+                  className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5"
+                >
                   <p className="text-[11px] text-slate-400">Bonus AI Queries Today</p>
                   <div className="mt-1 text-xl font-bold font-mono tabular-nums text-sky-300">
                     +{status.winterState.aiBonusCreditsToday} / 5
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">Orion daily study boost</p>
-                </div>
+                </motion.div>
 
-                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5 min-[375px]:col-span-2 lg:col-span-1">
+                <motion.div
+                  variants={getItemRevealVariants(prefersReduced, 8)}
+                  className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5 min-[375px]:col-span-2 lg:col-span-1"
+                >
                   <p className="text-[11px] text-slate-400">Winter Collectibles</p>
                   <div className="mt-1 text-xl font-bold font-mono tabular-nums text-amber-300">
                     {Object.keys(status.winterState.earnedWinterBadges || {}).length} / {status.badges.length}
@@ -653,12 +889,13 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
                     {(status.winterState.unlockedBanners || []).length} Banners ·{' '}
                     {(status.winterState.unlockedBorders || []).length} Borders
                   </p>
-                </div>
-              </div>
+                </motion.div>
+              </motion.div>
 
               {/* Cookie Exchange Bar */}
               {Array.isArray(status.cookieExchangeOptions) && status.cookieExchangeOptions.length > 0 && (
-                <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="relative rounded-xl border border-slate-800 bg-slate-950/60 p-3.5 pt-4 flex flex-col md:flex-row md:items-center justify-between gap-3 overflow-hidden">
+                  <SnowAccumulationCap variant="compact" />
                   <div className="space-y-0.5 min-w-0">
                     <p className="text-xs font-bold text-white flex items-center gap-1.5">
                       <WinterCookieSvg size={15} />
@@ -694,7 +931,8 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
       </section>
 
       {tasksAccess.accessible && status && (
-        <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 p-5 space-y-4">
+        <section className="relative rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 p-3.5 sm:p-5 pt-5 space-y-4 overflow-hidden">
+          <SnowAccumulationCap variant="card" />
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
               <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
@@ -707,6 +945,7 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
             <TactileButton
               variant="outline"
               size="sm"
+              className="min-h-[44px]"
               onClick={() => {
                 setQuizFeedback(null);
                 setQuizOpen(true);
@@ -721,10 +960,17 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
             {status.tasks.map((task) => {
               const prog = getTaskProgress(task, status);
               const pct = task.claimed ? 100 : Math.min(100, Math.round((prog.current / prog.target) * 100));
+              const isBusy = busyTaskId === task.id;
               return (
-                <div
+                <motion.div
                   key={task.id}
-                  className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 p-4 flex flex-col justify-between gap-3"
+                  whileHover={prefersReduced ? undefined : { y: -1 }}
+                  transition={{ duration: 0.16, ease: MOTION_EASE.easeOutCubic }}
+                  className={`rounded-xl border p-4 flex flex-col justify-between gap-3 transition-colors ${
+                    task.claimed
+                      ? 'border-emerald-500/35 bg-emerald-500/[0.04] dark:bg-emerald-950/20'
+                      : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50'
+                  }`}
                 >
                   <div className="space-y-1.5">
                     <div className="flex items-start justify-between gap-2">
@@ -744,9 +990,11 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
                         </span>
                       </div>
                       <div className="h-1.5 w-full rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-sky-500 transition-all duration-300"
-                          style={{ width: `${pct}%` }}
+                        <motion.div
+                          className={`h-full rounded-full ${task.claimed ? 'bg-emerald-500' : 'bg-sky-500'}`}
+                          initial={false}
+                          animate={{ width: `${pct}%` }}
+                          transition={{ duration: prefersReduced ? 0 : MOTION_DURATION.reveal, ease: MOTION_EASE.easeOutExpo }}
                         />
                       </div>
                     </div>
@@ -757,6 +1005,7 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
                       <TactileButton
                         variant="secondary"
                         size="sm"
+                        className="min-h-[44px]"
                         onClick={() => {
                           setQuizFeedback(null);
                           setQuizOpen(true);
@@ -767,26 +1016,29 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
                     )}
 
                     {task.claimed ? (
-                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                      <motion.span
+                        initial={prefersReduced ? false : { scale: 0.9, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={prefersReduced ? { duration: 0 } : MOTION_EASE.springReveal}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-xs font-semibold text-emerald-600 dark:text-emerald-400"
+                      >
                         <CheckCircle2 className="w-4 h-4" />
                         Claimed
-                      </span>
+                      </motion.span>
                     ) : (
                       <TactileButton
                         variant={prog.eligible ? 'primary' : 'outline'}
                         size="sm"
-                        disabled={!prog.eligible || busyTaskId === task.id}
+                        className="min-h-[44px]"
+                        disabled={!prog.eligible || Boolean(busyTaskId)}
                         onClick={() => handleClaimTask(task)}
+                        icon={isBusy ? <RotateCw className="w-3.5 h-3.5 animate-spin" /> : undefined}
                       >
-                        {busyTaskId === task.id
-                          ? 'Claiming...'
-                          : prog.eligible
-                          ? 'Claim Reward'
-                          : 'In Progress'}
+                        {isBusy ? 'Claiming...' : prog.eligible ? 'Claim Reward' : 'In Progress'}
                       </TactileButton>
                     )}
                   </div>
-                </div>
+                </motion.div>
               );
             })}
           </div>
@@ -794,7 +1046,8 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
       )}
 
       {badgesAccess.accessible && status && (
-        <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 p-4 sm:p-5 space-y-6">
+        <section className="relative rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 p-3.5 sm:p-5 pt-5 space-y-6 overflow-hidden">
+          <SnowAccumulationCap variant="card" />
           {/* Active Stackable Cosmetic Loadout Preview (Banner behind avatar + Border around avatar perimeter) */}
           <div className="space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -857,9 +1110,25 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
               badgeCount={Object.keys(status.winterState.earnedWinterBadges || {}).length}
               subtitle={`${status.winterState.frostXp || 0} Frost XP · ${status.winterState.cookiesCount || 0} Cookies`}
             />
+
+            <div className="overflow-x-auto pb-1">
+              <AnimatedTabs
+                layoutId="winter-collectibles-tabs"
+                activeTab={collectiblesFilter}
+                onTabChange={(id) => setCollectiblesFilter(id as typeof collectiblesFilter)}
+                tabs={[
+                  { id: 'all', label: 'All Collectibles' },
+                  { id: 'banners', label: 'Banners', badge: (status.banners || []).length },
+                  { id: 'borders', label: 'Borders', badge: (status.borders || []).length },
+                  { id: 'badges', label: 'Badges', badge: (status.badges || []).length },
+                  { id: 'history', label: 'History' },
+                ]}
+              />
+            </div>
           </div>
 
           {/* 1. Winter Profile Banners (Background artwork behind profile avatar & header) */}
+          {(collectiblesFilter === 'all' || collectiblesFilter === 'banners') && (
           <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div>
@@ -990,8 +1259,10 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
               })}
             </div>
           </div>
+          )}
 
           {/* 2. Winter Profile Borders (Contour-aligned perimeter decorations) */}
+          {(collectiblesFilter === 'all' || collectiblesFilter === 'borders') && (
           <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div>
@@ -1120,9 +1391,11 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
               })}
             </div>
           </div>
+          )}
 
           {/* 3. Winter Badges (Owned vs Locked separation + timestamps + progress) */}
-          <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3">
+          {(collectiblesFilter === 'all' || collectiblesFilter === 'badges') && (
+          <div id="winter-badges-showcase" className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3 scroll-mt-6">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div>
                 <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
@@ -1188,8 +1461,10 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
               })}
             </div>
           </div>
+          )}
 
           {/* 4. Reward History */}
+          {(collectiblesFilter === 'all' || collectiblesFilter === 'history') && (
           <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3">
             <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
               Claimed Santa Gifts, Shop &amp; Spin Rewards
@@ -1281,6 +1556,7 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
               );
             })()}
           </div>
+          )}
         </section>
       )}
 
@@ -1541,6 +1817,6 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
         onSpinComplete={loadWinterData}
         isPreviewOnly={wheelAccess.isPreviewOnly}
       />
-    </div>
+    </motion.div>
   );
 };

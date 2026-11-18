@@ -50,6 +50,8 @@ import {
 } from '../../lib/winterSpinPhysics';
 import { AnimatedDialog, TactileButton } from '../ui/animatedComponents';
 import { FrostShieldSvg, WinterCookieSvg } from './WinterArtwork';
+import { WinterSnowSystem } from './WinterSnowSystem';
+import { MOTION_EASE, MOTION_DURATION } from '../../lib/motionSystem';
 
 interface SpinWheelModalProps {
   isOpen: boolean;
@@ -488,6 +490,11 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
       maxWidth="max-w-2xl"
     >
       <div className="space-y-5 relative overflow-x-hidden">
+        {!prefersReduced && (
+          <div className="absolute inset-0 pointer-events-none overflow-hidden opacity-60 z-0">
+            <WinterSnowSystem density="low" variant="subtle" />
+          </div>
+        )}
         <ConfettiBurst
           active={Boolean(resultReward)}
           isLegendary={resultReward?.rarity === 'legendary' || resultReward?.rarity === 'insane' || resultReward?.rarity === 'jackpot'}
@@ -739,6 +746,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
               <motion.div
                 initial={prefersReduced ? { opacity: 0 } : { opacity: 0, scale: 0.94, y: 10 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
+                transition={{ duration: prefersReduced ? 0.14 : MOTION_DURATION.reveal, ease: MOTION_EASE.easeOutExpo }}
                 className="rounded-2xl border-2 border-emerald-400/60 bg-gradient-to-br from-emerald-950/80 via-slate-900 to-sky-950/70 p-5 space-y-3 shadow-xl shadow-emerald-500/10"
               >
                 <div className="flex items-center justify-between text-xs font-black uppercase tracking-wider text-emerald-300">

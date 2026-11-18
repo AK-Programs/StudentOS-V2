@@ -1,23 +1,109 @@
 {
   "version": 2,
   "skills": {
+    "60fps-animation": {
+      "source": "iart-ai/web-animation-skills",
+      "commit": "ed3a045192679b24d32090ee7a983871311ababd",
+      "sourceType": "github",
+      "skillPath": "skills/60fps-animation/SKILL.md",
+      "computedHash": "3783bf5371256b4a496fb3a3ee3e345a66887dc9141091b49984e47bad822811",
+      "installMode": "copy"
+    },
+    "accessible-animation": {
+      "source": "iart-ai/web-animation-skills",
+      "commit": "ed3a045192679b24d32090ee7a983871311ababd",
+      "sourceType": "github",
+      "skillPath": "skills/accessible-animation/SKILL.md",
+      "computedHash": "396a43fbb461daa4cb93a2795910459ae96c82937f965906b2b84f2703aef76c",
+      "installMode": "copy"
+    },
+    "animate-ui": {
+      "source": "imskyleen/animate-ui",
+      "commit": "9873c628afdcdb030e74dc2930774a2aa473bd39",
+      "sourceType": "github",
+      "skillPath": "skills/animate-ui/SKILL.md",
+      "computedHash": "44b0004328b1e03f9b6f03f0bef8f100c937b6858cfe893174c0da087fb97fa6",
+      "installMode": "copy"
+    },
+    "ascii-animation": {
+      "source": "iart-ai/web-animation-skills",
+      "commit": "ed3a045192679b24d32090ee7a983871311ababd",
+      "sourceType": "github",
+      "skillPath": "skills/ascii-animation/SKILL.md",
+      "computedHash": "b8b5f56046c43c82c3300d46c4295014c590bc340cb9351cfbe89f41f0a8f2b7",
+      "installMode": "copy"
+    },
+    "glassmorphism": {
+      "source": "iart-ai/web-animation-skills",
+      "commit": "ed3a045192679b24d32090ee7a983871311ababd",
+      "sourceType": "github",
+      "skillPath": "skills/glassmorphism/SKILL.md",
+      "computedHash": "52c31c76c1ce3c52485ed43c3dc36796c833972a0f916215392c2b611209a2dc",
+      "installMode": "copy"
+    },
+    "gsap-web": {
+      "source": "iart-ai/web-animation-skills",
+      "commit": "ed3a045192679b24d32090ee7a983871311ababd",
+      "sourceType": "github",
+      "skillPath": "skills/gsap-web/SKILL.md",
+      "computedHash": "acd6638268c8bf2d9b0eb935472659dfbc0f072a5237d486e462235b32045177",
+      "installMode": "copy"
+    },
+    "lottie-animation": {
+      "source": "iart-ai/web-animation-skills",
+      "commit": "ed3a045192679b24d32090ee7a983871311ababd",
+      "sourceType": "github",
+      "skillPath": "skills/lottie-animation/SKILL.md",
+      "computedHash": "1d3c9dac2ff3e7e54f1fb5a622ed5667992efab37966256a1906276d86b254b9",
+      "installMode": "copy"
+    },
+    "micro-interaction": {
+      "source": "iart-ai/web-animation-skills",
+      "commit": "ed3a045192679b24d32090ee7a983871311ababd",
+      "sourceType": "github",
+      "skillPath": "skills/micro-interaction/SKILL.md",
+      "computedHash": "35fe04bed325e1f7cdbf7d25e7327f33b868b854a999eaa0d523a0899331d071",
+      "installMode": "copy"
+    },
+    "page-transition-animation": {
+      "source": "iart-ai/web-animation-skills",
+      "commit": "ed3a045192679b24d32090ee7a983871311ababd",
+      "sourceType": "github",
+      "skillPath": "skills/page-transition-animation/SKILL.md",
+      "computedHash": "23248658c4bbae44a1a11a66a350dffd2cb97a20ebca20dca9369ec63365ef78",
+      "installMode": "copy"
+    },
     "particle-system": {
       "source": "iart-ai/webgl-animation-skills",
+      "commit": "0041933813688c357804f7b13dcb85095c5a3210",
       "sourceType": "github",
       "skillPath": "skills/particle-system/SKILL.md",
-      "computedHash": "e901340854fb896307236638e7333ac23c21483c6cdf79613daec658169f64b7"
+      "computedHash": "e901340854fb896307236638e7333ac23c21483c6cdf79613daec658169f64b7",
+      "installMode": "copy"
     },
     "shader-glsl": {
       "source": "iart-ai/webgl-animation-skills",
+      "commit": "0041933813688c357804f7b13dcb85095c5a3210",
       "sourceType": "github",
       "skillPath": "skills/shader-glsl/SKILL.md",
-      "computedHash": "916275255903d5b259a36ef5d71ba010629e37d61325c0cc52b8e2d462c9ef92"
+      "computedHash": "916275255903d5b259a36ef5d71ba010629e37d61325c0cc52b8e2d462c9ef92",
+      "installMode": "copy"
+    },
+    "svg-animation": {
+      "source": "iart-ai/web-animation-skills",
+      "commit": "ed3a045192679b24d32090ee7a983871311ababd",
+      "sourceType": "github",
+      "skillPath": "skills/svg-animation/SKILL.md",
+      "computedHash": "cfcf1a801009db1ee4d5141c749acbf6c5eff23534610c4ac3c87c16580809df",
+      "installMode": "copy"
     },
     "threejs-animation": {
       "source": "iart-ai/webgl-animation-skills",
+      "commit": "0041933813688c357804f7b13dcb85095c5a3210",
       "sourceType": "github",
       "skillPath": "skills/threejs-animation/SKILL.md",
-      "computedHash": "0ba8eea2da421691a047a1a3e4b4d328f513e5a7685edd3da7674b69895afc78"
+      "computedHash": "0ba8eea2da421691a047a1a3e4b4d328f513e5a7685edd3da7674b69895afc78",
+      "installMode": "copy"
     }
   }
 }

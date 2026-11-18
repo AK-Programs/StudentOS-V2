@@ -105,43 +105,92 @@ function notifyListeners() {
   });
 }
 
-export async function buildAuthHeadersForUser(user?: Partial<UserProfile> | null): Promise<Record<string, string>> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
+let cachedSessionToken: { token: string; expiresAtMs: number } | null = null;
+let inflightSessionPromise: Promise<string | undefined> | null = null;
+
+async function getFastAccessToken(): Promise<string | undefined> {
+  const nowMs = Date.now();
+  if (cachedSessionToken && cachedSessionToken.expiresAtMs > nowMs + 60_000) {
+    return cachedSessionToken.token;
+  }
+  if (inflightSessionPromise) {
+    return inflightSessionPromise;
+  }
+
   const withTimeout = <T,>(promise: Promise<T>, ms: number, fallback: T): Promise<T> =>
     Promise.race([
       promise,
       new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
     ]);
 
-  try {
-    const sessionRes = await withTimeout(
-      supabase.auth.getSession().catch(() => ({ data: { session: null } } as any)),
-      2000,
-      { data: { session: null } } as any
-    );
-    const session = sessionRes?.data?.session || null;
-    let token: string | undefined = session?.access_token;
-    const expiresAt = session?.expires_at;
-    const nowMs = Date.now();
-    const isExpired = expiresAt ? expiresAt * 1000 <= nowMs : false;
-    const isNearExpiry = expiresAt ? expiresAt * 1000 < nowMs + 60000 : false;
-
-    if (session && isNearExpiry) {
-      const refreshRes = await withTimeout(
-        supabase.auth.refreshSession().catch(() => ({ data: { session: null }, error: true } as any)),
-        2000,
-        { data: { session: null }, error: true } as any
+  inflightSessionPromise = (async () => {
+    try {
+      const sessionRes = await withTimeout(
+        supabase.auth.getSession().catch(() => ({ data: { session: null } } as any)),
+        600,
+        { data: { session: null } } as any
       );
-      if (!refreshRes?.error && refreshRes?.data?.session?.access_token) {
-        token = refreshRes.data.session.access_token;
-      } else if (isExpired) {
-        token = undefined;
-      }
-    }
+      const session = sessionRes?.data?.session || null;
+      let token: string | undefined = session?.access_token;
+      const expiresAtMs = session?.expires_at ? Number(session.expires_at) * 1000 : nowMs + 300_000;
+      const isExpired = session?.expires_at ? expiresAtMs <= nowMs : false;
+      const isNearExpiry = session?.expires_at ? expiresAtMs < nowMs + 60_000 : false;
 
-    if (token && (!isExpired || token !== session?.access_token)) {
+      if (session && isExpired) {
+        const refreshRes = await withTimeout(
+          supabase.auth.refreshSession().catch(() => ({ data: { session: null }, error: true } as any)),
+          900,
+          { data: { session: null }, error: true } as any
+        );
+        if (!refreshRes?.error && refreshRes?.data?.session?.access_token) {
+          token = refreshRes.data.session.access_token;
+          const nextExp = refreshRes.data.session.expires_at
+            ? Number(refreshRes.data.session.expires_at) * 1000
+            : nowMs + 300_000;
+          cachedSessionToken = { token, expiresAtMs: nextExp };
+          return token;
+        }
+        cachedSessionToken = null;
+        return undefined;
+      }
+
+      if (session && isNearExpiry) {
+        // Return valid token immediately and refresh quietly in background
+        void supabase.auth.refreshSession().then((refreshRes) => {
+          const nextSess = refreshRes?.data?.session;
+          if (nextSess?.access_token) {
+            cachedSessionToken = {
+              token: nextSess.access_token,
+              expiresAtMs: nextSess.expires_at ? Number(nextSess.expires_at) * 1000 : Date.now() + 300_000,
+            };
+          }
+        }).catch(() => {});
+      }
+
+      if (token) {
+        cachedSessionToken = { token, expiresAtMs };
+        return token;
+      }
+      cachedSessionToken = null;
+      return undefined;
+    } catch {
+      return undefined;
+    } finally {
+      inflightSessionPromise = null;
+    }
+  })();
+
+  return inflightSessionPromise;
+}
+
+export async function buildAuthHeadersForUser(user?: Partial<UserProfile> | null): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  try {
+    const token = await getFastAccessToken();
+    if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
   } catch (_) {}

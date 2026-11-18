@@ -26,6 +26,8 @@ import { fetchAIUsageStatus } from '../../lib/aiUsageManager';
 import { AnimatedDialog, TactileButton } from '../ui/animatedComponents';
 import { FrostShieldSvg, WinterCookieSvg } from './WinterArtwork';
 import { Santa3DCanvas, SantaScenePhase } from './Santa3DCanvas';
+import { WinterSnowSystem } from './WinterSnowSystem';
+import { MOTION_EASE, MOTION_DURATION } from '../../lib/motionSystem';
 
 interface SantaGiftModalProps {
   isOpen: boolean;
@@ -54,44 +56,10 @@ function mulberry32(seed: number) {
 }
 
 const FallingSnowOverlay: React.FC<{ reduced?: boolean }> = ({ reduced = false }) => {
-  const flakes = useMemo(() => {
-    const rng = mulberry32(202612);
-    return Array.from({ length: 16 }).map((_, i) => ({
-      id: i,
-      left: `${(rng() * 98 + 1).toFixed(1)}%`,
-      size: 3 + rng() * 3.5,
-      duration: 4.5 + rng() * 4.5,
-      delay: rng() * 4,
-      opacity: 0.25 + rng() * 0.45,
-    }));
-  }, []);
-
   if (reduced) return null;
-
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden z-0">
-      {flakes.map((f) => (
-        <motion.div
-          key={f.id}
-          initial={{ y: -10, opacity: 0 }}
-          animate={{ y: '105%', opacity: [0, f.opacity, f.opacity, 0] }}
-          transition={{
-            duration: f.duration,
-            repeat: Infinity,
-            delay: f.delay,
-            ease: 'linear',
-          }}
-          style={{
-            position: 'absolute',
-            left: f.left,
-            width: f.size,
-            height: f.size,
-            borderRadius: '50%',
-            backgroundColor: '#e0f2fe',
-            filter: 'blur(0.5px)',
-          }}
-        />
-      ))}
+      <WinterSnowSystem density="low" variant="subtle" />
     </div>
   );
 };
@@ -393,9 +361,9 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
 
           {savedTonightReward && (
             <motion.div
-              initial={prefersReduced ? { opacity: 0 } : { opacity: 0, scale: 0.92, y: 12 }}
+              initial={prefersReduced ? { opacity: 0 } : { opacity: 0, scale: 0.94, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+              transition={{ duration: prefersReduced ? 0.14 : MOTION_DURATION.reveal, ease: MOTION_EASE.easeOutExpo }}
               className={`rounded-2xl border p-4 text-left space-y-2 transition-all ${
                 RARITY_STYLES[String(savedTonightReward.rarity || 'common').toLowerCase()] || RARITY_STYLES.common
               }`}

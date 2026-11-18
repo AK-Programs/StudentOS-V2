@@ -51,15 +51,22 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
   const [period, setPeriod] = useState<'weekly' | 'monthly' | 'all_time'>('weekly');
   const [rankings, setRankings] = useState<LeaderboardEntry[]>([]);
   const [currentUserEntry, setCurrentUserEntry] = useState<LeaderboardEntry | null>(null);
+  const [rankDeltas, setRankDeltas] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const requestSeqRef = useRef<number>(0);
   const mountedRef = useRef<boolean>(true);
+  const prevRanksMapRef = useRef<Map<string, number>>(new Map());
+  const prevScopeKeyRef = useRef<string>('');
+  const syncDebounceRef = useRef<number | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      if (syncDebounceRef.current !== null) {
+        window.clearTimeout(syncDebounceRef.current);
+      }
     };
   }, []);
 
@@ -85,7 +92,29 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
         setRankings([]);
         setCurrentUserEntry(null);
       } else {
-        setRankings(Array.isArray(res.data.rankings) ? res.data.rankings : []);
+        const nextRankings = Array.isArray(res.data.rankings) ? res.data.rankings : [];
+        const scopeKey = `${type}:${period}`;
+        if (prevScopeKeyRef.current === scopeKey && prevRanksMapRef.current.size > 0) {
+          const deltas: Record<string, number> = {};
+          for (const item of nextRankings) {
+            const oldRank = prevRanksMapRef.current.get(item.userId);
+            if (typeof oldRank === 'number' && oldRank !== item.rank) {
+              // Positive = climbed higher (e.g. rank 4 -> rank 2 => +2)
+              deltas[item.userId] = oldRank - item.rank;
+            }
+          }
+          setRankDeltas(deltas);
+        } else {
+          setRankDeltas({});
+        }
+        prevScopeKeyRef.current = scopeKey;
+        const nextMap = new Map<string, number>();
+        for (const item of nextRankings) {
+          nextMap.set(item.userId, item.rank);
+        }
+        prevRanksMapRef.current = nextMap;
+
+        setRankings(nextRankings);
         setCurrentUserEntry(res.data.currentUserEntry || null);
       }
     } catch (err: any) {
@@ -96,7 +125,7 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
         setLoading(false);
       }
     }
-  }, [access.accessible, type, period, currentUser?.uid, currentUser?.email, currentUser?.role]);
+  }, [access.accessible, type, period, currentUser?.uid, (currentUser as any)?.id, currentUser?.email, currentUser?.role]);
 
   useEffect(() => {
     loadLeaderboard();
@@ -104,12 +133,21 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
 
   useEffect(() => {
     const onSync = () => {
-      loadLeaderboard();
+      if (syncDebounceRef.current !== null) {
+        window.clearTimeout(syncDebounceRef.current);
+      }
+      syncDebounceRef.current = window.setTimeout(() => {
+        syncDebounceRef.current = null;
+        loadLeaderboard();
+      }, 150);
     };
     window.addEventListener('studentos-gamification-updated', onSync);
     window.addEventListener('veylentra-winter-updated', onSync);
     window.addEventListener('veylentra-cosmetics-updated', onSync);
     return () => {
+      if (syncDebounceRef.current !== null) {
+        window.clearTimeout(syncDebounceRef.current);
+      }
       window.removeEventListener('studentos-gamification-updated', onSync);
       window.removeEventListener('veylentra-winter-updated', onSync);
       window.removeEventListener('veylentra-cosmetics-updated', onSync);
@@ -193,13 +231,13 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
       {/* Body */}
       <div className="p-4 sm:p-5 space-y-5">
         {loading ? (
-          <div className="space-y-3">
+          <div className="space-y-3" aria-busy="true" aria-label="Loading XP leaderboard">
             {[0, 1, 2, 3].map((idx) => (
               <AnimatedSkeleton key={idx} height={54} className="w-full" />
             ))}
           </div>
         ) : error ? (
-          <div className="p-4 rounded-xl border border-rose-500/30 bg-rose-500/10 text-xs text-rose-700 dark:text-rose-300 flex items-center justify-between gap-3">
+          <div className="p-4 rounded-xl border border-rose-500/30 bg-rose-500/10 text-xs text-rose-700 dark:text-rose-300 flex flex-wrap items-center justify-between gap-3">
             <span>{error}</span>
             <TactileButton variant="outline" size="sm" onClick={loadLeaderboard}>
               Retry
@@ -287,7 +325,11 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
             {/* Rankings Table */}
             <div className="divide-y divide-slate-200 dark:divide-slate-800 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
               {visibleRankings.map((entry, idx) => {
-                const isSelf = entry.userId === currentUser.uid;
+                const isSelf =
+                  entry.userId === currentUser.uid ||
+                  entry.userId === (currentUser as any)?.id ||
+                  (Boolean(currentUserEntry?.userId) && entry.userId === currentUserEntry?.userId);
+                const rankDelta = rankDeltas[entry.userId] || 0;
                 const progressPct = entry.nextLevelXp
                   ? Math.min(100, Math.round((entry.xp / entry.nextLevelXp) * 100))
                   : 100;
@@ -333,13 +375,25 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
                       />
 
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
                             {entry.name}
                           </span>
                           {isSelf && (
                             <span className="text-[10px] font-semibold text-sky-600 dark:text-sky-400">
                               (You)
+                            </span>
+                          )}
+                          {rankDelta !== 0 && (
+                            <span
+                              className={`text-[10px] font-mono font-bold tabular-nums px-1.5 py-0.5 rounded ${
+                                rankDelta > 0
+                                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                                  : 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                              }`}
+                              title={rankDelta > 0 ? `Moved up ${rankDelta} spot(s)` : `Moved down ${Math.abs(rankDelta)} spot(s)`}
+                            >
+                              {rankDelta > 0 ? `▲${rankDelta}` : `▼${Math.abs(rankDelta)}`}
                             </span>
                           )}
                         </div>

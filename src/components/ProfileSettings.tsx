@@ -28,6 +28,7 @@ import { soundService } from '../lib/soundService';
 import { fetchWinterStatus, WinterStatusResponse } from '../lib/winterFestivalService';
 import { ProfileBannerBackdrop, ProfileCosmeticAvatar } from './winter/ProfileCosmeticRenderer';
 import { WinterCosmeticsStudioSection } from './winter/WinterCosmeticsStudioSection';
+import { SnowflakeVector } from './winter/WinterArtwork';
 import { getWinterBannerVisual, getWinterBorderVisual } from '../lib/winterCosmetics';
 
 export type SettingsSubSection = 'customization' | 'info' | 'theme' | 'verification' | 'environment' | 'notifications';
@@ -1119,7 +1120,8 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                   >
                     {t.id === 'winter' ? (
                       <span className="absolute top-3 right-3 px-2 py-0.5 rounded-full bg-gradient-to-r from-sky-500 to-cyan-500 text-white text-[9px] font-black uppercase tracking-wider shadow-sm flex items-center gap-1">
-                        <span>❄️ Seasonal</span>
+                        <SnowflakeVector size={10} className="text-white" />
+                        <span>Seasonal</span>
                       </span>
                     ) : isSpecial ? (
                       <span className="absolute top-3 right-3 px-2 py-0.5 rounded-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-[9px] font-black uppercase tracking-wider shadow-sm">

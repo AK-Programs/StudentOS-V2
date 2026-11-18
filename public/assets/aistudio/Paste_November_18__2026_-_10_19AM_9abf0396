@@ -1,0 +1,1174 @@
+VEYLENTRA — WINTER FESTIVAL 4.0: REAL CINEMATIC VFX, PREMIUM MOTION SYSTEM, INSTANT TASK CLAIMS, BADGE UNLOCK SHOWCASE & XP LEADERBOARD DATA INTEGRITY
+
+This is a focused quality and engineering upgrade to the existing Veylentra Winter Festival.
+
+The previous animation implementation is not good enough. Some animations technically exist, but they mostly move simple shapes around. I want actual, polished visual effects with depth, lighting, particles, material movement, and carefully choreographed motion.
+
+There are also functional problems:
+
+1. Banners and Borders have animations, but they look like basic shape animations rather than real visual effects.
+2. Borders are incorrectly animated: the entire border ring simply spins. This is not acceptable.
+3. The agent did not properly study the reference websites or use the requested animation skills and GitHub repository guidance.
+4. XP Leaderboard results viewed from another account do not show the real results consistently.
+5. Winter task claims take approximately 10 seconds to complete.
+6. Unlocking a Winter Seasonal Badge does not show a prominent unlock popup or celebration animation.
+7. Winter Festival cards and buttons have snowflake emojis instead of actual snowfall and snow accumulation effects.
+8. Many Winter Festival interactions still feel static and need carefully designed animations.
+
+Your task is to investigate, redesign, implement, and verify these areas.
+
+Do not just add more CSS keyframes or random animations. Study the references, use appropriate animation techniques, and fix the underlying data and performance problems.
+
+---
+
+PART 0 — MANDATORY RESEARCH, REFERENCE WEBSITES AND SKILLS
+
+This section is mandatory. Do not skip it.
+
+The previous implementation did not properly use the references I provided. This time, research must happen before implementation.
+
+A. Study these reference websites
+
+Visit and study the actual websites, examples, documentation, and interactive demos.
+
+1. https://universe.io/
+2. https://ui.aceternity.com/
+3. https://animate-ui.com/
+4. https://motion-ui.com/
+5. https://reactbits.dev/
+
+Also study:
+
+6. https://motion.dev/
+7. https://gsap.com/docs/v3/
+8. https://threejs.org/docs/
+9. https://r3f.docs.pmnd.rs/
+10. https://react-postprocessing.docs.pmnd.rs/
+
+Important:
+
+- Verify the exact identity and purpose of every reference URL before using it.
+- If a URL has moved, redirects, or does not provide the expected animation resources, report that instead of pretending it was studied.
+- Study actual examples and implementation techniques, not just homepage screenshots.
+- Look for particle systems, shader effects, animated borders, fluid motion, material effects, lighting, snowfall, reveal transitions, and interaction choreography.
+- Use these references for inspiration and technical understanding, not blind copying.
+- Adapt the effects to Veylentra's existing visual identity.
+
+B. Install and use the requested WebGL Animation Skills
+
+Install the requested skill:
+
+npx skills add iart-ai/webgl-animation-skills
+
+Study its actual skill files and use the relevant workflows.
+
+Pay particular attention to:
+
+- "shader-glsl"
+- "threejs-animation"
+- "particle-system"
+
+This skill is especially important for creating real shader effects, 3D motion, and natural particle systems.
+
+C. Install and use the additional Web Animation Skills
+
+Install:
+
+npx skills add iart-ai/web-animation-skills
+
+Study the relevant workflows:
+
+- "gsap-web"
+- "60fps-animation"
+- "accessible-animation"
+- "micro-interaction"
+- "svg-animation"
+- "glassmorphism"
+
+Use these for interface motion, SVG effects, timeline orchestration, smooth interactions, and performance.
+
+D. Study Animate UI's agent skill
+
+Inspect the official Animate UI documentation and its agent skill.
+
+Reference:
+
+https://animate-ui.com/
+
+Repository/skill:
+
+npx skills add imskyleen/animate-ui
+
+Use only the components or techniques that are compatible with the current project architecture.
+
+Do not replace the entire existing component system.
+
+E. GitHub repository skill and repository inspection
+
+Use the available GitHub repository skill/workflow and inspect the actual Veylentra repository before making changes.
+
+Repository:
+
+https://github.com/AK-Programs/StudentOS-V2/tree/main
+
+You must:
+
+- Inspect the current branch and latest code.
+- Read repository instructions and relevant agent skill files.
+- Identify the existing React, Vite, TypeScript, styling, rendering, and animation architecture.
+- Inspect current Winter Banner, Border, task claim, badge, XP, and leaderboard implementations.
+- Trace frontend-to-backend-to-Supabase data flows.
+- Inspect relevant migrations, SQL functions, RLS policies, and tests.
+- Identify existing animation dependencies before installing anything.
+
+Do not claim that a skill was used just because its installation command was executed. Actually read and apply its guidance.
+
+If a skill cannot be installed or is incompatible with the current coding agent, explain why and use the available equivalent workflow.
+
+F. Additional research and technology selection
+
+Evaluate the following based on the existing codebase:
+
+- Motion for React.
+- GSAP.
+- Three.js.
+- React Three Fiber.
+- React Three Drei.
+- React Postprocessing.
+- GLSL shaders.
+- SVG filters and path animations.
+- Canvas-based particle systems.
+
+Do not install all these libraries automatically.
+
+Choose the smallest suitable combination.
+
+For example:
+
+- Motion for React: interface transitions and interaction choreography.
+- GSAP: complex timelines and carefully synchronized sequences.
+- SVG: precise border-path effects and vector decorations.
+- Canvas or WebGL: particle systems and high-density visual effects.
+- Three.js / React Three Fiber: actual 3D effects where they provide meaningful value.
+- GLSL: advanced procedural material and lighting effects.
+
+Do not introduce heavy dependencies for effects that can be implemented cleanly using existing technology.
+
+Mandatory research report
+
+Before coding, briefly document:
+
+- Which references were actually studied.
+- Which skills were installed and read.
+- Which techniques were selected.
+- Which libraries already existed.
+- Which new dependencies, if any, are genuinely necessary.
+
+---
+
+PART 1 — REAL VISUAL EFFECTS FOR PROFILE BANNERS
+
+Current problem
+
+Banners have animations, but the result looks like simple shapes moving around.
+
+I do not want random floating shapes, generic circles, repetitive glowing blobs, or a few moving CSS elements pretending to be professional VFX.
+
+I want the banners to feel like designed, animated seasonal artwork.
+
+Required visual direction
+
+Depending on the individual Banner design, implement appropriate combinations of:
+
+- Multi-layered snowfall.
+- Depth-based particle movement.
+- Frost forming and dissolving.
+- Light scattering.
+- Icy surface reflections.
+- Procedural snow textures.
+- Subtle environmental haze.
+- Light rays and controlled highlights.
+- Parallax depth.
+- Atmospheric movement.
+- Fine sparkling ice particles.
+- Natural wind-driven snow.
+- Carefully controlled material animation.
+
+The effect must complement the actual artwork.
+
+Examples of suitable Banner effects
+
+Frozen Forest Banner
+
+- Layered snowy tree silhouettes.
+- Slow atmospheric snowfall at different depths.
+- Subtle cold mist.
+- Gentle light filtering through the background.
+- Fine frost highlights.
+
+Aurora Winter Banner
+
+- Procedural flowing aurora ribbons.
+- Smooth color transitions.
+- Natural movement rather than repetitive shape rotation.
+- Subtle stars and atmospheric particles.
+
+Crystal Ice Banner
+
+- Actual reflective-looking ice surfaces.
+- Controlled light refraction or simulated refraction.
+- Moving specular highlights.
+- Fine crystal glints.
+
+Snowfall Night Banner
+
+- Multiple particle sizes.
+- Different particle velocities and trajectories.
+- Depth and parallax.
+- Natural variation in opacity and wind direction.
+
+These are creative directions, not instructions to make every Banner identical.
+
+Banner animation requirements
+
+- The artwork must remain the main visual element.
+- Effects should look integrated into the artwork.
+- Use appropriate depth and layering.
+- Avoid generic gradients and random geometric shapes.
+- Avoid excessive brightness.
+- Do not obscure the avatar or profile information.
+- Do not create unnecessary continuous React renders.
+- Respect reduced-motion settings.
+- Optimize for mobile devices.
+
+Create a distinct animation identity for every Banner.
+
+Do not reuse one generic animation preset for all Banners.
+
+---
+
+PART 2 — REBUILD BORDER ANIMATION CORRECTLY
+
+Current bug
+
+The Border is currently animated by rotating the entire ring.
+
+This looks incorrect and must be fixed.
+
+The Border itself must remain geometrically stable around the profile picture. Never rotate the entire Border as the primary animation.
+
+The animation should travel along the Border's actual shape.
+
+Required animation techniques
+
+Depending on each Border design, use techniques such as:
+
+- SVG stroke-dash animations.
+- Moving light highlights along a path.
+- Controlled gradient sweeps.
+- Animated frost formation.
+- Perimeter-following particles.
+- Tiny snowflake glints.
+- Directional icy reflections.
+- Candy-cane shine.
+- Localized sparkles.
+- Material-like edge illumination.
+- Fine crystalline details.
+
+Correct Border behavior
+
+1. The Border's base geometry stays fixed.
+2. Its position remains aligned with the profile avatar.
+3. The animation moves along its perimeter.
+4. Individual decorations may have small independent movements.
+5. Light can travel around the edge.
+6. Frost can gradually appear and disappear in localized areas.
+7. The Border must not wobble, detach, stretch, or rotate away from the avatar.
+
+Border animation examples
+
+Frost Crystal Border
+
+- A stable crystalline perimeter.
+- Individual ice glints appear at different locations.
+- A subtle light sweep travels along the edge.
+- Small frost particles occasionally form and dissolve.
+
+Candy Cane Border
+
+- Stable candy-cane geometry.
+- Glossy highlights travel along the curved surface.
+- Small decorative lights can pulse gently.
+- No continuous spinning ring.
+
+Aurora Border
+
+- Fixed perimeter.
+- Flowing light and color movement along the path.
+- Controlled luminous highlights.
+- No rotation of the entire avatar outline.
+
+Snowflake Border
+
+- Stable snowflake decorations.
+- Small individual glints and subtle opacity variation.
+- Localized motion without disturbing the Border's geometry.
+
+Important technical requirements
+
+- Preserve the actual avatar clipping shape.
+- Keep the Border aligned at all avatar sizes.
+- Support circular and rounded profile images.
+- Avoid animation-induced layout shifts.
+- Use GPU-friendly properties where possible.
+- Ensure Border and Banner effects can coexist.
+- Avoid excessive shader complexity on mobile.
+
+Test every existing Winter Border individually.
+
+---
+
+PART 3 — REAL SNOWFALL AND SNOW ACCUMULATION
+
+Current bug
+
+I requested snow around Winter Festival cards and buttons.
+
+Instead, snowflake emojis were added.
+
+This is not what I requested.
+
+Remove the decorative snowflake emojis used as a substitute for snowfall. Implement actual snow effects.
+
+Required snow system
+
+Create a reusable Winter Snow Effect component or shared particle system.
+
+It should produce:
+
+- Small and large snow particles.
+- Natural downward movement.
+- Slight wind-driven horizontal drift.
+- Different particle speeds.
+- Different depth layers.
+- Subtle rotation where appropriate.
+- Natural opacity variation.
+- Occasional particles landing near card edges.
+- Small snow accumulation along selected card and button edges.
+
+Snow accumulation
+
+The interface should have a subtle sense that snow is resting on the edges of selected cards and controls.
+
+Use carefully designed visual layers such as:
+
+- Small irregular snow caps.
+- Soft snow buildup along selected upper edges.
+- Subtle white crystalline texture.
+- Fine icy edge highlights.
+- Occasional tiny particles sliding off an edge.
+
+Do not simply place a white rectangle on top of every card.
+
+The snow should have organic, irregular contours and blend with the card surface.
+
+Where to use snow
+
+Apply appropriate levels of snow to:
+
+- Winter Festival main cards.
+- Seasonal task cards.
+- Frost XP display.
+- Cookie collection cards.
+- Badge collection cards.
+- Banner and Border collectible cards.
+- Selected buttons.
+- Important Winter Festival section headers.
+- Appropriate decorative surfaces.
+
+Do not cover all interface elements equally.
+
+Performance
+
+- Use one shared or efficiently managed particle system where possible.
+- Avoid a separate heavy animation loop for every card.
+- Use "pointer-events: none" for decorative layers.
+- Pause or reduce effects when off-screen.
+- Reduce particle density on mobile.
+- Respect reduced-motion preferences.
+- Keep text readable and controls clickable.
+
+The result should look like subtle snow resting on a premium winter interface, not emoji decoration or a snowstorm.
+
+---
+
+PART 4 — ANIMATE THE WINTER FESTIVAL AS A COMPLETE EXPERIENCE
+
+Many parts of the Winter Festival still feel static.
+
+Perform an animation audit of the entire tab.
+
+Do not add motion randomly. Define a consistent motion language.
+
+A. Winter Festival entrance
+
+When the Winter Festival page opens:
+
+- Use a polished entrance transition.
+- Reveal the main seasonal header.
+- Introduce the main cards with controlled stagger.
+- Let the Frost XP display enter with a small, refined animation.
+- Reveal seasonal sections smoothly.
+- Avoid delaying access to useful content.
+
+Do not make the entire page wait for decorative animations.
+
+B. Frost XP balance
+
+Add:
+
+- Smooth balance count-up when the balance genuinely changes.
+- Subtle reward highlight.
+- Small particle or light feedback when XP is earned.
+- Clear spending feedback.
+- Transaction list entrance transitions.
+
+Do not animate the balance as though the user earned XP when no transaction occurred.
+
+C. Cookie collection
+
+Add suitable motion:
+
+- Subtle collectible idle motion.
+- A polished unlock reveal.
+- Small collection feedback.
+- Smooth inventory transitions.
+- Purchase confirmation animation.
+
+Do not create excessive bouncing or repetitive spinning.
+
+D. Winter task cards
+
+Add:
+
+- Smooth hover/tap feedback.
+- Progress transitions.
+- Completion-state reveal.
+- Subtle completion highlight.
+- Animated progress indicators.
+- A clear claimed-state transition.
+
+Do not animate the entire card continuously.
+
+E. Spin Wheel
+
+Preserve the existing working Spin Wheel behavior and reward API.
+
+Add or improve only the visual presentation where necessary.
+
+Do not change its server-confirmed winning result.
+
+Ensure animations never imply a reward different from the actual server response.
+
+F. Santa experience
+
+Preserve the existing working Santa model, reward logic, and claim window.
+
+Do not replace the existing 3D Santa with a primitive shape.
+
+Improve transitions only where needed:
+
+- Modal entrance and exit.
+- Gift reveal.
+- Reward card presentation.
+- Appropriate particle effects.
+- Smooth loading states.
+
+Do not break the existing Santa claim functionality.
+
+G. Winter inventory
+
+Add polished transitions for:
+
+- Switching between Banners, Borders, Badges, and other categories.
+- Opening a collectible preview.
+- Unlocking an item.
+- Equipping or unequipping.
+- Displaying locked and owned states.
+- Updating Frost XP balance.
+
+H. Leaderboard
+
+Add:
+
+- Smooth initial loading presentation.
+- Animated ranking number changes where data actually changes.
+- Podium entrance.
+- Profile card transitions.
+- Rank-change indicators.
+- Empty and error states.
+
+Never animate fabricated leaderboard values.
+
+I. Winter history
+
+Use a clear animated timeline or list transition for:
+
+- XP earned.
+- Seasonal task completion.
+- Badge unlocks.
+- Collectible purchases.
+- Cosmetic equipment changes.
+- Santa rewards.
+- Spin Wheel rewards.
+
+Keep historical data real.
+
+---
+
+PART 5 — FIX WINTER TASK CLAIM DELAY
+
+Current bug
+
+Claiming a Winter task takes approximately 10 seconds.
+
+This is far too slow for a simple task claim.
+
+Investigate the actual cause before changing anything.
+
+Trace:
+
+- Claim button event.
+- Frontend loading state.
+- API request.
+- Authentication.
+- Task eligibility validation.
+- Supabase query or RPC.
+- Reward transaction.
+- Ownership or claim record.
+- XP update.
+- Realtime updates.
+- Cache invalidation.
+- Toast/notification handling.
+
+Find the exact source of the delay
+
+Check for:
+
+- Artificial "setTimeout" delays.
+- Unnecessary animation completion waits.
+- Multiple sequential database calls.
+- Duplicate API requests.
+- Repeated authentication checks.
+- Unnecessary full-page data refetches.
+- Slow or inefficient SQL.
+- Awaiting unrelated notifications before responding.
+- Excessively long retry loops.
+- Client-side waiting for decorative effects.
+
+Do not remove necessary security or eligibility checks.
+
+Required implementation
+
+A. Fast claim response
+
+The interface should acknowledge the user's click immediately.
+
+Target:
+
+- Immediate button feedback.
+- Visible pending state without waiting for an animation.
+- No unnecessary 10-second delay.
+- A fast server response under normal conditions.
+
+Measure actual API and database timings rather than inventing performance numbers.
+
+B. Optimistic UI, safely implemented
+
+If the architecture supports it:
+
+1. User clicks Claim.
+2. Button immediately changes to a pending/claiming state.
+3. Disable duplicate submissions.
+4. Submit the secure server-side claim.
+5. On successful server confirmation, immediately show Claimed.
+6. Update the relevant task and Frost XP/XP displays.
+7. Reconcile with authoritative server data.
+8. If the request fails, restore the correct state and show an understandable error.
+
+Do not display a successful claim before server confirmation.
+
+A short pending state is acceptable. A fake successful state is not.
+
+C. Backend requirements
+
+- Server-authoritative eligibility.
+- Authenticated user ownership.
+- Atomic claim and reward handling.
+- Idempotency.
+- Duplicate-claim prevention.
+- Correct Supabase RLS.
+- No client-side reward manipulation.
+- No swallowed database errors.
+
+If the claim creates multiple records, use an atomic transaction or secure RPC where appropriate.
+
+D. Performance verification
+
+Capture timings for:
+
+- Button click to request start.
+- Request duration.
+- Database operation duration.
+- Request completion to UI update.
+
+Compare before and after.
+
+Do not claim the issue is fixed without measured evidence.
+
+---
+
+PART 6 — WINTER SEASONAL BADGE UNLOCK CELEBRATION
+
+Current bug
+
+When a user unlocks a Winter Seasonal Badge, there is no prominent popup or large unlock animation.
+
+This must be implemented.
+
+A badge unlock should feel like a meaningful achievement.
+
+Required unlock experience
+
+When the backend confirms a newly earned Winter Seasonal Badge:
+
+1. Trigger a full-quality badge unlock presentation.
+2. Dim the background slightly.
+3. Introduce a refined light reveal.
+4. Animate the badge artwork into view.
+5. Use layered depth and controlled particle effects.
+6. Reveal the badge name.
+7. Display its rarity.
+8. Display its achievement description.
+9. Show a clear "Badge Unlocked" message.
+10. Provide a button to view the badge collection.
+
+Visual direction
+
+The animation should feel like an achievement reveal in a polished game or premium educational application.
+
+Possible techniques:
+
+- Layered light rays.
+- Frost particles.
+- Controlled sparkle effects.
+- A dimensional badge reveal.
+- SVG or shader highlights.
+- Carefully synchronized scale and opacity.
+- Subtle background blur.
+- Rarity-specific visual treatment.
+
+Do not use a generic spinning emoji or a simple scaling circle.
+
+Rarity treatment
+
+Use the actual rarity stored in the badge catalog.
+
+For example:
+
+- Common: restrained reveal.
+- Rare: stronger light sweep and particle reveal.
+- Legendary: more elaborate but controlled presentation.
+- Special seasonal badges: distinctive effects appropriate to their artwork.
+
+Do not invent rarity values or assign rarities in the frontend.
+
+Trigger and persistence requirements
+
+- Trigger only after the backend confirms the unlock.
+- Do not show the same unlock repeatedly after every refresh.
+- Prevent duplicate popups from duplicate API responses.
+- Handle multiple badges unlocked together.
+- Queue multiple unlock presentations cleanly.
+- Preserve badge ownership and reward data.
+- Work across supported devices and screen sizes.
+
+Additional feedback
+
+Show a prominent toast or notification when the badge is unlocked, even if the full animation cannot be displayed because of reduced-motion settings or an unavailable rendering capability.
+
+The user must never miss the achievement.
+
+---
+
+PART 7 — FIX XP LEADERBOARD CROSS-ACCOUNT DATA INTEGRITY
+
+Current bug
+
+The Student XP Leaderboard may load, but when another account views the leaderboard, the results do not consistently show the real rankings.
+
+This is a critical data-integrity issue.
+
+Do not treat this as an animation or frontend styling problem.
+
+Investigate the actual data flow.
+
+A. Trace the leaderboard implementation
+
+Inspect:
+
+- XP earning logic.
+- XP ledger.
+- User XP totals.
+- Leaderboard query.
+- SQL aggregation.
+- Supabase RPC functions.
+- RLS policies.
+- User profile joins.
+- Student/Faculty filtering.
+- Frontend query keys.
+- Caching.
+- Realtime updates.
+- Pagination and sorting.
+
+Determine whether the leaderboard reads:
+
+- Actual persistent XP ledger entries.
+- A persisted aggregate.
+- An outdated cached result.
+- Local or in-memory data.
+- A current user's own profile state.
+- A different table than the XP earning system writes to.
+
+The displayed leaderboard must be based on the same authoritative regular XP progression used by the application.
+
+B. Cross-account correctness
+
+The same leaderboard scope must return the same authoritative ranking to all users who are allowed to view it.
+
+For example:
+
+- Account A opens Student XP Leaderboard.
+- Account B opens Student XP Leaderboard.
+- Account C opens Student XP Leaderboard.
+
+All three should see the same ranking for the same scope and data snapshot, subject only to legitimate access rules.
+
+Do not let each account see rankings calculated from its own local state.
+
+C. Backend data requirements
+
+- Use persistent Supabase data.
+- Aggregate real regular XP.
+- Use deterministic ranking and tie-breaking.
+- Filter Student and Faculty populations correctly.
+- Avoid mixing seasonal Frost XP with regular XP.
+- Protect private user information.
+- Return only fields needed for the leaderboard.
+- Use a secure query or RPC where appropriate.
+- Respect RLS without disabling it.
+- Ensure legitimate viewers can read the permitted leaderboard data.
+
+If the existing XP ledger is authoritative, use it consistently.
+
+If a maintained aggregate exists, verify that it is updated atomically with every XP transaction.
+
+Do not invent an independent leaderboard balance.
+
+D. Cache correctness
+
+Check whether query keys accidentally include the viewer's own user ID when the leaderboard is global.
+
+Use correct cache scoping for:
+
+- Student Leaderboard.
+- Faculty Leaderboard.
+- Any supported leaderboard filters.
+
+Invalidate or refresh leaderboard data after relevant XP transactions.
+
+Do not display stale results indefinitely.
+
+E. Cross-account acceptance test
+
+1. Create or use multiple test accounts with different XP totals.
+2. Award known regular XP through the legitimate backend flow.
+3. Open the Student Leaderboard using Account A.
+4. Record the displayed ranking.
+5. Open the same leaderboard using Account B.
+6. Compare the results.
+7. Open it using Account C.
+8. Compare again.
+9. Verify the ranking matches the persistent database aggregation.
+10. Add another legitimate XP transaction.
+11. Verify the correct rankings update.
+12. Refresh all accounts.
+13. Verify rankings remain consistent.
+
+Repeat the test for Faculty Leaderboard.
+
+Do not use hardcoded users or fabricated ranking data.
+
+Important
+
+The Student and Faculty Leaderboards must remain separate.
+
+Winter Frost XP must never contribute to the regular XP Leaderboard.
+
+---
+
+PART 8 — CREATE A CONSISTENT ANIMATION DESIGN SYSTEM
+
+Do not create unrelated animation snippets throughout the application.
+
+Build or reuse a central animation system.
+
+Define:
+
+- Animation timing tokens.
+- Easing curves.
+- Spring configurations.
+- Entrance and exit behavior.
+- Hover and tap feedback.
+- Particle density levels.
+- VFX intensity levels.
+- Reduced-motion behavior.
+- Mobile performance settings.
+
+Suggested motion categories
+
+Micro-interactions
+
+- Buttons.
+- Toggles.
+- Tabs.
+- Small indicators.
+- Collectible selection.
+
+Component transitions
+
+- Cards.
+- Modals.
+- Lists.
+- Inventory categories.
+- Task states.
+
+Achievement effects
+
+- Badge unlocks.
+- Seasonal reward reveals.
+- XP earning.
+
+Environmental effects
+
+- Snowfall.
+- Snow accumulation.
+- Atmospheric backgrounds.
+- Frost materials.
+
+Advanced VFX
+
+- Shader effects.
+- Procedural particles.
+- Light sweeps.
+- 3D elements.
+
+Use the appropriate animation engine for each category.
+
+Do not use WebGL for every small UI transition.
+
+---
+
+PART 9 — PERFORMANCE, ACCESSIBILITY AND DEVICE QUALITY
+
+High-quality VFX must not make Veylentra slow.
+
+Performance requirements
+
+- Target smooth 60fps where practical on supported devices.
+- Do not trigger unnecessary React re-renders for every animation frame.
+- Prefer compositor-friendly transforms and opacity for ordinary UI motion.
+- Use efficient particle management.
+- Reuse particle systems where possible.
+- Avoid excessive transparent layers.
+- Dispose of WebGL resources correctly.
+- Avoid memory leaks.
+- Pause inactive scenes.
+- Stop animation loops on unmount.
+- Lazy-load advanced VFX.
+- Avoid downloading large assets on unrelated application pages.
+
+Device adaptation
+
+Desktop:
+
+- Full visual experience where hardware supports it.
+
+Tablet:
+
+- Balanced particle count and effects.
+
+Mobile:
+
+- Reduced particle density.
+- Simplified shader complexity.
+- No expensive unnecessary post-processing.
+- Preserve the visual identity even when effects are reduced.
+
+Accessibility
+
+- Respect "prefers-reduced-motion".
+- Provide static visual alternatives where appropriate.
+- Do not use flashing effects.
+- Do not make important information dependent on animation.
+- Keep controls accessible during animations.
+- Ensure keyboard interactions work.
+- Avoid autoplay audio.
+
+Reduced motion must not remove important achievement notifications or task status information.
+
+---
+
+PART 10 — TESTING AND VISUAL REVIEW
+
+Do not judge animation quality only by reading code.
+
+You must run the application and inspect actual rendered results.
+
+Visual test matrix
+
+Test:
+
+- 320px phone.
+- 375px phone.
+- 430px phone.
+- 768px tablet.
+- 1024px tablet.
+- Desktop.
+
+Inspect:
+
+- Every Banner.
+- Every Border.
+- Snow effects.
+- Winter Festival cards.
+- Buttons.
+- Task completion.
+- Badge unlock presentation.
+- XP display.
+- Leaderboard.
+- Inventory transitions.
+- Santa and Spin Wheel regressions.
+
+Animation verification
+
+For every animation, inspect:
+
+- Initial state.
+- Mid-animation.
+- Final state.
+- Repeated playback.
+- Reduced-motion mode.
+- Mobile rendering.
+- Unmount and remount behavior.
+
+Use browser developer tools, screenshots, recordings, or other appropriate evidence.
+
+If an effect is supposed to travel along a Border, capture evidence that the Border geometry stays fixed while the effect moves.
+
+If a badge unlock is supposed to display a celebration, capture the actual unlock sequence.
+
+Do not submit only screenshots of static final states.
+
+---
+
+PART 11 — PRESERVE EXISTING FUNCTIONALITY
+
+This is a focused upgrade, not a complete application rewrite.
+
+Preserve:
+
+- Winter Banners.
+- Winter Borders.
+- Profile Customisation.
+- Existing collectible ownership.
+- Frost XP economy.
+- Existing regular XP progression.
+- Student XP Leaderboard.
+- Faculty XP Leaderboard.
+- Winter task configuration.
+- Existing task claim eligibility rules.
+- Supabase RLS.
+- Winter feature toggles.
+- Santa reward functionality.
+- Spin Wheel functionality.
+- Existing profile cosmetic rendering.
+- Chat profile previews.
+- Existing Veylentra design language.
+- Existing custom 3D icon system.
+
+Do not remove or replace working systems just to make animation implementation easier.
+
+Do not make unrelated changes to the application.
+
+---
+
+PART 12 — IMPLEMENTATION ORDER
+
+Follow this order.
+
+Phase 1: Research
+
+1. Inspect repository and current architecture.
+2. Study reference websites.
+3. Install and read relevant animation skills.
+4. Inspect existing dependencies.
+5. Document findings and implementation plan.
+
+Phase 2: Functional root-cause fixes
+6. Diagnose and fix Winter task claim delay.
+7. Diagnose and fix cross-account XP Leaderboard data.
+8. Implement reliable badge unlock event handling.
+
+Phase 3: Core VFX
+9. Redesign Banner effects.
+10. Correct Border animations without rotating the ring.
+11. Implement real snowfall and snow accumulation.
+
+Phase 4: Winter Festival motion
+12. Add coordinated entrance and transition animations.
+13. Improve Frost XP, Cookie, Task, Inventory, and Reward interactions.
+14. Add the Badge Unlock Celebration.
+
+Phase 5: Optimization and verification
+15. Optimize desktop, tablet, and mobile rendering.
+16. Verify reduced-motion behavior.
+17. Run cross-account and persistence tests.
+18. Run all existing Winter Festival regression tests.
+19. Capture visual evidence.
+20. Produce the final report.
+
+Do not spend time polishing animations while the Leaderboard or claim functionality is still incorrect.
+
+---
+
+PART 13 — REQUIRED ACCEPTANCE TESTS
+
+Banner and Border VFX
+
+- Every Banner has a distinct visual effect.
+- Effects look integrated into the artwork.
+- No generic random shape animation.
+- Every Border stays geometrically stable.
+- No entire-ring spinning.
+- Light and particle effects follow the actual perimeter.
+- Avatar alignment remains correct.
+- Banner and Border coexist.
+- Mobile performance remains acceptable.
+
+Snow
+
+- No emoji substitutes for snow.
+- Natural particles are visible.
+- Snow accumulation has organic edges.
+- Snow does not cover text.
+- Snow does not block interactions.
+- Reduced-motion and mobile settings work.
+
+Winter tasks
+
+- Claim feedback begins immediately.
+- No arbitrary 10-second wait.
+- Duplicate claims are prevented.
+- Server eligibility is preserved.
+- Successful claims persist after refresh.
+- Failed claims do not grant rewards.
+- Actual before/after request timings are recorded.
+
+Badge unlock
+
+- Badge unlock is confirmed by the backend.
+- Large unlock presentation appears.
+- Badge name, rarity, and description are correct.
+- Duplicate popups are prevented.
+- Multiple unlocks are handled.
+- Reduced-motion users receive a clear alternative notification.
+- Badge ownership persists after refresh.
+
+XP Leaderboard
+
+- Student results come from real persistent XP.
+- Faculty results come from real persistent XP.
+- Multiple accounts see the same authoritative rankings for the same scope.
+- Rankings are deterministic.
+- New XP transactions update the rankings.
+- Frost XP is excluded.
+- Refresh preserves correct results.
+- No fabricated fallback rankings.
+
+Regression
+
+- Santa still works.
+- Spin Wheel still works.
+- Winter tasks still work.
+- Feature toggles still work.
+- Profile cosmetics still work.
+- Chat profile preview still works.
+- Normal XP still works.
+- Existing badges remain intact.
+- Supabase RLS remains enabled.
+
+---
+
+FINAL REPORT — EVIDENCE REQUIRED
+
+Provide a detailed report with:
+
+1. Reference websites actually studied.
+2. Skills successfully installed and read.
+3. GitHub repository inspection performed.
+4. Existing animation architecture discovered.
+5. Libraries and techniques selected, with reasons.
+6. Exact Banner animation changes.
+7. Exact Border animation changes.
+8. Proof that the Border no longer rotates as a complete ring.
+9. Snowfall and snow accumulation implementation.
+10. Winter Festival components animated.
+11. Root cause of the 10-second task claim delay.
+12. Before-and-after task claim timings.
+13. Badge Unlock Celebration implementation.
+14. XP Leaderboard root cause.
+15. Supabase tables, RPCs, queries, and RLS changes if any.
+16. Cross-account Student and Faculty leaderboard test results.
+17. Mobile and desktop performance observations.
+18. Screenshots and short recordings of important effects.
+19. Tests actually executed.
+20. Remaining limitations and deployment requirements.
+
+For every completed item, state the actual evidence.
+
+Do not say "fixed" when only code was changed but the behavior was not tested.
+
+Do not claim that a reference, skill, or library was used unless it was actually inspected and applied.
+
+---
+
+FINAL QUALITY STANDARD
+
+I want the Winter Festival to feel like a carefully crafted seasonal experience inside a premium educational platform.
+
+The Banners should feel like animated winter artwork, not moving shapes.
+
+The Borders should have real perimeter-based visual effects, not a spinning ring.
+
+Snow should look like actual snowfall and snow resting on surfaces, not ❄️ emojis.
+
+Badge unlocks should feel like meaningful achievements.
+
+Task claims should feel immediate and reliable.
+
+The XP Leaderboard must show real, persistent, cross-account-consistent rankings.
+
+Use the reference websites and animation skills intelligently. Prioritize actual visual quality, correct data, performance, and reliability over adding more effects for the sake of appearance.
+
+Do not rebuild Veylentra. Upgrade the existing Winter Festival properly, fix its real bugs, and deliver evidence that the result works.

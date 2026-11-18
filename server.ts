@@ -938,8 +938,9 @@ const memoryGamificationStore: Record<string, any> = {};
 app.get('/api/gamification/profile', async (req, res) => {
   const userId = String(req.query.userId || '');
   const schoolId = String(req.query.schoolId || 'default_school');
-  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
-  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+  const cfg = getSupabaseServerConfig();
+  const supabaseUrl = cfg.url;
+  const supabaseKey = cfg.key || process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
 
   let storeData: Record<string, any> = { ...memoryGamificationStore };
   try {
@@ -984,7 +985,7 @@ app.get('/api/gamification/profile', async (req, res) => {
 });
 
 app.post('/api/gamification/award', async (req, res) => {
-  const { userId, schoolId = 'default_school', profile } = req.body || {};
+  const { userId, schoolId = 'default_school', profile, syncContext } = req.body || {};
   if (!userId || !profile || typeof profile !== 'object') {
     return res.status(400).json({ error: 'userId and profile are required' });
   }
@@ -1029,6 +1030,7 @@ app.post('/api/gamification/award', async (req, res) => {
       }
     }
     const existingProfile = existingMap[userId] || memoryGamificationStore[userId];
+    const prevKnownXp = Number(existingProfile?.xp || 0);
     if (existingProfile && typeof existingProfile.xp === 'number') {
       const incomingXp = Number(profile.xp || 0);
       if (existingProfile.xp > incomingXp) {
@@ -1040,6 +1042,8 @@ app.post('/api/gamification/award', async (req, res) => {
         profile.xp = existingProfile.xp + 150;
       }
     }
+
+    const authoritativeDelta = Math.max(0, Math.round(Number(profile.xp || 0) - prevKnownXp));
 
     if (useDb) {
       const nextMap = { ...existingMap, [userId]: profile };
@@ -1114,6 +1118,41 @@ app.post('/api/gamification/award', async (req, res) => {
       memoryGamificationStore[userId] = profile;
       existingMap[userId] = profile;
       Object.assign(memoryGamificationStore, existingMap);
+    }
+
+    // 4. Mirror positive XP deltas into gamification_xp_ledger so Weekly/Monthly/All-Time leaderboards stay consistent across accounts
+    const syncCtx = syncContext && typeof syncContext === 'object' ? syncContext : null;
+    if (authoritativeDelta > 0 && !syncCtx?.skipLedgerSync) {
+      const nowIso = new Date().toISOString();
+      const actionSlug = String(syncCtx?.action || 'xp_award').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 48);
+      const uniquePart = String(syncCtx?.uniqueItemId || profile.updatedAt || Date.now()).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+      const ledgerId = `xp_awd_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+      await appendXpLedgerEntry(
+        () => cfg,
+        {
+          id: ledgerId,
+          userId: String(userId),
+          userName: String(profile.userName || profile.name || verified?.user_metadata?.name || 'Campus Member'),
+          userRole: String(profile.role || verifiedRole || 'student').toLowerCase(),
+          grade: String(profile.grade || ''),
+          section: String(profile.section || ''),
+          house: String(profile.house || ''),
+          avatar: String(profile.avatar || ''),
+          sourceType: 'academic',
+          actionKey: `award:${actionSlug}:${uniquePart}`,
+          xpDelta: Math.min(authoritativeDelta, isPriv ? authoritativeDelta : 150),
+          label: String(syncCtx?.label || 'Academic Achievement').slice(0, 120),
+          createdAt: nowIso,
+        },
+        { alreadyAddedToProfile: true }
+      ).catch((ledErr) => {
+        console.warn('[GAMIFICATION] Non-fatal XP ledger mirror warning:', ledErr?.message || ledErr);
+      });
+      broadcastToAllWs({
+        type: 'leaderboard:updated',
+        userId: String(userId),
+        role: String(profile.role || verifiedRole || 'student').toLowerCase(),
+      });
     }
   } catch (e: any) {
     return res.status(503).json({
@@ -5798,6 +5837,11 @@ const WHITELISTED_SUPER_ADMIN_EMAILS = [
   'superadmin@veylentra.edu',
 ];
 
+const actorProfileCache = new Map<
+  string,
+  { role: string; name: string; grade: string; section: string; expiresAt: number }
+>();
+
 async function resolveFeatureAndWinterActor(req: express.Request): Promise<{
   id: string;
   name: string;
@@ -5848,29 +5892,49 @@ async function resolveFeatureAndWinterActor(req: express.Request): Promise<{
         resolvedRole = 'super_admin';
       }
 
-      try {
-        const cfg = getSupabaseServerConfig();
-        if (cfg.url && cfg.key) {
-          const profRes = await fetch(
-            `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(verified.id)},uid.eq.${encodeURIComponent(verified.id)},email.eq.${encodeURIComponent(userEmail || verified.id)})&select=name,role,grade,section`,
-            { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
-          );
-          if (profRes.ok) {
-            const rows = await profRes.json();
-            if (Array.isArray(rows) && rows[0]) {
-              name = String(rows[0].name || name);
-              grade = String(rows[0].grade || grade);
-              section = String(rows[0].section || section);
-              if (rows[0].role) {
-                const dbRole = String(rows[0].role).toLowerCase();
-                if (dbRole === 'super_admin' || WHITELISTED_SUPER_ADMIN_EMAILS.includes(userEmail)) {
-                  resolvedRole = 'super_admin';
+      const jwtCacheKey = `${verified.id}|${userEmail}`;
+      const cachedJwt = process.env.NODE_ENV !== 'test' ? actorProfileCache.get(jwtCacheKey) : undefined;
+      if (cachedJwt && cachedJwt.expiresAt > Date.now()) {
+        name = cachedJwt.name || name;
+        grade = cachedJwt.grade || grade;
+        section = cachedJwt.section || section;
+        if (cachedJwt.role === 'super_admin' || WHITELISTED_SUPER_ADMIN_EMAILS.includes(userEmail)) {
+          resolvedRole = 'super_admin';
+        }
+      } else {
+        try {
+          const cfg = getSupabaseServerConfig();
+          if (cfg.url && cfg.key) {
+            const profRes = await fetch(
+              `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(verified.id)},uid.eq.${encodeURIComponent(verified.id)},email.eq.${encodeURIComponent(userEmail || verified.id)})&select=name,role,grade,section`,
+              { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+            );
+            if (profRes.ok) {
+              const rows = await profRes.json();
+              if (Array.isArray(rows) && rows[0]) {
+                name = String(rows[0].name || name);
+                grade = String(rows[0].grade || grade);
+                section = String(rows[0].section || section);
+                if (rows[0].role) {
+                  const dbRole = String(rows[0].role).toLowerCase();
+                  if (dbRole === 'super_admin' || WHITELISTED_SUPER_ADMIN_EMAILS.includes(userEmail)) {
+                    resolvedRole = 'super_admin';
+                  }
+                }
+                if (process.env.NODE_ENV !== 'test') {
+                  actorProfileCache.set(jwtCacheKey, {
+                    role: resolvedRole,
+                    name,
+                    grade,
+                    section,
+                    expiresAt: Date.now() + 60_000,
+                  });
                 }
               }
             }
           }
-        }
-      } catch (_) {}
+        } catch (_) {}
+      }
 
       return {
         id: verified.id,
@@ -5920,25 +5984,43 @@ async function resolveFeatureAndWinterActor(req: express.Request): Promise<{
       isVerifiedJwt: false,
     };
   } else {
-    // In local/PIN session mode without Bearer JWT, look up authoritative role from Supabase user_profiles
-    try {
-      const cfg = getSupabaseServerConfig();
-      if (cfg.url && cfg.key) {
-        const profRes = await fetch(
-          `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(actorId)},uid.eq.${encodeURIComponent(actorId)},email.eq.${encodeURIComponent(emailHeader || actorId)})&select=id,name,role,grade,section`,
-          { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
-        );
-        if (profRes.ok) {
-          const rows = await profRes.json();
-          if (Array.isArray(rows) && rows[0]) {
-            resolvedRole = String(rows[0].role || 'student').toLowerCase();
-            resolvedName = String(rows[0].name || resolvedName);
-            resolvedGrade = String(rows[0].grade || resolvedGrade);
-            resolvedSection = String(rows[0].section || resolvedSection);
+    // In local/PIN session mode without Bearer JWT, look up authoritative role from Supabase user_profiles (60s TTL cache)
+    const cacheKey = `${actorId}|${emailHeader}`;
+    const cachedActor = process.env.NODE_ENV !== 'test' ? actorProfileCache.get(cacheKey) : undefined;
+    if (cachedActor && cachedActor.expiresAt > Date.now()) {
+      resolvedRole = cachedActor.role;
+      resolvedName = cachedActor.name || resolvedName;
+      resolvedGrade = cachedActor.grade || resolvedGrade;
+      resolvedSection = cachedActor.section || resolvedSection;
+    } else {
+      try {
+        const cfg = getSupabaseServerConfig();
+        if (cfg.url && cfg.key) {
+          const profRes = await fetch(
+            `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(actorId)},uid.eq.${encodeURIComponent(actorId)},email.eq.${encodeURIComponent(emailHeader || actorId)})&select=id,name,role,grade,section`,
+            { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+          );
+          if (profRes.ok) {
+            const rows = await profRes.json();
+            if (Array.isArray(rows) && rows[0]) {
+              resolvedRole = String(rows[0].role || 'student').toLowerCase();
+              resolvedName = String(rows[0].name || resolvedName);
+              resolvedGrade = String(rows[0].grade || resolvedGrade);
+              resolvedSection = String(rows[0].section || resolvedSection);
+              if (process.env.NODE_ENV !== 'test') {
+                actorProfileCache.set(cacheKey, {
+                  role: resolvedRole,
+                  name: resolvedName,
+                  grade: resolvedGrade,
+                  section: resolvedSection,
+                  expiresAt: Date.now() + 60_000,
+                });
+              }
+            }
           }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
   }
 
   return {

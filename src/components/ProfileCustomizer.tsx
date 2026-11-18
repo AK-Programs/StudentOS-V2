@@ -17,6 +17,7 @@ import { soundService } from '../lib/soundService';
 import { fetchWinterStatus, WinterStatusResponse } from '../lib/winterFestivalService';
 import { ProfileBannerBackdrop, ProfileCosmeticAvatar } from './winter/ProfileCosmeticRenderer';
 import { WinterCosmeticsStudioSection } from './winter/WinterCosmeticsStudioSection';
+import { SnowflakeVector } from './winter/WinterArtwork';
 
 interface ProfileCustomizerProps {
   currentUser: UserProfile;
@@ -705,8 +706,9 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
                 {currentUser.role === 'teacher' && <span title="Verified Faculty" className="text-sm">🎓</span>}
                 {(currentUser.role === 'admin' || currentUser.role === 'super_admin') && <span title="System Administrator" className="text-sm">🛡️</span>}
                 {earnedWinterBadgeCount > 0 && (
-                  <span title={`${earnedWinterBadgeCount} Winter Badges`} className="text-[10px] font-mono font-bold text-sky-300 px-1">
-                    ❄️{earnedWinterBadgeCount}
+                  <span title={`${earnedWinterBadgeCount} Winter Badges`} className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-sky-300 px-1">
+                    <SnowflakeVector size={11} className="text-sky-300" />
+                    <span>{earnedWinterBadgeCount}</span>
                   </span>
                 )}
                 <span title="Early Adopter" className="text-sm">⚡</span>

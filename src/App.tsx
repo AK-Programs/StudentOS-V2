@@ -173,6 +173,8 @@ import { SnowflakeVector } from './components/winter/WinterArtwork';
 import { scheduleSantaModelIdlePreload } from './lib/santaModelCache';
 import { ProfileBannerBackdrop, ProfileCosmeticAvatar } from './components/winter/ProfileCosmeticRenderer';
 import { fetchPublicWinterCosmetics } from './lib/winterFestivalService';
+import { BadgeUnlockCelebrationModal } from './components/winter/BadgeUnlockCelebrationModal';
+import { prefersReducedMotion } from './lib/motionSystem';
 
 // Stub Integrations
 import {
@@ -15731,6 +15733,22 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
           />
         );
       })()}
+
+      {/* Global Winter Seasonal Badge Unlock Celebration Modal */}
+      {currentUser && !isLocked && (
+        <BadgeUnlockCelebrationModal
+          onViewCollection={() => {
+            handleTabSelect('winter_festival');
+            setTimeout(() => {
+              const target = document.getElementById('winter-badges-showcase');
+              target?.scrollIntoView({
+                behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+                block: 'start',
+              });
+            }, 140);
+          }}
+        />
+      )}
 
     </div>
   );
