@@ -524,7 +524,7 @@ async function main() {
       assert.equal(mockDb.tables.winter_task_claims.length, 0, 'Task claim row must be rolled back');
       assert.equal(mockDb.tables.gamification_xp_ledger.length, 0, 'XP must not be granted on rollback');
 
-      // Both table and RPC blocked -> clean 503 WINTER_TASK_CLAIMS_RLS_BLOCKED
+      // When table RLS is blocked and RPC is not set up, claim gracefully persists on winter_user_profiles
       mockDb.resetAll();
       resetWinterAndLeaderboardMemoryForTests();
       mockDb.setFailureRules([
@@ -543,14 +543,30 @@ async function main() {
         },
       ]);
 
-      const rlsErrRes = await fetch(`${apiBase}/api/winter/tasks/task_visit_festival/claim`, {
+      const rlsFallbackRes = await fetch(`${apiBase}/api/winter/tasks/task_visit_festival/claim`, {
         method: 'POST',
         headers: actorHeaders('stu_rls_2', 'Sam', 'student'),
       });
-      assert.equal(rlsErrRes.status, 503);
-      const rlsErrBody = await rlsErrRes.json();
-      assert.equal(rlsErrBody.code, 'WINTER_TASK_CLAIMS_RLS_BLOCKED');
-      assert.equal(mockDb.tables.gamification_xp_ledger.length, 0, 'No XP mutation when claim blocked');
+      assert.equal(rlsFallbackRes.status, 200);
+      const rlsFallbackBody = await rlsFallbackRes.json();
+      assert.equal(rlsFallbackBody.success, true);
+      assert.ok(rlsFallbackBody.winterState.claimedTaskIds.includes('task_visit_festival'));
+
+      // Verify that after memory clear (refresh), the task claim persists from winter_user_profiles
+      clearWinterMemoryCacheOnlyForTests();
+      const statusRes = await fetch(`${apiBase}/api/winter/status`, {
+        headers: actorHeaders('stu_rls_2', 'Sam', 'student'),
+      });
+      assert.equal(statusRes.status, 200);
+      const statusBody = await statusRes.json();
+      assert.ok(statusBody.winterState.claimedTaskIds.includes('task_visit_festival'));
+
+      // Verify duplicate claim rejects with 409
+      const dupRes = await fetch(`${apiBase}/api/winter/tasks/task_visit_festival/claim`, {
+        method: 'POST',
+        headers: actorHeaders('stu_rls_2', 'Sam', 'student'),
+      });
+      assert.equal(dupRes.status, 409);
     });
 
     // 3. Complete Collectibles Unlock Matrix (6 Banners, 9 Badges, 6 Borders)

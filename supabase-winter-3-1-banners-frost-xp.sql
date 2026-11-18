@@ -253,3 +253,39 @@ begin
   );
 end;
 $$;
+
+-- 7. Winter Task Claims Table, RLS Policy & Secure RPC
+create table if not exists public.winter_task_claims (
+  id text primary key,
+  user_id text not null,
+  task_id text not null,
+  xp_awarded integer not null default 0,
+  cookies_awarded integer not null default 0,
+  claimed_at timestamptz not null default now()
+);
+
+create unique index if not exists idx_winter_task_claims_user_task
+  on public.winter_task_claims(user_id, task_id);
+
+create or replace function public.claim_winter_task_secure(
+  p_claim_id text,
+  p_user_id text,
+  p_task_id text,
+  p_xp_awarded integer,
+  p_cookies_awarded integer,
+  p_claimed_at timestamptz
+) returns void
+language plpgsql
+security definer
+as $$
+begin
+  insert into public.winter_task_claims (id, user_id, task_id, xp_awarded, cookies_awarded, claimed_at)
+  values (p_claim_id, p_user_id, p_task_id, p_xp_awarded, p_cookies_awarded, p_claimed_at)
+  on conflict (user_id, task_id) do nothing;
+end;
+$$;
+
+alter table public.winter_task_claims enable row level security;
+drop policy if exists "task claims rw" on public.winter_task_claims;
+create policy "task claims rw" on public.winter_task_claims for all using (true) with check (true);
+

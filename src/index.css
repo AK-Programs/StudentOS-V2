@@ -794,67 +794,309 @@ button, a, [role="button"], input, select, textarea {
 
 /* ==========================================
    WINTER FESTIVAL 3.1 BANNER & BORDER VFX
-   Compositor-only transforms/opacity, paused when off-screen.
+   Rebuilt dynamic visual effects (compositor-only, mobile-friendly).
+   Respects prefers-reduced-motion and .veylentra-vfx-paused.
    ========================================== */
-@keyframes veylentra-aurora-drift {
-  0%, 100% {
-    transform: translate3d(-6%, 0, 0) scale(1);
-    opacity: 0.62;
-  }
-  50% {
-    transform: translate3d(6%, -4%, 0) scale(1.06);
-    opacity: 0.92;
-  }
-}
 
-@keyframes veylentra-peppermint-glint {
+/* 1. BANNER: Snowfall (layered flakes fall across the card - React Bits Pixel Snow) */
+@keyframes veylentra-pixel-snow-fall-1 {
   0% {
-    transform: translate3d(-25%, 0, 0);
-    opacity: 0.28;
-  }
-  50% {
-    opacity: 0.55;
+    transform: translate3d(0, -25px, 0);
   }
   100% {
-    transform: translate3d(25%, 0, 0);
-    opacity: 0.28;
+    transform: translate3d(-18px, 150px, 0);
   }
 }
 
-@keyframes veylentra-starlight-twinkle {
+@keyframes veylentra-pixel-snow-fall-2 {
+  0% {
+    transform: translate3d(0, -35px, 0);
+  }
+  100% {
+    transform: translate3d(22px, 160px, 0);
+  }
+}
+
+@keyframes veylentra-pixel-snow-fall-3 {
+  0% {
+    transform: translate3d(0, -30px, 0);
+  }
+  100% {
+    transform: translate3d(-10px, 155px, 0);
+  }
+}
+
+.veylentra-pixel-snow-layer-1 {
+  will-change: transform;
+  animation: veylentra-pixel-snow-fall-1 4.5s linear infinite;
+}
+
+.veylentra-pixel-snow-layer-2 {
+  will-change: transform;
+  animation: veylentra-pixel-snow-fall-2 7s linear infinite;
+}
+
+.veylentra-pixel-snow-layer-3 {
+  will-change: transform;
+  animation: veylentra-pixel-snow-fall-3 10s linear infinite;
+}
+
+/* 2. BANNER: Aurora (3 light sheets sweep left to right - Aceternity / React Bits Aurora Beam) */
+@keyframes veylentra-aurora-sweep-1 {
+  0% {
+    transform: translate3d(-60%, 0, 0) skewX(-14deg) scaleY(0.9);
+    opacity: 0.4;
+  }
+  50% {
+    transform: translate3d(25%, -8%, 0) skewX(10deg) scaleY(1.15);
+    opacity: 0.85;
+  }
+  100% {
+    transform: translate3d(125%, 0, 0) skewX(-14deg) scaleY(0.9);
+    opacity: 0.4;
+  }
+}
+
+@keyframes veylentra-aurora-sweep-2 {
+  0% {
+    transform: translate3d(-50%, 0, 0) skewX(12deg) scaleY(1.1);
+    opacity: 0.35;
+  }
+  50% {
+    transform: translate3d(35%, 6%, 0) skewX(-8deg) scaleY(0.85);
+    opacity: 0.8;
+  }
+  100% {
+    transform: translate3d(130%, 0, 0) skewX(12deg) scaleY(1.1);
+    opacity: 0.35;
+  }
+}
+
+@keyframes veylentra-aurora-sweep-3 {
+  0% {
+    transform: translate3d(-70%, 4%, 0) skewX(-18deg) scaleY(0.95);
+    opacity: 0.3;
+  }
+  50% {
+    transform: translate3d(20%, -6%, 0) skewX(14deg) scaleY(1.2);
+    opacity: 0.75;
+  }
+  100% {
+    transform: translate3d(115%, 4%, 0) skewX(-18deg) scaleY(0.95);
+    opacity: 0.3;
+  }
+}
+
+.veylentra-aurora-sheet-1 {
+  will-change: transform, opacity;
+  animation: veylentra-aurora-sweep-1 7.2s ease-in-out infinite;
+}
+
+.veylentra-aurora-sheet-2 {
+  will-change: transform, opacity;
+  animation: veylentra-aurora-sweep-2 10.5s ease-in-out infinite 1.8s;
+}
+
+.veylentra-aurora-sheet-3 {
+  will-change: transform, opacity;
+  animation: veylentra-aurora-sweep-3 14s ease-in-out infinite 3.6s;
+}
+
+/* 3. BANNER: Peppermint Ribbon (red & white ribbon stripe moves across) */
+@keyframes veylentra-peppermint-ribbon-slide {
+  0% {
+    transform: translate3d(-35%, -15%, 0) rotate(-14deg);
+  }
+  100% {
+    transform: translate3d(45%, 15%, 0) rotate(-14deg);
+  }
+}
+
+@keyframes veylentra-peppermint-sheen {
+  0% {
+    transform: translate3d(-100%, 0, 0);
+    opacity: 0;
+  }
+  50% {
+    opacity: 0.65;
+  }
+  100% {
+    transform: translate3d(220%, 0, 0);
+    opacity: 0;
+  }
+}
+
+.veylentra-peppermint-ribbon {
+  will-change: transform;
+  animation: veylentra-peppermint-ribbon-slide 5.5s linear infinite;
+}
+
+.veylentra-peppermint-sheen-bar {
+  will-change: transform, opacity;
+  animation: veylentra-peppermint-sheen 3.2s ease-in-out infinite 0.5s;
+}
+
+/* 4. BANNER: Starlight (Aceternity Sparkles at different sizes and times) */
+@keyframes veylentra-sparkle-burst-1 {
+  0%, 100% {
+    transform: scale(0) rotate(0deg);
+    opacity: 0;
+  }
+  25%, 50% {
+    transform: scale(1.15) rotate(45deg);
+    opacity: 0.95;
+  }
+  75% {
+    transform: scale(0.2) rotate(90deg);
+    opacity: 0.1;
+  }
+}
+
+@keyframes veylentra-sparkle-burst-2 {
+  0%, 100% {
+    transform: scale(0) rotate(0deg);
+    opacity: 0;
+  }
+  25%, 50% {
+    transform: scale(1.25) rotate(-45deg);
+    opacity: 1;
+  }
+  75% {
+    transform: scale(0.2) rotate(-90deg);
+    opacity: 0.15;
+  }
+}
+
+@keyframes veylentra-sparkle-burst-3 {
+  0%, 100% {
+    transform: scale(0) rotate(0deg);
+    opacity: 0;
+  }
+  30%, 60% {
+    transform: scale(1.1) rotate(60deg);
+    opacity: 0.9;
+  }
+  80% {
+    transform: scale(0.2) rotate(120deg);
+    opacity: 0.1;
+  }
+}
+
+.veylentra-sparkle-group-1 {
+  will-change: transform, opacity;
+  animation: veylentra-sparkle-burst-1 2.2s ease-in-out infinite;
+}
+
+.veylentra-sparkle-group-2 {
+  will-change: transform, opacity;
+  animation: veylentra-sparkle-burst-2 3.1s ease-in-out infinite 0.7s;
+}
+
+.veylentra-sparkle-group-3 {
+  will-change: transform, opacity;
+  animation: veylentra-sparkle-burst-3 4.2s ease-in-out infinite 1.4s;
+}
+
+/* 5. BANNER: Crown (gold beam runs the top edge - Aceternity Tracing Beam) */
+@keyframes veylentra-crown-tracing-beam {
+  0% {
+    transform: translate3d(-100%, 0, 0);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(240%, 0, 0);
+    opacity: 0;
+  }
+}
+
+@keyframes veylentra-crown-pulse {
   0%, 100% {
     opacity: 0.45;
-    transform: scale(0.96);
+    transform: scaleY(0.96);
   }
   50% {
+    opacity: 0.85;
+    transform: scaleY(1.04);
+  }
+}
+
+.veylentra-crown-beam {
+  will-change: transform, opacity;
+  animation: veylentra-crown-tracing-beam 2.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.veylentra-crown-filigree {
+  will-change: opacity, transform;
+  animation: veylentra-crown-pulse 4.5s ease-in-out infinite;
+}
+
+/* 6. BANNER: Hearth (warm radial glow breathes from center + floating embers) */
+@keyframes veylentra-hearth-glow-breathe {
+  0%, 100% {
+    transform: scale(0.85);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.22);
     opacity: 0.95;
-    transform: scale(1.04);
   }
 }
 
-@keyframes veylentra-crown-sweep {
-  0%, 100% {
-    transform: translate3d(-8%, 0, 0) rotate(-1deg);
-    opacity: 0.68;
+@keyframes veylentra-ember-float-1 {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
   }
-  50% {
-    transform: translate3d(8%, 0, 0) rotate(1deg);
-    opacity: 0.98;
+  30% {
+    opacity: 0.9;
   }
-}
-
-@keyframes veylentra-hearth-breathe {
-  0%, 100% {
-    opacity: 0.58;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.88;
-    transform: scale(1.05);
+  100% {
+    transform: translate3d(14px, -65px, 0);
+    opacity: 0;
   }
 }
 
-@keyframes veylentra-prism-rotate {
+@keyframes veylentra-ember-float-2 {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translate3d(-16px, -75px, 0);
+    opacity: 0;
+  }
+}
+
+.veylentra-hearth-center-glow {
+  will-change: transform, opacity;
+  animation: veylentra-hearth-glow-breathe 3.6s ease-in-out infinite;
+}
+
+.veylentra-ember-1 {
+  will-change: transform, opacity;
+  animation: veylentra-ember-float-1 3s ease-out infinite;
+}
+
+.veylentra-ember-2 {
+  will-change: transform, opacity;
+  animation: veylentra-ember-float-2 4s ease-out infinite 1.2s;
+}
+
+/* ==========================================
+   BORDERS: 6 DISTINCT VISIBLE MOTIONS
+   ========================================== */
+
+/* 1. BORDER: Ice (light travels the ring, like Star Border) */
+@keyframes veylentra-ice-star-border-spin {
   0% {
     transform: rotate(0deg);
   }
@@ -863,47 +1105,166 @@ button, a, [role="button"], input, select, textarea {
   }
 }
 
-.veylentra-vfx-aurora {
-  will-change: transform, opacity;
-  animation: veylentra-aurora-drift 7.5s ease-in-out infinite;
-}
-
-.veylentra-vfx-peppermint {
-  will-change: transform, opacity;
-  animation: veylentra-peppermint-glint 6s ease-in-out infinite alternate;
-}
-
-.veylentra-vfx-starlight {
-  will-change: transform, opacity;
-  animation: veylentra-starlight-twinkle 3.8s ease-in-out infinite;
-}
-
-.veylentra-vfx-crown {
-  will-change: transform, opacity;
-  animation: veylentra-crown-sweep 6.5s ease-in-out infinite;
-}
-
-.veylentra-vfx-snowfall {
-  will-change: transform, opacity;
-  animation: veylentra-aurora-drift 9s ease-in-out infinite;
-}
-
-.veylentra-vfx-hearth {
-  will-change: transform, opacity;
-  animation: veylentra-hearth-breathe 5.2s ease-in-out infinite;
-}
-
-.veylentra-border-prism {
+.veylentra-border-ice-light {
   will-change: transform;
-  animation: veylentra-prism-rotate 10s linear infinite;
+  animation: veylentra-ice-star-border-spin 2.6s linear infinite;
 }
 
-.veylentra-border-shimmer {
-  will-change: opacity;
-  animation: veylentra-starlight-twinkle 4.2s ease-in-out infinite;
+/* 2. BORDER: Snowflake (small flakes orbit the avatar) */
+@keyframes veylentra-orbit-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes veylentra-counter-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(-360deg);
+  }
+}
+
+.veylentra-snowflake-orbit-ring {
+  will-change: transform;
+  animation: veylentra-orbit-spin 6.5s linear infinite;
+}
+
+.veylentra-snowflake-counter-spin {
+  will-change: transform;
+  animation: veylentra-counter-spin 6.5s linear infinite;
+}
+
+/* 3. BORDER: Glow (soft aura pulse, not a flat fade) */
+@keyframes veylentra-aura-wave-1 {
+  0% {
+    transform: scale(0.98);
+    opacity: 0.85;
+    box-shadow: 0 0 10px rgba(34, 211, 238, 0.6);
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 0.35;
+    box-shadow: 0 0 22px rgba(34, 211, 238, 0.8);
+  }
+  100% {
+    transform: scale(1.32);
+    opacity: 0;
+    box-shadow: 0 0 28px rgba(34, 211, 238, 0);
+  }
+}
+
+@keyframes veylentra-aura-wave-2 {
+  0% {
+    transform: scale(0.98);
+    opacity: 0.85;
+    box-shadow: 0 0 8px rgba(52, 211, 153, 0.6);
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 0.35;
+    box-shadow: 0 0 20px rgba(52, 211, 153, 0.8);
+  }
+  100% {
+    transform: scale(1.32);
+    opacity: 0;
+    box-shadow: 0 0 26px rgba(52, 211, 153, 0);
+  }
+}
+
+.veylentra-border-aura-1 {
+  will-change: transform, opacity;
+  animation: veylentra-aura-wave-1 2.8s ease-out infinite;
+}
+
+.veylentra-border-aura-2 {
+  will-change: transform, opacity;
+  animation: veylentra-aura-wave-2 2.8s ease-out infinite 1.4s;
+}
+
+/* 4. BORDER: Peppermint (rotating red and white dashes) */
+@keyframes veylentra-peppermint-dashes-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.veylentra-border-peppermint-spin {
+  will-change: transform;
+  animation: veylentra-peppermint-dashes-spin 3.8s linear infinite;
+}
+
+/* 5. BORDER: Gilded (gold shimmer around the edge) */
+@keyframes veylentra-gilded-shimmer-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.veylentra-border-gilded-spin {
+  will-change: transform;
+  animation: veylentra-gilded-shimmer-spin 3.2s linear infinite;
+}
+
+/* 6. BORDER: Prism (slow rainbow ring) */
+@keyframes veylentra-prism-rainbow-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.veylentra-border-prism-spin {
+  will-change: transform;
+  animation: veylentra-prism-rainbow-spin 7.5s linear infinite;
+}
+
+/* Pause animations when offscreen or reduced-motion is preferred */
+@media (prefers-reduced-motion: reduce) {
+  .veylentra-snowflake,
+  .veylentra-pixel-snow-layer-1,
+  .veylentra-pixel-snow-layer-2,
+  .veylentra-pixel-snow-layer-3,
+  .veylentra-aurora-sheet-1,
+  .veylentra-aurora-sheet-2,
+  .veylentra-aurora-sheet-3,
+  .veylentra-peppermint-ribbon,
+  .veylentra-peppermint-sheen-bar,
+  .veylentra-sparkle-group-1,
+  .veylentra-sparkle-group-2,
+  .veylentra-sparkle-group-3,
+  .veylentra-crown-beam,
+  .veylentra-crown-filigree,
+  .veylentra-hearth-center-glow,
+  .veylentra-ember-1,
+  .veylentra-ember-2,
+  .veylentra-border-ice-light,
+  .veylentra-snowflake-orbit-ring,
+  .veylentra-snowflake-counter-spin,
+  .veylentra-border-aura-1,
+  .veylentra-border-aura-2,
+  .veylentra-border-peppermint-spin,
+  .veylentra-border-gilded-spin,
+  .veylentra-border-prism-spin {
+    animation: none !important;
+    transform: none !important;
+  }
 }
 
 .veylentra-vfx-paused,
 .veylentra-vfx-paused * {
   animation-play-state: paused !important;
 }
+
