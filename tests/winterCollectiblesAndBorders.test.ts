@@ -1082,12 +1082,16 @@ async function main() {
     if (prevKey === undefined) delete process.env.VITE_SUPABASE_ANON_KEY;
     else process.env.VITE_SUPABASE_ANON_KEY = prevKey;
 
+    apiServer.closeAllConnections?.();
+    mockDb.server.closeAllConnections?.();
     await new Promise<void>((resolve) => apiServer.close(() => resolve()));
     await new Promise<void>((resolve) => mockDb.server.close(() => resolve()));
   }
 }
 
-main().catch((err) => {
-  console.error('❌ Test suite failed:', err);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error('❌ Test suite failed:', err);
+    process.exit(1);
+  });
