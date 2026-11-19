@@ -97,30 +97,25 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
     }
   });
 
+  const userStreakStorageKey = `${STREAK_STORAGE_KEY}_${userId}`;
   const [streakData, setStreakData] = useState<{ count: number; lastDate: string; softened: boolean }>(() => {
     const today = getTodayString();
-    if (typeof window === 'undefined') return { count: 1, lastDate: today, softened: false };
+    const initialCount = Number(currentUser.streakDays ?? 0);
+    if (typeof window === 'undefined') return { count: initialCount, lastDate: today, softened: false };
     try {
-      const raw = localStorage.getItem(STREAK_STORAGE_KEY);
+      const raw = localStorage.getItem(userStreakStorageKey);
       if (raw) {
         const parsed = JSON.parse(raw);
-        const last = new Date(parsed.lastDate);
-        const curr = new Date(today);
-        const diffDays = Math.round((curr.getTime() - last.getTime()) / (1000 * 3600 * 24));
-        if (diffDays <= 1) return parsed;
-        if (diffDays === 2) {
-          const softened = { count: parsed.count, lastDate: today, softened: true };
-          localStorage.setItem(STREAK_STORAGE_KEY, JSON.stringify(softened));
-          return softened;
-        }
-        const fresh = { count: 1, lastDate: today, softened: false };
-        localStorage.setItem(STREAK_STORAGE_KEY, JSON.stringify(fresh));
-        return fresh;
+        return {
+          count: Math.max(initialCount, Number(parsed.count || 0)),
+          lastDate: parsed.lastDate || today,
+          softened: Boolean(parsed.softened),
+        };
       }
     } catch {
       // ignore storage errors
     }
-    return { count: 1, lastDate: today, softened: false };
+    return { count: initialCount, lastDate: today, softened: false };
   });
 
   const [reminderVersion, setReminderVersion] = useState<number>(0);
@@ -291,10 +286,11 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
       }
       const today = getTodayString();
       setStreakData(prev => {
-        const nextCount = prev.lastDate === today ? prev.count : prev.count + 1;
+        const syncedBase = Math.max(prev.count, Number(currentUser.streakDays ?? 0));
+        const nextCount = prev.lastDate === today ? syncedBase : syncedBase + 1;
         const updated = { count: nextCount, lastDate: today, softened: false };
         try {
-          localStorage.setItem(STREAK_STORAGE_KEY, JSON.stringify(updated));
+          localStorage.setItem(userStreakStorageKey, JSON.stringify(updated));
         } catch {
           // ignore
         }
@@ -305,7 +301,7 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
       setTimeout(() => setCurrentMood('idle'), 2800);
     }
     prevCompletedTasksCount.current = currentCompleted;
-  }, [tasks]);
+  }, [tasks, currentUser.streakDays, userStreakStorageKey]);
 
   if (!isAllowedTab) {
     return null;

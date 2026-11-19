@@ -718,11 +718,19 @@ export const ALLOWED_GAMIFICATION_ACTION_XP: Record<
   brain_battle_perfect: { xp: 25, maxPerDay: 6, label: '100% Flawless Round Bonus', category: 'battle' },
   brain_battle_daily: { xp: 50, maxPerDay: 1, label: 'Daily Brain Battle Challenge', category: 'battle' },
   brain_battle_multiplayer_win: { xp: 45, maxPerDay: 8, label: 'Multiplayer Arena Victory', category: 'battle' },
-  // Faculty engagement actions
+  // System 2.0 Streak & Mission Rewards
+  streak_recovery: { xp: 35, maxPerDay: 1, label: 'Learning Streak Restored', category: 'streak' },
+  daily_mission_complete: { xp: 25, maxPerDay: 5, label: 'Daily Mission Completed', category: 'academic' },
+  weekly_mission_complete: { xp: 75, maxPerDay: 3, label: 'Weekly Milestone Reached', category: 'academic' },
+  milestone_mission_complete: { xp: 100, maxPerDay: 3, label: 'Achievement Milestone Reached', category: 'academic' },
+  // Faculty, Coordinator & Admin engagement actions
   faculty_publish_assignment: { xp: 25, maxPerDay: 10, label: 'Assignment Published to Cohort', category: 'faculty' },
   faculty_grade_submission: { xp: 20, maxPerDay: 30, label: 'Student Submission Evaluated', category: 'faculty' },
   faculty_mark_attendance: { xp: 20, maxPerDay: 8, label: 'Class Attendance Submitted', category: 'faculty' },
   faculty_publish_announcement: { xp: 15, maxPerDay: 6, label: 'Cohort Circular Published', category: 'faculty' },
+  faculty_workflow_action: { xp: 25, maxPerDay: 6, label: 'Teaching Workflow Completed', category: 'faculty' },
+  coordinator_oversight_action: { xp: 30, maxPerDay: 5, label: 'Cohort Oversight Review Completed', category: 'faculty' },
+  admin_ops_action: { xp: 25, maxPerDay: 5, label: 'Operations & Governance Review Completed', category: 'faculty' },
 };
 
 export interface SantaWindowStatus {

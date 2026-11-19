@@ -123,6 +123,10 @@ import { LectureNotesAiModal } from './components/LectureNotesAiModal';
 import { LectureNotesWorkspace } from './components/lectureNotes/LectureNotesWorkspace';
 import { HomeworkLinkedNotesSection } from './components/lectureNotes/HomeworkLinkedNotesSection';
 import { NotificationFlyout } from './components/NotificationFlyout';
+import { LevelUpCelebrationModal } from './components/gamification/LevelUpCelebrationModal';
+import { RegularBadgeUnlockModal } from './components/gamification/RegularBadgeUnlockModal';
+import { UnifiedEngagementPanel } from './components/engagement/UnifiedEngagementPanel';
+import { useEngagementOverview } from './lib/engagementService';
 import { ParentalPortal } from './components/ParentalPortal';
 import { BrainBattleArena } from './components/BrainBattleArena';
 import { SyllabusStudyPlanner } from './components/SyllabusStudyPlanner';
@@ -558,6 +562,11 @@ export default function App() {
   const winterTasksAccess = useFeatureAccess('winter_festival_tasks', currentUser);
   const winterBadgesAccess = useFeatureAccess('winter_badges', currentUser);
   const winterSantaAccess = useFeatureAccess('winter_santa_gifts', currentUser);
+  const {
+    overview: engagementOverview,
+    loading: engagementLoading,
+    refresh: refreshEngagementOverview,
+  } = useEngagementOverview(currentUser, effectiveRole);
   const winterSpinAccess = useFeatureAccess('winter_spin_wheel', currentUser);
 
   const isFacultyRoleForLb = ['teacher', 'coordinator', 'hod', 'admin'].includes((effectiveRole || '').toLowerCase());
@@ -3014,19 +3023,24 @@ export default function App() {
 
   // Realtime Supabase & Local Custom Event Sync for Orion Automations & Global Broadcasts
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser) {
+      setNotifications([]);
+      return;
+    }
+
+    setNotifications([]);
 
     const refreshNotifications = async () => {
       try {
         const list = await getAppNotifications(currentUser.uid, currentUser.grade, currentUser.section, effectiveRole);
         if (list) {
-          setNotifications(prev => {
-            if (list.length === 0 && prev.length > 0) return prev;
-            return list;
-          });
+          setNotifications(list);
         }
-        // Intelligent learning reminders check
-        ReminderService.checkAndDispatchLearningReminders(currentUser.uid, currentUser.name).catch(() => {});
+        // Role-strict learning reminders (Students only)
+        ReminderService.checkAndDispatchLearningReminders(currentUser.uid, currentUser.name, {
+          role: effectiveRole || currentUser.role,
+          notificationPreferences: (currentUser as any)?.raw_data?.notificationPreferences,
+        }).catch(() => {});
       } catch (e) {
         console.warn('[App] Error refreshing notifications:', e);
       }
@@ -3083,7 +3097,7 @@ export default function App() {
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
           refreshNotifications();
           const row = payload?.new as any;
-          if (row && currentUser && isUserEligibleForNotification(row, currentUser)) {
+          if (row && currentUser && isUserEligibleForNotification(row, { ...currentUser, role: effectiveRole })) {
             const nId = row.id || '';
             triggerBrowserPushNotification(row.title || '📢 Veylentra Notice', {
               body: row.message || row.content || '',
@@ -3097,10 +3111,9 @@ export default function App() {
           refreshNotifications();
         })
         .on('broadcast', { event: 'new_app_notification' }, (payload) => {
-          console.log('[REALTIME-BROADCAST] Received broadcast notification:', payload);
           refreshNotifications();
           const notif = payload?.payload;
-          if (notif && currentUser && isUserEligibleForNotification(notif, currentUser)) {
+          if (notif && currentUser && isUserEligibleForNotification(notif, { ...currentUser, role: effectiveRole })) {
             triggerNotificationSound(notif.type || 'announcement');
             triggerBrowserPushNotification(notif.title || '📢 Veylentra Notice', {
               body: notif.message || '',
@@ -9146,7 +9159,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
             )}
             
             {/* Live Broadcast Banner */}
-            <LiveBroadcastBanner currentUser={currentUser} />
+            <LiveBroadcastBanner currentUser={currentUser} effectiveRole={effectiveRole} />
 
             {/* Global Workspace Header bar */}
             <header className="sticky top-0 z-40 px-3 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between gap-3 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md">
@@ -9577,12 +9590,14 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                         </h1>
                       </div>
 
-                      {/* Streak Card — Tapping opens Brain Battle */}
+                      {/* Authoritative Streak Card — Zero hardcoded fallbacks */}
                       <button
                         type="button"
-                        onClick={() => handleTabSelect('brain_battle')}
+                        onClick={() =>
+                          handleTabSelect((effectiveRole as string) === 'student' ? 'study_hub' : 'leaderboard')
+                        }
                         className="flex items-center gap-3 bg-slate-800/80 hover:bg-slate-800 px-4 py-2.5 rounded-xl border border-slate-700/80 shrink-0 cursor-pointer transition-colors shadow-sm text-left group"
-                        title="View Brain Battle Arena"
+                        title="View streak & consistency details"
                       >
                         <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-amber-500/10 text-amber-400 shrink-0">
                           <Flame className="w-5 h-5 text-amber-400" />
@@ -9590,11 +9605,18 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                         <div>
                           <div className="flex items-center gap-1.5">
                             <span className="text-base font-bold font-mono tabular-nums text-white">
-                              <NumberTicker value={currentUser.streakDays || 5} suffix=" Days" />
+                              <NumberTicker
+                                value={engagementOverview?.streak?.currentStreak ?? currentUser.streakDays ?? 0}
+                                suffix=" Days"
+                              />
                             </span>
-                            <span className="text-[10px] text-amber-400 font-medium">Streak</span>
+                            <span className="text-[10px] text-amber-400 font-medium capitalize">
+                              {(engagementOverview?.streak?.streakState || currentUser.streakState || 'active').replace('_', ' ')}
+                            </span>
                           </div>
-                          <p className="text-[11px] text-slate-400 font-normal">Brain Battle Arena</p>
+                          <p className="text-[11px] text-slate-400 font-normal">
+                            Best {engagementOverview?.streak?.longestStreak ?? currentUser.longestStreak ?? currentUser.streakDays ?? 0}d
+                          </p>
                         </div>
                       </button>
                     </div>
@@ -9879,71 +9901,89 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                     </div>
                   </div>
 
-                  {/* Core Metrics Summary Strip */}
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
-                    <div
-                      onClick={() => { setStudyHubSubTab('tasks'); handleTabSelect('study_hub'); }}
-                      className="p-4 sm:p-5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors flex items-center justify-between cursor-pointer shadow-sm"
-                    >
-                      <div className="space-y-1">
-                        <span className="text-xs font-medium text-slate-400">Open Tasks</span>
-                        <h3 className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-white">
-                          <NumberTicker value={tasks.filter(t => !t.completed).length} />
-                        </h3>
+                  {/* Core Metrics Summary Strip (Students only; non-students get dedicated role-scoped panel below) */}
+                  {(effectiveRole as string) === 'student' && (
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+                      <div
+                        onClick={() => { setStudyHubSubTab('tasks'); handleTabSelect('study_hub'); }}
+                        className="p-4 sm:p-5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors flex items-center justify-between cursor-pointer shadow-sm"
+                      >
+                        <div className="space-y-1">
+                          <span className="text-xs font-medium text-slate-400">Open Tasks</span>
+                          <h3 className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-white">
+                            <NumberTicker value={tasks.filter(t => !t.completed).length} />
+                          </h3>
+                        </div>
+                        <div className="h-8 w-8 bg-indigo-500/10 border border-indigo-500/20 rounded-lg flex items-center justify-center text-indigo-400 shrink-0">
+                          <CheckSquare className="w-4 h-4" />
+                        </div>
                       </div>
-                      <div className="h-8 w-8 bg-indigo-500/10 border border-indigo-500/20 rounded-lg flex items-center justify-center text-indigo-400 shrink-0">
-                        <CheckSquare className="w-4 h-4" />
+
+                      <div
+                        onClick={() => handleTabSelect('notes')}
+                        className="p-4 sm:p-5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors flex items-center justify-between cursor-pointer shadow-sm"
+                      >
+                        <div className="space-y-1">
+                          <span className="text-xs font-medium text-slate-400">Saved Notes</span>
+                          <h3 className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-white">
+                            <NumberTicker value={vaultNotes.length} />
+                          </h3>
+                        </div>
+                        <div className="h-8 w-8 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-center justify-center text-amber-400 shrink-0">
+                          <FileText className="w-4 h-4" />
+                        </div>
+                      </div>
+
+                      <div
+                        onClick={() => handleTabSelect('brain_battle')}
+                        className="p-4 sm:p-5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors flex items-center justify-between cursor-pointer shadow-sm"
+                      >
+                        <div className="space-y-1">
+                          <span className="text-xs font-medium text-slate-400">Brain Battles</span>
+                          <h3 className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-white">
+                            <NumberTicker value={currentUser.quizzesTaken ?? 0} />
+                          </h3>
+                        </div>
+                        <div className="h-8 w-8 bg-emerald-500/10 border border-emerald-500/20 rounded-lg flex items-center justify-center text-emerald-400 shrink-0">
+                          <Trophy className="w-4 h-4" />
+                        </div>
+                      </div>
+
+                      <div
+                        onClick={() => handleTabSelect('pomodoro')}
+                        className="p-4 sm:p-5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors flex items-center justify-between cursor-pointer shadow-sm"
+                      >
+                        <div className="space-y-1">
+                          <span className="text-xs font-medium text-slate-400">Study Hours</span>
+                          <h3 className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-white">
+                            <NumberTicker value={currentUser.studyHours ?? 0} suffix="h" />
+                          </h3>
+                        </div>
+                        <div className="h-8 w-8 bg-rose-500/10 border border-rose-500/20 rounded-lg flex items-center justify-center text-rose-400 shrink-0">
+                          <Clock className="w-4 h-4" />
+                        </div>
                       </div>
                     </div>
+                  )}
 
-                    <div
-                      onClick={() => handleTabSelect('notes')}
-                      className="p-4 sm:p-5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors flex items-center justify-between cursor-pointer shadow-sm"
-                    >
-                      <div className="space-y-1">
-                        <span className="text-xs font-medium text-slate-400">Saved Notes</span>
-                        <h3 className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-white">
-                          <NumberTicker value={vaultNotes.length} />
-                        </h3>
-                      </div>
-                      <div className="h-8 w-8 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-center justify-center text-amber-400 shrink-0">
-                        <FileText className="w-4 h-4" />
-                      </div>
-                    </div>
+                  {/* Role-Aware Engagement, Streak Recovery & Mission Engine */}
+                  <UnifiedEngagementPanel
+                    currentUser={currentUser}
+                    effectiveRole={effectiveRole || currentUser.role}
+                    overview={engagementOverview}
+                    loading={engagementLoading}
+                    onNavigateTab={(tabId, subTab) => {
+                      if (subTab === 'flashcards') setStudyHubSubTab('flashcards');
+                      handleTabSelect(tabId);
+                    }}
+                    showNotification={showNotification}
+                    onRefresh={refreshEngagementOverview}
+                  />
 
-                    <div
-                      onClick={() => handleTabSelect('brain_battle')}
-                      className="p-4 sm:p-5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors flex items-center justify-between cursor-pointer shadow-sm"
-                    >
-                      <div className="space-y-1">
-                        <span className="text-xs font-medium text-slate-400">Brain Battles</span>
-                        <h3 className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-white">
-                          <NumberTicker value={currentUser.quizzesTaken || 3} />
-                        </h3>
-                      </div>
-                      <div className="h-8 w-8 bg-emerald-500/10 border border-emerald-500/20 rounded-lg flex items-center justify-center text-emerald-400 shrink-0">
-                        <Trophy className="w-4 h-4" />
-                      </div>
-                    </div>
-
-                    <div
-                      onClick={() => handleTabSelect('pomodoro')}
-                      className="p-4 sm:p-5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors flex items-center justify-between cursor-pointer shadow-sm"
-                    >
-                      <div className="space-y-1">
-                        <span className="text-xs font-medium text-slate-400">Study Hours</span>
-                        <h3 className="text-xl sm:text-2xl font-bold font-mono tabular-nums text-white">
-                          <NumberTicker value={currentUser.studyHours || 12} suffix="h" />
-                        </h3>
-                      </div>
-                      <div className="h-8 w-8 bg-rose-500/10 border border-rose-500/20 rounded-lg flex items-center justify-center text-rose-400 shrink-0">
-                        <Clock className="w-4 h-4" />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* StudentOS Scholar Gamification Summary Card */}
-                  <DashboardGamificationCard currentUser={currentUser} />
+                  {/* StudentOS Scholar Gamification Summary Card (Students only — never shows student study metrics to Admin/Faculty) */}
+                  {(effectiveRole as string) === 'student' && (
+                    <DashboardGamificationCard currentUser={currentUser} />
+                  )}
 
                   {/* StudentOS Life — Role-Aware Dashboard Community Hub Card (Visible to All Authenticated Roles) */}
                   <div className="p-5 sm:p-6 rounded-xl bg-slate-900 border border-slate-800 shadow-sm relative overflow-hidden">
@@ -14773,9 +14813,9 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                           house: 'Emerald',
                           section: 'Solara',
                           grade: 'Grade 10',
-                          streakDays: 5,
-                          quizzesTaken: 3,
-                          studyHours: 12
+                          streakDays: 0,
+                          quizzesTaken: 0,
+                          studyHours: 0
                         }
                   }
                   onNavigateToTab={handleTabSelect}
@@ -14793,9 +14833,9 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                   house: 'Ruby',
                   section: 'Astra',
                   grade: 'Grade 12',
-                  streakDays: 10,
-                  quizzesTaken: 12,
-                  studyHours: 40
+                  streakDays: 0,
+                  quizzesTaken: 0,
+                  studyHours: 0
                 }} />
               )}
 
@@ -15712,11 +15752,18 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
         ))}
       </div>
 
-      {/* Real-time Notification Flyout Animations emerging from Bell Button */}
+      {/* Real-time Notification Flyout with Per-User Throttling & Lifecycle Guards */}
       <NotificationFlyout
         notifications={notifications}
+        currentUserId={currentUser?.uid}
+        effectiveRole={effectiveRole}
+        userGrade={currentUser?.grade}
+        userSection={currentUser?.section}
+        maxVisible={engagementOverview?.policy?.maxVisibleFlyouts ?? 1}
+        cooldownSeconds={engagementOverview?.policy?.flyoutCooldownSeconds ?? 45}
         onNavigateTab={(tab) => handleTabSelect(tab)}
         onMarkAsRead={(id) => handleMarkAsRead(id)}
+        onDismiss={(id) => handleDeleteNotif(id)}
       />
 
       {/* AI Lecture Notes Synthesizer and Transformer Modal */}
@@ -15753,6 +15800,20 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
             }, 140);
           }}
         />
+      )}
+
+      {/* Global Scholar Level-Up & Regular Academic Badge Celebration Overlays */}
+      {currentUser && !isLocked && (
+        <>
+          <LevelUpCelebrationModal
+            currentUserId={currentUser.uid}
+            onViewRoadmap={() => handleTabSelect('leaderboard')}
+          />
+          <RegularBadgeUnlockModal
+            currentUserId={currentUser.uid}
+            onViewCollection={() => handleTabSelect('leaderboard')}
+          />
+        </>
       )}
 
     </div>

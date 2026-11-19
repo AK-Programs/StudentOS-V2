@@ -25,7 +25,14 @@ export type GamificationActionType =
   | 'brain_battle_round'
   | 'brain_battle_perfect'
   | 'brain_battle_daily'
-  | 'brain_battle_multiplayer_win';
+  | 'brain_battle_multiplayer_win'
+  | 'streak_recovery'
+  | 'daily_mission_complete'
+  | 'weekly_mission_complete'
+  | 'milestone_mission_complete'
+  | 'faculty_workflow_action'
+  | 'coordinator_oversight_action'
+  | 'admin_ops_action';
 
 export interface LevelDefinition {
   level: number;
@@ -245,7 +252,14 @@ export const XP_REWARDS: Record<GamificationActionType, { xp: number; label: str
   brain_battle_round: { xp: 35, label: 'Brain Battle Round Completed' },
   brain_battle_perfect: { xp: 25, label: '100% Flawless Round Bonus' },
   brain_battle_daily: { xp: 50, label: 'Daily Brain Battle Challenge' },
-  brain_battle_multiplayer_win: { xp: 45, label: 'Multiplayer Arena Victory' }
+  brain_battle_multiplayer_win: { xp: 45, label: 'Multiplayer Arena Victory' },
+  streak_recovery: { xp: 35, label: 'Verified Streak Recovery' },
+  daily_mission_complete: { xp: 25, label: 'Daily Mission Completed' },
+  weekly_mission_complete: { xp: 75, label: 'Weekly Consistency Mission' },
+  milestone_mission_complete: { xp: 100, label: 'Milestone Achievement Unlocked' },
+  faculty_workflow_action: { xp: 25, label: 'Teaching Workflow Completed' },
+  coordinator_oversight_action: { xp: 30, label: 'Department Oversight Completed' },
+  admin_ops_action: { xp: 25, label: 'Campus Governance Completed' }
 };
 
 export function getTodayDateString(): string {
@@ -336,9 +350,9 @@ export function createDefaultGamificationProfile(user: {
     xp: 0,
     level: 1,
     levelTitle: SCHOLAR_LEVELS[0].title,
-    currentStreak: 1,
-    longestStreak: 1,
-    lastActiveDate: today,
+    currentStreak: 0,
+    longestStreak: 0,
+    lastActiveDate: '',
     earnedBadges: {},
     counts: {
       totalActions: 0,
@@ -503,8 +517,12 @@ export async function loadAuthoritativeGamificationProfile(user: {
           dailyChallengesCompleted: Math.max(localProfile.counts?.dailyChallengesCompleted || 0, baseRemote.counts?.dailyChallengesCompleted || 0),
           multiplayerWins: Math.max(localProfile.counts?.multiplayerWins || 0, baseRemote.counts?.multiplayerWins || 0)
         },
-        currentStreak: Math.max(localProfile.currentStreak || 1, baseRemote.currentStreak || 1),
-        longestStreak: Math.max(localProfile.longestStreak || 1, baseRemote.longestStreak || 1),
+        currentStreak: Number(apiProfile?.currentStreak ?? baseRemote.currentStreak ?? localProfile.currentStreak ?? 0),
+        longestStreak: Math.max(
+          Number(apiProfile?.currentStreak ?? baseRemote.currentStreak ?? 0),
+          Number(localProfile.longestStreak ?? 0),
+          Number(baseRemote.longestStreak ?? 0)
+        ),
         updatedAt: new Date().toISOString()
       };
 
@@ -512,6 +530,10 @@ export async function loadAuthoritativeGamificationProfile(user: {
       if (typeof window !== 'undefined') {
         const storageKey = `s_os_gamification_${userId}`;
         localStorage.setItem(storageKey, JSON.stringify(merged));
+        // Seed baseline silently so historical levels/badges NEVER replay on reload or login
+        import('./engagementService').then(({ seedCelebrationBaseline }) => {
+          seedCelebrationBaseline(userId, merged.level, Object.keys(merged.earnedBadges || {}));
+        }).catch(() => {});
         window.dispatchEvent(new CustomEvent('studentos-gamification-updated', { detail: { profile: merged } }));
       }
       return merged;
@@ -863,6 +885,14 @@ export async function awardStudentXP(
     if (leveledUp) {
       soundService.playSuccessSound();
     }
+    import('./engagementService').then(({ dispatchLevelUpIfNew, dispatchRegularBadgesIfNew }) => {
+      if (leveledUp) {
+        dispatchLevelUpIfNew(targetUserId, prevLevel, newLevelInfo.current, profile.xp);
+      }
+      if (newBadges.length > 0) {
+        dispatchRegularBadgesIfNew(targetUserId, newBadges);
+      }
+    }).catch(() => {});
     window.dispatchEvent(
       new CustomEvent('studentos-xp-toast', {
         detail: {

@@ -1,0 +1,994 @@
+VEYLENTRA — COMPLETE ATTENTION, ENGAGEMENT & RETENTION SYSTEM 2.0
+
+Student Motivation, Streak Recovery, Role-Aware Missions, Animated Rewards, Faculty Engagement & Notification Intelligence
+
+We are upgrading Veylentra's complete attention and retention experience.
+
+This is NOT a request to add another isolated gamification page. It is a product-wide improvement to the existing XP, streak, learning, study, task, badge, notification and faculty engagement systems.
+
+Veylentra already has:
+
+- XP and existing XP infrastructure.
+- Learning and study systems.
+- Existing streak functionality.
+- Existing badges and achievement systems.
+- Existing faculty engagement mechanics.
+- Student and Faculty dashboards.
+- Admin and Super Admin dashboards.
+- Existing notification and broadcast systems.
+- Winter Festival rewards and badge celebration patterns.
+
+Preserve all working systems, existing user data, APIs, permissions, database structures where possible, and current Veylentra design language. Inspect the repository and actual Supabase architecture before making changes.
+
+Do not perform a full UI redesign. Improve the existing experience with thoughtful, polished interactions.
+
+---
+
+PHASE 0 — REQUIRED DISCOVERY AND SAFETY AUDIT
+
+Before implementing anything:
+
+1. Inspect the entire existing engagement architecture.
+2. Identify current XP sources, streak calculations, streak tables, badge ownership, task completion, notifications, broadcasts and faculty engagement systems.
+3. Trace the actual event flow from backend event to database write to frontend display.
+4. Identify existing reusable components and services.
+5. Identify all supported account roles and their actual permissions.
+6. Inspect Admin and Super Admin dashboard statistics and streak queries.
+7. Identify why all roles currently receive identical study tasks.
+8. Identify why old broadcast notifications and irrelevant reminders repeatedly appear.
+9. Inspect all existing cooldowns, scheduling logic and background jobs.
+
+Produce an internal implementation plan based on the actual codebase.
+
+Do not invent schemas, APIs, database tables or model identifiers.
+
+Do not replace an existing working system simply because a new implementation is easier.
+
+Critical data protection
+
+- Never reset existing XP, streaks, badges, tasks or progress.
+- Never award arbitrary XP to compensate for a bug.
+- Preserve historical records.
+- Use idempotent migrations and backfills.
+- Maintain proper Supabase RLS and server-side authorization.
+- Test account switching and cross-account data isolation.
+- Make database changes backward-compatible where possible.
+
+PHASE 1 — COMPLETE STUDENT ATTENTION & RETENTION SYSTEM
+
+Build a connected system that encourages students to return, learn consistently, complete meaningful activities and recognize their progress.
+
+The experience should combine:
+
+1. Consistent daily engagement.
+2. Better study-session focus.
+3. More exciting and meaningful learning.
+4. Personalised motivation.
+5. Progress recognition and achievements.
+6. Sustainable long-term study habits.
+
+Do not create another isolated XP system. Reuse the existing XP and achievement infrastructure.
+
+1.1 — Smart Student Daily Missions
+
+Create an improved role-aware daily mission system for Students.
+
+Missions should encourage actual learning rather than meaningless clicks.
+
+Potential mission examples:
+
+- Complete a learning session.
+- Review a set of flashcards.
+- Complete a revision activity.
+- Finish an assignment.
+- Complete a practice quiz.
+- Reach a reasonable study goal.
+- Review previously learned material.
+- Continue an unfinished learning activity.
+- Complete a scheduled revision task.
+
+Requirements:
+
+- Missions must reflect the student's actual available tools and responsibilities.
+- Avoid assigning activities the student cannot access.
+- Do not generate identical missions indefinitely.
+- Support daily, weekly and milestone-based missions.
+- Provide clear progress indicators.
+- Show estimated effort when it can be reliably calculated.
+- Show completed, active and upcoming missions.
+- Provide meaningful rewards through the existing XP system.
+- Make mission completion feel satisfying.
+- Ensure backend verification before awarding rewards.
+- Prevent duplicate claims and XP farming.
+- Handle time zones and day boundaries correctly.
+
+Add a mission recommendation system that selects suitable tasks based on available learning activities, previous completion and current progress.
+
+Do not make every student complete identical tasks if their learning context differs.
+
+1.2 — Streak Freeze, Recovery and Restoration
+
+This is a critical feature.
+
+The current streak system does not adequately handle missed days. When a user forgets to maintain their streak for one or more days, nothing meaningful happens.
+
+Implement a proper streak lifecycle.
+
+Required states
+
+- Active: User has maintained the streak.
+- At risk: User is approaching the end of the current activity window.
+- Frozen: The user missed the required activity window, but their historical streak is preserved.
+- Recovery available: The user has returned and can complete a recovery activity.
+- Recovered: The recovery requirement has been completed and the streak is restored.
+- Expired: Recovery is no longer available under the configured policy.
+
+Core behavior
+
+When a student misses a day:
+
+1. Do not immediately erase their historical streak.
+2. Mark the streak as frozen.
+3. Preserve the last valid streak count and historical records.
+4. Show a clear frozen-state indicator.
+5. When the student returns, explain what happened.
+6. Offer a meaningful recovery mission.
+7. Require completion of that mission to unfreeze the streak.
+8. Restore the streak according to verified historical activity and the recovery policy.
+
+The recovery mission should involve genuine learning, such as a short revision activity, flashcard review or practice session.
+
+Do not simply let a user press a button to restore a streak.
+
+Recovery rules
+
+- Define configurable recovery eligibility and expiry.
+- Handle one missed day and multiple missed days.
+- Prevent repeated recovery claims.
+- Prevent users from manipulating device clocks.
+- Use trusted server timestamps and the configured user or institution timezone.
+- Avoid duplicate daily activity records.
+- Make all transitions transactional and server-authoritative.
+- Preserve streak history and recovery history.
+- Make recovery rules transparent to users.
+
+Important distinction
+
+A frozen streak is not the same as a new streak.
+
+If a user had a 25-day streak and misses a day, do not silently replace it with 0 or 8. Preserve the actual historical count and display the frozen state until recovery is resolved.
+
+Do not restore a streak to a fabricated value.
+
+UI
+
+Add:
+
+- A visually clear active streak state.
+- A distinct frozen streak state.
+- A recovery mission card.
+- A recovery progress indicator.
+- A satisfying recovery animation when the server confirms success.
+- A streak history view showing maintained, missed, frozen and recovered days.
+
+Reuse existing Veylentra visual patterns.
+
+1.3 — Streak Accuracy Across Every Dashboard
+
+There is currently a serious dashboard data-display issue.
+
+In Admin and Super Admin dashboards, a statistics box displays:
+
+- Name.
+- Role.
+- Streak.
+- XP.
+
+However, all roles currently appear to show an 8-day streak, even when users have longer streaks.
+
+Investigate the actual source of this error.
+
+Potential causes to inspect:
+
+- Hardcoded values.
+- Incorrect aggregation.
+- Default fallback values.
+- Incorrect joins.
+- Limited query results.
+- Wrong profile fields.
+- Stale caches.
+- Inconsistent field naming.
+- Incorrect role filtering.
+- Incorrect date calculations.
+
+Requirements:
+
+1. Display each account's actual authoritative streak.
+2. Never substitute a constant value such as 8.
+3. Handle zero, null, frozen and expired streaks correctly.
+4. Distinguish current streak from longest historical streak.
+5. Ensure Admin and Super Admin see accurate data according to their permissions.
+6. Ensure other dashboards use the same authoritative streak source.
+7. Verify that student and faculty streaks are not accidentally mixed.
+8. Ensure account switching does not retain another account's streak.
+
+Test accounts with different streak values, including 0, 8, 14, 25 and 50 days.
+
+Use test data only; do not alter real users' historical records.
+
+1.4 — Exciting Learning and Study Experience
+
+Veylentra already has learning tools. Improve how students experience them.
+
+The goal is to make learning feel rewarding, interactive and progressive.
+
+Explore appropriate improvements to:
+
+- Learning session completion.
+- Flashcard review.
+- Practice and quiz completion.
+- Revision sessions.
+- Study goals.
+- Learning milestones.
+- Progress tracking.
+- Saved learning progress.
+- Continued learning recommendations.
+
+Add a sense of progression between learning activities.
+
+Examples:
+
+- A learning journey showing milestones.
+- Small completion animations.
+- Progress checkpoints.
+- Personal best recognition.
+- Weekly learning summaries.
+- Meaningful study achievements.
+- Suggested next steps after completing an activity.
+
+Do not force users through unnecessary screens.
+
+Do not interrupt active learning with random popups.
+
+Keep educational usefulness above gamification.
+
+1.5 — Level Progression and Level-Up Celebrations
+
+Inspect the existing XP and level infrastructure.
+
+If levels already exist, improve their presentation and reward feedback. If no real level system exists, design it to integrate with the existing XP source of truth.
+
+Requirements:
+
+- Clear current level.
+- XP required for the next level.
+- Progress indicator.
+- Level history where appropriate.
+- Meaningful level-up event.
+- Server-confirmed reward handling.
+- No duplicate level-up celebrations.
+- No arbitrary XP grants.
+- Consistent calculations across dashboards.
+
+Level-up animation
+
+A level-up must feel like an achievement, not a toast.
+
+Create a polished celebration experience:
+
+- Animated level reveal.
+- Visual progression.
+- Distinctive Veylentra artwork.
+- Subtle particle or light effects.
+- Clear level number.
+- XP progress information.
+- Optional reward details.
+- A clear dismiss/continue action.
+
+Use the existing design system and appropriate animation libraries already compatible with the project.
+
+Avoid generic browser alerts and basic toast-only implementations.
+
+1.6 — Regular Badge Unlock Celebration Cards
+
+The Winter Festival badge unlock experience is the desired reference.
+
+Regular Veylentra badges should receive the same quality of recognition.
+
+Currently, badge unlocks only show a toast.
+
+Replace toast-only feedback with a prominent badge celebration card or overlay.
+
+The experience should include:
+
+- Actual badge artwork.
+- Badge name.
+- Description.
+- Rarity or achievement category where supported.
+- Unlock context.
+- A polished reveal animation.
+- Subtle visual effects.
+- A button to view the badge collection.
+
+Technical requirements
+
+- Trigger only after the backend confirms new badge ownership.
+- Detect actual ownership changes.
+- Support badges unlocked through missions, learning, streaks and other legitimate events.
+- Prevent duplicate celebrations.
+- Do not replay old badge unlocks after refresh or login.
+- Queue multiple simultaneous unlocks correctly.
+- Ensure cross-account isolation.
+- Provide accessible reduced-motion behavior.
+- Preserve existing badge ownership and reward records.
+
+A toast may remain as secondary feedback, but it must not be the primary unlock experience.
+
+1.7 — Personalised Motivation and Return Experience
+
+Build a personalised student dashboard experience that makes it easy to continue learning.
+
+Examples:
+
+- Welcome back with meaningful progress context.
+- Continue your last learning activity.
+- Your next recommended study task.
+- Your weekly learning progress.
+- Upcoming academic work.
+- Streak status and recovery mission.
+- Recently achieved milestones.
+- A manageable daily learning goal.
+
+Use actual user data.
+
+Do not fabricate recommendations or pretend a user has completed activities they have not completed.
+
+Avoid guilt-based language.
+
+Do not shame students for missing days.
+
+Motivation should emphasize progress, not failure.
+
+1.8 — Sustainable Daily Return Mechanics
+
+Build a healthy daily engagement loop:
+
+1. The user opens Veylentra.
+2. The dashboard presents relevant priorities.
+3. The user chooses a meaningful learning or academic activity.
+4. Progress is recorded.
+5. The user receives appropriate feedback.
+6. Progress contributes to their existing XP, streaks and achievements.
+7. The dashboard suggests a sensible next step.
+
+Support weekly goals and personal progress summaries.
+
+Daily engagement must not require users to spend excessive time in the app.
+
+No infinite task loops, manipulative countdowns, forced engagement or unnecessary notification pressure.
+
+PHASE 2 — ROLE-AWARE ENGAGEMENT AND TASK SYSTEM
+
+This is a critical architectural improvement.
+
+Currently, all roles receive similar tasks, including Admin accounts receiving Student study missions.
+
+That is incorrect.
+
+Build a reusable role-aware engagement engine.
+
+2.1 — Role-specific task categories
+
+Students
+
+Tasks should focus on:
+
+- Learning.
+- Revision.
+- Flashcards.
+- Practice.
+- Assignments.
+- Study goals.
+- Academic progress.
+
+Teachers
+
+Tasks should focus on:
+
+- Reviewing pending assignments.
+- Preparing lessons.
+- Publishing learning materials.
+- Reviewing student progress.
+- Completing attendance.
+- Providing feedback.
+- Preparing assessments.
+- Managing relevant classroom responsibilities.
+
+Coordinators
+
+Tasks should focus on:
+
+- Reviewing department progress.
+- Monitoring class or grade performance.
+- Following up on incomplete academic workflows.
+- Reviewing teacher activity where authorized.
+- Monitoring attendance and assessment completion.
+- Coordinating academic activities.
+- Reviewing reports and outstanding responsibilities.
+
+Admins
+
+Tasks should focus on:
+
+- Institution operations.
+- Reviewing system activity.
+- Managing administrative workflows.
+- Monitoring relevant institution-level activity.
+- Reviewing pending operational responsibilities.
+
+Super Admins
+
+Tasks should focus on:
+
+- Platform health and oversight.
+- Reviewing platform-level operational alerts.
+- Managing feature configuration.
+- Reviewing system-wide analytics.
+- Monitoring service health.
+- Reviewing security and administration workflows.
+
+Super Admins should not receive student study missions by default.
+
+Do not expose sensitive administrative information through generic tasks.
+
+2.2 — Flexible role and permission architecture
+
+Do not hardcode role-specific task rendering throughout the application.
+
+Create or improve a central role-aware task registry.
+
+Each task should define:
+
+- Task ID.
+- Applicable roles.
+- Required permissions.
+- Task category.
+- Completion criteria.
+- Reward configuration.
+- Availability window.
+- Frequency.
+- Eligibility rules.
+- Backend verification.
+- Completion event.
+
+Support multiple roles and future institution-defined roles.
+
+A user with multiple roles should receive relevant tasks for their active responsibilities, without duplicated or conflicting tasks.
+
+Permissions must be enforced server-side, not merely hidden in the frontend.
+
+2.3 — Context-aware task generation
+
+Tasks should be based on actual pending responsibilities.
+
+Examples:
+
+- A Teacher with pending assignment reviews may receive a relevant task.
+- A Coordinator may receive a department review task.
+- A Student with an unfinished revision goal may receive a revision task.
+- An Admin should receive operational tasks, not flashcard reminders.
+
+Do not generate tasks for completed, unavailable or irrelevant activities.
+
+Avoid repeatedly presenting the same task when it has already been completed.
+
+Use meaningful cooldowns and configurable task rotation.
+
+PHASE 3 — FACULTY ATTENTION & RETENTION SYSTEM
+
+Faculty engagement already exists in Veylentra. Improve the current system rather than replacing it.
+
+The objective is to help Teachers and Coordinators use Veylentra consistently and complete their real responsibilities efficiently.
+
+3.1 — Teacher engagement
+
+Improve the Teacher dashboard with relevant engagement features:
+
+- Daily professional workflow checklist.
+- Pending assignment review reminders.
+- Attendance completion reminders.
+- Lesson preparation milestones.
+- Student progress review tasks.
+- Assessment preparation tasks.
+- Teaching activity summaries.
+- Weekly teaching progress.
+- Meaningful faculty achievements.
+- Workload and pending-task visibility.
+
+Teachers should receive recognition for meaningful work, not repetitive button clicks.
+
+3.2 — Coordinator engagement
+
+Build Coordinator-specific engagement.
+
+Examples:
+
+- Daily academic oversight checklist.
+- Pending department reviews.
+- Class performance monitoring.
+- Attendance completion monitoring.
+- Teacher follow-up tasks.
+- Academic workflow milestones.
+- Weekly department progress.
+- Relevant coordination achievements.
+
+Every task must respect the Coordinator's actual scope and permissions.
+
+A Coordinator must not see another department's private information unless explicitly authorized.
+
+3.3 — Faculty milestones and recognition
+
+Improve the existing faculty XP, badge and engagement systems.
+
+Possible achievement categories:
+
+- Consistent teaching activity.
+- Timely academic workflow completion.
+- Assessment preparation.
+- Student feedback and support.
+- Department coordination.
+- Academic planning.
+- Meaningful platform participation.
+
+Do not reward spam, repetitive actions or superficial activity.
+
+Make achievements transparent, useful and fair.
+
+Do not rank faculty purely by raw activity volume or create pressure to spend excessive time in Veylentra.
+
+3.4 — Faculty daily and weekly summaries
+
+Provide useful summaries:
+
+- Completed responsibilities.
+- Outstanding responsibilities.
+- Important upcoming tasks.
+- Meaningful achievements.
+- Weekly activity overview.
+- Relevant progress milestones.
+
+These should help faculty organize their work rather than become another source of distraction.
+
+3.5 — Role-aware notifications
+
+Faculty must not receive Student-only notifications.
+
+Examples:
+
+- Teachers should not receive student flashcard study reminders.
+- Coordinators should not receive irrelevant student revision reminders.
+- Admins should not receive student daily mission notifications.
+
+Check all notification producers, subscribers, background jobs and role filters.
+
+Do not solve this only by hiding notifications in the frontend.
+
+PHASE 4 — CRITICAL NOTIFICATION SYSTEM REPAIR
+
+This is one of the highest-priority parts of the task.
+
+Currently, opening Veylentra can produce too many notification popups.
+
+The problems include:
+
+- Old broadcast notifications appearing again.
+- Repeated notification popups.
+- Faculty receiving irrelevant flashcard reminders.
+- Multiple notifications appearing at once.
+- Notifications continuing instead of stopping.
+- Old notifications appearing even when they are no longer relevant.
+
+This must be fixed at the root cause.
+
+4.1 — Audit every notification source
+
+Trace all notification sources, including:
+
+- Broadcast notifications.
+- Admin announcements.
+- Student study reminders.
+- Flashcard reminders.
+- Faculty reminders.
+- Assignment notifications.
+- Attendance notifications.
+- Task reminders.
+- Achievement notifications.
+- Badge unlock notifications.
+- Level-up notifications.
+- Streak notifications.
+- Push notifications.
+- In-app notifications.
+- Realtime subscriptions.
+- Scheduled jobs and background workers.
+
+Identify why old or already acknowledged notifications are repeatedly displayed.
+
+4.2 — Notification lifecycle
+
+Implement or improve a clear lifecycle:
+
+- Created.
+- Scheduled.
+- Eligible.
+- Delivered.
+- Read.
+- Dismissed.
+- Expired.
+- Archived.
+
+Each notification must have a stable unique ID and proper lifecycle state.
+
+The system must distinguish:
+
+- Unread notification.
+- Already displayed notification.
+- Already dismissed notification.
+- Expired notification.
+- Historical notification.
+
+Do not treat every notification retrieved from the database as a new popup.
+
+4.3 — Fix old broadcast notification replay
+
+Old broadcasts must not repeatedly popup every time the user opens Veylentra.
+
+Requirements:
+
+1. Inspect broadcast creation, delivery and read-state handling.
+2. Identify why old broadcasts are replayed.
+3. Ensure each user has a reliable delivery/read state where appropriate.
+4. Track whether a broadcast has already been presented.
+5. Respect broadcast expiration and audience targeting.
+6. Do not repeatedly replay dismissed or acknowledged broadcasts.
+7. Keep valid historical announcements available in the notification center.
+8. Avoid losing legitimate new announcements.
+
+A broadcast intended for an audience should not be incorrectly marked as read for every user just because one user has seen it.
+
+Use correct per-user state.
+
+4.4 — Notification deduplication
+
+Prevent duplicate notifications caused by:
+
+- React remounts.
+- Repeated effects.
+- Multiple realtime events.
+- Duplicate background jobs.
+- Retry logic.
+- Multiple subscriptions.
+- Account switching.
+- Repeated API responses.
+
+Use stable notification identifiers and idempotent processing.
+
+Do not rely solely on local component state.
+
+4.5 — Role-aware notification targeting
+
+Every notification must declare or resolve its intended audience.
+
+Examples:
+
+Notification| Eligible audience
+Flashcard review reminder| Students who use the relevant study feature
+Assignment deadline| Relevant students
+Assignment review pending| Relevant teachers
+Attendance pending| Authorized teachers
+Department review| Relevant coordinators
+Institution announcement| Explicitly targeted institution audience
+Platform configuration alert| Authorized administrators
+
+Do not broadcast Student-specific reminders to every role.
+
+Validate audience membership on the backend.
+
+4.6 — Notification frequency and priority control
+
+Introduce sensible notification limits.
+
+Requirements:
+
+- Avoid multiple popup notifications on initial page load.
+- Queue important notifications rather than displaying them all simultaneously.
+- Prevent repeated low-priority notifications.
+- Apply configurable cooldowns.
+- Respect expiration.
+- Respect user notification preferences.
+- Prioritize critical, actionable notifications.
+- Avoid notifying users about tasks they have already completed.
+- Avoid sending reminders outside appropriate configured hours.
+
+A notification center may retain historical items without repeatedly showing them as popups.
+
+4.7 — Session and account-switch correctness
+
+When users sign out, switch accounts or change roles:
+
+- Clear account-specific notification queues.
+- Reinitialize subscriptions safely.
+- Prevent notifications belonging to another account from appearing.
+- Prevent stale cached notification state.
+- Unsubscribe from old realtime channels.
+- Ensure each account receives only its own authorized notifications.
+
+4.8 — Do not remove important notifications
+
+The goal is intelligent delivery, not disabling notifications entirely.
+
+Preserve:
+
+- Genuine new broadcasts.
+- Important deadlines.
+- Relevant assignment alerts.
+- Security alerts.
+- Relevant task reminders.
+- Confirmed achievement unlocks.
+
+Historical notifications should remain accessible where appropriate.
+
+PHASE 5 — CENTRAL ENGAGEMENT EXPERIENCE
+
+Connect the features through a cohesive dashboard experience.
+
+Student dashboard
+
+Create a well-organized engagement area containing:
+
+- Daily mission progress.
+- Streak status and recovery.
+- Current level and XP progress.
+- Next recommended learning activity.
+- Recent achievements.
+- Weekly progress.
+- Upcoming academic priorities.
+
+Teacher dashboard
+
+Include:
+
+- Teaching workflow progress.
+- Pending academic responsibilities.
+- Relevant daily tasks.
+- Faculty milestones.
+- Weekly activity summary.
+
+Coordinator dashboard
+
+Include:
+
+- Department oversight checklist.
+- Outstanding academic workflows.
+- Relevant coordination milestones.
+- Department progress summaries.
+- Weekly overview.
+
+Admin and Super Admin dashboards
+
+Show:
+
+- Accurate role-specific engagement information.
+- Correct XP and streak values.
+- Relevant operational responsibilities.
+- No student-only mission cards unless the account also has an appropriate student role and active context.
+
+Do not clutter dashboards.
+
+Use progressive disclosure and existing Veylentra visual patterns.
+
+PHASE 6 — REWARD AND ANIMATION QUALITY
+
+Use the Winter Festival badge celebration as the reference for regular achievement presentation.
+
+Improve:
+
+- Level-up celebrations.
+- Badge unlock celebrations.
+- Mission completion feedback.
+- Streak recovery feedback.
+- Weekly milestone recognition.
+- Faculty milestone recognition.
+
+Avoid toast-only feedback for significant achievements.
+
+Use suitable animation techniques for each experience.
+
+Do not rely exclusively on generic CSS transforms if the result requires a richer animation.
+
+Preserve Veylentra's existing custom 3D icon system.
+
+Respect reduced-motion preferences and performance constraints.
+
+Do not introduce unnecessary animation libraries or duplicate animation frameworks.
+
+All significant reward animations must be triggered by confirmed backend events, not speculative frontend state.
+
+PHASE 7 — ADMIN CONFIGURATION
+
+Where appropriate, provide authorized administrators with configurable controls for:
+
+- Daily and weekly mission availability.
+- Role-specific task categories.
+- Streak recovery policy.
+- Recovery activity requirements.
+- Mission reward values.
+- Level thresholds.
+- Achievement availability.
+- Notification priorities.
+- Notification cooldowns.
+- Broadcast expiration.
+- Engagement feature availability.
+
+Use Supabase as the source of truth where this matches the existing architecture.
+
+Requirements:
+
+- Super Admin authorization for platform-level settings.
+- Appropriate institution-level Admin permissions for institution settings.
+- Server-side validation.
+- RLS.
+- Audit logs for sensitive configuration changes.
+- Safe defaults.
+- Configuration versioning where appropriate.
+
+Do not allow client-side users to grant themselves XP, restore arbitrary streaks or complete tasks without verification.
+
+PHASE 8 — TESTING AND VERIFICATION
+
+Do not declare the work complete without testing actual flows.
+
+Student tests
+
+Test:
+
+- New Student with no streak.
+- Student with an active streak.
+- Student missing one day.
+- Student missing multiple days.
+- Student returning with a frozen streak.
+- Student completing recovery.
+- Student with expired recovery eligibility.
+- Student completing multiple daily missions.
+- Student reaching a level.
+- Student unlocking a regular badge.
+- Student refreshing after an achievement.
+- Student switching accounts.
+
+Faculty tests
+
+Test:
+
+- Teacher with pending assignments.
+- Teacher with completed attendance.
+- Teacher with pending assessments.
+- Coordinator with department responsibilities.
+- Coordinator without department access.
+- Faculty account with multiple permitted responsibilities.
+- Faculty account receiving no Student-only reminders.
+
+Admin tests
+
+Test:
+
+- Admin receiving administrative tasks.
+- Super Admin receiving platform tasks.
+- Admin and Super Admin seeing accurate streak and XP data.
+- No inappropriate student mission assignment.
+
+Notification tests
+
+Test:
+
+1. Fresh new broadcast.
+2. Already-read broadcast.
+3. Dismissed broadcast.
+4. Expired broadcast.
+5. Broadcast targeted to a different role.
+6. Student flashcard reminder.
+7. Teacher opening the dashboard.
+8. Coordinator opening the dashboard.
+9. Multiple realtime events.
+10. React remount.
+11. Account switching.
+12. Repeated application reload.
+13. Multiple simultaneous eligible notifications.
+
+Confirm that legitimate new notifications still work while old, irrelevant and duplicate popups stop.
+
+Data integrity tests
+
+- Verify existing XP remains unchanged except for legitimate new activity.
+- Verify streak history is preserved.
+- Verify no duplicate recovery claims.
+- Verify badge ownership is unchanged.
+- Verify no duplicate rewards.
+- Verify RLS and account isolation.
+- Verify task eligibility and completion on the server.
+- Verify timezone and date-boundary behavior.
+
+PHASE 9 — FINAL REPORT
+
+Provide a detailed implementation report containing:
+
+1. Existing architecture discovered.
+2. Root cause of the inaccurate 8-day streak display.
+3. Root cause of the notification replay problem.
+4. Streak lifecycle and recovery implementation.
+5. Role-specific task registry and eligibility logic.
+6. Student retention improvements.
+7. Teacher engagement improvements.
+8. Coordinator engagement improvements.
+9. Admin and Super Admin task behavior.
+10. Level-up and badge celebration implementation.
+11. Database migrations and RLS changes.
+12. Notification lifecycle and deduplication changes.
+13. Tests actually executed and their results.
+14. Files and components changed.
+15. Any remaining limitations.
+
+Separate completed, partially completed and unverified items.
+
+Do not claim a test passed unless it was actually executed.
+
+---
+
+IMPLEMENTATION PRIORITY
+
+Follow this order:
+
+Priority 1 — Critical correctness
+
+- Notification popup spam and old broadcast replay.
+- Role-based notification filtering.
+- Incorrect 8-day streak display.
+- Streak freeze and recovery correctness.
+
+Priority 2 — Core engagement
+
+- Role-aware daily task engine.
+- Student daily missions.
+- Teacher and Coordinator engagement improvements.
+- Personalised return experience.
+
+Priority 3 — Motivation
+
+- Level progression presentation.
+- Animated regular badge unlock cards.
+- Mission completion and streak recovery celebrations.
+- Weekly progress and meaningful milestones.
+
+Priority 4 — Administration and verification
+
+- Admin configuration.
+- Comprehensive role-based tests.
+- Notification lifecycle tests.
+- Data integrity and regression testing.
+
+FINAL NON-NEGOTIABLE RULES
+
+- Do not rebuild working XP, learning, study, badge or faculty systems.
+- Do not replace the existing XP source of truth.
+- Do not award arbitrary XP.
+- Do not erase historical streaks.
+- Do not let a frontend-only action restore streaks or claim rewards.
+- Do not give Student tasks to Admins or Super Admins by default.
+- Do not give Student flashcard reminders to Teachers or Coordinators.
+- Do not replay old broadcasts repeatedly.
+- Do not simply hide notification spam without fixing its source.
+- Do not remove legitimate important notifications.
+- Do not create manipulative engagement loops.
+- Do not overwhelm students or faculty with popups.
+- Do not make unnecessary changes to unrelated working features.
+- Preserve Veylentra's existing visual identity and architecture.
+
+The final result should make Veylentra feel like an intelligent learning and academic platform that users genuinely want to return to—not an app that pressures them into opening it.

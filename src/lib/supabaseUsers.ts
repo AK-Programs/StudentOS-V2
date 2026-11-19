@@ -46,9 +46,17 @@ export function mapSupabaseUserToProfile(u: any): UserProfile {
     enableWebPush: u.enable_web_push ?? raw.enableWebPush ?? false,
     fcmToken: raw.fcmToken || '',
     fcmDeviceId: raw.fcmDeviceId || '',
-    studyHours: u.studyHours || 14,
-    quizzesTaken: u.quizzesTaken || 5,
-    streakDays: u.streakDays || 8,
+    studyHours: Number(u.study_hours ?? u.studyHours ?? raw.studyHours ?? 0),
+    quizzesTaken: Number(u.quizzes_taken ?? u.quizzesTaken ?? raw.quizzesTaken ?? 0),
+    streakDays: Number(u.streak_days ?? u.streakDays ?? raw.streakDays ?? 0),
+    longestStreak: Number(u.longest_streak ?? u.longestStreak ?? raw.longestStreak ?? u.streak_days ?? u.streakDays ?? 0),
+    streakState: (u.streak_state || u.streakState || raw.streakState || 'active') as any,
+    frozenStreakCount: Number(u.frozen_streak_count ?? u.frozenStreakCount ?? raw.frozenStreakCount ?? 0),
+    lastActiveDate: u.last_active_date || u.lastActiveDate || raw.lastActiveDate || undefined,
+    streakTimezone: u.streak_timezone || u.streakTimezone || raw.streakTimezone || undefined,
+    streakRecoveryDeadline: u.streak_recovery_deadline || u.streakRecoveryDeadline || null,
+    xp: Number(u.points ?? u.xp ?? raw.xp ?? 0),
+    points: Number(u.points ?? u.xp ?? raw.xp ?? 0),
     lastLogin: u.lastLogin || Date.now(),
     raw_data: raw,
   };
@@ -433,6 +441,10 @@ export async function saveSupabaseUserProfile(profile: UserProfile): Promise<Use
       unlockedFrames: (profile as any).unlockedFrames || ['none']
     },
     pin: profile.pin || null,
+    ...(typeof profile.streakDays === 'number' ? { streak_days: profile.streakDays } : {}),
+    ...(typeof profile.longestStreak === 'number' ? { longest_streak: profile.longestStreak } : {}),
+    ...(typeof profile.studyHours === 'number' ? { study_hours: profile.studyHours } : {}),
+    ...(typeof profile.quizzesTaken === 'number' ? { quizzes_taken: profile.quizzesTaken } : {}),
     updated_at: Date.now()
   };
 

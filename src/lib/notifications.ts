@@ -21,38 +21,93 @@ export function generateUUID(): string {
 /**
  * Helper to check if a user profile is eligible to receive a notification
  */
+const STUDENT_ONLY_NOTIFICATION_TYPES = new Set([
+  'flashcard',
+  'flashcard_due',
+  'flashcards_due',
+  'homework_due',
+  'study_reminder',
+  'exam_prep',
+  'pomodoro_reminder',
+]);
+
+/**
+ * Helper to check if a user profile is eligible to receive a notification.
+ * Enforces expiry, archival, direct user targeting, multi-role rules, cohort grade/section,
+ * and ensures student flashcard/study reminders NEVER reach Teachers, Coordinators, Admins, or Parents.
+ */
 export function isUserEligibleForNotification(
   notif: AppNotification | any,
-  user?: { uid?: string; id?: string; grade?: string; classGrade?: string; section?: string; role?: string }
+  user?: { uid?: string; id?: string; grade?: string; classGrade?: string; section?: string; role?: string },
+  nowMs: number = Date.now()
 ): boolean {
+  if (!notif) return false;
+  if (notif.archivedAt || notif.archived_at) return false;
+  const rawExpires = notif.expiresAt || notif.expires_at;
+  if (rawExpires) {
+    const expMs = new Date(rawExpires).getTime();
+    if (Number.isFinite(expMs) && expMs <= nowMs) return false;
+  }
+
   if (!user) return true;
   const userId = user.uid || user.id;
   const userGrade = user.grade || user.classGrade || '';
   const userSection = user.section || '';
-  const userRole = (user.role || 'student').toLowerCase();
+  const userRole = (user.role || 'student').toLowerCase().trim();
 
   const targetUser = notif.targetUserId || notif.target_user_id || notif.user_id || 'all';
   const targetRole = notif.targetRole || notif.target_role || 'all';
-  const targetClass = notif.targetClass || notif.target_class || 'all';
+  const targetRolesRaw = Array.isArray(notif.targetRoles || notif.target_roles)
+    ? (notif.targetRoles || notif.target_roles)
+    : [];
+  const targetClass = notif.targetClass || notif.target_class || notif.targetGrade || notif.target_grade || 'all';
   const targetSection = notif.targetSection || notif.target_section || 'all';
 
+  const notifType = String(notif.type || 'general').toLowerCase().trim();
+  const linkTab = String(notif.linkTab || '').toLowerCase().trim();
+  const notifTitle = String(notif.title || '').toLowerCase();
+
+  // Strict guard: Student study/flashcard reminders must NEVER appear on non-student roles
+  if (
+    userRole !== 'student' &&
+    (STUDENT_ONLY_NOTIFICATION_TYPES.has(notifType) ||
+      linkTab === 'flashcards' ||
+      (notifType === 'reminder' && notifTitle.includes('flashcard')))
+  ) {
+    return false;
+  }
+
   // 1. User ID matching
-  if (targetUser !== 'all' && targetUser !== null && userId && targetUser !== userId) {
+  if (targetUser && targetUser !== 'all' && targetUser !== null && userId && targetUser !== userId) {
     return false;
   }
 
-  // 2. Role matching
-  if (targetRole && targetRole !== 'all' && targetRole.toLowerCase() !== userRole) {
-    return false;
-  }
-
-  // 3. Class/Grade matching
-  const rawTargetClass = String(targetClass || 'all').trim().toLowerCase();
-  const isAllGrades = !rawTargetClass || rawTargetClass === 'all' || rawTargetClass === 'all grades';
-  if (!isAllGrades) {
-    if (!userGrade) {
+  // 2. Role / multi-role matching
+  const allowedRoles = Array.from(
+    new Set(
+      [
+        ...targetRolesRaw.map((r: any) => String(r || '').toLowerCase().trim()),
+        ...String(targetRole || '')
+          .split(',')
+          .map(r => r.toLowerCase().trim()),
+      ].filter(Boolean)
+    )
+  );
+  if (allowedRoles.length > 0 && !allowedRoles.includes('all')) {
+    if (allowedRoles.includes('faculty') || allowedRoles.includes('staff')) {
+      if (!['teacher', 'coordinator', 'admin', 'super_admin'].includes(userRole)) {
+        return false;
+      }
+    } else if (!allowedRoles.includes(userRole)) {
       return false;
     }
+  }
+
+  // 3. Class/Grade matching (applies primarily to students when cohort-scoped)
+  const rawTargetClass = String(targetClass || 'all').trim().toLowerCase();
+  const isAllGrades = !rawTargetClass || rawTargetClass === 'all' || rawTargetClass === 'all grades';
+  if (!isAllGrades && userRole === 'student') {
+    if (!userGrade) return false;
     const normTargetC = rawTargetClass.replace(/class|grade|\s+/g, '');
     const normUserC = userGrade.toString().toLowerCase().replace(/class|grade|\s+/g, '');
     if (!normUserC.includes(normTargetC) && !normTargetC.includes(normUserC)) {
@@ -63,10 +118,8 @@ export function isUserEligibleForNotification(
   // 4. Section matching
   const rawTargetSec = String(targetSection || 'all').trim().toLowerCase();
   const isAllSections = !rawTargetSec || rawTargetSec === 'all' || rawTargetSec === 'all sections';
-  if (!isAllSections) {
-    if (!userSection) {
-      return false;
-    }
+  if (!isAllSections && userRole === 'student') {
+    if (!userSection) return false;
     const normUserS = userSection.toString().toLowerCase().trim();
     if (normUserS !== rawTargetSec && !normUserS.includes(rawTargetSec)) {
       return false;
@@ -74,6 +127,29 @@ export function isUserEligibleForNotification(
   }
 
   return true;
+}
+
+/**
+ * Determines if a notification is eligible to auto-pop as a floating toast/flyout.
+ * Blocks old broadcast replays, dismissed, read, expired, or previously presented items.
+ */
+export function isNotificationPopupEligible(
+  notif: any,
+  user?: { uid?: string; id?: string; grade?: string; classGrade?: string; section?: string; role?: string },
+  options?: { nowMs?: number; freshnessWindowMs?: number }
+): boolean {
+  const nowMs = options?.nowMs ?? Date.now();
+  const freshnessWindowMs = options?.freshnessWindowMs ?? 24 * 60 * 60 * 1000;
+  if (!isUserEligibleForNotification(notif, user, nowMs)) return false;
+  if (notif.isRead || notif.isDismissed || notif.readAt || notif.dismissedAt) return false;
+  if (notif.popupPresentedAt || notif.popup_presented_at || notif.acknowledgedAt) return false;
+
+  const createdMs = new Date(notif.createdAt || notif.created_at || 0).getTime();
+  if (!Number.isFinite(createdMs) || nowMs - createdMs > freshnessWindowMs) return false;
+
+  const prio = String(notif.priority || '').toLowerCase();
+  const type = String(notif.type || '').toLowerCase();
+  return prio === 'urgent' || prio === 'high' || type === 'broadcast' || type === 'urgent';
 }
 
 /**
@@ -98,91 +174,137 @@ export async function getAppNotifications(
   userClass?: string, 
   userSection?: string, 
   userRole?: string
-): Promise<AppNotification[]> {
-  console.log('[SUPABASE-NOTIFS] Fetching notifications from Supabase...');
-  const notifMap = new Map<string, AppNotification>();
+): Promise<Array<AppNotification & { priority?: string; expiresAt?: string | null; popupPresentedAt?: string | null; deliveredAt?: string | null; acknowledgedAt?: string | null; targetRoles?: string[] }>> {
+  const notifMap = new Map<string, any>();
+  const userStateMap = new Map<string, { isRead: boolean; isDismissed: boolean; popupPresentedAt?: string | null; deliveredAt?: string | null; acknowledgedAt?: string | null }>();
 
-  // 1. Build map of user-specific read/dismiss states
-  const userStateMap = new Map<string, { isRead: boolean; isDismissed: boolean }>();
-
-  // Local storage cache for zero-latency UI update
+  // 1. Local per-user lifecycle cache
   if (typeof window !== 'undefined' && userId) {
     try {
       const local = JSON.parse(localStorage.getItem(`s_os_notif_states_${userId}`) || '{}');
       Object.keys(local).forEach(id => {
         userStateMap.set(id, {
           isRead: Boolean(local[id].isRead),
-          isDismissed: Boolean(local[id].isDismissed)
+          isDismissed: Boolean(local[id].isDismissed),
+          popupPresentedAt: local[id].popupPresentedAt || null,
+          deliveredAt: local[id].deliveredAt || null,
+          acknowledgedAt: local[id].acknowledgedAt || null,
         });
       });
     } catch (_) {}
   }
 
-  // Fetch per-user notification state from Supabase notification_user_state
+  // 2. Authoritative backend notification lifecycle list (handles demo & UUID users + server expiry)
+  if (typeof window !== 'undefined' && userId) {
+    try {
+      const params = new URLSearchParams({
+        userId,
+        role: userRole || 'student',
+        grade: userClass || '',
+        section: userSection || '',
+      });
+      const apiRes = await fetch(`/api/notifications/list?${params.toString()}`);
+      if (apiRes.ok) {
+        const apiData = await apiRes.json().catch(() => null);
+        if (apiData?.success && Array.isArray(apiData.notifications)) {
+          for (const item of apiData.notifications) {
+            const localSt = userStateMap.get(item.id);
+            const mergedRead = Boolean(item.isRead || localSt?.isRead);
+            const mergedDismissed = Boolean(item.isDismissed || localSt?.isDismissed);
+            const mergedPresented = item.popupPresentedAt || localSt?.popupPresentedAt || null;
+            if (mergedDismissed) continue;
+            const merged = {
+              ...item,
+              isRead: mergedRead,
+              popupPresentedAt: mergedPresented,
+              deliveredAt: item.deliveredAt || localSt?.deliveredAt || null,
+              acknowledgedAt: item.acknowledgedAt || localSt?.acknowledgedAt || null,
+            };
+            if (isUserEligibleForNotification(merged, { uid: userId, grade: userClass, section: userSection, role: userRole })) {
+              notifMap.set(merged.id, merged);
+            }
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 3. Fetch per-user notification state from Supabase notification_user_state
   if (userId) {
     try {
       const { data: userStates } = await supabase
         .from('notification_user_state')
-        .select('notification_id, read_at, dismissed_at')
-        .eq('user_id', userId);
+        .select('notification_id, read_at, dismissed_at, popup_presented_at, delivered_at, acknowledged_at')
+        .or(`user_id.eq.${userId},user_key.eq.${userId}`);
 
       if (userStates && userStates.length > 0) {
-        userStates.forEach(us => {
+        userStates.forEach((us: any) => {
           const existing = userStateMap.get(us.notification_id) || { isRead: false, isDismissed: false };
           userStateMap.set(us.notification_id, {
             isRead: existing.isRead || Boolean(us.read_at),
-            isDismissed: existing.isDismissed || Boolean(us.dismissed_at)
+            isDismissed: existing.isDismissed || Boolean(us.dismissed_at),
+            popupPresentedAt: existing.popupPresentedAt || us.popup_presented_at || null,
+            deliveredAt: existing.deliveredAt || us.delivered_at || null,
+            acknowledgedAt: existing.acknowledgedAt || us.acknowledged_at || null,
           });
         });
       }
-    } catch (e) {
-      console.warn('[SUPABASE-NOTIFS] Notice fetching user notification states:', e);
-    }
+    } catch (_) {}
   }
 
   try {
     const { data, error } = await supabase
       .from('notifications')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(100);
 
     if (!error && data) {
       data.forEach(item => {
         const payload = item.payload && typeof item.payload === 'object' ? item.payload : {};
         const id = item.id || payload.id || generateUUID();
         const uState = userStateMap.get(id);
-
-        // If user has dismissed this notification from their own box, skip it
         if (uState?.isDismissed) {
+          notifMap.delete(id);
           return;
         }
 
-        const notifObj: AppNotification = {
+        const notifObj: any = {
           id,
           title: payload.title || item.title || 'StudentOS Alert',
           message: payload.message || item.message || payload.content || item.content || '',
           type: item.type || payload.type || 'announcement',
+          priority: item.priority || payload.priority || 'normal',
           createdAt: item.created_at ? new Date(item.created_at).toISOString() : new Date().toISOString(),
+          expiresAt: item.expires_at || payload.expiresAt || null,
+          archivedAt: item.archived_at || payload.archivedAt || null,
           isRead: uState ? uState.isRead : false,
+          popupPresentedAt: uState?.popupPresentedAt || null,
+          deliveredAt: uState?.deliveredAt || null,
+          acknowledgedAt: uState?.acknowledgedAt || null,
           targetUserId: payload.targetUserId || item.target_user_id || item.user_id || 'all',
           targetClass: payload.targetClass || item.target_class || 'all',
           targetSection: payload.targetSection || item.target_section || 'all',
           targetRole: payload.targetRole || item.target_role || 'all',
+          targetRoles: item.target_roles || payload.targetRoles || [],
           linkTab: payload.linkTab || 'notice_viewer'
         };
 
         if (isUserEligibleForNotification(notifObj, { uid: userId, grade: userClass, section: userSection, role: userRole })) {
-          notifMap.set(notifObj.id, notifObj);
+          const prev = notifMap.get(notifObj.id);
+          notifMap.set(notifObj.id, {
+            ...(prev || {}),
+            ...notifObj,
+            isRead: Boolean(prev?.isRead || notifObj.isRead),
+            popupPresentedAt: prev?.popupPresentedAt || notifObj.popupPresentedAt || null,
+          });
         }
       });
-    } else if (error) {
-      console.warn('[SUPABASE-NOTIFS] Warning fetching notifications:', error.message);
     }
   } catch (err) {
     console.warn('[SUPABASE-NOTIFS] Error fetching notifications:', err);
   }
 
-  // Return fetched notifications sorted by created_at
   return Array.from(notifMap.values()).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
@@ -471,6 +593,41 @@ export async function saveAppNotification(notif: AppNotification): Promise<{ suc
   return { success: saveSuccess, error: saveErrorMessage };
 }
 
+async function syncServerNotificationState(
+  userId: string | undefined,
+  notificationIds: string[],
+  action: 'delivered' | 'popup_presented' | 'read' | 'dismissed' | 'acknowledged'
+): Promise<void> {
+  if (!userId || notificationIds.length === 0 || typeof window === 'undefined') return;
+  try {
+    await fetch('/api/notifications/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, notificationIds, action }),
+    });
+  } catch (_) {}
+}
+
+export async function markNotificationPopupPresented(notifIds: string[], userId?: string): Promise<void> {
+  if (!userId && typeof window !== 'undefined') {
+    try {
+      const u = JSON.parse(localStorage.getItem('s_os_user') || '{}');
+      userId = u.uid || u.id;
+    } catch (_) {}
+  }
+  if (!userId || notifIds.length === 0) return;
+  const now = new Date().toISOString();
+  try {
+    const cacheKey = `s_os_notif_states_${userId}`;
+    const local = JSON.parse(localStorage.getItem(cacheKey) || '{}');
+    for (const nid of notifIds) {
+      local[nid] = { ...local[nid], popupPresentedAt: local[nid]?.popupPresentedAt || now, deliveredAt: local[nid]?.deliveredAt || now };
+    }
+    localStorage.setItem(cacheKey, JSON.stringify(local));
+  } catch (_) {}
+  await syncServerNotificationState(userId, notifIds, 'popup_presented');
+}
+
 /**
  * Mark notification as read per-user without modifying authoritative global notification row
  */
@@ -484,28 +641,27 @@ export async function markNotificationAsRead(notifId: string, userId?: string): 
 
   const now = new Date().toISOString();
 
-  // 1. Update local cache
   if (userId) {
     try {
       const cacheKey = `s_os_notif_states_${userId}`;
       const local = JSON.parse(localStorage.getItem(cacheKey) || '{}');
-      local[notifId] = { ...local[notifId], isRead: true, readAt: now };
+      local[notifId] = { ...local[notifId], isRead: true, readAt: now, popupPresentedAt: local[notifId]?.popupPresentedAt || now };
       localStorage.setItem(cacheKey, JSON.stringify(local));
     } catch (_) {}
   }
 
-  // 2. Persist to Supabase notification_user_state table
+  await syncServerNotificationState(userId, [notifId], 'read');
+
   if (userId && isValidUUID(userId) && isValidUUID(notifId)) {
     try {
       await supabase.from('notification_user_state').upsert({
         notification_id: notifId,
         user_id: userId,
+        user_key: userId,
         read_at: now,
         updated_at: now
       }, { onConflict: 'notification_id,user_id' });
-    } catch (err) {
-      console.warn('[SUPABASE-NOTIFS] Error marking read in notification_user_state:', err);
-    }
+    } catch (_) {}
   }
 
   if (typeof window !== 'undefined') {
@@ -525,19 +681,20 @@ export async function markAllNotificationsAsRead(notificationsList?: AppNotifica
   }
 
   const now = new Date().toISOString();
+  const ids = (notificationsList || []).map(n => n.id).filter(Boolean);
 
   if (userId) {
     try {
       const cacheKey = `s_os_notif_states_${userId}`;
       const local = JSON.parse(localStorage.getItem(cacheKey) || '{}');
-      if (notificationsList && notificationsList.length > 0) {
-        notificationsList.forEach(n => {
-          local[n.id] = { ...local[n.id], isRead: true, readAt: now };
-        });
-      }
+      ids.forEach(nid => {
+        local[nid] = { ...local[nid], isRead: true, readAt: now, popupPresentedAt: local[nid]?.popupPresentedAt || now };
+      });
       localStorage.setItem(cacheKey, JSON.stringify(local));
     } catch (_) {}
   }
+
+  await syncServerNotificationState(userId, ids, 'read');
 
   if (userId && notificationsList && notificationsList.length > 0) {
     const upserts = notificationsList
@@ -545,6 +702,7 @@ export async function markAllNotificationsAsRead(notificationsList?: AppNotifica
       .map(n => ({
         notification_id: n.id,
         user_id: userId,
+        user_key: userId,
         read_at: now,
         updated_at: now
       }));
@@ -552,9 +710,7 @@ export async function markAllNotificationsAsRead(notificationsList?: AppNotifica
     if (upserts.length > 0) {
       try {
         await supabase.from('notification_user_state').upsert(upserts, { onConflict: 'notification_id,user_id' });
-      } catch (err) {
-        console.warn('[SUPABASE-NOTIFS] Error marking all read in database:', err);
-      }
+      } catch (_) {}
     }
   }
 
@@ -576,28 +732,28 @@ export async function dismissNotification(notifId: string, userId?: string): Pro
 
   const now = new Date().toISOString();
 
-  // 1. Update local cache
   if (userId) {
     try {
       const cacheKey = `s_os_notif_states_${userId}`;
       const local = JSON.parse(localStorage.getItem(cacheKey) || '{}');
-      local[notifId] = { ...local[notifId], isDismissed: true, dismissedAt: now };
+      local[notifId] = { ...local[notifId], isRead: true, isDismissed: true, dismissedAt: now, popupPresentedAt: local[notifId]?.popupPresentedAt || now };
       localStorage.setItem(cacheKey, JSON.stringify(local));
     } catch (_) {}
   }
 
-  // 2. Persist to Supabase notification_user_state table
+  await syncServerNotificationState(userId, [notifId], 'dismissed');
+
   if (userId && isValidUUID(userId) && isValidUUID(notifId)) {
     try {
       await supabase.from('notification_user_state').upsert({
         notification_id: notifId,
         user_id: userId,
+        user_key: userId,
         dismissed_at: now,
+        read_at: now,
         updated_at: now
       }, { onConflict: 'notification_id,user_id' });
-    } catch (err) {
-      console.warn('[SUPABASE-NOTIFS] Error saving dismiss state to notification_user_state:', err);
-    }
+    } catch (_) {}
   }
 
   if (typeof window !== 'undefined') {

@@ -1158,7 +1158,7 @@ export async function appendXpLedgerEntry(
       house: entry.house || prev?.house || '',
       avatar: entry.avatar || prev?.avatar || '',
       xp: newTotalXp,
-      currentStreak: prev?.currentStreak || 1,
+      currentStreak: prev?.currentStreak ?? 0,
       earnedBadges: prev?.earnedBadges || {},
       updatedAt: entry.createdAt,
     });
@@ -1365,7 +1365,7 @@ export async function appendXpLedgerEntry(
     house: entry.house || prev?.house || '',
     avatar: entry.avatar || prev?.avatar || '',
     xp: newTotalXp,
-    currentStreak: prev?.currentStreak || existingDoc?.currentStreak || 1,
+    currentStreak: prev?.currentStreak ?? existingDoc?.currentStreak ?? 0,
     earnedBadges: prev?.earnedBadges || existingDoc?.earnedBadges || {},
     updatedAt: entry.createdAt,
   });
@@ -2341,7 +2341,7 @@ export function seedXpEntryForTests(entry: XpLedgerEntry, totalXpOverride?: numb
     house: entry.house || 'Emerald',
     avatar: entry.avatar || '',
     xp: nextXp,
-    currentStreak: existing?.currentStreak || 1,
+    currentStreak: existing?.currentStreak ?? 0,
     earnedBadges: existing?.earnedBadges || {},
     updatedAt: entry.createdAt,
   });

@@ -348,11 +348,11 @@ export function StudentSpectateModal({ student, currentUser, onClose }: StudentS
                       </div>
                       <div>
                         <span className="text-slate-500 block">Study Hours Recorded:</span>
-                        <span className="text-slate-200 font-mono font-bold">{student.studyHours || 18} Hours</span>
+                        <span className="text-slate-200 font-mono font-bold tabular-nums">{student.studyHours ?? 0} Hours</span>
                       </div>
                       <div>
                         <span className="text-slate-500 block">Consecutive Learning Streak:</span>
-                        <span className="text-slate-200 font-mono font-bold">{student.streakDays || 12} Days 🔥</span>
+                        <span className="text-slate-200 font-mono font-bold tabular-nums">{student.streakDays ?? 0} Days</span>
                       </div>
                     </div>
                   </div>

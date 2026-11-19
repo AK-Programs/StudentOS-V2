@@ -57,6 +57,14 @@ export interface UserProfile {
   studyHours?: number;
   quizzesTaken?: number;
   streakDays?: number;
+  longestStreak?: number;
+  streakState?: StreakState;
+  frozenStreakCount?: number;
+  lastActiveDate?: string;
+  streakTimezone?: string;
+  streakRecoveryDeadline?: string | null;
+  xp?: number;
+  points?: number;
   pin?: string;
   grant_all_permissions?: boolean;
   permissions?: string[];
@@ -64,6 +72,103 @@ export interface UserProfile {
   fcmToken?: string;
   fcmDeviceId?: string;
   raw_data?: any;
+}
+
+export type StreakState =
+  | 'active'
+  | 'at_risk'
+  | 'frozen'
+  | 'recovery_available'
+  | 'recovered'
+  | 'expired';
+
+export interface StreakHistoryEntry {
+  id: string;
+  activityDate: string;
+  eventType: 'maintained' | 'missed' | 'frozen' | 'recovery_available' | 'recovered' | 'expired';
+  streakBefore: number;
+  streakAfter: number;
+  source?: string;
+  createdAt: string;
+}
+
+export interface StreakSnapshot {
+  currentStreak: number;
+  longestStreak: number;
+  streakState: StreakState;
+  frozenStreakCount: number;
+  lastActiveDate: string | null;
+  todayDate: string;
+  timezone: string;
+  recoveryDeadline: string | null;
+  recoveriesThisMonth: number;
+  maxRecoveriesPerMonth: number;
+  recoveryEligible: boolean;
+  recoveryBlockedReason?: string | null;
+  recoveryRequiredActivity: string;
+  recoveryRequiredCount: number;
+  recoveryCurrentProgress: number;
+  history: StreakHistoryEntry[];
+}
+
+export interface EngagementPolicyConfig {
+  version: number;
+  updatedAt: string;
+  updatedBy: string;
+  streakRecoveryEnabled: boolean;
+  maxMissedDaysForRecovery: number;
+  requiredRecoveryActivity: 'review_flashcards' | 'complete_quiz' | 'review_flashcards_or_quiz' | 'study_session';
+  recoveryRequiredCount: number;
+  recoveryCooldownDays: number;
+  maxRecoveriesPerMonth: number;
+  defaultTimezone: string;
+  weeklyStudentXpGoal: number;
+  weeklyFacultyActionsGoal: number;
+  maxVisibleFlyouts: number;
+  flyoutCooldownSeconds: number;
+  defaultBroadcastTtlHours: number;
+  featureFlags: {
+    dailyMissions: boolean;
+    streakRecovery: boolean;
+    levelUpCelebration: boolean;
+    badgeCelebration: boolean;
+    smartReturn: boolean;
+    facultyChecklists: boolean;
+    adminOpsTasks: boolean;
+  };
+}
+
+export interface SmartReturnContext {
+  title: string;
+  subtitle: string;
+  ctaLabel: string;
+  actionTab: string;
+  actionSubTab?: string;
+  reason: string;
+}
+
+export interface EngagementOverview {
+  userId: string;
+  role: string;
+  name: string;
+  xp: number;
+  level: number;
+  levelTitle: string;
+  nextLevelXp: number | null;
+  progressPercent: number;
+  streak: StreakSnapshot;
+  missions: any[];
+  weeklySummary: {
+    activeDaysThisWeek: number;
+    xpEarnedThisWeek: number;
+    actionsCompletedThisWeek: number;
+    weeklyGoalTarget: number;
+    weeklyGoalUnit: string;
+  };
+  smartReturn: SmartReturnContext | null;
+  policy: EngagementPolicyConfig;
+  badgeCount: number;
+  earnedBadges: Record<string, string>;
 }
 
 export type ProfileFrameStyle =
@@ -589,7 +694,7 @@ export interface AppNotification {
   id: string;
   title: string;
   message: string;
-  type: 'assignment' | 'homework' | 'attendance' | 'exam' | 'marks' | 'feedback' | 'announcement' | 'chat' | 'mention' | 'ai_task' | 'substitute' | 'timetable' | 'resource' | 'blog' | 'reminder' | 'notice';
+  type: 'assignment' | 'homework' | 'attendance' | 'exam' | 'marks' | 'feedback' | 'announcement' | 'chat' | 'mention' | 'ai_task' | 'substitute' | 'timetable' | 'resource' | 'blog' | 'reminder' | 'notice' | 'flashcard_due' | 'study_reminder' | 'exam_prep' | 'broadcast' | 'urgent';
   createdAt: string;
   isRead: boolean;
   targetUserId?: string; // 'all' or user ID

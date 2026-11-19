@@ -225,13 +225,13 @@ export function calculateSoftenedStreak(userId?: string, isTestMode = false): St
   const storageKey = `${STREAK_STORAGE_PREFIX}${userId || 'guest'}`;
 
   const defaultState: StreakState = {
-    currentStreak: 3,
-    longestStreak: 7,
-    lastActiveDate: today,
+    currentStreak: 0,
+    longestStreak: 0,
+    lastActiveDate: '',
     isSoftened: false,
     freezesRemaining: 1,
-    streakDays: [today],
-    nextMilestone: 7
+    streakDays: [],
+    nextMilestone: 3
   };
 
   if (isTestMode) {

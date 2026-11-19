@@ -89,6 +89,8 @@ import { soundService } from '../lib/soundService';
 import { WinterDashboardBanner } from './winter/WinterFestivalHub';
 import { XpLeaderboardPanel } from './gamification/XpLeaderboardPanel';
 import { awardServerActionXp } from '../lib/winterFestivalService';
+import { UnifiedEngagementPanel } from './engagement/UnifiedEngagementPanel';
+import { useEngagementOverview, recordEngagementActivity } from '../lib/engagementService';
 
 export interface StudentExperienceWorkspaceProps {
   currentUser: UserProfile;
@@ -141,6 +143,8 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
 
   const [subTab, setSubTab] = useState<StudentSubTab>('home');
   const [loading, setLoading] = useState<boolean>(true);
+  const { overview: engagementOverview, loading: engagementLoading, refresh: refreshEngagement } =
+    useEngagementOverview(currentUser, 'student');
   const [winterCosmetics, setWinterCosmetics] = useState<{ equippedBanner: string | null; equippedBorder: string | null }>({
     equippedBanner: null,
     equippedBorder: null,
@@ -595,6 +599,14 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
     }));
     setActiveSubmitHwId(null);
     void awardServerActionXp(currentUser, 'complete_homework', hw.id);
+    void recordEngagementActivity(currentUser, 'student', 'homework', 1, {
+      title: `Submitted ${hw.subject}: ${hw.title}`,
+      subtitle: 'Great work completing your assignment. Review related flashcards or continue to your next subject.',
+      ctaLabel: 'Review Flashcards',
+      actionTab: 'study_hub',
+      actionSubTab: 'flashcards',
+      reason: 'Assignment submitted checkpoint',
+    });
     showNotification(
       res.data.isLate
         ? `✓ Late work submitted for "${hw.title}". Your teacher has been notified.`
@@ -878,6 +890,18 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
       {/* ================================================================== */}
       {subTab === 'home' && (
         <div className="space-y-5">
+          {/* Unified Student Streak, Verified Recovery & Smart Missions */}
+          <UnifiedEngagementPanel
+            currentUser={currentUser}
+            effectiveRole="student"
+            overview={engagementOverview}
+            loading={engagementLoading}
+            compactMode={true}
+            onNavigateTab={onNavigateTab}
+            showNotification={showNotification}
+            onRefresh={refreshEngagement}
+          />
+
           {/* Top KPI Summary Row */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bento-card rounded-2xl p-4 space-y-1.5">

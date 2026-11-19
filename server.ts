@@ -46,6 +46,8 @@ import {
   getUserWinterAiBonusCredits,
   appendXpLedgerEntry,
 } from './server/winterFestivalModule';
+import { registerNotificationRoutes } from './server/notificationEngine';
+import { registerEngagementSystemRoutes } from './server/engagementEngine';
 import {
   AIQuotaPersistenceError,
   getRolling24hUsageAsync,
@@ -997,7 +999,7 @@ app.get('/api/gamification/profile', async (req, res) => {
         { headers }
       ).catch(() => null),
       supabaseFetchWithAnonRetry(
-        `${supabaseUrl}/rest/v1/user_profiles?or=(id.eq.${encUid},uid.eq.${encUid})&select=id,uid,name,role,points,grade,section&limit=2`,
+        `${supabaseUrl}/rest/v1/user_profiles?or=(id.eq.${encUid},uid.eq.${encUid})&select=id,uid,name,role,points,grade,section,streak_days,longest_streak,streak_state,frozen_streak_count,last_active_date&limit=2`,
         { headers }
       ).catch(() => null),
       supabaseFetchWithAnonRetry(
@@ -1043,8 +1045,16 @@ app.get('/api/gamification/profile', async (req, res) => {
       ledgerSum
     );
 
-    if (candidateDoc || authoritativeXp > 0) {
+    if (candidateDoc || authoritativeXp > 0 || profileMeta) {
       const lvl = computeServerGamificationLevel(authoritativeXp);
+      const dbStreak = profileMeta?.streak_days !== undefined && profileMeta?.streak_days !== null
+        ? Number(profileMeta.streak_days)
+        : Number(candidateDoc?.currentStreak ?? 0);
+      const dbLongest = Math.max(
+        dbStreak,
+        Number(profileMeta?.longest_streak ?? 0),
+        Number(candidateDoc?.longestStreak ?? 0)
+      );
       storeData[userId] = {
         ...(candidateDoc || {}),
         userId,
@@ -1053,6 +1063,11 @@ app.get('/api/gamification/profile', async (req, res) => {
         grade: candidateDoc?.grade || profileMeta?.grade || '',
         section: candidateDoc?.section || profileMeta?.section || '',
         xp: authoritativeXp,
+        currentStreak: dbStreak,
+        longestStreak: dbLongest,
+        streakState: profileMeta?.streak_state || candidateDoc?.streakState || 'active',
+        frozenStreakCount: Number(profileMeta?.frozen_streak_count ?? candidateDoc?.frozenStreakCount ?? 0),
+        lastActiveDate: profileMeta?.last_active_date || candidateDoc?.lastActiveDate || null,
         level: lvl.level,
         levelTitle: lvl.levelTitle,
       };
@@ -6221,6 +6236,25 @@ registerWinterFestivalAndLeaderboardRoutes(app, {
   },
   getVerifiedUserFromRequest: resolveFeatureAndWinterActor,
   requireFeatureAccess: featureController.requireFeatureAccess,
+  broadcastToAllWs,
+  getGamificationStore: () => memoryGamificationStore,
+});
+
+registerNotificationRoutes(app, {
+  getSupabaseServerConfig: () => {
+    const cfg = getSupabaseServerConfig();
+    return { url: cfg.url, key: cfg.key || '' };
+  },
+  getVerifiedUserFromRequest: resolveFeatureAndWinterActor,
+  broadcastToAllWs,
+});
+
+registerEngagementSystemRoutes(app, {
+  getSupabaseServerConfig: () => {
+    const cfg = getSupabaseServerConfig();
+    return { url: cfg.url, key: cfg.key || '' };
+  },
+  getVerifiedUserFromRequest: resolveFeatureAndWinterActor,
   broadcastToAllWs,
   getGamificationStore: () => memoryGamificationStore,
 });

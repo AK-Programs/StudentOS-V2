@@ -1,141 +1,238 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  BellRing, 
-  MessageSquare, 
-  MessageCircle, 
-  BookOpen, 
-  Award, 
-  Megaphone, 
-  Sparkles, 
-  X, 
+import {
+  BellRing,
+  MessageSquare,
+  MessageCircle,
+  BookOpen,
+  Award,
+  Megaphone,
+  Sparkles,
+  X,
   ArrowRight,
-  Calendar,
-  CheckCircle2
 } from 'lucide-react';
 import { AppNotification } from '../types';
 import { soundService } from '../lib/soundService';
+import {
+  isNotificationPopupEligible,
+  markNotificationPopupPresented,
+  dismissNotification,
+} from '../lib/notifications';
+import { useReducedMotionPreference } from '../lib/motionSystem';
 
 interface NotificationFlyoutProps {
   notifications: AppNotification[];
+  currentUserId?: string;
+  effectiveRole?: string;
+  userGrade?: string;
+  userSection?: string;
+  maxVisible?: number;
+  cooldownSeconds?: number;
   onNavigateTab?: (tab: string) => void;
   onMarkAsRead?: (id: string) => void;
+  onDismiss?: (id: string) => void;
 }
 
 interface ActiveFlyoutItem {
   id: string;
   notification: AppNotification;
-  timerId: NodeJS.Timeout;
+  timerId: ReturnType<typeof setTimeout>;
   duration: number;
 }
 
 export const NotificationFlyout: React.FC<NotificationFlyoutProps> = ({
   notifications,
+  currentUserId,
+  effectiveRole = 'student',
+  userGrade,
+  userSection,
+  maxVisible = 1,
+  cooldownSeconds = 45,
   onNavigateTab,
-  onMarkAsRead
+  onMarkAsRead,
+  onDismiss,
 }) => {
+  const prefersReduced = useReducedMotionPreference();
   const [activeFlyouts, setActiveFlyouts] = useState<ActiveFlyoutItem[]>([]);
   const [pendingQueue, setPendingQueue] = useState<AppNotification[]>([]);
   const shownIdsRef = useRef<Set<string>>(new Set());
+  const baselineCapturedRef = useRef<boolean>(false);
+  const activeAccountKeyRef = useRef<string>('');
+  const lastFlyoutShownAtRef = useRef<number>(0);
 
-  // Initialize shown IDs from sessionStorage to prevent spamming after page refresh
+  const accountKey = `${currentUserId || 'guest'}:${effectiveRole || 'student'}`;
+  const storageKey = `veylentra_shown_flyouts_v2_${currentUserId || 'guest'}`;
+  const safeMaxVisible = Math.max(1, Math.min(3, maxVisible || 1));
+
+  // Clear queues & reset shown set cleanly whenever user account or role switches
   useEffect(() => {
-    try {
-      const stored = sessionStorage.getItem('veylentra_shown_flyouts');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          parsed.forEach((id: string) => shownIdsRef.current.add(id));
-        }
+    if (activeAccountKeyRef.current !== accountKey) {
+      activeAccountKeyRef.current = accountKey;
+      setActiveFlyouts((prev) => {
+        prev.forEach((item) => clearTimeout(item.timerId));
+        return [];
+      });
+      setPendingQueue([]);
+      shownIdsRef.current = new Set();
+      baselineCapturedRef.current = false;
+      lastFlyoutShownAtRef.current = 0;
+
+      if (currentUserId && typeof window !== 'undefined') {
+        try {
+          const stored = sessionStorage.getItem(storageKey);
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (Array.isArray(parsed)) {
+              parsed.forEach((id: string) => shownIdsRef.current.add(id));
+            }
+          }
+        } catch (_) {}
       }
-    } catch (_) {}
-  }, []);
+    }
+  }, [accountKey, currentUserId, storageKey]);
 
   const saveShownIds = () => {
+    if (typeof window === 'undefined' || !currentUserId) return;
     try {
       const arr = Array.from(shownIdsRef.current).slice(-500);
-      sessionStorage.setItem('veylentra_shown_flyouts', JSON.stringify(arr));
+      sessionStorage.setItem(storageKey, JSON.stringify(arr));
     } catch (_) {}
   };
 
-  const dismissFlyout = (id: string) => {
+  const dismissFlyout = (id: string, persistUserDismissal = false) => {
     setActiveFlyouts((prev) => {
       const item = prev.find((f) => f.id === id);
       if (item) clearTimeout(item.timerId);
       return prev.filter((f) => f.id !== id);
     });
+    if (persistUserDismissal) {
+      if (onDismiss) onDismiss(id);
+      else dismissNotification(id, currentUserId).catch(() => {});
+    }
   };
 
-  // 0. Remove read notifications from queues immediately
+  // Remove read/dismissed notifications from queues immediately
   useEffect(() => {
     if (!Array.isArray(notifications)) return;
-    
-    const readIds = new Set(notifications.filter(n => n.isRead).map(n => n.id));
+    const readIds = new Set(
+      notifications.filter((n: any) => n.isRead || n.isDismissed).map((n) => n.id)
+    );
     if (readIds.size === 0) return;
 
-    setPendingQueue(prev => prev.filter(n => !readIds.has(n.id)));
-    setActiveFlyouts(prev => {
-      const toRemove = prev.filter(item => readIds.has(item.id));
-      toRemove.forEach(item => clearTimeout(item.timerId));
-      return prev.filter(item => !readIds.has(item.id));
+    setPendingQueue((prev) => prev.filter((n) => !readIds.has(n.id)));
+    setActiveFlyouts((prev) => {
+      const toRemove = prev.filter((item) => readIds.has(item.id));
+      toRemove.forEach((item) => clearTimeout(item.timerId));
+      return prev.filter((item) => !readIds.has(item.id));
     });
   }, [notifications]);
 
-  // 1. Process incoming notifications into the pending queue
+  // Process notifications with baseline capture (blocks historical replay on page load / login / reload)
   useEffect(() => {
-    if (!Array.isArray(notifications) || notifications.length === 0) return;
+    if (!currentUserId || !Array.isArray(notifications) || notifications.length === 0) return;
 
-    // Filter unread notifications that have not been shown in this session
-    const unreadUnshown = notifications.filter((n) => {
-      return !n.isRead && !shownIdsRef.current.has(n.id);
-    });
-
-    if (unreadUnshown.length === 0) return;
-
-    // Prioritize: Announcement/Exam > Chat/Mention > Homework > Others
-    const priorityMap: Record<string, number> = {
-      'announcement': 10,
-      'exam': 9,
-      'notice': 8,
-      'chat': 7,
-      'mention': 7,
-      'homework': 6,
-      'assignment': 6,
-      'marks': 5,
-      'attendance': 4,
-      'feedback': 4,
-      'ai_task': 3,
-      'reminder': 2
+    const userContext = {
+      uid: currentUserId,
+      role: effectiveRole,
+      grade: userGrade,
+      section: userSection,
     };
 
-    const sortedNew = [...unreadUnshown].sort((a, b) => {
-      const pA = priorityMap[a.type] || 0;
-      const pB = priorityMap[b.type] || 0;
+    // On first hydration after mount/account switch, silently seed existing older notifications
+    // Only allow genuinely fresh notifications created within the last 10 minutes that have not been presented yet
+    const nowMs = Date.now();
+    if (!baselineCapturedRef.current) {
+      baselineCapturedRef.current = true;
+      const freshLiveCandidates: AppNotification[] = [];
+      for (const n of notifications) {
+        const createdMs = new Date(n.createdAt || 0).getTime();
+        const isJustCreated = Number.isFinite(createdMs) && nowMs - createdMs <= 10 * 60 * 1000;
+        const eligible = isNotificationPopupEligible(n, userContext, { nowMs });
+        if (eligible && isJustCreated && !shownIdsRef.current.has(n.id)) {
+          freshLiveCandidates.push(n);
+        }
+        shownIdsRef.current.add(n.id);
+      }
+      saveShownIds();
+      if (freshLiveCandidates.length === 0) return;
+
+      const newestOnly = freshLiveCandidates
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, safeMaxVisible);
+      setPendingQueue(newestOnly);
+      return;
+    }
+
+    const eligibleNew = notifications.filter((n) => {
+      if (shownIdsRef.current.has(n.id)) return false;
+      return isNotificationPopupEligible(n, userContext, { nowMs });
+    });
+
+    if (eligibleNew.length === 0) return;
+
+    const priorityMap: Record<string, number> = {
+      emergency: 11,
+      announcement: 10,
+      urgent: 10,
+      exam: 9,
+      notice: 8,
+      chat: 7,
+      mention: 7,
+      homework: 6,
+      assignment: 6,
+      marks: 5,
+      attendance: 4,
+      feedback: 4,
+      ai_task: 3,
+      reminder: 2,
+    };
+
+    const sortedNew = [...eligibleNew].sort((a, b) => {
+      const pA = priorityMap[String((a as any).priority || a.type)] || 0;
+      const pB = priorityMap[String((b as any).priority || b.type)] || 0;
       if (pA !== pB) return pB - pA;
-      // If same priority, newest first
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
 
     setPendingQueue((prev) => {
-      const existingIds = new Set(prev.map(p => p.id));
-      const uniqueNew = sortedNew.filter(n => !existingIds.has(n.id));
-      return [...prev, ...uniqueNew];
+      const existingIds = new Set(prev.map((p) => p.id));
+      const uniqueNew = sortedNew.filter((n) => !existingIds.has(n.id));
+      return [...prev, ...uniqueNew].slice(0, 5);
     });
 
-    // Mark as shown so we don't re-queue them
-    unreadUnshown.forEach(n => shownIdsRef.current.add(n.id));
+    eligibleNew.forEach((n) => shownIdsRef.current.add(n.id));
     saveShownIds();
-  }, [notifications]);
+  }, [notifications, currentUserId, effectiveRole, userGrade, userSection, safeMaxVisible]);
 
-  // 2. Move items from pending queue to active flyouts
+  // Throttle active flyout emission: max N visible, cooldown between non-emergency items
   useEffect(() => {
-    if (pendingQueue.length === 0 || activeFlyouts.length >= 3) return;
+    if (pendingQueue.length === 0 || activeFlyouts.length >= safeMaxVisible) return;
 
-    const nextBatch = pendingQueue.slice(0, 3 - activeFlyouts.length);
+    const nowMs = Date.now();
+    const cooldownMs = Math.max(5, cooldownSeconds) * 1000;
+    const head = pendingQueue[0];
+    const isUrgentHead =
+      String((head as any).priority || '').toLowerCase() === 'emergency' ||
+      String((head as any).priority || '').toLowerCase() === 'urgent';
+
+    if (
+      lastFlyoutShownAtRef.current > 0 &&
+      !isUrgentHead &&
+      nowMs - lastFlyoutShownAtRef.current < cooldownMs
+    ) {
+      const waitTimer = setTimeout(() => {
+        setPendingQueue((q) => [...q]);
+      }, Math.max(500, cooldownMs - (nowMs - lastFlyoutShownAtRef.current)));
+      return () => clearTimeout(waitTimer);
+    }
+
+    const nextBatch = pendingQueue.slice(0, Math.max(1, safeMaxVisible - activeFlyouts.length));
     const remainingQueue = pendingQueue.slice(nextBatch.length);
+    lastFlyoutShownAtRef.current = nowMs;
 
+    const presentedIds: string[] = [];
     nextBatch.forEach((n) => {
-      // Select appropriate verified sound effect
+      presentedIds.push(n.id);
       const lowerTitle = (n.title || '').toLowerCase();
       const lowerMsg = (n.message || '').toLowerCase();
 
@@ -147,23 +244,25 @@ export const NotificationFlyout: React.FC<NotificationFlyoutProps> = ({
         soundService.playNewNotification();
       }
 
-      // Dynamic duration based on priority/type
       let duration = 5500;
-      if (n.type === 'announcement' || n.type === 'exam' || n.type === 'notice') duration = 8500;
-      else if (n.type === 'chat' || n.type === 'mention') duration = 6500;
-      else if (['attendance', 'marks', 'feedback'].includes(n.type)) duration = 4500;
+      if (n.type === 'announcement' || n.type === 'exam' || n.type === 'notice') duration = 7500;
+      else if (n.type === 'chat' || n.type === 'mention') duration = 6000;
 
       const timerId = setTimeout(() => {
-        dismissFlyout(n.id);
+        dismissFlyout(n.id, false);
       }, duration);
 
       setActiveFlyouts((prev) => [...prev, { id: n.id, notification: n, timerId, duration }]);
     });
 
-    setPendingQueue(remainingQueue);
-  }, [pendingQueue, activeFlyouts]);
+    if (presentedIds.length > 0 && currentUserId) {
+      markNotificationPopupPresented(presentedIds, currentUserId).catch(() => {});
+    }
 
-  if (activeFlyouts.length === 0 && pendingQueue.length === 0) return null;
+    setPendingQueue(remainingQueue);
+  }, [pendingQueue, activeFlyouts.length, safeMaxVisible, cooldownSeconds, currentUserId]);
+
+  if (activeFlyouts.length === 0) return null;
 
   const getCategoryMeta = (n: AppNotification) => {
     switch (n.type) {
@@ -172,7 +271,7 @@ export const NotificationFlyout: React.FC<NotificationFlyoutProps> = ({
         return {
           icon: isServer ? <MessageSquare className="w-4 h-4 text-emerald-400" /> : <MessageCircle className="w-4 h-4 text-cyan-400" />,
           color: isServer ? 'border-emerald-500/30 bg-emerald-950/40 text-emerald-300' : 'border-cyan-500/30 bg-cyan-950/40 text-cyan-300',
-          badge: isServer ? 'Server Chat' : 'Direct Message'
+          badge: isServer ? 'Server Chat' : 'Direct Message',
         };
       }
       case 'homework':
@@ -180,38 +279,38 @@ export const NotificationFlyout: React.FC<NotificationFlyoutProps> = ({
         return {
           icon: <BookOpen className="w-4 h-4 text-purple-400" />,
           color: 'border-purple-500/30 bg-purple-950/40 text-purple-300',
-          badge: 'Assignment'
+          badge: 'Assignment',
         };
       case 'exam':
       case 'marks':
         return {
           icon: <Award className="w-4 h-4 text-amber-400" />,
           color: 'border-amber-500/30 bg-amber-950/40 text-amber-300',
-          badge: 'Academic'
+          badge: 'Academic',
         };
       case 'announcement':
         return {
           icon: <Megaphone className="w-4 h-4 text-rose-400" />,
           color: 'border-rose-500/30 bg-rose-950/40 text-rose-300',
-          badge: 'Announcement'
+          badge: 'Announcement',
         };
       case 'ai_task':
         return {
           icon: <Sparkles className="w-4 h-4 text-yellow-300" />,
           color: 'border-yellow-500/30 bg-yellow-950/40 text-yellow-300',
-          badge: 'AI Update'
+          badge: 'AI Update',
         };
       default:
         return {
           icon: <BellRing className="w-4 h-4 text-indigo-400" />,
           color: 'border-indigo-500/30 bg-indigo-950/40 text-indigo-300',
-          badge: 'Notification'
+          badge: 'Notification',
         };
     }
   };
 
   return (
-    <div 
+    <div
       className="fixed top-16 right-4 sm:right-6 z-50 flex flex-col gap-2.5 max-w-sm w-full pointer-events-none"
       aria-live="polite"
     >
@@ -222,11 +321,11 @@ export const NotificationFlyout: React.FC<NotificationFlyoutProps> = ({
           return (
             <motion.div
               key={id}
-              layout
-              initial={{ opacity: 0, scale: 0.4, y: -24, x: 24 }}
+              layout={!prefersReduced}
+              initial={prefersReduced ? { opacity: 0 } : { opacity: 0, scale: 0.92, y: -12, x: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0, x: 0 }}
-              exit={{ opacity: 0, scale: 0.85, x: 60, transition: { duration: 0.25 } }}
-              transition={{ type: 'spring', stiffness: 420, damping: 28 }}
+              exit={prefersReduced ? { opacity: 0 } : { opacity: 0, scale: 0.92, x: 40, transition: { duration: 0.2 } }}
+              transition={{ duration: prefersReduced ? 0.1 : 0.25 }}
               className="pointer-events-auto group relative overflow-hidden rounded-2xl bg-slate-900/95 border border-white/10 shadow-2xl backdrop-blur-xl hover:border-indigo-500/40 transition-all cursor-pointer"
               onClick={() => {
                 if (onMarkAsRead) onMarkAsRead(n.id);
@@ -235,11 +334,10 @@ export const NotificationFlyout: React.FC<NotificationFlyoutProps> = ({
                 } else if (onNavigateTab && n.type === 'chat') {
                   onNavigateTab('chat');
                 }
-                dismissFlyout(id);
+                dismissFlyout(id, false);
               }}
             >
-              {/* Top Accent Gradient Border */}
-              <div className="h-1 w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500" />
+              <div className="h-1 w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-sky-500" />
 
               <div className="p-3.5 space-y-2">
                 <div className="flex items-center justify-between gap-2">
@@ -253,19 +351,20 @@ export const NotificationFlyout: React.FC<NotificationFlyoutProps> = ({
                   </div>
 
                   <button
+                    type="button"
                     onClick={(e) => {
                       e.stopPropagation();
                       if (onMarkAsRead) onMarkAsRead(n.id);
-                      dismissFlyout(id);
+                      dismissFlyout(id, true);
                     }}
-                    className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                    className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
                     title="Dismiss"
+                    aria-label="Dismiss notification"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
 
-                {/* Content */}
                 <div className="space-y-1">
                   <h4 className="text-xs font-black font-display text-white line-clamp-1 group-hover:text-indigo-300 transition-colors">
                     {n.title}
@@ -275,23 +374,23 @@ export const NotificationFlyout: React.FC<NotificationFlyoutProps> = ({
                   </p>
                 </div>
 
-                {/* Bottom Navigation Hint */}
                 <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[10px] text-slate-400">
-                  <span className="font-mono">Just now</span>
+                  <span className="font-mono">Live notice</span>
                   <div className="flex items-center gap-1 font-bold text-indigo-400 group-hover:translate-x-0.5 transition-transform">
-                    <span>View</span>
+                    <span>Open</span>
                     <ArrowRight className="w-3 h-3" />
                   </div>
                 </div>
               </div>
 
-              {/* Progress bar animation for auto-dismissal */}
-              <motion.div
-                initial={{ width: '100%' }}
-                animate={{ width: '0%' }}
-                transition={{ duration: duration / 1000, ease: 'linear' }}
-                className="h-0.5 bg-indigo-500/60"
-              />
+              {!prefersReduced && (
+                <motion.div
+                  initial={{ width: '100%' }}
+                  animate={{ width: '0%' }}
+                  transition={{ duration: duration / 1000, ease: 'linear' }}
+                  className="h-0.5 bg-indigo-500/60"
+                />
+              )}
             </motion.div>
           );
         })}

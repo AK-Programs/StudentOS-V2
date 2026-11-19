@@ -92,16 +92,18 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
     }
   };
 
+  const processedRealtimeIdsRef = React.useRef<Set<string>>(new Set());
+
   // Load notifications from Supabase with per-user state
   const loadNotifications = async () => {
-    if (!currentUser) return;
+    if (!currentUser) {
+      setNotifications([]);
+      return;
+    }
     try {
       const data = await getAppNotifications(currentUser.uid, currentUser.grade, currentUser.section, currentUser.role);
       if (data) {
-        setNotifications(prev => {
-          if (data.length === 0 && prev.length > 0) return prev;
-          return data;
-        });
+        setNotifications(data);
       }
     } catch (e) {
       console.warn('[NOTIF-CENTER] Error loading notifications:', e);
@@ -109,22 +111,27 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   };
 
   useEffect(() => {
+    setNotifications([]);
+    processedRealtimeIdsRef.current = new Set();
     loadNotifications();
 
     // Subscribe to realtime broadcast notifications
-    const channel = supabase.channel('student-os-public-notifcenter')
+    const channel = supabase.channel(`student-os-public-notifcenter-${currentUser?.uid || 'anon'}`)
       .on('broadcast', { event: 'new_app_notification' }, (payload) => {
         if (payload && payload.payload) {
           const notif = payload.payload as AppNotification;
           if (isUserEligibleForNotification(notif, currentUser || {})) {
             setNotifications((prev) => [notif, ...prev.filter((n) => n.id !== notif.id)]);
-            triggerNotificationSound(notif.type);
-            triggerBrowserPushNotification(notif.title, {
-              body: notif.message,
-              tag: notif.id ? `studentos-notif-${notif.id}` : `studentos-notif-${Date.now()}`,
-              notifId: notif.id,
-              linkTab: notif.linkTab || 'notice_viewer'
-            });
+            if (!processedRealtimeIdsRef.current.has(notif.id)) {
+              processedRealtimeIdsRef.current.add(notif.id);
+              triggerNotificationSound(notif.type);
+              triggerBrowserPushNotification(notif.title, {
+                body: notif.message,
+                tag: notif.id ? `studentos-notif-${notif.id}` : `studentos-notif-${Date.now()}`,
+                notifId: notif.id,
+                linkTab: notif.linkTab || 'notice_viewer'
+              });
+            }
           }
         }
       })

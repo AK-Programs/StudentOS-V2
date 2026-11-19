@@ -51,6 +51,7 @@ import {
 } from 'lucide-react';
 import { ExperienceTestingTab } from './admin/ExperienceTestingTab';
 import { FeatureControlCenter } from './admin/FeatureControlCenter';
+import { EngagementPolicyConsole } from './admin/EngagementPolicyConsole';
 
 export type AdminSubTab =
   | 'overview'
@@ -59,6 +60,7 @@ export type AdminSubTab =
   | 'classes'
   | 'promotion'
   | 'credentials'
+  | 'engagement_policies'
   | 'requests'
   | 'presence'
   | 'tab_usage'
@@ -875,7 +877,7 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
                         <h4 className="text-base font-black text-white">{selectedDetailUser.name}</h4>
                         <p className="text-xs text-slate-400 font-mono">{selectedDetailUser.email}</p>
                         <span className="text-[10px] text-amber-400 font-mono mt-0.5 block">
-                          UID: {selectedDetailUser.uid || 'unregistered'}
+                          UID: {selectedDetailUser.uid || 'unregistered'} · Streak: {selectedDetailUser.streakDays ?? 0}d · XP: {(selectedDetailUser.points ?? selectedDetailUser.xp ?? 0).toLocaleString()}
                         </span>
                       </div>
                     </div>
@@ -1170,6 +1172,7 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
               { id: 'requests', label: `Approvals (${pendingRequests.length + pendingLeaves.length})`, icon: Clock },
               { id: 'parent_links', label: 'Parent Links', icon: UserCheck },
               { id: 'promotion', label: 'Academic Configuration', icon: GraduationCap },
+              { id: 'engagement_policies', label: 'Engagement & Policies', icon: Sparkles },
             ].map(tab => {
               const Icon = tab.icon;
               const active = adminSubTab === tab.id;
@@ -2372,6 +2375,13 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
       ========================================================================= */}
       {isSuperAdmin && adminSubTab === 'experience_testing' && (
         <ExperienceTestingTab
+          currentUser={currentUser}
+          showNotification={showNotification}
+        />
+      )}
+
+      {adminSubTab === 'engagement_policies' && (
+        <EngagementPolicyConsole
           currentUser={currentUser}
           showNotification={showNotification}
         />

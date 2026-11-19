@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Megaphone, Send, X, ShieldAlert, Users, Sparkles, Filter, BellRing } from 'lucide-react';
+import { Megaphone, Send, X, Filter } from 'lucide-react';
 import { UserProfile, AppNotification } from '../types';
 import { saveAppNotification, generateUUID } from '../lib/notifications';
+import { buildAuthHeadersForUser } from '../lib/featureAccessService';
 import { supabase } from '../lib/supabase';
 
 interface BroadcastModalProps {
@@ -29,8 +30,9 @@ export const BroadcastModal: React.FC<BroadcastModalProps> = ({
   const [message, setMessage] = useState('');
   const [priority, setPriority] = useState<'normal' | 'urgent' | 'emergency'>('urgent');
   const [category, setCategory] = useState<'announcement' | 'homework' | 'exam' | 'reminder' | 'notice'>('announcement');
-  
-  // Target audience for teachers
+  const [targetRoleAudience, setTargetRoleAudience] = useState<'all' | 'student' | 'faculty' | 'admin'>('all');
+  const [ttlHours, setTtlHours] = useState<number>(72);
+
   const [targetGrade, setTargetGrade] = useState<string>('All Grades');
   const [targetSection, setTargetSection] = useState<string>('All Sections');
   const [targetSubject, setTargetSubject] = useState<string>('General');
@@ -46,7 +48,44 @@ export const BroadcastModal: React.FC<BroadcastModalProps> = ({
 
     try {
       const notifId = generateUUID();
-      
+      const targetRoles =
+        targetRoleAudience === 'faculty'
+          ? ['teacher', 'coordinator']
+          : targetRoleAudience === 'admin'
+            ? ['admin', 'super_admin']
+            : [targetRoleAudience];
+      const expiresAt = new Date(Date.now() + ttlHours * 3600 * 1000).toISOString();
+
+      let deliveredViaServer = false;
+      try {
+        const headers = await buildAuthHeadersForUser({
+          ...currentUser,
+          role: role as any,
+        });
+        const res = await fetch('/api/notifications/broadcast', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            id: notifId,
+            title: title.trim(),
+            message: message.trim(),
+            type: category === 'notice' ? 'announcement' : category,
+            priority,
+            targetUserId: 'all',
+            targetRole: targetRoles[0],
+            targetRoles,
+            targetClass: targetGrade !== 'All Grades' ? targetGrade : 'all',
+            targetSection: targetSection !== 'All Sections' ? targetSection : 'all',
+            linkTab: category === 'homework' ? 'homework' : 'notice_viewer',
+            expiresInHours: ttlHours,
+            dedupeKey: `broadcast:${role}:${targetRoleAudience}:${title.trim().toLowerCase().slice(0, 48)}:${Math.floor(Date.now() / 60000)}`,
+          }),
+        });
+        if (res.ok) {
+          deliveredViaServer = true;
+        }
+      } catch (_) {}
+
       const newNotif: AppNotification = {
         id: notifId,
         title: title.trim(),
@@ -55,66 +94,52 @@ export const BroadcastModal: React.FC<BroadcastModalProps> = ({
         createdAt: new Date().toISOString(),
         isRead: false,
         targetUserId: 'all',
+        targetRole: targetRoles[0] as any,
         targetClass: targetGrade !== 'All Grades' ? targetGrade : 'all',
         targetSection: targetSection !== 'All Sections' ? targetSection : 'all',
         linkTab: category === 'homework' ? 'homework' : 'notice_viewer',
       };
 
-      // 1. Save to database & dispatch server-side FCM / WebPush
-      await saveAppNotification(newNotif);
+      if (!deliveredViaServer) {
+        await saveAppNotification({ ...newNotif, priority, targetRoles, expiresAt } as any);
+      }
 
-      // 2. Broadcast live event on Supabase channel
       const broadcastPayload = {
         id: notifId,
         title: title.trim(),
         message: message.trim(),
         senderName: currentUser?.name || 'School Principal',
-        senderRole: currentUser?.role || 'admin',
+        senderRole: role,
         priority,
         category,
+        targetRole: targetRoles[0],
+        targetRoles,
         targetGrade,
-        targetSection,
+        targetClass: targetGrade !== 'All Grades' ? targetGrade : 'all',
+        targetSection: targetSection !== 'All Sections' ? targetSection : 'all',
         targetSubject,
+        expiresAt,
         createdAt: new Date().toISOString(),
       };
 
+      // Emit once per targeted channel (no triple redundant broadcasts)
       try {
-        const channel = supabase.channel('student-os-public');
-        await channel.send({
+        await supabase.channel('student-os-public').send({
           type: 'broadcast',
           event: 'principal_live_broadcast',
           payload: broadcastPayload,
-        });
-
-        await channel.send({
-          type: 'broadcast',
-          event: 'new_app_notification',
-          payload: newNotif,
-        });
-      } catch (_) {}
-
-      try {
-        await supabase.channel('student-os-public-banner').send({
-          type: 'broadcast',
-          event: 'principal_live_broadcast',
-          payload: broadcastPayload,
-        });
-        await supabase.channel('student-os-public-notifcenter').send({
-          type: 'broadcast',
-          event: 'new_app_notification',
-          payload: newNotif,
         });
       } catch (_) {}
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('studentos-live-broadcast', { detail: broadcastPayload }));
+        window.dispatchEvent(new CustomEvent('studentos-notif-state-change'));
       }
 
       if (showNotification) {
-        showNotification('📢 Realtime broadcast published successfully to all devices!');
+        showNotification(`📢 Broadcast published (${targetRoleAudience}, expires in ${ttlHours}h).`);
       }
 
-      // Clear form
       setTitle('');
       setMessage('');
       setIsSubmitting(false);
@@ -129,36 +154,29 @@ export const BroadcastModal: React.FC<BroadcastModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fadeIn">
       <div className="w-full max-w-xl bg-slate-900 border border-indigo-500/30 rounded-3xl p-6 shadow-2xl relative animate-scaleUp">
-        
-        {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-white/10">
           <div className="flex items-center gap-3">
             <div className="p-3 rounded-2xl bg-gradient-to-tr from-amber-500/20 to-orange-500/20 border border-amber-500/30 text-amber-400">
-              <Megaphone className="w-6 h-6 animate-pulse" />
+              <Megaphone className="w-6 h-6" />
             </div>
             <div>
               <h3 className="text-lg font-black text-white flex items-center gap-2">
-                {isPrincipal ? 'Principal Live Broadcast' : 'Teacher Class Broadcast'}
-                <span className="px-2 py-0.5 text-[10px] uppercase tracking-wider font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full">
-                  Realtime
-                </span>
+                {isPrincipal ? 'Institutional Live Broadcast' : 'Faculty Class Broadcast'}
               </h3>
-              <p className="text-xs text-slate-400">Instant school-wide push notification & banner</p>
+              <p className="text-xs text-slate-400">Role-targeted, expiring push notice & banner</p>
             </div>
           </div>
 
           <button
+            type="button"
             onClick={onClose}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-white/10"
+            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-white/10 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Form */}
         <form onSubmit={handleSendBroadcast} className="mt-5 space-y-4">
-          
-          {/* Title */}
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
               Notice Title
@@ -166,14 +184,13 @@ export const BroadcastModal: React.FC<BroadcastModalProps> = ({
             <input
               type="text"
               required
-              placeholder={isPrincipal ? "e.g. Tomorrow school starts at 8:30 AM" : "e.g. Physics Lab Assignment Due Tomorrow"}
+              placeholder={isPrincipal ? 'e.g. Tomorrow campus assembly at 8:30 AM' : 'e.g. Physics Lab Assignment Due Tomorrow'}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-white text-sm focus:outline-none focus:border-amber-500 placeholder-slate-500"
             />
           </div>
 
-          {/* Category & Priority */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
@@ -184,11 +201,11 @@ export const BroadcastModal: React.FC<BroadcastModalProps> = ({
                 onChange={(e) => setCategory(e.target.value as any)}
                 className="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-white text-xs focus:outline-none focus:border-amber-500"
               >
-                <option value="announcement">📢 Announcement</option>
-                <option value="homework">📚 Homework / Task</option>
-                <option value="exam">✏️ Exam / Test</option>
-                <option value="reminder">⏰ Reminder</option>
-                <option value="notice">📋 Faculty Notice</option>
+                <option value="announcement">Announcement</option>
+                <option value="homework">Homework / Task</option>
+                <option value="exam">Exam / Test</option>
+                <option value="reminder">Reminder</option>
+                <option value="notice">Faculty Notice</option>
               </select>
             </div>
 
@@ -201,19 +218,51 @@ export const BroadcastModal: React.FC<BroadcastModalProps> = ({
                 onChange={(e) => setPriority(e.target.value as any)}
                 className="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-white text-xs focus:outline-none focus:border-amber-500"
               >
-                <option value="normal">🔵 Normal Priority</option>
-                <option value="urgent">🟠 Urgent Notice</option>
-                <option value="emergency">🔴 Emergency Broadcast</option>
+                <option value="normal">Normal Priority (Inbox only)</option>
+                <option value="urgent">Urgent Notice (Single Toast + Inbox)</option>
+                <option value="emergency">Emergency Broadcast</option>
               </select>
             </div>
           </div>
 
-          {/* Teacher Targeted Filters */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                Target Role Audience
+              </label>
+              <select
+                value={targetRoleAudience}
+                onChange={(e) => setTargetRoleAudience(e.target.value as any)}
+                className="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-white text-xs focus:outline-none focus:border-amber-500"
+              >
+                <option value="all">All Campus Roles</option>
+                <option value="student">Students Only</option>
+                <option value="faculty">Teachers & Coordinators Only</option>
+                <option value="admin">Admins & Leadership Only</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                Auto-Expiry Window
+              </label>
+              <select
+                value={ttlHours}
+                onChange={(e) => setTtlHours(Number(e.target.value))}
+                className="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-white text-xs focus:outline-none focus:border-amber-500"
+              >
+                <option value={24}>24 Hours</option>
+                <option value={72}>72 Hours (Default)</option>
+                <option value={168}>7 Days</option>
+              </select>
+            </div>
+          </div>
+
           {isTeacher && (
             <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-indigo-500/20 space-y-3">
               <div className="flex items-center gap-2 text-xs font-bold text-indigo-300">
                 <Filter className="w-4 h-4 text-indigo-400" />
-                Target Audience
+                Target Cohort
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
                 <div>
@@ -257,7 +306,6 @@ export const BroadcastModal: React.FC<BroadcastModalProps> = ({
             </div>
           )}
 
-          {/* Notice Message */}
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
               Broadcast Content
@@ -272,26 +320,25 @@ export const BroadcastModal: React.FC<BroadcastModalProps> = ({
             />
           </div>
 
-          {/* Action Buttons */}
           <div className="pt-3 flex items-center justify-end gap-3 border-t border-white/10">
             <button
               type="button"
               onClick={onClose}
-              className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition-all"
+              className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition-all cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSubmitting || !title.trim() || !message.trim()}
-              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 font-black text-xs flex items-center gap-2 shadow-lg shadow-amber-500/20 disabled:opacity-50 transition-all"
+              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 font-black text-xs flex items-center gap-2 shadow-lg shadow-amber-500/20 disabled:opacity-50 transition-all cursor-pointer"
             >
               {isSubmitting ? (
-                <span>Broadcasting...</span>
+                <span>Publishing...</span>
               ) : (
                 <>
                   <Send className="w-4 h-4" />
-                  <span>Send Realtime Broadcast</span>
+                  <span>Publish Broadcast</span>
                 </>
               )}
             </button>

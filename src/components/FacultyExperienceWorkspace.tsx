@@ -88,6 +88,8 @@ import { getSectionsForGrade } from '../config/academicHierarchy';
 import { WinterDashboardBanner } from './winter/WinterFestivalHub';
 import { XpLeaderboardPanel } from './gamification/XpLeaderboardPanel';
 import { awardServerActionXp } from '../lib/winterFestivalService';
+import { UnifiedEngagementPanel } from './engagement/UnifiedEngagementPanel';
+import { useEngagementOverview, recordEngagementActivity } from '../lib/engagementService';
 
 interface FacultyExperienceWorkspaceProps {
   currentUser: UserProfile;
@@ -146,6 +148,8 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
   const [subSection, setSubSection] = useState<FacultySubSection>(() =>
     roleConfig.defaultSubTab === 'coordination' && isCoordinatorPlus ? 'coordination' : 'overview'
   );
+  const { overview: engagementOverview, loading: engagementLoading, refresh: refreshEngagement } =
+    useEngagementOverview(currentUser, effectiveRole);
   const [winterCosmetics, setWinterCosmetics] = useState<{ equippedBanner: string | null; equippedBorder: string | null }>({
     equippedBanner: null,
     equippedBorder: null,
@@ -614,6 +618,12 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
     const refreshHw = await fetchAssignments(currentUser);
     if (refreshHw.ok && refreshHw.data) setBackendAssignments(refreshHw.data);
     void awardServerActionXp(currentUser, 'faculty_grade_submission', `${hw.id}_${sub.studentId}`);
+    void recordEngagementActivity(
+      currentUser,
+      effectiveRole,
+      isCoordinatorPlus ? 'oversight_review' : 'grade_submission',
+      1
+    );
     showNotification(
       action === 'return_for_revision'
         ? `Returned ${sub.studentName}'s work for revision.`
@@ -695,6 +705,12 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
       setAnnAttachUrl('');
       if (annStatus === 'published') {
         void awardServerActionXp(currentUser, 'faculty_publish_announcement', res.data.id);
+        void recordEngagementActivity(
+          currentUser,
+          effectiveRole,
+          isCoordinatorPlus ? 'oversight_review' : 'grade_submission',
+          1
+        );
       }
       showNotification(
         annStatus === 'draft'
@@ -1010,6 +1026,21 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
               </button>
             </div>
           </motion.div>
+
+          {/* Faculty & Coordinator Scoped Workflow Checklist & Weekly Summary */}
+          <UnifiedEngagementPanel
+            currentUser={currentUser}
+            effectiveRole={effectiveRole}
+            overview={engagementOverview}
+            loading={engagementLoading}
+            onNavigateTab={(tabId) => {
+              if (tabId === 'attendance_manager') setSubSection('attendance');
+              else if (tabId === 'homework') setSubSection('assignments');
+              else onNavigateTab(tabId);
+            }}
+            showNotification={showNotification}
+            onRefresh={refreshEngagement}
+          />
 
           {/* Scoped Real KPI Strip */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">

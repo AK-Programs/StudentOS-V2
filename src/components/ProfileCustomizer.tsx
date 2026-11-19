@@ -750,7 +750,7 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
               <div className="pt-2 border-t border-white/5 grid grid-cols-2 gap-2 text-[11px]">
                 <div className="p-2.5 bg-slate-900/50 rounded-xl border border-white/5">
                   <span className="text-slate-500 font-bold uppercase text-[9px] block">Streak</span>
-                  <span className="text-amber-400 font-bold font-mono">🔥 {currentUser.streakDays || 1} Days</span>
+                  <span className="text-amber-400 font-bold font-mono tabular-nums">{currentUser.streakDays ?? 0} Days</span>
                 </div>
                 <div className="p-2.5 bg-slate-900/50 rounded-xl border border-white/5">
                   <span className="text-slate-500 font-bold uppercase text-[9px] block">House</span>
