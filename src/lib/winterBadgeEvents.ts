@@ -23,6 +23,36 @@ const FALLBACK_BADGE_META: Record<
   string,
   { name: string; rarity: BadgeUnlockPayload['rarity']; description: string; purpose: string }
 > = {
+  snowflake_explorer: {
+    name: 'Snowflake Explorer',
+    rarity: 'seasonal',
+    description: 'Stepped into the campus Winter Festival Celebration.',
+    purpose: 'Displayed on Profile Badge Showcase & Chat Public Profile',
+  },
+  winter_scholar: {
+    name: 'Winter Scholar',
+    rarity: 'seasonal',
+    description: 'Aced the 3-question Winter Science & Knowledge Check.',
+    purpose: 'Displayed on Profile Badge Showcase & Chat Public Profile',
+  },
+  frosty_focus: {
+    name: 'Frosty Focus',
+    rarity: 'rare',
+    description: 'Maintained real academic momentum throughout the winter season.',
+    purpose: 'Displayed on Profile Badge Showcase & Chat Public Profile',
+  },
+  cookie_collector: {
+    name: 'Cookie Jar Curator',
+    rarity: 'rare',
+    description: 'Collected at least 5 festive Winter Cookies.',
+    purpose: 'Displayed on Profile Badge Showcase & Chat Public Profile',
+  },
+  winter_champion: {
+    name: 'Solstice Celebrant',
+    rarity: 'rare',
+    description: 'Participated in either the Winter Spin Wheel or Nightly Santa Gift.',
+    purpose: 'Displayed on Profile Badge Showcase & Chat Public Profile',
+  },
   frost_starter: {
     name: 'Frost Starter Badge',
     rarity: 'seasonal',
@@ -48,25 +78,25 @@ const FALLBACK_BADGE_META: Record<
     purpose: 'Celebrates sustained seasonal engagement',
   },
   winter_wheel_ace: {
-    name: 'Frost Spin Ace Badge',
+    name: 'Frost Wheel Ace',
     rarity: 'legendary',
-    description: 'Landed the ultra-rare Frost Jackpot on the 2-Hour Winter Spin Wheel.',
+    description: 'Landed cleanly on the Frost Jackpot slice of the Winter Spin Wheel.',
     purpose: 'Signature Spin Wheel jackpot collectible',
   },
   sleigh_keeper: {
-    name: 'Sleigh Keeper Badge',
+    name: 'Sleigh Keeper',
     rarity: 'legendary',
-    description: 'Unwrapped a Legendary Starlight Sleigh Crate from Nightly Santa.',
-    purpose: 'Awarded for rare Santa Gift generosity',
+    description: 'Unwrapped a Legendary Starlight Sleigh Crate during the 7–9 PM window.',
+    purpose: 'Prestigious seasonal profile merit badge',
   },
   aurora_miracle: {
-    name: 'Aurora Miracle Badge',
+    name: 'Aurora Miracle',
     rarity: 'legendary',
     description: 'Discovered the 4% Aurora Crown Vault during the Nightly Santa window.',
     purpose: 'Pinnacle Winter Festival Vault collectible',
   },
   north_star_secret: {
-    name: 'North Star Secret Badge',
+    name: 'North Star Secret',
     rarity: 'secret',
     description: 'Unlocked by gathering 15+ Winter Cookies and completing 3+ Winter Festival Tasks.',
     purpose: 'Hidden achievement for Winter masters',
@@ -155,7 +185,7 @@ export function syncWinterBadgeBaseline(
   const badgeIds = Object.keys(earnedWinterBadges || {});
   for (const id of badgeIds) {
     set.add(id);
-    markBadgeAsCelebrated(id);
+    markBadgeAsCelebrated(id, userId);
   }
   writePersistedSeenSet(userId, set);
 }
@@ -185,7 +215,7 @@ export function processNewWinterBadges(params: {
   if (!initialized && silentOnFirstBaseline) {
     for (const id of earnedIds) {
       set.add(id);
-      markBadgeAsCelebrated(id);
+      markBadgeAsCelebrated(id, userId);
     }
     writePersistedSeenSet(userId, set);
     return [];
@@ -195,7 +225,7 @@ export function processNewWinterBadges(params: {
   for (const badgeId of earnedIds) {
     if (set.has(badgeId)) continue;
     set.add(badgeId);
-    const payload = resolveBadgeMetadata(badgeId, badgesCatalog);
+    const payload = { ...resolveBadgeMetadata(badgeId, badgesCatalog), userId };
     newlyUnlocked.push(payload);
   }
 

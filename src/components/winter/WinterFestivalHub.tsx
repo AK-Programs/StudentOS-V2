@@ -487,7 +487,16 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
     const onSync = (e: Event) => {
       const detail = (e as CustomEvent<{ winterState?: WinterStatusResponse['winterState'] }>).detail;
       if (detail?.winterState) {
-        setStatus((prev) => mergeWinterStateIntoStatus(prev, detail.winterState));
+        setStatus((prev) => {
+          processNewWinterBadges({
+            userId: currentUser?.uid,
+            earnedWinterBadges: detail.winterState?.earnedWinterBadges,
+            badgesCatalog: prev?.badges,
+            showNotification,
+            silentOnFirstBaseline: false,
+          });
+          return mergeWinterStateIntoStatus(prev, detail.winterState);
+        });
         return;
       }
       void loadWinterData();
@@ -498,7 +507,7 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
       window.removeEventListener('veylentra-winter-updated', onSync);
       window.removeEventListener('veylentra-cosmetics-updated', onSync);
     };
-  }, [loadWinterData]);
+  }, [loadWinterData, currentUser?.uid, showNotification]);
 
   useEffect(() => {
     return () => {
@@ -585,6 +594,16 @@ export const WinterFestivalHub: React.FC<WinterHubProps> = ({
       showNotification?.('Winter Knowledge Check passed! You can now claim the task reward.', 'success');
       if (res.data.winterState) {
         setStatus((prev) => mergeWinterStateIntoStatus(prev, res.data.winterState));
+        processNewWinterBadges({
+          userId: currentUser?.uid,
+          earnedWinterBadges: res.data.winterState.earnedWinterBadges,
+          badgesCatalog: status?.badges,
+          showNotification,
+          silentOnFirstBaseline: false,
+        });
+        window.dispatchEvent(
+          new CustomEvent('veylentra-winter-updated', { detail: { winterState: res.data.winterState } })
+        );
       } else {
         await loadWinterData();
       }

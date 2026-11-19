@@ -48,7 +48,7 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
   const featureKey = type === 'faculty' ? 'faculty_xp_leaderboard' : 'student_xp_leaderboard';
   const access = useFeatureAccess(featureKey, currentUser);
 
-  const [period, setPeriod] = useState<'weekly' | 'monthly' | 'all_time'>('weekly');
+  const [period, setPeriod] = useState<'weekly' | 'monthly' | 'all_time'>('all_time');
   const [rankings, setRankings] = useState<LeaderboardEntry[]>([]);
   const [currentUserEntry, setCurrentUserEntry] = useState<LeaderboardEntry | null>(null);
   const [rankDeltas, setRankDeltas] = useState<Record<string, number>>({});
@@ -59,6 +59,7 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
   const prevRanksMapRef = useRef<Map<string, number>>(new Map());
   const prevScopeKeyRef = useRef<string>('');
   const syncDebounceRef = useRef<number | null>(null);
+  const prevActorUidRef = useRef<string>(currentUser?.uid || '');
 
   useEffect(() => {
     mountedRef.current = true;
@@ -69,6 +70,17 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
       }
     };
   }, []);
+
+  useEffect(() => {
+    const nextUid = currentUser?.uid || '';
+    if (prevActorUidRef.current !== nextUid) {
+      prevActorUidRef.current = nextUid;
+      prevRanksMapRef.current.clear();
+      setRankDeltas({});
+      setRankings([]);
+      setCurrentUserEntry(null);
+    }
+  }, [currentUser?.uid]);
 
   const loadLeaderboard = useCallback(async () => {
     const seq = ++requestSeqRef.current;
@@ -308,9 +320,16 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
                             {entry.section ? ` · ${entry.section}` : ''}
                           </p>
                         </div>
-                        <div className="flex items-center gap-1.5 text-sm font-bold font-mono tabular-nums text-sky-600 dark:text-sky-400">
-                          <NumberTicker value={entry.xp} />
-                          <span className="text-xs">XP</span>
+                        <div className="flex flex-col items-center gap-0.5">
+                          <div className="flex items-center gap-1.5 text-sm font-bold font-mono tabular-nums text-sky-600 dark:text-sky-400">
+                            <NumberTicker value={entry.xp} />
+                            <span className="text-xs">XP</span>
+                          </div>
+                          {period !== 'all_time' && typeof entry.allTimeXp === 'number' && entry.allTimeXp > entry.xp && (
+                            <span className="text-[10px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                              All-time: {entry.allTimeXp.toLocaleString()} XP
+                            </span>
+                          )}
                         </div>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400">
                           Lv.{entry.level} {entry.levelTitle}
@@ -442,9 +461,16 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
                           {entry.winterCookies}
                         </span>
                       )}
-                      <span className="text-xs sm:text-sm font-bold font-mono tabular-nums text-slate-900 dark:text-white min-w-[54px] sm:min-w-[64px] text-right">
-                        {entry.xp.toLocaleString()} XP
-                      </span>
+                      <div className="text-right min-w-[60px] sm:min-w-[74px]">
+                        <span className="block text-xs sm:text-sm font-bold font-mono tabular-nums text-slate-900 dark:text-white">
+                          {entry.xp.toLocaleString()} XP
+                        </span>
+                        {period !== 'all_time' && typeof entry.allTimeXp === 'number' && entry.allTimeXp > entry.xp && (
+                          <span className="block text-[10px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                            Total {entry.allTimeXp.toLocaleString()} XP
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </motion.div>
                 );
@@ -462,9 +488,16 @@ export const XpLeaderboardPanel: React.FC<XpLeaderboardPanelProps> = ({
                     Lv.{currentUserEntry.level} {currentUserEntry.levelTitle}
                   </span>
                 </div>
-                <span className="text-sm font-bold font-mono tabular-nums text-sky-700 dark:text-sky-300">
-                  {currentUserEntry.xp.toLocaleString()} XP
-                </span>
+                <div className="text-right shrink-0">
+                  <span className="block text-sm font-bold font-mono tabular-nums text-sky-700 dark:text-sky-300">
+                    {currentUserEntry.xp.toLocaleString()} XP
+                  </span>
+                  {period !== 'all_time' && typeof currentUserEntry.allTimeXp === 'number' && currentUserEntry.allTimeXp > currentUserEntry.xp && (
+                    <span className="block text-[10px] font-mono tabular-nums text-sky-700/80 dark:text-sky-300/80">
+                      All-time: {currentUserEntry.allTimeXp.toLocaleString()} XP
+                    </span>
+                  )}
+                </div>
               </div>
             )}
           </>

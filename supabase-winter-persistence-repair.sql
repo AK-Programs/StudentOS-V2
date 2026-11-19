@@ -110,19 +110,24 @@ BEGIN
   END LOOP;
 END $$;
 
--- 6. Safe, additive backfill of existing legacy global_data gamification XP into user_profiles & gamification_xp_ledger
--- Preserves every existing user's XP so leaderboards never start empty or lose historical progress.
+-- 6. Safe, additive backfill of missing historical regular XP into user_profiles & gamification_xp_ledger
+-- Computes ONLY missing delta (GREATEST(0, max_historical_xp - existing_ledger_sum)) so all-time totals reconcile without inflating weekly deltas or double-counting.
 DO $$
 DECLARE
   rec RECORD;
   uid_val TEXT;
   xp_val INTEGER;
+  led_sum INTEGER;
+  prof_pts INTEGER;
+  target_xp INTEGER;
+  missing_delta INTEGER;
   uname TEXT;
   urole TEXT;
   ugrade TEXT;
   usection TEXT;
   uhouse TEXT;
   uavatar TEXT;
+  min_led_at TIMESTAMPTZ;
   ts_val TIMESTAMPTZ;
 BEGIN
   FOR rec IN
@@ -141,9 +146,21 @@ BEGIN
       ELSE 0
     END;
 
-    IF xp_val <= 0 THEN
+    SELECT COALESCE(MAX(points), 0) INTO prof_pts
+    FROM public.user_profiles
+    WHERE id::text = uid_val OR uid = uid_val;
+
+    SELECT COALESCE(SUM(GREATEST(0, xp_delta)), 0), MIN(created_at)
+      INTO led_sum, min_led_at
+    FROM public.gamification_xp_ledger
+    WHERE user_id = uid_val;
+
+    target_xp := GREATEST(COALESCE(xp_val, 0), COALESCE(prof_pts, 0), COALESCE(led_sum, 0));
+    IF target_xp <= 0 THEN
       CONTINUE;
     END IF;
+
+    missing_delta := GREATEST(0, target_xp - COALESCE(led_sum, 0));
 
     uname := COALESCE(NULLIF(rec.data->>'userName', ''), NULLIF(rec.data->>'name', ''), 'Member');
     urole := LOWER(COALESCE(NULLIF(rec.data->>'role', ''), 'student'));
@@ -152,42 +169,64 @@ BEGIN
     uhouse := COALESCE(rec.data->>'house', '');
     uavatar := COALESCE(NULLIF(rec.data->>'avatar', ''), NULLIF(rec.data->>'photoURL', ''), '');
 
-    ts_val := NOW();
+    -- Sync user_profiles.points safely (never overwrite higher value)
+    UPDATE public.user_profiles
+    SET points = GREATEST(COALESCE(points, 0), target_xp)
+    WHERE id::text = uid_val OR uid = uid_val;
+
+    IF missing_delta <= 0 THEN
+      CONTINUE;
+    END IF;
+
+    ts_val := COALESCE(min_led_at - INTERVAL '2 days', NOW() - INTERVAL '14 days');
     BEGIN
       IF rec.data->>'updatedAt' IS NOT NULL AND rec.data->>'updatedAt' <> '' THEN
-        ts_val := (rec.data->>'updatedAt')::timestamptz;
-      ELSIF rec.updated_at IS NOT NULL THEN
+        IF (rec.data->>'updatedAt')::timestamptz < ts_val THEN
+          ts_val := (rec.data->>'updatedAt')::timestamptz;
+        END IF;
+      ELSIF rec.updated_at IS NOT NULL AND rec.updated_at < ts_val THEN
         ts_val := rec.updated_at;
       END IF;
     EXCEPTION WHEN OTHERS THEN
-      ts_val := NOW();
+      ts_val := COALESCE(min_led_at - INTERVAL '2 days', NOW() - INTERVAL '14 days');
     END;
 
-    -- Sync user_profiles.points safely (never overwrite higher value)
-    UPDATE public.user_profiles
-    SET points = GREATEST(COALESCE(points, 0), xp_val)
-    WHERE id::text = uid_val OR uid = uid_val;
-
-    -- Idempotently seed baseline XP entry into gamification_xp_ledger
-    INSERT INTO public.gamification_xp_ledger (
-      id, user_id, user_name, user_role, grade, section, house, avatar,
-      source_type, action_key, xp_delta, label, created_at
-    )
-    VALUES (
-      'xp_mig_' || substr(md5(uid_val), 1, 20),
-      uid_val,
-      uname,
-      urole,
-      ugrade,
-      usection,
-      uhouse,
-      uavatar,
-      'academic',
-      'migration:baseline_xp',
-      xp_val,
-      'Historical Academic XP',
-      ts_val
-    )
-    ON CONFLICT (user_id, action_key) DO NOTHING;
+    -- Idempotently insert ONLY the un-ledgered historical reconciliation delta in <=150 XP chunks
+    IF NOT EXISTS (
+      SELECT 1 FROM public.gamification_xp_ledger
+      WHERE user_id = uid_val AND action_key LIKE 'migration:historical_xp_reconciliation%'
+    ) THEN
+      DECLARE
+        v_rem INTEGER := missing_delta;
+        v_part INTEGER := 1;
+        v_chunk INTEGER;
+      BEGIN
+        WHILE v_rem > 0 LOOP
+          v_chunk := LEAST(150, v_rem);
+          v_rem := v_rem - v_chunk;
+          INSERT INTO public.gamification_xp_ledger (
+            id, user_id, user_name, user_role, grade, section, house, avatar,
+            source_type, action_key, xp_delta, label, created_at
+          )
+          VALUES (
+            'xp_recon_' || substr(md5(uid_val), 1, 14) || '_' || v_part::text,
+            uid_val,
+            uname,
+            urole,
+            ugrade,
+            usection,
+            uhouse,
+            uavatar,
+            'academic',
+            'migration:historical_xp_reconciliation:' || v_part::text,
+            v_chunk,
+            'Historical Regular XP Reconciliation',
+            ts_val
+          )
+          ON CONFLICT (user_id, action_key) DO NOTHING;
+          v_part := v_part + 1;
+        END LOOP;
+      END;
+    END IF;
   END LOOP;
 END $$;

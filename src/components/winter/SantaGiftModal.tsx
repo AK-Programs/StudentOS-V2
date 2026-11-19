@@ -127,6 +127,7 @@ interface PendingRevealPayload {
   reward: WinterRewardRecord | null;
   recovered: boolean;
   isPreview: boolean;
+  winterState?: any;
 }
 
 export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
@@ -226,16 +227,20 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
     }
 
     if (!payload.isPreview) {
-      await onRewardClaimed();
       if ((payload.reward?.frostXpBonus || 0) > 0 && isGlobalSoundEnabled()) {
         import('../../lib/winterAudio').then((m) => m.winterAudio.playFrostXpEarned()).catch(() => {});
       }
       void fetchAIUsageStatus(currentUser?.uid || 'guest', currentUser?.role || 'student');
-      window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
+      window.dispatchEvent(
+        new CustomEvent('veylentra-winter-updated', {
+          detail: payload.winterState ? { winterState: payload.winterState } : undefined,
+        })
+      );
       window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated'));
       window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
+      await onRewardClaimed();
     }
-  }, [onRewardClaimed]);
+  }, [onRewardClaimed, currentUser?.uid, currentUser?.role]);
 
   const handleUnwrap = async (previewMode: boolean = false) => {
     if (claiming) return;
@@ -261,16 +266,12 @@ export const SantaGiftModal: React.FC<SantaGiftModalProps> = ({
         return;
       }
 
-      // Reload user's saved state immediately when claim persists, then reveal prize cleanly
-      if (!res.data.isPreview) {
-        void onRewardClaimed();
-      }
-
       // Server confirmed claim/preview -> trigger coordinated 3D Santa reach -> lid open -> magic glow -> prize reveal
       pendingRevealRef.current = {
         reward: res.data.reward || null,
         recovered: Boolean(res.data.recovered),
         isPreview: Boolean(res.data.isPreview),
+        winterState: res.data.winterState || null,
       };
       setScenePhase('revealing');
     } catch (err: any) {

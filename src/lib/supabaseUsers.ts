@@ -80,6 +80,19 @@ function isValidUUID(str: string): boolean {
 const profileCache = new Map<string, { profile: UserProfile; timestamp: number }>();
 const CACHE_TTL_MS = 30000; // 30 seconds
 
+export function clearSupabaseUserProfileCache(uidOrEmail?: string): void {
+  if (!uidOrEmail) {
+    profileCache.clear();
+    return;
+  }
+  const needle = uidOrEmail.toLowerCase();
+  for (const key of profileCache.keys()) {
+    if (key.toLowerCase().includes(needle)) {
+      profileCache.delete(key);
+    }
+  }
+}
+
 function getLocalProfileKey(uidOrEmail: string): string {
   return `s_os_profile_store_${(uidOrEmail || '').toLowerCase()}`;
 }

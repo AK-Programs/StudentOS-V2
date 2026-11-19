@@ -26,7 +26,7 @@ import {
 import { supabase } from './lib/supabase';
 import { getVaultNotes, saveVaultNoteToSupabase, deleteVaultNoteFromSupabase, getNoteByCollabCode, updateNoteOrder } from './lib/supabaseNotes';
 import { generateFormattedPdf } from './lib/pdfGenerator';
-import { getSupabaseUserProfile, saveSupabaseUserProfile, getDefaultProfileForAccount, saveLocalProfileBackup } from './lib/supabaseUsers';
+import { getSupabaseUserProfile, saveSupabaseUserProfile, getDefaultProfileForAccount, saveLocalProfileBackup, clearSupabaseUserProfileCache } from './lib/supabaseUsers';
 import { getSupabaseHomework, saveSupabaseHomework, deleteSupabaseHomework } from './lib/supabaseHomework';
 import {
   fetchAssignments,
@@ -2400,8 +2400,8 @@ export default function App() {
     if (isDemoMode) {
       const demoStudent = {
         uid: 'demo-student-uid',
-        name: 'Naitik Kashyap',
-        email: 'naitik.kashyap0015@gmail.com',
+        name: 'Aarav Sharma',
+        email: 'student@demo.com',
         role: 'student' as const,
         grade: 'Grade 10',
         section: 'Ruby' as any,
@@ -4257,6 +4257,7 @@ ${resultText}
     try {
       (window as any).__studentos_explicit_logout__ = true;
       await supabase.auth.signOut();
+      clearSupabaseUserProfileCache();
       localStorage.removeItem('s_os_user');
       localStorage.removeItem('s_os_active_tab');
       try {
@@ -5261,11 +5262,12 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
       saveSupabaseUserProfile(outgoingProfile).catch(() => {});
     }
 
-    // 2. Clear role simulation overrides & chat/AI caches so new user's data loads cleanly
+    // 2. Clear role simulation overrides & chat/AI/user caches so new user's data loads cleanly
     setSimulatedRole(null);
     setIsSuperAdmin(matched.role === 'super_admin');
     aiChatsSyncingFor.current = null;
     clearChatCache();
+    clearSupabaseUserProfileCache();
     setActiveChatTargetId('group-all');
     setSelectedMaterialForAi(null);
     setPreviewMaterial(null);
@@ -5314,6 +5316,8 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
     localStorage.setItem('s_os_user', JSON.stringify(nextProfile));
     saveLocalProfileBackup(nextProfile);
     updateRecentAccounts(nextProfile);
+    window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
+    window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
 
     setTasks(nextProfile.raw_data?.tasks || []);
     setSchedules(nextProfile.raw_data?.schedules || []);
@@ -15737,6 +15741,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
       {/* Global Winter Seasonal Badge Unlock Celebration Modal */}
       {currentUser && !isLocked && (
         <BadgeUnlockCelebrationModal
+          currentUserId={currentUser.uid}
           onViewCollection={() => {
             handleTabSelect('winter_festival');
             setTimeout(() => {

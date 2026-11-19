@@ -204,6 +204,7 @@ export interface LeaderboardEntry {
   house: string;
   avatar: string;
   xp: number;
+  allTimeXp?: number;
   level: number;
   levelTitle: string;
   nextLevelXp: number | null;

@@ -428,89 +428,87 @@ export async function loadAuthoritativeGamificationProfile(user: {
   const localProfile = getLocalGamificationProfile(user);
 
   try {
-    // 1. Check user-specific document in Supabase global_data
     const userDocId = `gamification_user_${userId}`;
-    const { data: userDoc } = await supabase
-      .from('global_data')
-      .select('*')
-      .eq('id', userDocId)
-      .maybeSingle();
 
-    let remoteProfile: StudentGamificationStats | null = null;
-    if (userDoc) {
-      const parsed = (userDoc as any).data ?? ((userDoc as any).content ? JSON.parse((userDoc as any).content) : null);
+    // Query user-specific global_data doc, user_profiles.points (matching id or uid), and backend API (which also aggregates ledger) in parallel
+    const [gdRes, upRes, apiRes] = await Promise.all([
+      Promise.resolve(
+        supabase.from('global_data').select('*').eq('id', userDocId).maybeSingle()
+      ).catch(() => ({ data: null })),
+      Promise.resolve(
+        supabase.from('user_profiles').select('id,uid,points').or(`id.eq.${userId},uid.eq.${userId}`).limit(2)
+      ).catch(() => ({ data: null })),
+      fetch(`/api/gamification/profile?userId=${encodeURIComponent(userId)}&schoolId=${encodeURIComponent(schoolId)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null),
+    ]);
+
+    let remoteDocProfile: StudentGamificationStats | null = null;
+    if (gdRes?.data) {
+      const parsed = (gdRes.data as any).data ?? ((gdRes.data as any).content ? JSON.parse((gdRes.data as any).content) : null);
       if (parsed && typeof parsed === 'object') {
-        remoteProfile = parsed;
+        remoteDocProfile = parsed;
       }
     }
 
-    // 2. Also check user_profiles table for any existing points
-    try {
-      const { data: uProfile } = await supabase
-        .from('user_profiles')
-        .select('points')
-        .eq('id', userId)
-        .maybeSingle();
-      if (uProfile && typeof uProfile.points === 'number' && uProfile.points > 0) {
-        if (!remoteProfile || (remoteProfile.xp || 0) < uProfile.points) {
-          if (remoteProfile) {
-            remoteProfile.xp = uProfile.points;
-          }
-        }
+    let uProfilePoints = 0;
+    if (Array.isArray(upRes?.data)) {
+      for (const row of upRes.data) {
+        uProfilePoints = Math.max(uProfilePoints, Number((row as any)?.points || 0));
       }
-    } catch (_) {}
-
-    // 3. If not found in individual doc, check backend API / school doc
-    if (!remoteProfile) {
-      try {
-        const resp = await fetch(
-          `/api/gamification/profile?userId=${encodeURIComponent(userId)}&schoolId=${encodeURIComponent(schoolId)}`
-        );
-        if (resp.ok) {
-          const json = await resp.json();
-          if (json?.profile) remoteProfile = json.profile;
-        }
-      } catch (_) {}
     }
 
-    if (remoteProfile) {
+    const apiProfile: StudentGamificationStats | null =
+      apiRes?.profile && typeof apiRes.profile === 'object' ? apiRes.profile : null;
+
+    const remoteProfile = remoteDocProfile || apiProfile;
+    const maxRemoteXp = Math.max(
+      Number(remoteDocProfile?.xp || 0),
+      Number(apiProfile?.xp || 0),
+      uProfilePoints
+    );
+
+    if (remoteProfile || maxRemoteXp > 0) {
       // Reconcile safely: ALWAYS keep whichever has the higher XP to prevent data loss!
-      const reconciledXp = Math.max(Number(remoteProfile.xp) || 0, Number(localProfile.xp) || 0);
+      const reconciledXp = Math.max(maxRemoteXp, Number(localProfile.xp) || 0);
       const lvlInfo = calculateLevelInfo(reconciledXp);
+      const baseRemote = remoteProfile || localProfile;
 
       const merged: StudentGamificationStats = {
         ...localProfile,
-        ...remoteProfile,
+        ...baseRemote,
         userId,
-        name: user.name || remoteProfile.name || localProfile.name,
-        grade: user.grade || remoteProfile.grade || localProfile.grade,
+        name: user.name || (baseRemote as any).name || (baseRemote as any).userName || localProfile.name,
+        grade: user.grade || baseRemote.grade || localProfile.grade,
         schoolId,
         xp: reconciledXp,
         level: lvlInfo.current.level,
         levelTitle: lvlInfo.current.title,
         earnedBadges: {
-          ...(remoteProfile.earnedBadges || {}),
+          ...(apiProfile?.earnedBadges || {}),
+          ...(remoteDocProfile?.earnedBadges || {}),
           ...(localProfile.earnedBadges || {})
         },
         counts: {
-          totalActions: Math.max(localProfile.counts?.totalActions || 0, remoteProfile.counts?.totalActions || 0),
-          homeworkCompleted: Math.max(localProfile.counts?.homeworkCompleted || 0, remoteProfile.counts?.homeworkCompleted || 0),
-          flashcardsStudied: Math.max(localProfile.counts?.flashcardsStudied || 0, remoteProfile.counts?.flashcardsStudied || 0),
-          quizzesCompleted: Math.max(localProfile.counts?.quizzesCompleted || 0, remoteProfile.counts?.quizzesCompleted || 0),
-          highScoreQuizzes: Math.max(localProfile.counts?.highScoreQuizzes || 0, remoteProfile.counts?.highScoreQuizzes || 0),
-          notesCreated: Math.max(localProfile.counts?.notesCreated || 0, remoteProfile.counts?.notesCreated || 0),
-          aiStudyUses: Math.max(localProfile.counts?.aiStudyUses || 0, remoteProfile.counts?.aiStudyUses || 0),
-          noticesRead: Math.max(localProfile.counts?.noticesRead || 0, remoteProfile.counts?.noticesRead || 0),
-          brainBattlesPlayed: Math.max(localProfile.counts?.brainBattlesPlayed || 0, remoteProfile.counts?.brainBattlesPlayed || 0),
-          brainBattlePerfects: Math.max(localProfile.counts?.brainBattlePerfects || 0, remoteProfile.counts?.brainBattlePerfects || 0),
-          dailyChallengesCompleted: Math.max(localProfile.counts?.dailyChallengesCompleted || 0, remoteProfile.counts?.dailyChallengesCompleted || 0),
-          multiplayerWins: Math.max(localProfile.counts?.multiplayerWins || 0, remoteProfile.counts?.multiplayerWins || 0)
+          totalActions: Math.max(localProfile.counts?.totalActions || 0, baseRemote.counts?.totalActions || 0),
+          homeworkCompleted: Math.max(localProfile.counts?.homeworkCompleted || 0, baseRemote.counts?.homeworkCompleted || 0),
+          flashcardsStudied: Math.max(localProfile.counts?.flashcardsStudied || 0, baseRemote.counts?.flashcardsStudied || 0),
+          quizzesCompleted: Math.max(localProfile.counts?.quizzesCompleted || 0, baseRemote.counts?.quizzesCompleted || 0),
+          highScoreQuizzes: Math.max(localProfile.counts?.highScoreQuizzes || 0, baseRemote.counts?.highScoreQuizzes || 0),
+          notesCreated: Math.max(localProfile.counts?.notesCreated || 0, baseRemote.counts?.notesCreated || 0),
+          aiStudyUses: Math.max(localProfile.counts?.aiStudyUses || 0, baseRemote.counts?.aiStudyUses || 0),
+          noticesRead: Math.max(localProfile.counts?.noticesRead || 0, baseRemote.counts?.noticesRead || 0),
+          brainBattlesPlayed: Math.max(localProfile.counts?.brainBattlesPlayed || 0, baseRemote.counts?.brainBattlesPlayed || 0),
+          brainBattlePerfects: Math.max(localProfile.counts?.brainBattlePerfects || 0, baseRemote.counts?.brainBattlePerfects || 0),
+          dailyChallengesCompleted: Math.max(localProfile.counts?.dailyChallengesCompleted || 0, baseRemote.counts?.dailyChallengesCompleted || 0),
+          multiplayerWins: Math.max(localProfile.counts?.multiplayerWins || 0, baseRemote.counts?.multiplayerWins || 0)
         },
-        currentStreak: Math.max(localProfile.currentStreak || 1, remoteProfile.currentStreak || 1),
-        longestStreak: Math.max(localProfile.longestStreak || 1, remoteProfile.longestStreak || 1),
+        currentStreak: Math.max(localProfile.currentStreak || 1, baseRemote.currentStreak || 1),
+        longestStreak: Math.max(localProfile.longestStreak || 1, baseRemote.longestStreak || 1),
         updatedAt: new Date().toISOString()
       };
 
+      hydratedRemoteXpUsers.add(userId);
       if (typeof window !== 'undefined') {
         const storageKey = `s_os_gamification_${userId}`;
         localStorage.setItem(storageKey, JSON.stringify(merged));
@@ -518,6 +516,7 @@ export async function loadAuthoritativeGamificationProfile(user: {
       }
       return merged;
     }
+    hydratedRemoteXpUsers.add(userId);
   } catch (err) {
     console.warn('[Gamification] Authoritative load notice:', err);
   }
@@ -525,38 +524,17 @@ export async function loadAuthoritativeGamificationProfile(user: {
   return localProfile;
 }
 
+const hydratedRemoteXpUsers = new Set<string>();
+
 /**
  * Save gamification profile locally and sync to server + Supabase
+ * Reconciles with /api/gamification/award FIRST so stale local state NEVER overwrites higher cloud XP.
  */
 export async function saveGamificationProfile(
   profile: StudentGamificationStats,
   syncContext?: { action?: string; label?: string; xpDelta?: number; uniqueItemId?: string; skipLedgerSync?: boolean }
 ): Promise<void> {
-  if (typeof window !== 'undefined') {
-    const storageKey = `s_os_gamification_${profile.userId}`;
-    localStorage.setItem(storageKey, JSON.stringify(profile));
-    window.dispatchEvent(new CustomEvent('studentos-gamification-updated', { detail: { profile } }));
-  }
-
-  // Authoritative cloud persistence in Supabase global_data (using data column)
-  try {
-    const userDocId = `gamification_user_${profile.userId}`;
-    await supabase.from('global_data').upsert({
-      id: userDocId,
-      data: profile,
-      updated_at: new Date().toISOString()
-    });
-  } catch (err) {
-    console.warn('[Gamification] Direct Supabase persistence notice:', err);
-  }
-
-  // Mirror to user_profiles table points column
-  try {
-    await supabase.from('user_profiles').update({
-      points: profile.xp,
-      updated_at: Date.now()
-    }).eq('id', profile.userId);
-  } catch (_) {}
+  let finalProfile = { ...profile };
 
   try {
     const headers = await buildAuthHeadersForUser({
@@ -566,17 +544,65 @@ export async function saveGamificationProfile(
       grade: profile.grade,
       section: profile.section as SectionType,
     });
-    await fetch('/api/gamification/award', {
+    const res = await fetch('/api/gamification/award', {
       method: 'POST',
       headers,
       body: JSON.stringify({
         userId: profile.userId,
         schoolId: profile.schoolId || 'default_school',
-        profile,
+        profile: finalProfile,
         syncContext,
       })
     });
-  } catch (_) {}
+    if (res.ok) {
+      const json = await res.json().catch(() => null);
+      if (json?.profile && typeof json.profile === 'object') {
+        const serverXp = Number(json.profile.xp || 0);
+        if (serverXp >= finalProfile.xp) {
+          finalProfile = {
+            ...finalProfile,
+            ...json.profile,
+            xp: serverXp,
+          };
+        }
+      }
+    }
+  } catch (_) {
+    // Fallback direct persistence when backend route is unreachable
+    try {
+      const userDocId = `gamification_user_${finalProfile.userId}`;
+      await supabase.from('global_data').upsert({
+        id: userDocId,
+        data: finalProfile,
+        updated_at: new Date().toISOString()
+      });
+    } catch (err) {
+      console.warn('[Gamification] Direct Supabase persistence notice:', err);
+    }
+
+    try {
+      const { data: rows } = await supabase
+        .from('user_profiles')
+        .select('points')
+        .or(`id.eq.${finalProfile.userId},uid.eq.${finalProfile.userId}`)
+        .limit(2);
+      const maxExisting = Array.isArray(rows)
+        ? rows.reduce((m: number, r: any) => Math.max(m, Number(r?.points || 0)), 0)
+        : 0;
+      const safePoints = Math.max(maxExisting, finalProfile.xp);
+      finalProfile.xp = safePoints;
+      await supabase
+        .from('user_profiles')
+        .update({ points: safePoints, updated_at: Date.now() })
+        .or(`id.eq.${finalProfile.userId},uid.eq.${finalProfile.userId}`);
+    } catch (_) {}
+  }
+
+  if (typeof window !== 'undefined') {
+    const storageKey = `s_os_gamification_${finalProfile.userId}`;
+    localStorage.setItem(storageKey, JSON.stringify(finalProfile));
+    window.dispatchEvent(new CustomEvent('studentos-gamification-updated', { detail: { profile: finalProfile } }));
+  }
 }
 
 /**
@@ -649,6 +675,11 @@ export async function awardStudentXP(
 }> {
   if (!user || !(user.uid || user.id)) {
     return { awarded: false, xpAdded: 0, leveledUp: false, newBadges: [], profile: null };
+  }
+
+  const targetUserId = user.uid || user.id || 'student_default';
+  if (!hydratedRemoteXpUsers.has(targetUserId)) {
+    await loadAuthoritativeGamificationProfile(user).catch(() => null);
   }
 
   const profile = getLocalGamificationProfile(user);

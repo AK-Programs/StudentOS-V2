@@ -3830,10 +3830,10 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
       };
 
       if (shouldUseSupabase(cfg)) {
-        const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+        const effectiveCfg = resolveWinterSupabaseConfig(getSupabaseServerConfig);
         const headers = {
-          apikey: serviceKey || cfg.key,
-          Authorization: `Bearer ${serviceKey || cfg.key}`,
+          apikey: effectiveCfg.key,
+          Authorization: `Bearer ${effectiveCfg.key}`,
         };
         const sinceClause =
           period === 'all_time'
@@ -3842,62 +3842,93 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
                 new Date(Date.now() - (period === 'weekly' ? 7 : 30) * 24 * 60 * 60 * 1000).toISOString()
               )}&`;
 
-        const fetchOptionalStoreRows = async (url: string, label: string): Promise<any[] | null> => {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 3500);
-          try {
-            const res = await fetchJsonStrict(url, { headers, signal: controller.signal }, label);
-            if (!res.ok) return null;
-            const parsed = await res.json().catch(() => null);
-            return Array.isArray(parsed) ? parsed : null;
-          } catch {
-            return null;
-          } finally {
-            clearTimeout(timer);
+        const fetchAllPagedOptional = async (baseUrl: string, pageSize: number, maxPages: number, label: string): Promise<any[] | null> => {
+          const all: any[] = [];
+          for (let page = 0; page < maxPages; page++) {
+            const offset = page * pageSize;
+            const sep = baseUrl.includes('?') ? '&' : '?';
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 3500);
+            try {
+              const res = await fetchJsonStrict(
+                `${baseUrl}${sep}limit=${pageSize}&offset=${offset}`,
+                { headers, signal: controller.signal },
+                label
+              );
+              if (!res.ok) return page === 0 ? null : all;
+              const batch = await res.json().catch(() => null);
+              if (!Array.isArray(batch)) return page === 0 ? null : all;
+              all.push(...batch);
+              if (batch.length < pageSize) break;
+            } catch {
+              return page === 0 ? null : all;
+            } finally {
+              clearTimeout(timer);
+            }
           }
+          return all;
         };
 
-        const ledController = new AbortController();
-        const ledTimer = setTimeout(() => ledController.abort(), 6500);
-        let ledRes: Response;
-        let profRows: any[] | null;
-        let gdRows: any[] | null;
-        try {
-          // Query gamification_xp_ledger, user_profiles (full alias & role directory), and global_data in parallel.
-          [ledRes, profRows, gdRows] = await Promise.all([
-            fetchJsonStrict(
-              `${cfg.url}/rest/v1/gamification_xp_ledger?${sinceClause}select=id,user_id,user_name,user_role,xp_delta,label,created_at&order=created_at.desc&limit=1000`,
-              { headers, signal: ledController.signal },
-              'leaderboard gamification_xp_ledger'
-            ),
-            fetchOptionalStoreRows(
-              `${cfg.url}/rest/v1/user_profiles?select=id,uid,name,role,points,grade,section,updated_at&order=points.desc.nullslast&limit=500`,
-              'leaderboard user_profiles'
-            ),
-            fetchOptionalStoreRows(
-              `${cfg.url}/rest/v1/global_data?or=(id.like.gamification_user_*,id.like.__studentos_gamification_*)&select=id,data,updated_at&limit=500`,
-              'leaderboard global_data'
-            ),
-          ]);
-        } finally {
-          clearTimeout(ledTimer);
-        }
-
-        if (!ledRes.ok) {
-          const errText = await ledRes.text().catch(() => '');
-          if (isMissingColumnOrRelationError(ledRes.status, errText)) {
-            throw new WinterPersistenceError(
-              `Leaderboard table gamification_xp_ledger is missing or outdated (${errText || ledRes.statusText}). Please run the Winter SQL migration script in Supabase SQL Editor.`,
-              503,
-              'WINTER_SQL_MIGRATION_REQUIRED'
-            );
+        const fetchAllPagedLedger = async (baseUrl: string, pageSize: number, maxPages: number): Promise<any[]> => {
+          const all: any[] = [];
+          for (let page = 0; page < maxPages; page++) {
+            const offset = page * pageSize;
+            const sep = baseUrl.includes('?') ? '&' : '?';
+            const ledController = new AbortController();
+            const ledTimer = setTimeout(() => ledController.abort(), 6500);
+            let res: Response;
+            try {
+              res = await fetchJsonStrict(
+                `${baseUrl}${sep}limit=${pageSize}&offset=${offset}`,
+                { headers, signal: ledController.signal },
+                'leaderboard gamification_xp_ledger'
+              );
+            } finally {
+              clearTimeout(ledTimer);
+            }
+            if (!res.ok) {
+              const errText = await res.text().catch(() => '');
+              if (isMissingColumnOrRelationError(res.status, errText)) {
+                throw new WinterPersistenceError(
+                  `Leaderboard table gamification_xp_ledger is missing or outdated (${errText || res.statusText}). Please run the Winter SQL migration script in Supabase SQL Editor.`,
+                  503,
+                  'WINTER_SQL_MIGRATION_REQUIRED'
+                );
+              }
+              throw new WinterPersistenceError(
+                `Leaderboard query failed on gamification_xp_ledger (${res.status}): ${errText || res.statusText}`,
+                503,
+                'LEADERBOARD_PERSISTENCE_ERROR'
+              );
+            }
+            const batch = await res.json().catch(() => []);
+            if (!Array.isArray(batch)) break;
+            all.push(...batch);
+            if (batch.length < pageSize) break;
           }
-          throw new WinterPersistenceError(
-            `Leaderboard query failed on gamification_xp_ledger (${ledRes.status}): ${errText || ledRes.statusText}`,
-            503,
-            'LEADERBOARD_PERSISTENCE_ERROR'
-          );
-        }
+          return all;
+        };
+
+        // Query gamification_xp_ledger, user_profiles (full alias & role directory), and global_data in parallel.
+        const [ledRows, profRows, gdRows] = await Promise.all([
+          fetchAllPagedLedger(
+            `${effectiveCfg.url}/rest/v1/gamification_xp_ledger?${sinceClause}select=id,user_id,user_name,user_role,xp_delta,label,created_at&order=created_at.desc`,
+            1000,
+            8
+          ),
+          fetchAllPagedOptional(
+            `${effectiveCfg.url}/rest/v1/user_profiles?select=id,uid,name,role,points,grade,section,updated_at&order=points.desc.nullslast`,
+            500,
+            6,
+            'leaderboard user_profiles'
+          ),
+          fetchAllPagedOptional(
+            `${effectiveCfg.url}/rest/v1/global_data?or=(id.like.gamification_user_*,id.like.__studentos_gamification_*)&select=id,data,updated_at`,
+            500,
+            6,
+            'leaderboard global_data'
+          ),
+        ]);
 
         // 0. Build complete id <-> uid alias & role directory across ALL user_profiles first
         if (Array.isArray(profRows)) {
@@ -3907,8 +3938,10 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
             if (p?.uid) aliasToCanonicalId.set(String(p.uid).trim(), canonicalId);
             if (p?.id) aliasToCanonicalId.set(String(p.id).trim(), canonicalId);
             const role = String(p?.role || 'student').toLowerCase().trim();
-            const name = String(p?.name || 'Member').trim() || 'Member';
+            const rawName = String(p?.name || '').trim();
+            const name = rawName || 'Member';
             const pts = Math.max(0, Number(p?.points || 0));
+            if (!rawName && pts <= 0) continue;
             profileDirectory.set(canonicalId, {
               name,
               role,
@@ -3943,15 +3976,16 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
           }
         }
 
-        // 1. Seed existing account XP store from user_profiles (strictly public fields)
+        // 1. Seed existing AND new 0-XP account stores from user_profiles (strictly public fields)
         if (Array.isArray(profRows)) {
           for (const p of profRows) {
             const canonicalId = String(p?.id || p?.uid || '').trim();
             if (!canonicalId || canonicalId.startsWith('__probe_')) continue;
             const pts = Math.max(0, Number(p?.points || 0));
-            if (pts <= 0) continue;
+            const rawName = String(p?.name || '').trim();
+            if (!rawName && pts <= 0) continue;
             const role = String(p?.role || 'student').toLowerCase().trim();
-            const name = String(p?.name || 'Member').trim() || 'Member';
+            const name = rawName || 'Member';
             const wDb = winterProfileById.get(canonicalId);
             const wMem = memoryWinterStates.get(canonicalId);
             allUsersMap.set(canonicalId, {
@@ -4014,7 +4048,6 @@ export function registerWinterFestivalAndLeaderboardRoutes(app: express.Express,
         });
 
         // 5. Merge authoritative gamification_xp_ledger deltas
-        const ledRows = await ledRes.json().catch(() => []);
         if (Array.isArray(ledRows)) {
           const seenIds = new Set(ledgerSnapshot.map((l) => l.id));
           for (const r of ledRows) {

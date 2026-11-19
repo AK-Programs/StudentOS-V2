@@ -65,6 +65,8 @@ import {
   markSupabaseKeyInvalid,
   isKnownInvalidSupabaseKey,
   probeServiceRoleKey,
+  supabaseFetchWithAnonRetry,
+  getFeatureAndWinterSupabaseKey,
 } from './server/supabaseKeyManager';
 
 export { WORKING_ANON_KEY, markSupabaseKeyInvalid };
@@ -935,18 +937,48 @@ app.post('/api/tts/preview', async (req, res) => {
 // ========================================================================
 const memoryGamificationStore: Record<string, any> = {};
 
+export function clearServerGamificationMemoryForTests(): void {
+  if (process.env.NODE_ENV !== 'test') return;
+  for (const key of Object.keys(memoryGamificationStore)) {
+    delete memoryGamificationStore[key];
+  }
+}
+
+const SERVER_GAMIFICATION_LEVELS = [
+  { level: 1, title: 'Rookie Scholar', minXp: 0 },
+  { level: 2, title: 'Curious Learner', minXp: 100 },
+  { level: 3, title: 'Active Student', minXp: 250 },
+  { level: 4, title: 'Focused Scholar', minXp: 450 },
+  { level: 5, title: 'Knowledge Builder', minXp: 700 },
+  { level: 6, title: 'Academic Achiever', minXp: 1000 },
+  { level: 7, title: 'Top Performer', minXp: 1400 },
+  { level: 8, title: 'Honor Student', minXp: 1900 },
+  { level: 9, title: 'Master Scholar', minXp: 2500 },
+  { level: 10, title: 'Campus Legend', minXp: 3200 },
+];
+
+function computeServerGamificationLevel(xp: number): { level: number; levelTitle: string } {
+  let current = SERVER_GAMIFICATION_LEVELS[0];
+  for (const lvl of SERVER_GAMIFICATION_LEVELS) {
+    if (xp >= lvl.minXp) current = lvl;
+  }
+  return { level: current.level, levelTitle: current.title };
+}
+
 app.get('/api/gamification/profile', async (req, res) => {
   const userId = String(req.query.userId || '');
   const schoolId = String(req.query.schoolId || 'default_school');
   const cfg = getSupabaseServerConfig();
   const supabaseUrl = cfg.url;
-  const supabaseKey = cfg.key || process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+  const supabaseKey = getFeatureAndWinterSupabaseKey(cfg.url, cfg.key) || WORKING_ANON_KEY;
+  const headers = { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` };
 
   let storeData: Record<string, any> = { ...memoryGamificationStore };
   try {
-    const gRes = await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.__studentos_gamification_${encodeURIComponent(schoolId)}__&select=*`, {
-      headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
-    });
+    const gRes = await supabaseFetchWithAnonRetry(
+      `${supabaseUrl}/rest/v1/global_data?id=eq.__studentos_gamification_${encodeURIComponent(schoolId)}__&select=*`,
+      { headers }
+    );
     if (gRes.ok) {
       const rows = await gRes.json();
       const content = rows[0]?.data ?? (rows[0]?.content ? JSON.parse(rows[0].content) : null);
@@ -956,22 +988,75 @@ app.get('/api/gamification/profile', async (req, res) => {
     }
   } catch (_) {}
 
-  // Also query user-specific document gamification_user_${userId}
+  // Reconcile user-specific doc, user_profiles.points, and gamification_xp_ledger sum so full historical XP is never hidden
   if (userId) {
-    try {
-      const uRes = await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.gamification_user_${encodeURIComponent(userId)}&select=*`, {
-        headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
-      });
-      if (uRes.ok) {
-        const uRows = await uRes.json();
-        const uContent = uRows[0]?.data ?? (uRows[0]?.content ? JSON.parse(uRows[0].content) : null);
-        if (uContent && typeof uContent === 'object') {
-          if (!storeData[userId] || (uContent.xp || 0) > (storeData[userId]?.xp || 0)) {
-            storeData[userId] = uContent;
-          }
+    const encUid = encodeURIComponent(userId);
+    const [uRes, pRes, lRes] = await Promise.all([
+      supabaseFetchWithAnonRetry(
+        `${supabaseUrl}/rest/v1/global_data?id=eq.gamification_user_${encUid}&select=*`,
+        { headers }
+      ).catch(() => null),
+      supabaseFetchWithAnonRetry(
+        `${supabaseUrl}/rest/v1/user_profiles?or=(id.eq.${encUid},uid.eq.${encUid})&select=id,uid,name,role,points,grade,section&limit=2`,
+        { headers }
+      ).catch(() => null),
+      supabaseFetchWithAnonRetry(
+        `${supabaseUrl}/rest/v1/gamification_xp_ledger?user_id=eq.${encUid}&select=xp_delta`,
+        { headers }
+      ).catch(() => null),
+    ]);
+
+    let candidateDoc: any = storeData[userId] || null;
+    if (uRes && uRes.ok) {
+      const uRows = await uRes.json().catch(() => []);
+      const uContent = uRows[0]?.data ?? (uRows[0]?.content ? JSON.parse(uRows[0].content) : null);
+      if (uContent && typeof uContent === 'object') {
+        if (!candidateDoc || Number(uContent.xp || 0) >= Number(candidateDoc.xp || 0)) {
+          candidateDoc = { ...(candidateDoc || {}), ...uContent };
         }
       }
-    } catch (_) {}
+    }
+
+    let profilePoints = 0;
+    let profileMeta: any = null;
+    if (pRes && pRes.ok) {
+      const pRows = await pRes.json().catch(() => []);
+      if (Array.isArray(pRows)) {
+        for (const p of pRows) {
+          profilePoints = Math.max(profilePoints, Number(p?.points || 0));
+          if (!profileMeta && p) profileMeta = p;
+        }
+      }
+    }
+
+    let ledgerSum = 0;
+    if (lRes && lRes.ok) {
+      const lRows = await lRes.json().catch(() => []);
+      if (Array.isArray(lRows)) {
+        ledgerSum = lRows.reduce((s: number, r: any) => s + Math.max(0, Number(r?.xp_delta || 0)), 0);
+      }
+    }
+
+    const authoritativeXp = Math.max(
+      Number(candidateDoc?.xp || 0),
+      profilePoints,
+      ledgerSum
+    );
+
+    if (candidateDoc || authoritativeXp > 0) {
+      const lvl = computeServerGamificationLevel(authoritativeXp);
+      storeData[userId] = {
+        ...(candidateDoc || {}),
+        userId,
+        userName: candidateDoc?.userName || candidateDoc?.name || profileMeta?.name || 'Member',
+        role: candidateDoc?.role || profileMeta?.role || 'student',
+        grade: candidateDoc?.grade || profileMeta?.grade || '',
+        section: candidateDoc?.section || profileMeta?.section || '',
+        xp: authoritativeXp,
+        level: lvl.level,
+        levelTitle: lvl.levelTitle,
+      };
+    }
   }
 
   const profile = userId ? storeData[userId] || null : null;
@@ -1003,20 +1088,42 @@ app.post('/api/gamification/award', async (req, res) => {
 
   const cfg = getSupabaseServerConfig();
   const supabaseUrl = cfg.url;
-  const supabaseKey = cfg.key;
+  const supabaseKey = getFeatureAndWinterSupabaseKey(cfg.url, cfg.key) || cfg.key;
+  const headers = { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` };
   const useDb =
     Boolean(supabaseUrl && supabaseKey) &&
     (process.env.NODE_ENV !== 'test' || supabaseUrl.includes('127.0.0.1') || supabaseUrl.includes('localhost'));
 
   const docId = `__studentos_gamification_${schoolId}__`;
   const userDocId = `gamification_user_${userId}`;
+  const encUid = encodeURIComponent(userId);
 
   try {
     let existingMap: Record<string, any> = {};
+    let existingUserDoc: any = null;
+    let profilePoints = 0;
+    let ledgerSum = 0;
+
     if (useDb) {
-      const gRes = await fetch(`${supabaseUrl}/rest/v1/global_data?id=eq.${encodeURIComponent(docId)}&select=*`, {
-        headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
-      });
+      const [gRes, uRes, pRes, lRes] = await Promise.all([
+        supabaseFetchWithAnonRetry(
+          `${supabaseUrl}/rest/v1/global_data?id=eq.${encodeURIComponent(docId)}&select=*`,
+          { headers }
+        ),
+        supabaseFetchWithAnonRetry(
+          `${supabaseUrl}/rest/v1/global_data?id=eq.${encodeURIComponent(userDocId)}&select=*`,
+          { headers }
+        ).catch(() => null),
+        supabaseFetchWithAnonRetry(
+          `${supabaseUrl}/rest/v1/user_profiles?or=(id.eq.${encUid},uid.eq.${encUid})&select=id,uid,points&limit=2`,
+          { headers }
+        ).catch(() => null),
+        supabaseFetchWithAnonRetry(
+          `${supabaseUrl}/rest/v1/gamification_xp_ledger?user_id=eq.${encUid}&select=xp_delta`,
+          { headers }
+        ).catch(() => null),
+      ]);
+
       if (!gRes.ok) {
         const errText = await gRes.text().catch(() => '');
         return res.status(503).json({
@@ -1028,18 +1135,86 @@ app.post('/api/gamification/award', async (req, res) => {
       if (loaded && typeof loaded === 'object') {
         existingMap = loaded;
       }
+
+      if (uRes && uRes.ok) {
+        const uRows = await uRes.json().catch(() => []);
+        const uLoaded = uRows[0]?.data ?? (uRows[0]?.content ? JSON.parse(uRows[0].content) : null);
+        if (uLoaded && typeof uLoaded === 'object') {
+          existingUserDoc = uLoaded;
+        }
+      }
+
+      if (pRes && pRes.ok) {
+        const pRows = await pRes.json().catch(() => []);
+        if (Array.isArray(pRows)) {
+          for (const p of pRows) {
+            profilePoints = Math.max(profilePoints, Number(p?.points || 0));
+          }
+        }
+      }
+
+      if (lRes && lRes.ok) {
+        const lRows = await lRes.json().catch(() => []);
+        if (Array.isArray(lRows)) {
+          ledgerSum = lRows.reduce((s: number, r: any) => s + Math.max(0, Number(r?.xp_delta || 0)), 0);
+        }
+      }
     }
-    const existingProfile = existingMap[userId] || memoryGamificationStore[userId];
-    const prevKnownXp = Number(existingProfile?.xp || 0);
-    if (existingProfile && typeof existingProfile.xp === 'number') {
-      const incomingXp = Number(profile.xp || 0);
-      if (existingProfile.xp > incomingXp) {
-        profile.xp = existingProfile.xp;
-        profile.level = existingProfile.level || profile.level;
-        profile.levelTitle = existingProfile.levelTitle || profile.levelTitle;
-      } else if (!isPriv && incomingXp - existingProfile.xp > 150) {
-        // Prevent raw client payload tampering with arbitrary XP jumps
-        profile.xp = existingProfile.xp + 150;
+
+    const existingSchoolProfile = existingMap[userId];
+    const existingProfile =
+      existingUserDoc && Number(existingUserDoc.xp || 0) >= Number(existingSchoolProfile?.xp || 0)
+        ? existingUserDoc
+        : (existingSchoolProfile || memoryGamificationStore[userId]);
+
+    const prevKnownXp = Math.max(
+      Number(existingSchoolProfile?.xp || 0),
+      Number(existingUserDoc?.xp || 0),
+      Number(memoryGamificationStore[userId]?.xp || 0),
+      profilePoints,
+      ledgerSum
+    );
+
+    const incomingXp = Math.max(0, Number(profile.xp || 0));
+    if (prevKnownXp > incomingXp) {
+      // NEVER let a stale/unhydrated client payload overwrite higher authoritative XP!
+      profile.xp = prevKnownXp;
+      const lvl = computeServerGamificationLevel(prevKnownXp);
+      profile.level = lvl.level;
+      profile.levelTitle = lvl.levelTitle;
+    } else if (!isPriv && incomingXp - prevKnownXp > 150) {
+      // Prevent raw client payload tampering with arbitrary XP jumps
+      profile.xp = prevKnownXp + 150;
+      const lvl = computeServerGamificationLevel(profile.xp);
+      profile.level = lvl.level;
+      profile.levelTitle = lvl.levelTitle;
+    }
+
+    // Preserve badges, completedActionKeys, and highest action counters from existing cloud profile
+    if (existingProfile && typeof existingProfile === 'object') {
+      if (existingProfile.earnedBadges && typeof existingProfile.earnedBadges === 'object') {
+        profile.earnedBadges = {
+          ...existingProfile.earnedBadges,
+          ...(profile.earnedBadges || {}),
+        };
+      }
+      if (Array.isArray(existingProfile.completedActionKeys)) {
+        profile.completedActionKeys = Array.from(
+          new Set([...existingProfile.completedActionKeys, ...(profile.completedActionKeys || [])])
+        ).slice(-500);
+      }
+      if (existingProfile.counts && typeof existingProfile.counts === 'object') {
+        const mergedCounts: Record<string, number> = { ...existingProfile.counts };
+        for (const [ck, cv] of Object.entries(profile.counts || {})) {
+          mergedCounts[ck] = Math.max(Number(mergedCounts[ck] || 0), Number(cv || 0));
+        }
+        profile.counts = mergedCounts;
+      }
+      if (existingProfile.equippedBanner && !profile.equippedBanner) {
+        profile.equippedBanner = existingProfile.equippedBanner;
+      }
+      if (existingProfile.equippedBorder && !profile.equippedBorder) {
+        profile.equippedBorder = existingProfile.equippedBorder;
       }
     }
 
@@ -1049,11 +1224,10 @@ app.post('/api/gamification/award', async (req, res) => {
       const nextMap = { ...existingMap, [userId]: profile };
 
       // 1. Persist aggregated school gamification store
-      const schoolRes = await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
+      const schoolRes = await supabaseFetchWithAnonRetry(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
         method: 'POST',
         headers: {
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`,
+          ...headers,
           'Content-Type': 'application/json',
           'Prefer': 'resolution=merge-duplicates'
         },
@@ -1071,11 +1245,10 @@ app.post('/api/gamification/award', async (req, res) => {
       }
 
       // 2. Persist individual user profile document for rock-solid cross-device isolation
-      const userDocRes = await fetch(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
+      const userDocRes = await supabaseFetchWithAnonRetry(`${supabaseUrl}/rest/v1/global_data?on_conflict=id`, {
         method: 'POST',
         headers: {
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`,
+          ...headers,
           'Content-Type': 'application/json',
           'Prefer': 'resolution=merge-duplicates'
         },
@@ -1093,12 +1266,10 @@ app.post('/api/gamification/award', async (req, res) => {
       }
 
       // 3. Mirror points to user_profiles table across both id and uid columns
-      const encUid = encodeURIComponent(userId);
-      const profPatchRes = await fetch(`${supabaseUrl}/rest/v1/user_profiles?or=(id.eq.${encUid},uid.eq.${encUid})`, {
+      const profPatchRes = await supabaseFetchWithAnonRetry(`${supabaseUrl}/rest/v1/user_profiles?or=(id.eq.${encUid},uid.eq.${encUid})`, {
         method: 'PATCH',
         headers: {
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`,
+          ...headers,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({

@@ -267,6 +267,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
 
     let resolvedPlan: SpinResolvedPlan | null = null;
     let resolvedReward: WinterRewardRecord | null = null;
+    let resolvedWinterState: any = null;
     let resolvedSegIndex = 0;
     let apiFailed = false;
 
@@ -321,6 +322,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
 
         resolvedSegIndex = Number(res.data.segmentIndex ?? 0);
         resolvedReward = res.data.reward || null;
+        resolvedWinterState = res.data.winterState || null;
         const resolvedAtMs = Math.max(16, performance.now() - startTime);
         resolvedPlan = buildResolvedSpinPlan({
           launch: launchState,
@@ -452,11 +454,15 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
         if ((resolvedReward?.frostXpBonus || 0) > 0 && wheelAudioRef.current) {
           import('../../lib/winterAudio').then((m) => m.winterAudio.playFrostXpEarned()).catch(() => {});
         }
-        void Promise.resolve(onSpinComplete()).catch(() => {});
         void fetchAIUsageStatus(currentUser?.uid || 'guest', currentUser?.role || 'student');
-        window.dispatchEvent(new CustomEvent('veylentra-winter-updated'));
+        window.dispatchEvent(
+          new CustomEvent('veylentra-winter-updated', {
+            detail: resolvedWinterState ? { winterState: resolvedWinterState } : undefined,
+          })
+        );
         window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated'));
         window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
+        void Promise.resolve(onSpinComplete()).catch(() => {});
       }
     };
 

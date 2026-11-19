@@ -15,7 +15,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { AddressInfo } from 'node:net';
-import { app } from '../server';
+import { app, clearServerGamificationMemoryForTests } from '../server';
 import {
   clearWinterMemoryCacheOnlyForTests,
   resetWinterAndLeaderboardMemoryForTests,
@@ -276,6 +276,7 @@ async function main() {
     await runTest('1. Cross-Account Leaderboard Parity (Accounts A, B, C see identical Weekly/Monthly/All-Time rankings & cosmetics, Frost XP excluded, zero PII)', async () => {
       mockDb.resetAll();
       resetWinterAndLeaderboardMemoryForTests();
+      clearServerGamificationMemoryForTests();
 
       // Seed accounts with id vs uid alias and private PII fields that MUST NOT leak
       mockDb.tables.user_profiles.push(
@@ -376,6 +377,7 @@ async function main() {
     await runTest('2. Task Claim Idempotency, Concurrent Lock & Single-Task Badge Sync (no 7-loop storm)', async () => {
       mockDb.resetAll();
       resetWinterAndLeaderboardMemoryForTests();
+      clearServerGamificationMemoryForTests();
       mockDb.setClaimBehavior({ rlsBlocked: true, rpcMissing: false });
 
       mockDb.tables.user_profiles.push({ id: 'stu_fast', name: 'Fast Scholar', role: 'student', points: 50 });
@@ -458,6 +460,134 @@ async function main() {
       });
       assert.equal(afterReload.length, 0);
       assert.equal(notifications.length, 2);
+
+      delete (globalThis as any).window;
+    });
+
+    await runTest('4. Stale Client Overwrite Protection: /api/gamification/award never lowers higher user_profiles/ledger XP', async () => {
+      mockDb.resetAll();
+      resetWinterAndLeaderboardMemoryForTests();
+      clearServerGamificationMemoryForTests();
+
+      mockDb.tables.user_profiles.push({
+        id: 'sa_hist_1',
+        uid: 'sa_hist_1',
+        name: 'Naitik Historical',
+        role: 'super_admin',
+        points: 3999,
+        grade: 'Grade 9',
+        section: 'Astra',
+      });
+
+      const staleAwardRes = await fetch(`${apiBase}/api/gamification/award`, {
+        method: 'POST',
+        headers: actorHeaders('sa_hist_1', 'Naitik Historical', 'super_admin'),
+        body: JSON.stringify({
+          userId: 'sa_hist_1',
+          schoolId: 'test_school',
+          profile: {
+            userId: 'sa_hist_1',
+            userName: 'Naitik Historical',
+            role: 'super_admin',
+            xp: 10,
+            level: 1,
+            levelTitle: 'Rookie Scholar',
+            updatedAt: new Date().toISOString(),
+          },
+        }),
+      });
+      assert.equal(staleAwardRes.status, 200);
+      const staleAwardJson = await staleAwardRes.json();
+      assert.equal(staleAwardJson.profile.xp, 3999, 'Server must clamp stale client XP up to authoritative 3,999 XP');
+
+      const profGetRes = await fetch(`${apiBase}/api/gamification/profile?userId=sa_hist_1&schoolId=test_school`, {
+        headers: actorHeaders('sa_hist_1', 'Naitik Historical', 'super_admin'),
+      });
+      assert.equal(profGetRes.status, 200);
+      const profGetJson = await profGetRes.json();
+      assert.equal(profGetJson.profile.xp, 3999);
+    });
+
+    await runTest('5. Brand-New 0-XP Student Included Consistently Across Accounts (Account A, Account B, New 0-XP Account C)', async () => {
+      mockDb.resetAll();
+      resetWinterAndLeaderboardMemoryForTests();
+      clearServerGamificationMemoryForTests();
+
+      mockDb.tables.user_profiles.push(
+        { id: 'stu_hist_a', uid: 'stu_hist_a', name: 'Aarav Senior', role: 'student', points: 1355, grade: 'Grade 10', section: 'Astra' },
+        { id: 'stu_mid_b', uid: 'stu_mid_b', name: 'Diya Mid', role: 'student', points: 420, grade: 'Grade 10', section: 'Beta' },
+        { id: 'stu_zero_c', uid: 'stu_zero_c', name: 'Kavya Fresh', role: 'student', points: 0, grade: 'Grade 9', section: 'Astra' },
+        { id: 'fac_top_1', uid: 'fac_top_1', name: 'Naitik Mentor', role: 'super_admin', points: 3999, grade: 'Admin', section: 'HQ' }
+      );
+
+      clearWinterMemoryCacheOnlyForTests();
+
+      const accounts = [
+        actorHeaders('stu_hist_a', 'Aarav Senior', 'student'),
+        actorHeaders('stu_mid_b', 'Diya Mid', 'student'),
+        actorHeaders('stu_zero_c', 'Kavya Fresh', 'student'),
+      ];
+
+      for (const period of ['weekly', 'monthly', 'all_time'] as const) {
+        const stuResponses: any[] = [];
+        for (const acc of accounts) {
+          const r = await fetch(`${apiBase}/api/leaderboard?type=student&period=${period}`, { headers: acc });
+          assert.equal(r.status, 200);
+          stuResponses.push(await r.json());
+        }
+
+        assert.deepEqual(stuResponses[0].rankings, stuResponses[1].rankings, `Mismatch A vs B on ${period}`);
+        assert.deepEqual(stuResponses[0].rankings, stuResponses[2].rankings, `Mismatch A vs C on ${period}`);
+        assert.equal(stuResponses[0].rankings.length, 3, `Expected all 3 students including 0-XP Kavya on ${period}`);
+        const zeroEntry = stuResponses[2].currentUserEntry;
+        assert.ok(zeroEntry && zeroEntry.userId === 'stu_zero_c' && zeroEntry.xp === 0, `Brand-new 0-XP student must have currentUserEntry on ${period}`);
+      }
+    });
+
+    await runTest('6. Per-User Badge Celebration Isolation: Account A celebrating a badge never suppresses Account B', () => {
+      const lStore = new Map<string, string>();
+      const sStore = new Map<string, string>();
+      const events: any[] = [];
+      (globalThis as any).window = {
+        localStorage: {
+          getItem: (k: string) => (lStore.has(k) ? lStore.get(k)! : null),
+          setItem: (k: string, v: string) => lStore.set(k, v),
+        },
+        sessionStorage: {
+          getItem: (k: string) => (sStore.has(k) ? sStore.get(k)! : null),
+          setItem: (k: string, v: string) => sStore.set(k, v),
+        },
+        dispatchEvent: (ev: any) => {
+          events.push(ev?.detail || ev);
+          return true;
+        },
+      };
+
+      const notifsA: string[] = [];
+      const notifsB: string[] = [];
+
+      syncWinterBadgeBaseline('acct_a', {});
+      const resA = processNewWinterBadges({
+        userId: 'acct_a',
+        earnedWinterBadges: { snowflake_explorer: '2026-11-19T01:00:00Z' },
+        showNotification: (m) => notifsA.push(m),
+        silentOnFirstBaseline: false,
+      });
+      assert.equal(resA.length, 1);
+      assert.equal(resA[0].badgeName, 'Snowflake Explorer');
+      assert.equal(notifsA.length, 1);
+
+      syncWinterBadgeBaseline('acct_b', {});
+      const resB = processNewWinterBadges({
+        userId: 'acct_b',
+        earnedWinterBadges: { snowflake_explorer: '2026-11-19T01:05:00Z' },
+        showNotification: (m) => notifsB.push(m),
+        silentOnFirstBaseline: false,
+      });
+      assert.equal(resB.length, 1, 'Account B must still celebrate snowflake_explorer independently of Account A');
+      assert.equal(resB[0].userId, 'acct_b');
+      assert.equal(notifsB.length, 1);
+      assert.equal(events.filter((e) => e?.badgeId === 'snowflake_explorer').length, 2);
 
       delete (globalThis as any).window;
     });

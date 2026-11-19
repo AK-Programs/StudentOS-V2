@@ -3,19 +3,21 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Cinematic Winter Seasonal Badge Unlock Celebration Modal
- * - Bespoke per-badge / rarity multi-layered crest SVG artwork (no generic spinning emoji)
- * - Rarity-calibrated light rays, dimensional entrance, shimmer sweep, and spark particle burst
- * - Multi-badge queue handling with clear remaining count badge
- * - Accessible: full keyboard Escape support, focusable close button, and static calm alternative under prefers-reduced-motion
+ * - Bespoke per-badge / rarity multi-layered crest SVG artwork with pathLength="1" draw-on stroke
+ * - 60fps Canvas particle spark burst (Euler physics + gravity + drag, DPI-capped <= 2)
+ * - Rarity-calibrated light rays, specular light sweep, & dimensional entrance
+ * - Multi-badge queue handling with per-userId sessionStorage deduplication
+ * - Accessible: keyboard Escape, focusable controls, static calm fallback under prefers-reduced-motion
  */
 
-import React, { useEffect, useState, useCallback, useId, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useId, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, CheckCircle2, ChevronRight, X } from 'lucide-react';
 import { winterAudio } from '../../lib/winterAudio';
 import { MOTION_EASE, useReducedMotionPreference } from '../../lib/motionSystem';
 
 export interface BadgeUnlockPayload {
+  userId?: string;
   badgeId: string;
   badgeName: string;
   rarity?: 'common' | 'rare' | 'legendary' | 'seasonal' | 'secret';
@@ -46,7 +48,7 @@ const RARITY_THEMES: Record<
     accentHex: '#fbbf24',
     secondaryHex: '#fef08a',
     ringHex: '#f59e0b',
-    sparkCount: 22,
+    sparkCount: 44,
   },
   secret: {
     badgeClass: 'bg-fuchsia-500/20 text-fuchsia-200 border-fuchsia-400/60 shadow-[0_0_18px_rgba(217,70,239,0.38)]',
@@ -57,7 +59,7 @@ const RARITY_THEMES: Record<
     accentHex: '#e879f9',
     secondaryHex: '#67e8f9',
     ringHex: '#a855f7',
-    sparkCount: 20,
+    sparkCount: 40,
   },
   rare: {
     badgeClass: 'bg-cyan-500/20 text-cyan-200 border-cyan-400/55 shadow-[0_0_16px_rgba(6,182,212,0.32)]',
@@ -68,7 +70,7 @@ const RARITY_THEMES: Record<
     accentHex: '#22d3ee',
     secondaryHex: '#a5f3fc',
     ringHex: '#0284c7',
-    sparkCount: 14,
+    sparkCount: 30,
   },
   seasonal: {
     badgeClass: 'bg-rose-500/20 text-rose-200 border-rose-400/55 shadow-[0_0_16px_rgba(244,63,94,0.3)]',
@@ -79,7 +81,7 @@ const RARITY_THEMES: Record<
     accentHex: '#fb7185',
     secondaryHex: '#bae6fd',
     ringHex: '#38bdf8',
-    sparkCount: 12,
+    sparkCount: 28,
   },
   common: {
     badgeClass: 'bg-sky-500/20 text-sky-200 border-sky-400/45',
@@ -90,16 +92,20 @@ const RARITY_THEMES: Record<
     accentHex: '#38bdf8',
     secondaryHex: '#e0f2fe',
     ringHex: '#0ea5e9',
-    sparkCount: 8,
+    sparkCount: 20,
   },
 };
 
-const CELEBRATED_STORAGE_KEY = 'veylentra_celebrated_badges';
+const CELEBRATED_STORAGE_KEY_PREFIX = 'veylentra_celebrated_badges_';
 
-export function getCelebratedBadgeIds(): Set<string> {
+function getCelebratedStorageKey(userId?: string | null): string {
+  return `${CELEBRATED_STORAGE_KEY_PREFIX}${userId || 'guest'}`;
+}
+
+export function getCelebratedBadgeIds(userId?: string | null): Set<string> {
   if (typeof window === 'undefined') return new Set();
   try {
-    const raw = sessionStorage.getItem(CELEBRATED_STORAGE_KEY);
+    const raw = sessionStorage.getItem(getCelebratedStorageKey(userId));
     if (!raw) return new Set();
     const arr = JSON.parse(raw);
     return new Set(Array.isArray(arr) ? arr : []);
@@ -108,20 +114,20 @@ export function getCelebratedBadgeIds(): Set<string> {
   }
 }
 
-export function markBadgeAsCelebrated(badgeId: string) {
+export function markBadgeAsCelebrated(badgeId: string, userId?: string | null) {
   if (typeof window === 'undefined' || !badgeId) return;
   try {
-    const existing = getCelebratedBadgeIds();
+    const existing = getCelebratedBadgeIds(userId);
     existing.add(badgeId);
-    sessionStorage.setItem(CELEBRATED_STORAGE_KEY, JSON.stringify(Array.from(existing)));
+    sessionStorage.setItem(getCelebratedStorageKey(userId), JSON.stringify(Array.from(existing)));
   } catch {}
 }
 
 export function triggerBadgeUnlockCelebration(payload: BadgeUnlockPayload) {
   if (typeof window === 'undefined' || !payload.badgeId) return;
-  const celebrated = getCelebratedBadgeIds();
+  const celebrated = getCelebratedBadgeIds(payload.userId);
   if (celebrated.has(payload.badgeId)) return;
-  markBadgeAsCelebrated(payload.badgeId);
+  markBadgeAsCelebrated(payload.badgeId, payload.userId);
   window.dispatchEvent(
     new CustomEvent('veylentra-badge-celebrate', {
       detail: payload,
@@ -129,12 +135,153 @@ export function triggerBadgeUnlockCelebration(payload: BadgeUnlockPayload) {
   );
 }
 
+/**
+ * 60fps HTML5 Canvas celebration fountain (diamond shards + soft glow sparks)
+ * Semi-implicit Euler integration with dt clamped <= 0.05s, capped DPR <= 2, clean cancelAnimationFrame.
+ */
+const BadgeSparkCanvas: React.FC<{
+  badgeKey: string;
+  accentHex: string;
+  secondaryHex: string;
+  sparkCount: number;
+  reduced: boolean;
+}> = ({ badgeKey, accentHex, secondaryHex, sparkCount, reduced }) => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    if (reduced) return;
+    const canvas = canvasRef.current;
+    if (!canvas || typeof window === 'undefined') return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const width = 420;
+    const height = 280;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const originX = width * 0.5;
+    const originY = height * 0.44;
+    const palette = [accentHex, secondaryHex, '#ffffff', accentHex];
+
+    interface SparkParticle {
+      x: number;
+      y: number;
+      vx: number;
+      vy: number;
+      size: number;
+      rot: number;
+      vRot: number;
+      alpha: number;
+      life: number;
+      maxLife: number;
+      color: string;
+      kind: 'shard' | 'orb';
+    }
+
+    const particles: SparkParticle[] = Array.from({ length: sparkCount }).map((_, idx) => {
+      const wave = idx >= Math.floor(sparkCount * 0.6) ? 1 : 0;
+      const angle = (idx / sparkCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.35;
+      const speed = (wave === 0 ? 110 : 75) + Math.random() * 145;
+      return {
+        x: originX + (Math.random() - 0.5) * 14,
+        y: originY + (Math.random() - 0.5) * 14,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 42,
+        size: 2.8 + Math.random() * 4.2,
+        rot: Math.random() * Math.PI * 2,
+        vRot: (Math.random() - 0.5) * 7,
+        alpha: 1,
+        life: wave === 1 ? -0.18 : 0,
+        maxLife: 1.25 + Math.random() * 0.65,
+        color: palette[idx % palette.length],
+        kind: idx % 3 === 0 ? 'shard' : 'orb',
+      };
+    });
+
+    let rafId: number | null = null;
+    let lastTime = performance.now();
+
+    const tick = (now: number) => {
+      const dt = Math.min(0.05, Math.max(0.001, (now - lastTime) / 1000));
+      lastTime = now;
+      ctx.clearRect(0, 0, width, height);
+
+      let aliveCount = 0;
+      for (const p of particles) {
+        p.life += dt;
+        if (p.life < 0) {
+          aliveCount += 1;
+          continue;
+        }
+        if (p.life >= p.maxLife) continue;
+        aliveCount += 1;
+
+        const progress = p.life / p.maxLife;
+        p.vx *= 1 - 1.35 * dt;
+        p.vy = p.vy * (1 - 1.1 * dt) + 150 * dt;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.rot += p.vRot * dt;
+        p.alpha = progress < 0.2 ? progress / 0.2 : Math.max(0, 1 - (progress - 0.2) / 0.8);
+
+        ctx.save();
+        ctx.globalAlpha = p.alpha;
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rot);
+        ctx.fillStyle = p.color;
+
+        if (p.kind === 'shard') {
+          ctx.beginPath();
+          ctx.moveTo(0, -p.size);
+          ctx.lineTo(p.size * 0.65, 0);
+          ctx.lineTo(0, p.size);
+          ctx.lineTo(-p.size * 0.65, 0);
+          ctx.closePath();
+          ctx.fill();
+        } else {
+          ctx.beginPath();
+          ctx.arc(0, 0, p.size * 0.52, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      if (aliveCount > 0) {
+        rafId = window.requestAnimationFrame(tick);
+      } else {
+        ctx.clearRect(0, 0, width, height);
+        rafId = null;
+      }
+    };
+
+    rafId = window.requestAnimationFrame(tick);
+    return () => {
+      if (rafId !== null) window.cancelAnimationFrame(rafId);
+    };
+  }, [badgeKey, accentHex, secondaryHex, sparkCount, reduced]);
+
+  if (reduced) return null;
+
+  return (
+    <canvas
+      ref={canvasRef}
+      style={{ width: '420px', height: '280px' }}
+      className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 max-w-full z-20"
+      aria-hidden="true"
+    />
+  );
+};
+
 const BadgeEmblemSvg: React.FC<{
   badgeId: string;
   accentHex: string;
   secondaryHex: string;
   ringHex: string;
-}> = ({ badgeId, accentHex, secondaryHex, ringHex }) => {
+  reduced: boolean;
+}> = ({ badgeId, accentHex, secondaryHex, ringHex, reduced }) => {
   const uid = useId().replace(/:/g, '');
   const shieldGrad = `badgeShield_${uid}`;
   const alloyGrad = `badgeAlloy_${uid}`;
@@ -225,6 +372,14 @@ const BadgeEmblemSvg: React.FC<{
             <path d="M50 24 L52 29 L57 31 L52 33 L50 38 L48 33 L43 31 L48 29 Z" fill={secondaryHex} />
           </g>
         );
+      case 'frosty_focus':
+        return (
+          <g strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="50" cy="50" r="20" stroke={accentHex} strokeWidth="2" fill="rgba(6,182,212,0.1)" />
+            <path d="M50 30 V70 M30 50 H70 M36 36 L64 64 M64 36 L36 64" stroke={secondaryHex} strokeWidth="1.8" />
+            <polygon points="50,38 59,50 50,62 41,50" fill={accentHex} stroke="#ffffff" strokeWidth="1.3" />
+          </g>
+        );
       default:
         // snowflake_explorer / frost_starter / snowflake_collector
         return (
@@ -257,13 +412,28 @@ const BadgeEmblemSvg: React.FC<{
         </linearGradient>
       </defs>
 
-      {/* Outer Hex Crest Frame */}
+      {/* Outer Hex Crest Shield Fill */}
       <polygon
         points="50,5 89,27.5 89,72.5 50,95 11,72.5 11,27.5"
         fill={`url(#${shieldGrad})`}
-        stroke={`url(#${alloyGrad})`}
+        stroke={reduced ? `url(#${alloyGrad})` : 'rgba(255,255,255,0.12)'}
         strokeWidth="3.2"
       />
+      {/* Animated Draw-On Outer Hex Crest Perimeter */}
+      {!reduced && (
+        <motion.polygon
+          key={badgeId}
+          points="50,5 89,27.5 89,72.5 50,95 11,72.5 11,27.5"
+          fill="none"
+          stroke={`url(#${alloyGrad})`}
+          strokeWidth="3.4"
+          strokeLinejoin="round"
+          pathLength={1}
+          initial={{ pathLength: 0, opacity: 0.35 }}
+          animate={{ pathLength: 1, opacity: 1 }}
+          transition={{ duration: 0.68, delay: 0.06, ease: MOTION_EASE.easeOutExpo }}
+        />
+      )}
       <polygon
         points="50,12 83,31 83,69 50,88 17,69 17,31"
         fill="none"
@@ -277,16 +447,29 @@ const BadgeEmblemSvg: React.FC<{
 };
 
 export const BadgeUnlockCelebrationModal: React.FC<{
+  currentUserId?: string | null;
   onViewCollection?: () => void;
-}> = ({ onViewCollection }) => {
+}> = ({ currentUserId, onViewCollection }) => {
   const prefersReduced = useReducedMotionPreference();
   const [queue, setQueue] = useState<BadgeUnlockPayload[]>([]);
   const [activeBadge, setActiveBadge] = useState<BadgeUnlockPayload | null>(null);
+  const prevUserRef = useRef<string | null | undefined>(currentUserId);
+
+  useEffect(() => {
+    if (prevUserRef.current !== currentUserId) {
+      prevUserRef.current = currentUserId;
+      setQueue([]);
+      setActiveBadge(null);
+    }
+  }, [currentUserId]);
 
   useEffect(() => {
     const handleEvent = (e: Event) => {
       const customEvent = e as CustomEvent<BadgeUnlockPayload>;
       if (!customEvent.detail || !customEvent.detail.badgeId) return;
+      if (customEvent.detail.userId && currentUserId && customEvent.detail.userId !== currentUserId) {
+        return;
+      }
       setQueue((prev) => {
         if (prev.some((b) => b.badgeId === customEvent.detail.badgeId)) return prev;
         return [...prev, customEvent.detail];
@@ -295,7 +478,7 @@ export const BadgeUnlockCelebrationModal: React.FC<{
 
     window.addEventListener('veylentra-badge-celebrate', handleEvent);
     return () => window.removeEventListener('veylentra-badge-celebrate', handleEvent);
-  }, []);
+  }, [currentUserId]);
 
   useEffect(() => {
     if (!activeBadge && queue.length > 0) {
@@ -303,7 +486,7 @@ export const BadgeUnlockCelebrationModal: React.FC<{
       setQueue((prev) => prev.slice(1));
       setActiveBadge(next);
       try {
-        winterAudio.playRewardChime();
+        winterAudio.playBadgeEarned();
       } catch {}
     }
   }, [activeBadge, queue]);
@@ -329,21 +512,6 @@ export const BadgeUnlockCelebrationModal: React.FC<{
   const rarity = (activeBadge?.rarity || 'seasonal').toLowerCase();
   const theme = RARITY_THEMES[rarity] || RARITY_THEMES.seasonal;
 
-  const burstSparks = useMemo(() => {
-    const count = theme.sparkCount;
-    return Array.from({ length: count }).map((_, idx) => {
-      const angle = (idx / count) * Math.PI * 2;
-      const dist = 74 + (idx % 3) * 26;
-      return {
-        id: idx,
-        x: Math.cos(angle) * dist,
-        y: Math.sin(angle) * dist,
-        size: idx % 2 === 0 ? 5 : 3.5,
-        delay: (idx % 5) * 0.035,
-      };
-    });
-  }, [theme.sparkCount]);
-
   return (
     <AnimatePresence>
       {activeBadge && (
@@ -354,7 +522,7 @@ export const BadgeUnlockCelebrationModal: React.FC<{
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: prefersReduced ? 0.12 : 0.24 }}
+          transition={{ duration: prefersReduced ? 0.14 : 0.24 }}
           className="fixed inset-0 z-[130] flex items-center justify-center p-4 select-none"
         >
           {/* Dimmed backdrop with blur */}
@@ -382,6 +550,27 @@ export const BadgeUnlockCelebrationModal: React.FC<{
             transition={prefersReduced ? { duration: 0.14 } : MOTION_EASE.springReveal}
             className={`relative w-full max-w-md rounded-3xl bg-gradient-to-b from-slate-900 via-slate-900/95 to-slate-950 border ${theme.borderClass} p-6 sm:p-8 text-center text-white shadow-2xl overflow-hidden`}
           >
+            {/* 60fps HTML5 Canvas Spark & Shard Fountain */}
+            <BadgeSparkCanvas
+              badgeKey={`${activeBadge.userId || 'anon'}:${activeBadge.badgeId}`}
+              accentHex={theme.accentHex}
+              secondaryHex={theme.secondaryHex}
+              sparkCount={theme.sparkCount}
+              reduced={prefersReduced}
+            />
+
+            {/* Specular Light Sweep across celebration card */}
+            {!prefersReduced && (
+              <motion.div
+                key={`sweep_${activeBadge.badgeId}`}
+                initial={{ x: '-140%' }}
+                animate={{ x: '220%' }}
+                transition={{ duration: 1.05, delay: 0.15, ease: MOTION_EASE.easeOutExpo }}
+                className="pointer-events-none absolute inset-y-0 w-1/2 -skew-x-12 bg-gradient-to-r from-transparent via-white/10 to-transparent z-10"
+                aria-hidden="true"
+              />
+            )}
+
             {/* Top ambient light wash */}
             <div
               className={`absolute top-0 inset-x-0 h-36 bg-gradient-to-b ${theme.glowClass} pointer-events-none`}
@@ -392,7 +581,7 @@ export const BadgeUnlockCelebrationModal: React.FC<{
             <button
               type="button"
               onClick={handleClose}
-              className="absolute top-4 right-4 min-w-[40px] min-h-[40px] flex items-center justify-center rounded-full text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer z-20"
+              className="absolute top-4 right-4 min-w-[40px] min-h-[40px] flex items-center justify-center rounded-full text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer z-30"
               aria-label="Close unlock celebration"
             >
               <X className="w-5 h-5" />
@@ -406,33 +595,12 @@ export const BadgeUnlockCelebrationModal: React.FC<{
             </div>
 
             {/* Dimensional Badge Artwork Centerpiece */}
-            <div className="relative mx-auto my-2 w-28 h-28 sm:w-32 sm:h-32 flex items-center justify-center">
+            <div className="relative mx-auto my-2 w-28 h-28 sm:w-32 sm:h-32 flex items-center justify-center z-10">
               {/* Backlight glow */}
               <div
                 className="absolute inset-2 rounded-full blur-2xl opacity-65 pointer-events-none"
                 style={{ backgroundColor: theme.accentHex }}
               />
-
-              {/* Controlled spark burst */}
-              {!prefersReduced && (
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  {burstSparks.map((sp) => (
-                    <motion.span
-                      key={`${activeBadge.badgeId}_${sp.id}`}
-                      initial={{ x: 0, y: 0, scale: 0, opacity: 1 }}
-                      animate={{ x: sp.x, y: sp.y, scale: [0, 1.25, 0], opacity: [1, 0.9, 0] }}
-                      transition={{ duration: 0.95, delay: 0.08 + sp.delay, ease: MOTION_EASE.easeOutExpo }}
-                      style={{
-                        position: 'absolute',
-                        width: sp.size,
-                        height: sp.size,
-                        borderRadius: '9999px',
-                        backgroundColor: sp.id % 2 === 0 ? theme.secondaryHex : theme.accentHex,
-                      }}
-                    />
-                  ))}
-                </div>
-              )}
 
               <motion.div
                 initial={prefersReduced ? { opacity: 1 } : { scale: 0.6, opacity: 0 }}
@@ -445,6 +613,7 @@ export const BadgeUnlockCelebrationModal: React.FC<{
                   accentHex={theme.accentHex}
                   secondaryHex={theme.secondaryHex}
                   ringHex={theme.ringHex}
+                  reduced={prefersReduced}
                 />
               </motion.div>
             </div>
