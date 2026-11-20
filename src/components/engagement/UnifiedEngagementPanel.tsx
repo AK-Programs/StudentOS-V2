@@ -128,10 +128,20 @@ export const UnifiedEngagementPanel: React.FC<UnifiedEngagementPanelProps> = ({
   const handleVerifiedRecovery = async () => {
     if (!overview) return;
     setRecovering(true);
+    const reqActivity =
+      overview.streak.recoveryRequiredActivity ||
+      (isTeacher
+        ? 'attendance_mark'
+        : isAdmin
+          ? 'admin_audit'
+          : isCoordinator
+            ? 'oversight_review'
+            : 'flashcards');
     const res = await recoverUserStreak(
       currentUser,
-      overview.streak.recoveryRequiredActivity || 'flashcards',
-      overview.streak.recoveryCurrentProgress || 0
+      reqActivity,
+      overview.streak.recoveryCurrentProgress || 0,
+      role
     );
     setRecovering(false);
     if (res.success) {
@@ -140,7 +150,7 @@ export const UnifiedEngagementPanel: React.FC<UnifiedEngagementPanelProps> = ({
       );
       onRefresh?.();
     } else {
-      showNotification?.(res.error || 'Complete the required learning mission first.');
+      showNotification?.(res.error || 'Complete the required recovery mission first.');
     }
   };
 
@@ -153,7 +163,6 @@ export const UnifiedEngagementPanel: React.FC<UnifiedEngagementPanelProps> = ({
   const weeklyPct = Math.min(100, Math.round((weeklyCurrent / weeklyTarget) * 100));
 
   const showRecoveryPanel =
-    isStudent &&
     overview?.policy?.streakRecoveryEnabled &&
     (streakState === 'frozen' || streakState === 'recovery_available') &&
     overview.streak.frozenStreakCount > 0;

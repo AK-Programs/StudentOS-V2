@@ -22,6 +22,7 @@ import {
   EvaluatedMission,
   resolveApplicableMissionDefinitions,
 } from '../src/lib/roleTaskRegistry';
+import { hasTeacherRecordedAttendanceToday } from './academicWorkflowModule';
 
 export type ServerStreakState =
   | 'active'
@@ -385,13 +386,33 @@ export function evaluateStreakTransition(
   };
 }
 
-function getRecoveryProgressForDate(
+export function getRecoveryProgressForDate(
   record: ServerStreakRecord,
   dateYmd: string,
-  policy: EngagementPolicyConfig
+  policy: EngagementPolicyConfig,
+  role: string = 'student'
 ): number {
   const dayEntry = record.recoveryActivityDates?.[dateYmd];
   if (!dayEntry) return 0;
+  const userRole = String(role || 'student').toLowerCase();
+
+  if (userRole === 'teacher') {
+    return (dayEntry.missionProgress?.teacher_daily_attendance || 0) +
+      (dayEntry.missionProgress?.teacher_evaluate_submissions || 0) +
+      Math.min(1, dayEntry.actions || 0);
+  }
+  if (userRole === 'coordinator') {
+    return (dayEntry.missionProgress?.coordinator_cohort_attendance_audit || 0) +
+      (dayEntry.missionProgress?.coordinator_submission_compliance || 0) +
+      Math.min(1, dayEntry.actions || 0);
+  }
+  if (userRole === 'admin' || userRole === 'super_admin') {
+    return (dayEntry.missionProgress?.admin_approvals_queue_review || 0) +
+      (dayEntry.missionProgress?.admin_policy_broadcast_audit || 0) +
+      Math.min(1, dayEntry.actions || 0);
+  }
+
+  // Student learning steps
   switch (policy.requiredRecoveryActivity) {
     case 'review_flashcards':
       return dayEntry.flashcards || 0;
@@ -415,6 +436,7 @@ export function executeVerifiedStreakRecovery(
   evidence: {
     activityType?: string;
     verifiedCount?: number;
+    role?: string;
   },
   nowMs: number = Date.now()
 ): {
@@ -428,6 +450,7 @@ export function executeVerifiedStreakRecovery(
   const evaluated = evaluateStreakTransition(record, policy, nowMs);
   const rec = evaluated.record;
   const todayDate = evaluated.todayDate;
+  const userRole = String(evidence.role || 'student').toLowerCase();
 
   if (!policy.streakRecoveryEnabled || !policy.featureFlags.streakRecovery) {
     return { ok: false, status: 403, error: 'Streak recovery is disabled by campus policy.', record: rec, restoredFrom: 0, newStreak: rec.currentStreak };
@@ -468,19 +491,38 @@ export function executeVerifiedStreakRecovery(
     return { ok: false, status: 400, error: 'Recovery deadline has passed.', record: rec, restoredFrom: 0, newStreak: 0 };
   }
 
-  // Must satisfy verified learning activity count on server OR corroborated server evidence
-  const trackedProgress = getRecoveryProgressForDate(rec, todayDate, policy);
+  // Must satisfy verified role activity count on server OR corroborated server evidence
+  const reqCount = userRole === 'student' ? policy.recoveryRequiredCount : 1;
+  const trackedProgress = getRecoveryProgressForDate(rec, todayDate, policy, userRole);
   const verifiedPayloadCount = Math.max(0, Number(evidence.verifiedCount || 0));
-  const validActivityType = ['flashcards', 'quiz', 'study_session', 'homework'].includes(
+
+  const validActivityTypes =
+    userRole === 'teacher'
+      ? ['attendance_mark', 'grade_submission', 'teaching_action', 'flashcards', 'quiz']
+      : userRole === 'coordinator'
+        ? ['oversight_review', 'cohort_audit', 'grade_submission', 'attendance_mark']
+        : (userRole === 'admin' || userRole === 'super_admin')
+          ? ['admin_audit', 'policy_update', 'leave_approval', 'role_approval', 'operational_action']
+          : ['flashcards', 'quiz', 'study_session', 'homework'];
+
+  const validActivityType = validActivityTypes.includes(
     String(evidence.activityType || '').toLowerCase()
   );
   const effectiveProgress = validActivityType ? Math.max(trackedProgress, verifiedPayloadCount) : trackedProgress;
 
-  if (effectiveProgress < policy.recoveryRequiredCount) {
+  if (effectiveProgress < reqCount) {
+    const activityName =
+      userRole === 'teacher'
+        ? 'attendance or grading workflow actions'
+        : (userRole === 'admin' || userRole === 'super_admin')
+          ? 'approvals review or governance audit actions'
+          : userRole === 'coordinator'
+            ? 'department oversight reviews'
+            : 'verified learning steps';
     return {
       ok: false,
       status: 400,
-      error: `Complete at least ${policy.recoveryRequiredCount} verified learning steps (${effectiveProgress}/${policy.recoveryRequiredCount} completed today) before recovering your streak.`,
+      error: `Complete at least ${reqCount} ${activityName} (${effectiveProgress}/${reqCount} completed today) before recovering your streak.`,
       record: rec,
       restoredFrom: rec.frozenStreakCount,
       newStreak: rec.currentStreak,
@@ -507,7 +549,7 @@ export function executeVerifiedStreakRecovery(
     eventType: 'recovered',
     streakBefore: restoredFrom,
     streakAfter: newStreak,
-    source: evidence.activityType || 'verified_learning_mission',
+    source: evidence.activityType || (userRole === 'teacher' ? 'verified_attendance_register' : (userRole === 'admin' || userRole === 'super_admin') ? 'verified_admin_audit' : 'verified_learning_mission'),
     createdAt: rec.updatedAt,
   });
 
@@ -1036,12 +1078,62 @@ export function registerEngagementSystemRoutes(
       // Prefer verified actor role, fall back safely
       const effectiveRole = requestedRole || loaded.role || 'student';
       const evaluated = evaluateStreakTransition(loaded.record, policy);
+
+      // Reconcile real workflow completions for faculty & admin if already recorded today
+      const todayDate = evaluated.todayDate;
+      const dayEntry = evaluated.record.recoveryActivityDates[todayDate] || {
+        flashcards: 0,
+        quizzes: 0,
+        studyMinutes: 0,
+        actions: 0,
+        missionProgress: {},
+      };
+      let recordUpdated = false;
+
+      if (effectiveRole === 'teacher') {
+        const teacherMarkedMemory = hasTeacherRecordedAttendanceToday(userId, loaded.name, todayDate);
+        let teacherMarkedDb = false;
+        if (!teacherMarkedMemory && shouldUseDb(cfg.url, cfg.key)) {
+          try {
+            const effectiveKey = getFeatureAndWinterSupabaseKey(cfg.url, cfg.key) || WORKING_ANON_KEY;
+            const attRes = await supabaseFetchWithAnonRetry(
+              `${cfg.url}/rest/v1/attendance?date=eq.${todayDate}&select=id&limit=1`,
+              { headers: { apikey: effectiveKey, Authorization: `Bearer ${effectiveKey}` } }
+            );
+            if (attRes.ok) {
+              const rows = await attRes.json().catch(() => []);
+              if (Array.isArray(rows) && rows.length > 0) teacherMarkedDb = true;
+            }
+          } catch (_) {}
+        }
+        if (teacherMarkedMemory || teacherMarkedDb) {
+          if (!dayEntry.missionProgress.teacher_daily_attendance) {
+            dayEntry.missionProgress.teacher_daily_attendance = 1;
+            dayEntry.actions = Math.max(1, dayEntry.actions || 0);
+            evaluated.record.recoveryActivityDates[todayDate] = dayEntry;
+            recordUpdated = true;
+          }
+        }
+      } else if (effectiveRole === 'admin' || effectiveRole === 'super_admin') {
+        const adminAuditedToday = memoryAuditLogs.some(
+          log => log.actorUserId === userId && log.timestamp && log.timestamp.startsWith(todayDate)
+        );
+        if (adminAuditedToday) {
+          if (!dayEntry.missionProgress.admin_policy_broadcast_audit) {
+            dayEntry.missionProgress.admin_policy_broadcast_audit = 1;
+            dayEntry.actions = Math.max(1, dayEntry.actions || 0);
+            evaluated.record.recoveryActivityDates[todayDate] = dayEntry;
+            recordUpdated = true;
+          }
+        }
+      }
+
       await persistUserStreakRecord(cfg.url, cfg.key, evaluated.record);
 
       const storeUser = deps.getGamificationStore()?.[userId];
       const authoritativeXp = Math.max(loaded.xp, Number(storeUser?.xp || 0));
       const lvl = computeLevelBreakdown(authoritativeXp);
-      const recoveryProgress = getRecoveryProgressForDate(evaluated.record, evaluated.todayDate, policy);
+      const recoveryProgress = getRecoveryProgressForDate(evaluated.record, evaluated.todayDate, policy, effectiveRole);
       const missions = evaluateMissionsForRecord(effectiveRole, evaluated.record, evaluated.todayDate);
 
       const weekKey = getWeekPeriodKey(evaluated.todayDate);
@@ -1068,6 +1160,16 @@ export function registerEngagementSystemRoutes(
             }
           : null;
 
+      const roleReqActivity =
+        effectiveRole === 'teacher'
+          ? 'attendance_mark'
+          : (effectiveRole === 'admin' || effectiveRole === 'super_admin')
+            ? 'admin_audit'
+            : effectiveRole === 'coordinator'
+              ? 'oversight_review'
+              : policy.requiredRecoveryActivity;
+      const roleReqCount = effectiveRole === 'student' ? policy.recoveryRequiredCount : 1;
+
       return res.json({
         success: true,
         overview: {
@@ -1092,8 +1194,8 @@ export function registerEngagementSystemRoutes(
             maxRecoveriesPerMonth: policy.maxRecoveriesPerMonth,
             recoveryEligible: evaluated.recoveryEligible,
             recoveryBlockedReason: evaluated.recoveryBlockedReason,
-            recoveryRequiredActivity: policy.requiredRecoveryActivity,
-            recoveryRequiredCount: policy.recoveryRequiredCount,
+            recoveryRequiredActivity: roleReqActivity,
+            recoveryRequiredCount: roleReqCount,
             recoveryCurrentProgress: recoveryProgress,
             history: evaluated.record.history.slice(0, 30),
           },
@@ -1136,6 +1238,7 @@ export function registerEngagementSystemRoutes(
       await persistUserStreakRecord(cfg.url, cfg.key, result.record);
 
       const effectiveRole = String(role || actor?.role || loaded.role || 'student').toLowerCase();
+      const roleReqCount = effectiveRole === 'student' ? policy.recoveryRequiredCount : 1;
       return res.json({
         success: true,
         streakIncremented: result.streakIncremented,
@@ -1144,8 +1247,8 @@ export function registerEngagementSystemRoutes(
           longestStreak: result.record.longestStreak,
           streakState: result.record.streakState,
           frozenStreakCount: result.record.frozenStreakCount,
-          recoveryCurrentProgress: getRecoveryProgressForDate(result.record, result.todayDate, policy),
-          recoveryRequiredCount: policy.recoveryRequiredCount,
+          recoveryCurrentProgress: getRecoveryProgressForDate(result.record, result.todayDate, policy, effectiveRole),
+          recoveryRequiredCount: roleReqCount,
         },
         missions: evaluateMissionsForRecord(effectiveRole, result.record, result.todayDate),
       });
@@ -1158,7 +1261,7 @@ export function registerEngagementSystemRoutes(
   app.post('/api/engagement/streak/recover', async (req, res) => {
     try {
       const actor = await deps.getVerifiedUserFromRequest(req);
-      const { userId: bodyUserId, activityType, verifiedCount } = req.body || {};
+      const { userId: bodyUserId, activityType, verifiedCount, role } = req.body || {};
       const userId = String(actor?.id || bodyUserId || '').trim();
       if (!userId) {
         return res.status(400).json({ success: false, error: 'userId is required' });
@@ -1170,7 +1273,12 @@ export function registerEngagementSystemRoutes(
       const cfg = deps.getSupabaseServerConfig();
       const policy = await loadPolicyConfig(cfg.url, cfg.key);
       const loaded = await loadOrInitializeUserStreakRecord(cfg.url, cfg.key, userId, policy);
-      const outcome = executeVerifiedStreakRecovery(loaded.record, policy, { activityType, verifiedCount });
+      const effectiveRole = String(role || actor?.role || loaded.role || 'student').toLowerCase();
+      const outcome = executeVerifiedStreakRecovery(loaded.record, policy, {
+        activityType,
+        verifiedCount,
+        role: effectiveRole,
+      });
       await persistUserStreakRecord(cfg.url, cfg.key, outcome.record);
 
       if (!outcome.ok) {
@@ -1353,6 +1461,26 @@ export function registerEngagementSystemRoutes(
       return res.status(500).json({ success: false, error: err?.message || 'Failed to read audit logs' });
     }
   });
+}
+
+export async function recordEngagementActivityServer(
+  url: string,
+  key: string,
+  userId: string,
+  role: string,
+  activityType: 'flashcards' | 'quiz' | 'homework' | 'study_session' | 'attendance_mark' | 'grade_submission' | 'oversight_review' | 'admin_audit' | 'daily_checkin',
+  count: number = 1
+): Promise<{ ok: boolean; streakIncremented: boolean; currentStreak: number }> {
+  try {
+    const policy = await loadPolicyConfig(url, key);
+    const loaded = await loadOrInitializeUserStreakRecord(url, key, userId, policy);
+    const result = recordVerifiedActivity(loaded.record, policy, { activityType, count });
+    await persistUserStreakRecord(url, key, result.record);
+    return { ok: true, streakIncremented: result.streakIncremented, currentStreak: result.record.currentStreak };
+  } catch (err) {
+    console.warn('[engagement-engine] recordEngagementActivityServer failed:', err);
+    return { ok: false, streakIncremented: false, currentStreak: 0 };
+  }
 }
 
 export function __seedStreakRecordForTests(record: ServerStreakRecord) {

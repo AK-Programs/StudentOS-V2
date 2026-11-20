@@ -52,6 +52,7 @@ import {
 import { ExperienceTestingTab } from './admin/ExperienceTestingTab';
 import { FeatureControlCenter } from './admin/FeatureControlCenter';
 import { EngagementPolicyConsole } from './admin/EngagementPolicyConsole';
+import { recordEngagementActivity } from '../lib/engagementService';
 
 export type AdminSubTab =
   | 'overview'
@@ -105,13 +106,20 @@ interface AdminCenterProps {
   currentUser: UserProfile;
   showNotification: (msg: string) => void;
   profileTab?: string;
+  initialSubTab?: AdminSubTab;
 }
 
-export default function AdminCenter({ currentUser, showNotification, profileTab }: AdminCenterProps) {
+export default function AdminCenter({ currentUser, showNotification, profileTab, initialSubTab }: AdminCenterProps) {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(false);
-  const [adminSubTab, setAdminSubTab] = useState<AdminSubTab>('overview');
+  const [adminSubTab, setAdminSubTab] = useState<AdminSubTab>(initialSubTab || 'overview');
   const [setupSql, setSetupSql] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialSubTab) {
+      setAdminSubTab(initialSubTab);
+    }
+  }, [initialSubTab]);
 
   // User editing state
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
@@ -674,6 +682,7 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
       });
 
       loadAuditLogs();
+      void recordEngagementActivity(currentUser, 'admin', 'admin_audit', 1);
       showNotification(`✓ Leave request marked as ${status.toUpperCase()}`);
     } catch (e: any) {
       showNotification(`Update failed: ${e.message}`);
@@ -726,6 +735,14 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
       };
 
       await saveSupabaseUserProfile(updatedUser);
+      logAuditAction({
+        actor: currentUser,
+        action: 'role_elevation',
+        details: `Approved role request for ${user.name} to ${user.requestedRole?.toUpperCase()}`,
+        schoolId: activeSchoolId
+      });
+      loadAuditLogs();
+      void recordEngagementActivity(currentUser, 'admin', 'admin_audit', 1);
       showNotification(`✓ Approved ${user.name} as ${user.requestedRole?.toUpperCase()}!`);
       fetchUsers();
     } catch (err) {
@@ -1611,6 +1628,40 @@ export default function AdminCenter({ currentUser, showNotification, profileTab 
       ========================================================================= */}
       {adminSubTab === 'requests' && (
         <div className="space-y-6 animate-fadeIn">
+          {/* Header & Verification Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-slate-900/80 border border-slate-800">
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-2">
+                <Shield className="w-4 h-4 text-amber-400" />
+                <h4 className="text-sm font-black text-white">
+                  Campus Requests & Approvals Queue
+                </h4>
+              </div>
+              <p className="text-xs text-slate-400">
+                Audit, verify, and resolve administrative requests across school departments.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={async () => {
+                logAuditAction({
+                  actor: currentUser,
+                  action: 'audit_log_access',
+                  details: `Reviewed and certified Approvals Queue (${pendingLeaves.length} pending leaves, ${pendingRequests.length} pending elevations).`,
+                  schoolId: activeSchoolId
+                });
+                loadAuditLogs();
+                await recordEngagementActivity(currentUser, 'admin', 'admin_audit', 1);
+                showNotification('✓ Approvals queue reviewed and administrative audit certified.');
+              }}
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-black flex items-center gap-2 shadow-lg shadow-amber-500/20 cursor-pointer shrink-0"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>Certify & Audit Queue</span>
+            </button>
+          </div>
+
           {/* Section 1: Leave Requests */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">

@@ -21,6 +21,17 @@ import { BadgeDefinition, LevelDefinition, calculateLevelInfo } from './gamifica
 export const ENGAGEMENT_UPDATED_EVENT = 'veylentra-engagement-updated';
 export const LEVEL_UP_EVENT = 'veylentra-level-up';
 export const REGULAR_BADGE_UNLOCKED_EVENT = 'veylentra-regular-badge-unlocked';
+export const STREAK_RECOVERED_EVENT = 'studentos-streak-recovered';
+
+export interface StreakRecoveryCelebrationPayload {
+  userId: string;
+  restoredFrom: number;
+  newStreak: number;
+  xpRewarded: number;
+  activityType?: string;
+  role: string;
+  timestamp: string;
+}
 
 export interface LevelUpCelebrationPayload {
   userId: string;
@@ -235,7 +246,8 @@ export async function recordEngagementActivity(
 export async function recoverUserStreak(
   user: Partial<UserProfile> | null | undefined,
   activityType: string,
-  verifiedCount?: number
+  verifiedCount?: number,
+  effectiveRole?: string
 ): Promise<{
   success: boolean;
   restoredFrom?: number;
@@ -247,17 +259,31 @@ export async function recoverUserStreak(
   if (!userId) return { success: false, error: 'Sign in required' };
 
   try {
-    const headers = await buildAuthHeadersForUser(user);
+    const role = effectiveRole || user?.role || 'student';
+    const headers = await buildAuthHeadersForUser({ ...user, role: role as any });
     const res = await fetch('/api/engagement/streak/recover', {
       method: 'POST',
       headers,
-      body: JSON.stringify({ userId, activityType, verifiedCount }),
+      body: JSON.stringify({ userId, activityType, verifiedCount, role }),
     });
     const data = await res.json().catch(() => ({ success: false, error: 'Failed to process recovery' }));
     if (res.ok && data?.success) {
       dispatchEngagementUpdate(userId);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
+        window.dispatchEvent(
+          new CustomEvent(STREAK_RECOVERED_EVENT, {
+            detail: {
+              userId,
+              restoredFrom: data.restoredFrom || 0,
+              newStreak: data.newStreak || 1,
+              xpRewarded: data.xpRewarded || 35,
+              activityType,
+              role,
+              timestamp: new Date().toISOString(),
+            } as StreakRecoveryCelebrationPayload,
+          })
+        );
       }
       return data;
     }

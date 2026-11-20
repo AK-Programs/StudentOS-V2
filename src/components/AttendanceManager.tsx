@@ -20,6 +20,7 @@ import {
   fetchAttendanceAuditHistory
 } from '../lib/academicWorkflowService';
 import { awardServerActionXp } from '../lib/winterFestivalService';
+import { recordEngagementActivity } from '../lib/engagementService';
 
 const SUBJECT_LIST = [
   'General / Homeroom',
@@ -397,6 +398,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
 
     setMarkingUid(null);
     void awardServerActionXp(currentUser, 'faculty_mark_attendance', `${selectedGrade}_${selectedSection}_${date}`);
+    void recordEngagementActivity(currentUser, 'teacher', 'attendance_mark', 1);
     setSuccessMessage(`✓ Marked as ${status.toUpperCase()}`);
     setTimeout(() => setSuccessMessage(null), 3000);
   };
@@ -491,6 +493,8 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
         localStorage.setItem(getCacheKey(date), JSON.stringify(newMap));
       } catch (_) {}
       void loadAuditHistory();
+      void awardServerActionXp(currentUser, 'faculty_mark_attendance', `${selectedGrade}_${selectedSection}_${date}`);
+      void recordEngagementActivity(currentUser, 'teacher', 'attendance_mark', targetUsers.length);
       setSuccessMessage('✓ All students marked Present.');
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (e: any) {

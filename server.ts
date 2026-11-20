@@ -47,7 +47,10 @@ import {
   appendXpLedgerEntry,
 } from './server/winterFestivalModule';
 import { registerNotificationRoutes } from './server/notificationEngine';
-import { registerEngagementSystemRoutes } from './server/engagementEngine';
+import {
+  registerEngagementSystemRoutes,
+  recordEngagementActivityServer,
+} from './server/engagementEngine';
 import {
   AIQuotaPersistenceError,
   getRolling24hUsageAsync,
@@ -6013,7 +6016,15 @@ app.post('/api/admin/unlink-parent-child', async (req, res) => {
 registerAcademicWorkflowRoutes(app, {
   getSupabaseServerConfig,
   getVerifiedUserFromRequest,
-  emitScopedBroadcast: broadcastScopedWsEvent
+  emitScopedBroadcast: broadcastScopedWsEvent,
+  onActivityRecorded: async (userId, role, activityType, count) => {
+    try {
+      const cfg = getSupabaseServerConfig();
+      await recordEngagementActivityServer(cfg.url, cfg.key || '', userId, role, activityType as any, count);
+    } catch (err) {
+      console.warn('[server-academic-sync] onActivityRecorded failed:', err);
+    }
+  },
 });
 
 const WHITELISTED_SUPER_ADMIN_EMAILS = [

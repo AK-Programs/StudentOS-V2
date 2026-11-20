@@ -25,6 +25,7 @@ import {
   fetchEngagementAuditLogs,
   fetchEngagementPolicyConfig,
   updateEngagementPolicyConfig,
+  recordEngagementActivity,
 } from '../../lib/engagementService';
 
 interface EngagementPolicyConsoleProps {
@@ -76,6 +77,7 @@ export const EngagementPolicyConsole: React.FC<EngagementPolicyConsoleProps> = (
     if (res.success && res.config) {
       setConfig(res.config);
       showNotification(`Saved Engagement Policy v${res.config.version} with audit trail.`);
+      void recordEngagementActivity(currentUser, 'admin', 'admin_audit', 1);
       const logs = await fetchEngagementAuditLogs(currentUser);
       setAuditLogs(logs);
     } else {

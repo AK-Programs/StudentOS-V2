@@ -254,6 +254,25 @@ export interface AcademicRouteDependencies {
     user_metadata?: any;
   } | null>;
   emitScopedBroadcast?: (eventType: string, payload: any, scope: AcademicEventScope) => void;
+  onActivityRecorded?: (userId: string, role: string, activityType: string, count: number) => Promise<any> | void;
+}
+
+export function hasTeacherRecordedAttendanceToday(actorId: string, actorName?: string, todayDate?: string): boolean {
+  const targetDate = todayDate || new Date().toISOString().split('T')[0];
+  const normName = String(actorName || '').trim().toLowerCase();
+  for (const [, att] of memoryStore.attendance.entries()) {
+    if (att.date === targetDate) {
+      if ((att as any).actorId === actorId || (att as any).updatedByUserId === actorId) return true;
+      if (normName && String(att.updatedBy || '').trim().toLowerCase() === normName) return true;
+    }
+  }
+  for (const log of memoryStore.attendanceAuditLogs) {
+    if (log.date === targetDate) {
+      if (log.actorId === actorId) return true;
+      if (normName && String(log.actorName || '').trim().toLowerCase() === normName) return true;
+    }
+  }
+  return false;
 }
 
 export function registerAcademicWorkflowRoutes(
@@ -1093,6 +1112,12 @@ export function registerAcademicWorkflowRoutes(
       }
     }
 
+    try {
+      if (deps.onActivityRecorded) {
+        void deps.onActivityRecorded(actor.id, actor.role || 'teacher', 'grade_submission', 1);
+      }
+    } catch (_) {}
+
     return res.json({ success: true, submission: updated });
   });
 
@@ -1648,6 +1673,12 @@ export function registerAcademicWorkflowRoutes(
         sensitive: true
       });
     }
+
+    try {
+      if (deps.onActivityRecorded) {
+        void deps.onActivityRecorded(actor.id, actor.role || 'teacher', 'attendance_mark', 1);
+      }
+    } catch (_) {}
 
     return res.json({ success: true, record, auditEntry });
   });
