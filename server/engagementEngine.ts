@@ -124,7 +124,7 @@ export interface EngagementModuleDeps {
   getGamificationStore: () => Record<string, any>;
 }
 
-const DEFAULT_POLICY_CONFIG: EngagementPolicyConfig = {
+export const DEFAULT_POLICY_CONFIG: EngagementPolicyConfig = {
   version: 1,
   updatedAt: '2026-11-01T00:00:00.000Z',
   updatedBy: 'Veylentra System',
@@ -1116,7 +1116,7 @@ export function registerEngagementSystemRoutes(
         }
       } else if (effectiveRole === 'admin' || effectiveRole === 'super_admin') {
         const adminAuditedToday = memoryAuditLogs.some(
-          log => log.actorUserId === userId && log.timestamp && log.timestamp.startsWith(todayDate)
+          log => log.actorUserId === userId && log.createdAt && log.createdAt.startsWith(todayDate)
         );
         if (adminAuditedToday) {
           if (!dayEntry.missionProgress.admin_policy_broadcast_audit) {

@@ -272,7 +272,7 @@ export const UnifiedEngagementPanel: React.FC<UnifiedEngagementPanelProps> = ({
         </div>
       )}
 
-      {/* Server-Verified Streak Recovery Flow (Student missed 1-2 days, no free 1-click bypass) */}
+      {/* Server-Verified Streak Recovery Flow (Role-aware verified recovery) */}
       {showRecoveryPanel && overview && (
         <div className="p-4 rounded-xl bg-cyan-950/35 border border-cyan-500/35 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -280,13 +280,27 @@ export const UnifiedEngagementPanel: React.FC<UnifiedEngagementPanelProps> = ({
               <div className="flex items-center gap-2 text-xs font-bold text-cyan-200">
                 <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0" />
                 <span>
-                  {overview.streak.frozenStreakCount}-Day Streak Protected — Complete Recovery Study Mission
+                  {overview.streak.frozenStreakCount}-Day Streak Protected — Complete{' '}
+                  {isTeacher
+                    ? 'Attendance'
+                    : isAdmin
+                      ? 'Governance'
+                      : isCoordinator
+                        ? 'Cohort Oversight'
+                        : 'Study'}{' '}
+                  Recovery Mission
                 </span>
               </div>
               <p className="text-xs text-slate-300">
                 {overview.streak.recoveryBlockedReason
                   ? overview.streak.recoveryBlockedReason
-                  : `Finish ${overview.streak.recoveryRequiredCount} flashcards or a verified quiz to restore your streak. (${overview.streak.recoveriesThisMonth}/${overview.streak.maxRecoveriesPerMonth} monthly recoveries used)`}
+                  : isTeacher
+                    ? `Mark today's attendance roll or grade submissions to restore your streak. (${overview.streak.recoveriesThisMonth}/${overview.streak.maxRecoveriesPerMonth} monthly recoveries used)`
+                    : isAdmin
+                      ? `Review and certify the approvals queue or update policy to restore your streak. (${overview.streak.recoveriesThisMonth}/${overview.streak.maxRecoveriesPerMonth} monthly recoveries used)`
+                      : isCoordinator
+                        ? `Complete department cohort attendance audit to restore your streak. (${overview.streak.recoveriesThisMonth}/${overview.streak.maxRecoveriesPerMonth} monthly recoveries used)`
+                        : `Finish ${overview.streak.recoveryRequiredCount} flashcards or a verified quiz to restore your streak. (${overview.streak.recoveriesThisMonth}/${overview.streak.maxRecoveriesPerMonth} monthly recoveries used)`}
               </p>
             </div>
 
@@ -297,10 +311,26 @@ export const UnifiedEngagementPanel: React.FC<UnifiedEngagementPanelProps> = ({
               {overview.streak.recoveryCurrentProgress < overview.streak.recoveryRequiredCount ? (
                 <button
                   type="button"
-                  onClick={() => onNavigateTab('study_hub', 'flashcards')}
+                  onClick={() => {
+                    if (isTeacher) {
+                      onNavigateTab('attendance_manager');
+                    } else if (isAdmin) {
+                      onNavigateTab('admin', 'requests');
+                    } else if (isCoordinator) {
+                      onNavigateTab('faculty', 'overview');
+                    } else {
+                      onNavigateTab('study_hub', 'flashcards');
+                    }
+                  }}
                   className="px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold cursor-pointer transition-colors"
                 >
-                  Study Flashcards
+                  {isTeacher
+                    ? 'Mark Attendance'
+                    : isAdmin
+                      ? 'Open Approvals'
+                      : isCoordinator
+                        ? 'Department Review'
+                        : 'Study Flashcards'}
                 </button>
               ) : (
                 <button
@@ -385,7 +415,7 @@ export const UnifiedEngagementPanel: React.FC<UnifiedEngagementPanelProps> = ({
                   ) : (
                     <button
                       type="button"
-                      onClick={() => onNavigateTab(mission.actionTab)}
+                      onClick={() => onNavigateTab(mission.actionTab, mission.actionSubTab)}
                       className="w-full py-1.5 px-3 rounded-lg bg-slate-800/80 hover:bg-slate-800 text-slate-200 text-xs font-semibold cursor-pointer flex items-center justify-between transition-colors"
                     >
                       <span>{mission.actionLabel}</span>
@@ -424,7 +454,7 @@ export const UnifiedEngagementPanel: React.FC<UnifiedEngagementPanelProps> = ({
         {isAdmin && (
           <button
             type="button"
-            onClick={() => onNavigateTab('admin')}
+            onClick={() => onNavigateTab('admin', 'engagement_policies')}
             className="text-xs font-semibold text-indigo-300 hover:text-indigo-200 flex items-center gap-1 shrink-0 cursor-pointer"
           >
             <span>Configure Policies</span>

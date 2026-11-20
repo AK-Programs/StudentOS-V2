@@ -72,7 +72,7 @@ import { checkPanelRegistration, PanelBoardRegistrationData } from './lib/panelB
 import { FeedbackBoard } from './components/FeedbackBoard';
 import { StudentOSJarvis } from './components/StudentOSJarvis';
 import AttendanceManager from './components/AttendanceManager';
-import AdminCenter from './components/AdminCenter';
+import AdminCenter, { AdminSubTab } from './components/AdminCenter';
 import TeacherStudentList from './components/TeacherStudentList';
 import TeacherStudentReports from './components/TeacherStudentReports';
 import TeacherProfile from './components/TeacherProfile';
@@ -125,6 +125,7 @@ import { HomeworkLinkedNotesSection } from './components/lectureNotes/HomeworkLi
 import { NotificationFlyout } from './components/NotificationFlyout';
 import { LevelUpCelebrationModal } from './components/gamification/LevelUpCelebrationModal';
 import { RegularBadgeUnlockModal } from './components/gamification/RegularBadgeUnlockModal';
+import { StreakRecoveryCelebrationModal } from './components/gamification/StreakRecoveryCelebrationModal';
 import { UnifiedEngagementPanel } from './components/engagement/UnifiedEngagementPanel';
 import { useEngagementOverview } from './lib/engagementService';
 import { ParentalPortal } from './components/ParentalPortal';
@@ -663,6 +664,7 @@ export default function App() {
   const [whatsNewUnreadCount, setWhatsNewUnreadCount] = useState<number>(0);
   const [dueCardsCount, setDueCardsCount] = useState<number>(0);
   const [studyHubSubTab, setStudyHubSubTab] = useState<'dashboard' | 'tasks' | 'planner' | 'flashcards'>('dashboard');
+  const [selectedAdminSubTab, setSelectedAdminSubTab] = useState<AdminSubTab | undefined>(undefined);
   const [selectedFlashcardDeckId, setSelectedFlashcardDeckId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -9974,6 +9976,9 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                     loading={engagementLoading}
                     onNavigateTab={(tabId, subTab) => {
                       if (subTab === 'flashcards') setStudyHubSubTab('flashcards');
+                      if (tabId === 'admin' && subTab) {
+                        setSelectedAdminSubTab(subTab as AdminSubTab);
+                      }
                       handleTabSelect(tabId);
                     }}
                     showNotification={showNotification}
@@ -14796,7 +14801,11 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
 
               {/* Tab 11: Admin Center */}
               {activeTab === 'admin' && (effectiveRole === 'admin' || effectiveRole === 'super_admin') && (
-                <AdminCenter currentUser={currentUser} showNotification={showNotification} />
+                <AdminCenter
+                  currentUser={currentUser}
+                  showNotification={showNotification}
+                  initialSubTab={selectedAdminSubTab}
+                />
               )}
 
               {/* Tab 12: StudentOS Life Community Hub */}
@@ -15812,6 +15821,10 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
           <RegularBadgeUnlockModal
             currentUserId={currentUser.uid}
             onViewCollection={() => handleTabSelect('leaderboard')}
+          />
+          <StreakRecoveryCelebrationModal
+            currentUserId={currentUser.uid}
+            onContinue={() => refreshEngagementOverview()}
           />
         </>
       )}

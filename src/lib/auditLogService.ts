@@ -18,6 +18,8 @@ export type AuditActionType =
   | 'leave_approval'
   | 'circular_approval'
   | 'role_override'
+  | 'role_elevation'
+  | 'audit_log_access'
   | 'account_status_change'
   | 'user_delete'
   | 'parent_unlink';
