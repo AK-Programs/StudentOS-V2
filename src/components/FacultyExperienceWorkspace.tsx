@@ -454,6 +454,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
 
   const handleMarkAssignmentReviewed = (hwId: string) => {
     soundService.playButtonClick();
+    const markingReviewed = !reviewedHwIds.has(hwId);
     setReviewedHwIds(prev => {
       const next = new Set(prev);
       if (next.has(hwId)) next.delete(hwId);
@@ -465,6 +466,14 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
       }
       return next;
     });
+    if (markingReviewed) {
+      void recordEngagementActivity(
+        currentUser,
+        effectiveRole,
+        isCoordinatorPlus ? 'oversight_review' : 'grade_submission',
+        1
+      );
+    }
     showNotification('Updated assignment review marker.');
   };
 

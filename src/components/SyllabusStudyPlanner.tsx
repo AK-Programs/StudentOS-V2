@@ -324,13 +324,17 @@ export const SyllabusStudyPlanner: React.FC<SyllabusStudyPlannerProps> = ({
       [chapterId]: updated
     }));
 
-    // Authoritative XP award
+    // Authoritative XP award & engagement tracking
     try {
       const { awardStudentXP } = await import('../lib/gamification');
       await awardStudentXP(currentUser, 'use_ai_study', {
         customXpAmount: 50,
         customLabel: `Mastered topic: ${topic} in ${subject}`
       });
+    } catch (_) {}
+    try {
+      const { recordEngagementActivity } = await import('../lib/engagementService');
+      void recordEngagementActivity(currentUser, currentUser?.role || 'student', 'study_session', 1);
     } catch (_) {}
 
     if (newStatus === 'completed' && currentProg?.status !== 'completed') {

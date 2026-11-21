@@ -120,7 +120,7 @@ export function getDefaultProfileForAccount(uid?: string, email?: string): UserP
       customStatus: 'Studying Rotational Mechanics ⚛️',
       studyHours: 18,
       quizzesTaken: 7,
-      streakDays: 9,
+      streakDays: 0,
       accountStatus: 'approved',
       raw_data: {
         savedMaterialIds: ['mat-teacher-1', 'mat-student-1'],
@@ -152,7 +152,7 @@ export function getDefaultProfileForAccount(uid?: string, email?: string): UserP
       customStatus: 'Grading Lab Reports & Office Hours 🔬',
       studyHours: 42,
       quizzesTaken: 15,
-      streakDays: 21,
+      streakDays: 0,
       accountStatus: 'approved',
       raw_data: {
         savedMaterialIds: ['mat-teacher-1', 'mat-teacher-2'],
@@ -180,7 +180,7 @@ export function getDefaultProfileForAccount(uid?: string, email?: string): UserP
       customStatus: 'Reviewing Weekly Progress Report 🛡️',
       studyHours: 6,
       quizzesTaken: 2,
-      streakDays: 4,
+      streakDays: 0,
       accountStatus: 'approved',
       raw_data: {
         savedMaterialIds: ['mat-teacher-1'],
@@ -206,7 +206,7 @@ export function getDefaultProfileForAccount(uid?: string, email?: string): UserP
       customStatus: 'Campus Operations & Academic Audit ⚡',
       studyHours: 30,
       quizzesTaken: 10,
-      streakDays: 14,
+      streakDays: 0,
       accountStatus: 'approved',
       raw_data: {
         savedMaterialIds: ['mat-admin-1', 'mat-teacher-1'],
@@ -236,7 +236,7 @@ export function getDefaultProfileForAccount(uid?: string, email?: string): UserP
       customStatus: 'Building & Orchestrating StudentOS 👑',
       studyHours: 64,
       quizzesTaken: 24,
-      streakDays: 30,
+      streakDays: 0,
       accountStatus: 'approved',
       raw_data: {
         savedMaterialIds: ['mat-super-1', 'mat-teacher-1', 'mat-student-1'],

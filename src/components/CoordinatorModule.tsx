@@ -7,6 +7,7 @@ import { saveAppNotification } from '../lib/notifications';
 import { getAuthorizedGrades, getAuthorizedSections } from '../config/facultyPermissions';
 import { getSectionsForGrade } from '../config/academicHierarchy';
 import { VeylentraIcon } from './ui/VeylentraIcon';
+import { recordEngagementActivity } from '../lib/engagementService';
 
 interface CoordinatorModuleProps {
   currentUser: UserProfile;
@@ -146,6 +147,7 @@ export default function CoordinatorModule({ currentUser, showNotification }: Coo
         },
         ...prev.slice(0, 4)
       ]);
+      void recordEngagementActivity(currentUser, currentUser?.role || 'coordinator', 'oversight_review', 1);
       showNotification(`✓ Awarded ${pointsInput} points to ${targetHouse} House.`);
       setReasonInput('');
     } catch (err: any) {
@@ -185,6 +187,7 @@ export default function CoordinatorModule({ currentUser, showNotification }: Coo
         },
         ...prev.slice(0, 4)
       ]);
+      void recordEngagementActivity(currentUser, currentUser?.role || 'coordinator', 'oversight_review', 1);
       showNotification(`✓ Notice dispatched to ${warnGrade} · ${warnSection}.`);
       setWarnMsg('');
     } catch (err: any) {

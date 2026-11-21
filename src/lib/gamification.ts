@@ -517,11 +517,10 @@ export async function loadAuthoritativeGamificationProfile(user: {
           dailyChallengesCompleted: Math.max(localProfile.counts?.dailyChallengesCompleted || 0, baseRemote.counts?.dailyChallengesCompleted || 0),
           multiplayerWins: Math.max(localProfile.counts?.multiplayerWins || 0, baseRemote.counts?.multiplayerWins || 0)
         },
-        currentStreak: Number(apiProfile?.currentStreak ?? baseRemote.currentStreak ?? localProfile.currentStreak ?? 0),
+        currentStreak: Number(apiProfile?.currentStreak ?? 0),
         longestStreak: Math.max(
-          Number(apiProfile?.currentStreak ?? baseRemote.currentStreak ?? 0),
-          Number(localProfile.longestStreak ?? 0),
-          Number(baseRemote.longestStreak ?? 0)
+          Number(apiProfile?.currentStreak ?? 0),
+          Number(apiProfile?.longestStreak ?? 0)
         ),
         updatedAt: new Date().toISOString()
       };
@@ -707,9 +706,8 @@ export async function awardStudentXP(
   const profile = getLocalGamificationProfile(user);
   if (user.role) profile.role = user.role;
   const today = getTodayDateString();
-  const yesterday = getYesterdayDateString();
 
-  // 1. Reset daily tracker if date changed & update study streak
+  // 1. Reset daily tracker if date changed (streaks are owned exclusively by server /api/engagement/overview)
   if (profile.dailyTrackers.date !== today) {
     profile.dailyTrackers = {
       date: today,
@@ -719,18 +717,7 @@ export async function awardStudentXP(
       dailyChallengeClaimed: false
     };
   }
-
-  if (profile.lastActiveDate !== today) {
-    if (profile.lastActiveDate === yesterday) {
-      profile.currentStreak += 1;
-    } else {
-      profile.currentStreak = 1;
-    }
-    if (profile.currentStreak > profile.longestStreak) {
-      profile.longestStreak = profile.currentStreak;
-    }
-    profile.lastActiveDate = today;
-  }
+  profile.lastActiveDate = today;
 
   // 2. Anti-spam & deduplication checks
   if (action === 'daily_login') {

@@ -469,6 +469,32 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
       { cardId: targetCardId, quality, response: resolvedLabel }
     ]);
 
+    if (currentUser?.uid) {
+      recordEngagementActivity(
+        currentUser,
+        currentUser.role || 'student',
+        'flashcards',
+        1,
+        willCompleteSession
+          ? {
+              title: 'Flashcard active recall session completed',
+              subtitle: `Reviewed ${studyCards.length} cards in ${activeDeck?.title || 'Study Hub'}. Continue with your next scheduled deck or check pending homework.`,
+              ctaLabel: 'Open Study Hub',
+              actionTab: 'study_hub',
+              actionSubTab: 'flashcards',
+              reason: 'Completed flashcard session checkpoint',
+            }
+          : {
+              title: `Reviewing ${activeDeck?.title || 'Flashcards'}`,
+              subtitle: `Reviewed ${completedCardIds.length + 1} of ${studyCards.length} cards. Finish the remaining cards in Study Hub.`,
+              ctaLabel: 'Continue Flashcards',
+              actionTab: 'study_hub',
+              actionSubTab: 'flashcards',
+              reason: 'Active flashcard study progress',
+            }
+      ).catch(() => {});
+    }
+
     if (!willCompleteSession) {
       setIsFlipped(false);
       setShowHint(false);
@@ -476,16 +502,6 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
     } else {
       setSessionCompleted(true);
       awardStudentXP(currentUser, 'study_flashcards', { flashcardCount: studyCards.length });
-      if (currentUser?.uid) {
-        recordEngagementActivity(currentUser, currentUser.role || 'student', 'flashcards', studyCards.length, {
-          title: 'Flashcard active recall session completed',
-          subtitle: `Reviewed ${studyCards.length} cards in ${activeDeck?.title || 'Study Hub'}. Continue with your next scheduled deck or check pending homework.`,
-          ctaLabel: 'Open Study Hub',
-          actionTab: 'study_hub',
-          actionSubTab: 'flashcards',
-          reason: 'Completed flashcard session checkpoint',
-        }).catch(() => {});
-      }
       showNotification('Review session completed! Your progress has been saved to Supabase.');
     }
   };
@@ -508,16 +524,6 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
       soundService.playFlashcardSessionComplete();
       setSessionCompleted(true);
       awardStudentXP(currentUser, 'study_flashcards', { flashcardCount: studyCards.length });
-      if (currentUser?.uid) {
-        recordEngagementActivity(currentUser, currentUser.role || 'student', 'flashcards', studyCards.length, {
-          title: 'Flashcard active recall session completed',
-          subtitle: `Reviewed ${studyCards.length} cards in ${activeDeck?.title || 'Study Hub'}. Continue with your next scheduled deck or check pending homework.`,
-          ctaLabel: 'Open Study Hub',
-          actionTab: 'study_hub',
-          actionSubTab: 'flashcards',
-          reason: 'Completed flashcard session checkpoint',
-        }).catch(() => {});
-      }
       showNotification('Deck complete! All progress has been saved to Supabase.');
     }
   };

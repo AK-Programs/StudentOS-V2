@@ -65,6 +65,7 @@ import { subscribeRealtimeEvents, sendRealtimeEvent } from '../lib/wsHelper';
 import { supabase } from '../lib/supabase';
 import { soundService } from '../lib/soundService';
 import { BrainBattleExamPrep } from './BrainBattleExamPrep';
+import { recordEngagementActivity } from '../lib/engagementService';
 
 export interface BrainBattleQuestion {
   id: string;
@@ -1042,6 +1043,13 @@ export const BrainBattleArena: React.FC<BrainBattleArenaProps> = ({
       quizScorePercent: accuracy,
       customXpAmount: calculatedXp,
       customLabel: label
+    });
+    void recordEngagementActivity(currentUser, effectiveRole || 'student', 'quiz', 1, {
+      title: 'Brain Battle Completed',
+      subtitle: `Finished ${matchMode === 'daily_challenge' ? 'Daily Challenge' : selectedSubject} with ${accuracy}% accuracy.`,
+      ctaLabel: 'Open Brain Battle',
+      actionTab: 'brain_battle',
+      reason: 'Completed Brain Battle quiz',
     });
 
     const actualXp = xpResult.awarded ? xpResult.xpAdded : 0;

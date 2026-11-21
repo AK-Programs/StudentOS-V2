@@ -1027,6 +1027,9 @@ Rules:
         import('../lib/gamification').then(({ awardStudentXP }) => {
           awardStudentXP(currentUser, 'use_ai_study');
         }).catch(() => {});
+        import('../lib/engagementService').then(({ recordEngagementActivity }) => {
+          recordEngagementActivity(currentUser, currentUser?.role || 'student', 'study_session', 1);
+        }).catch(() => {});
       } catch (apiErr: any) {
         console.warn("Orion AI completion error:", apiErr?.message || apiErr);
         aiText = "⚠️ AI is temporarily unavailable. Please try again.";

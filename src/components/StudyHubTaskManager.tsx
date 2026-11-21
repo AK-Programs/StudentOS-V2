@@ -42,6 +42,7 @@ import {
 } from '../lib/supabaseTasks';
 import { soundService } from '../lib/soundService';
 import { awardStudentXP } from '../lib/gamification';
+import { recordEngagementActivity } from '../lib/engagementService';
 
 interface StudyHubTaskManagerProps {
   currentUser: UserProfile;
@@ -185,6 +186,13 @@ export const StudyHubTaskManager: React.FC<StudyHubTaskManagerProps> = ({
           customXpAmount: 25,
           customLabel: `Task: ${task.title}`
         });
+        void recordEngagementActivity(currentUser, currentUser?.role || 'student', 'study_session', 1, {
+          title: 'Study task completed',
+          subtitle: `Finished "${task.title}" in Study Hub.`,
+          ctaLabel: 'Open Study Hub',
+          actionTab: 'study_hub',
+          reason: 'Completed study task',
+        });
         showNotification('Task completed! +25 XP');
       } else {
         soundService.playButtonClick();
@@ -240,6 +248,7 @@ export const StudyHubTaskManager: React.FC<StudyHubTaskManagerProps> = ({
           customXpAmount: 25,
           customLabel: `Kanban Done: ${task.title}`
         });
+        void recordEngagementActivity(currentUser, currentUser?.role || 'student', 'study_session', 1);
         showNotification('Moved to Completed! +25 XP');
       }
     } catch (err) {

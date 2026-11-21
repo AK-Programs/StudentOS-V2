@@ -127,7 +127,7 @@ import { LevelUpCelebrationModal } from './components/gamification/LevelUpCelebr
 import { RegularBadgeUnlockModal } from './components/gamification/RegularBadgeUnlockModal';
 import { StreakRecoveryCelebrationModal } from './components/gamification/StreakRecoveryCelebrationModal';
 import { UnifiedEngagementPanel } from './components/engagement/UnifiedEngagementPanel';
-import { useEngagementOverview } from './lib/engagementService';
+import { useEngagementOverview, recordEngagementActivity } from './lib/engagementService';
 import { ParentalPortal } from './components/ParentalPortal';
 import { BrainBattleArena } from './components/BrainBattleArena';
 import { SyllabusStudyPlanner } from './components/SyllabusStudyPlanner';
@@ -568,6 +568,7 @@ export default function App() {
     loading: engagementLoading,
     refresh: refreshEngagementOverview,
   } = useEngagementOverview(currentUser, effectiveRole);
+  const lastNoteEngagementAtRef = useRef<number>(0);
   const winterSpinAccess = useFeatureAccess('winter_spin_wheel', currentUser);
 
   const isFacultyRoleForLb = ['teacher', 'coordinator', 'hod', 'admin'].includes((effectiveRole || '').toLowerCase());
@@ -2419,7 +2420,7 @@ export default function App() {
         house: 'Ruby' as any,
         studyHours: 14,
         quizzesTaken: 5,
-        streakDays: 8,
+        streakDays: 0,
         accountStatus: 'approved' as const
       };
       setCurrentUser(demoStudent);
@@ -4202,7 +4203,7 @@ ${resultText}
       birthdate: regRole === 'parent' ? '' : regBirthdate,
       studyHours: 8,
       quizzesTaken: 2,
-      streakDays: 4,
+      streakDays: 0,
       lastLogin: Date.now(),
       raw_data: {
         password_hash: passwordHash,
@@ -4330,6 +4331,13 @@ ${resultText}
       setNewNoteTitle('');
       setNewNoteContent('');
       awardStudentXP(currentUser, 'create_note', { uniqueItemId: noteId });
+      void recordEngagementActivity(currentUser, effectiveRole || 'student', 'study_session', 1, {
+        title: 'Study notes updated',
+        subtitle: 'Saved lecture notes in your vault.',
+        ctaLabel: 'Open Lecture Notes',
+        actionTab: 'notes',
+        reason: 'Saved lecture note',
+      });
       showNotification('Lecture notes secured.');
     } catch (err: any) {
       console.error('Error saving note:', err);
@@ -4499,6 +4507,13 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
       setNoteEditMode(true);
       await saveVaultNoteToSupabase(newNote, uid);
       awardStudentXP(currentUser, 'create_note', { uniqueItemId: newId });
+      void recordEngagementActivity(currentUser, effectiveRole || 'student', 'study_session', 1, {
+        title: 'AI lecture note saved',
+        subtitle: `Saved "${newNote.title}" in Lecture Notes.`,
+        ctaLabel: 'Open Lecture Notes',
+        actionTab: 'notes',
+        reason: 'Saved AI lecture note',
+      });
       showNotification(`✨ Lecture Note "${newNote.title}" saved to Vault!`);
     } catch (err: any) {
       console.error('Error saving AI note:', err);
@@ -4517,6 +4532,13 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
     setVaultNotes(updatedNotes);
     try {
       await saveVaultNoteToSupabase(updatedNote, currentUser.uid);
+      void recordEngagementActivity(currentUser, effectiveRole || 'student', 'study_session', 1, {
+        title: 'Lecture note refined',
+        subtitle: `Updated "${activeNote.title}" with Byte edits.`,
+        ctaLabel: 'Open Lecture Notes',
+        actionTab: 'notes',
+        reason: 'Updated lecture note',
+      });
       showNotification(`✨ Note "${activeNote.title}" updated with AI changes.`);
     } catch (err: any) {
       console.error('Error updating note:', err);
@@ -5300,7 +5322,7 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
       accountStatus: 'approved',
       studyHours: 12,
       quizzesTaken: 4,
-      streakDays: 5,
+      streakDays: 0,
       raw_data: {
         tasks: [],
         schedules: [],
@@ -5868,6 +5890,13 @@ Date: ${new Date().toLocaleDateString()}
       setQuizStarted(false);
       const pct = questions.length > 0 ? Math.round((quizScore / questions.length) * 100) : 0;
       awardStudentXP(currentUser, 'complete_quiz', { quizScorePercent: pct });
+      void recordEngagementActivity(currentUser, effectiveRole || 'student', 'quiz', 1, {
+        title: 'Practice Quiz Completed',
+        subtitle: `Scored ${quizScore}/${questions.length} in ${quizSubject}.`,
+        ctaLabel: 'Open Study Hub',
+        actionTab: 'study_hub',
+        reason: 'Completed practice quiz',
+      });
       showNotification(`Quiz Finished! Accuracy: ${quizScore}/${questions.length}.`);
     }
   };
@@ -6688,6 +6717,13 @@ CRITICAL WEB GROUNDING DIRECTIVE:
         ? streamResult.webSources
         : streamedWebSources;
       awardStudentXP(currentUser, 'use_ai_study');
+      void recordEngagementActivity(currentUser, effectiveRole || 'student', 'study_session', 1, {
+        title: 'Byte AI Study Session',
+        subtitle: 'Practiced concepts with Byte AI Mentor.',
+        ctaLabel: 'Open AI Mentor',
+        actionTab: 'ai_teacher',
+        reason: 'Asked Byte study question',
+      });
 
       if (streamResult.usage) {
         setAiUsageState(prev => ({
@@ -9608,16 +9644,16 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           <div className="flex items-center gap-1.5">
                             <span className="text-base font-bold font-mono tabular-nums text-white">
                               <NumberTicker
-                                value={engagementOverview?.streak?.currentStreak ?? currentUser.streakDays ?? 0}
+                                value={engagementOverview?.streak?.currentStreak ?? 0}
                                 suffix=" Days"
                               />
                             </span>
                             <span className="text-[10px] text-amber-400 font-medium capitalize">
-                              {(engagementOverview?.streak?.streakState || currentUser.streakState || 'active').replace('_', ' ')}
+                              {(engagementOverview?.streak?.streakState || 'active').replace('_', ' ')}
                             </span>
                           </div>
                           <p className="text-[11px] text-slate-400 font-normal">
-                            Best {engagementOverview?.streak?.longestStreak ?? currentUser.longestStreak ?? currentUser.streakDays ?? 0}d
+                            Best {engagementOverview?.streak?.longestStreak ?? 0}d
                           </p>
                         </div>
                       </button>
@@ -10324,6 +10360,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                       currentUser={currentUser}
                       dueCardsCount={dueCardsCount}
                       tasks={tasks}
+                      serverStreak={engagementOverview?.streak?.currentStreak ?? 0}
                       onNavigateTab={(tab, sub, contextId) => {
                         if (tab === 'study_hub' && sub) {
                           if (sub === 'flashcards' && contextId) {
@@ -10404,6 +10441,19 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                         const merged = { ...target, ...updates };
                         try {
                           await saveVaultNoteToSupabase(merged, currentUser?.uid);
+                          if (currentUser && (updates.content !== undefined || updates.title !== undefined)) {
+                            const now = Date.now();
+                            if (now - lastNoteEngagementAtRef.current > 12000) {
+                              lastNoteEngagementAtRef.current = now;
+                              void recordEngagementActivity(currentUser, effectiveRole || 'student', 'study_session', 1, {
+                                title: 'Lecture note saved',
+                                subtitle: `Saved updates to "${merged.title}".`,
+                                ctaLabel: 'Open Lecture Notes',
+                                actionTab: 'notes',
+                                reason: 'Saved lecture note',
+                              });
+                            }
+                          }
                         } catch (_) {}
                       }
                     }}
@@ -10422,6 +10472,15 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                       setVaultNotes(prev => [newNote, ...prev]);
                       setSelectedNoteId(newId);
                       saveVaultNoteToSupabase(newNote, currentUser?.uid).catch(() => {});
+                      if (currentUser && partial?.content && partial.content.trim().length > 0) {
+                        void recordEngagementActivity(currentUser, effectiveRole || 'student', 'study_session', 1, {
+                          title: 'Study note created',
+                          subtitle: `Saved "${newNote.title}" to Lecture Notes.`,
+                          ctaLabel: 'Open Lecture Notes',
+                          actionTab: 'notes',
+                          reason: 'Created lecture note',
+                        });
+                      }
                       showNotification(`✓ Created "${newNote.title}"!`);
                     }}
                     onDeleteNote={(id) => {
@@ -11821,6 +11880,13 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                           if (updatedHw) saveSupabaseHomework(updatedHw);
                           if (!isDone) {
                             awardStudentXP(currentUser, 'complete_homework', { uniqueItemId: hw.id });
+                            void recordEngagementActivity(currentUser, effectiveRole || 'student', 'homework', 1, {
+                              title: 'Homework Completed',
+                              subtitle: `Finished "${hw.title}".`,
+                              ctaLabel: 'Open Homework',
+                              actionTab: 'homework',
+                              reason: 'Completed homework task',
+                            });
                           }
                           showNotification(isDone ? 'Marked assignment incomplete.' : 'Excellent work! Assignment marked complete.');
                         };
@@ -15463,6 +15529,13 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                   await awardStudentXP(currentUser, 'use_ai_study', {
                     customXpAmount: 50,
                     customLabel: `Mastered topic: ${top} with Byte!`
+                  });
+                  void recordEngagementActivity(currentUser, effectiveRole || 'student', 'study_session', 1, {
+                    title: 'Byte Topic Mastery',
+                    subtitle: `Mastered "${top}" with Byte AI.`,
+                    ctaLabel: 'Open Study Hub',
+                    actionTab: 'study_hub',
+                    reason: 'Mastered topic with Byte AI',
                   });
                 } catch (_) {}
               }

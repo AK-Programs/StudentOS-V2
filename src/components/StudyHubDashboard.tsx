@@ -23,21 +23,26 @@ import { SyllabusTimetableService } from '../lib/syllabusTimetableService';
 import { StudySessionItem } from '../types/syllabusTimetable';
 import { VeylentraIcon } from './ui/VeylentraIcon';
 import { soundService } from '../lib/soundService';
+import { useEngagementOverview } from '../lib/engagementService';
 
 interface StudyHubDashboardProps {
   currentUser: UserProfile;
   onNavigateTab: (tab: string, subTab?: string, contextId?: string) => void;
   dueCardsCount: number;
   tasks: Task[];
+  serverStreak?: number;
 }
 
 export const StudyHubDashboard: React.FC<StudyHubDashboardProps> = ({
   currentUser,
   onNavigateTab,
   dueCardsCount,
-  tasks
+  tasks,
+  serverStreak
 }) => {
   const userId = getCanonicalUserId(currentUser?.uid || currentUser?.email);
+  const { overview: engagementOverview } = useEngagementOverview(currentUser);
+  const authoritativeStreak = engagementOverview?.streak?.currentStreak ?? serverStreak ?? 0;
 
   const [decks, setDecks] = useState<FlashcardDeck[]>([]);
   const [sessions, setSessions] = useState<StudySessionItem[]>([]);
@@ -161,7 +166,7 @@ export const StudyHubDashboard: React.FC<StudyHubDashboardProps> = ({
           <div className="p-3.5 rounded-xl bg-slate-950/80 border border-white/10 text-left min-w-[96px]">
             <span className="text-[11px] font-medium text-slate-400 block">Streak</span>
             <span className="text-2xl font-bold text-emerald-400 tabular-nums mt-0.5 block">
-              {currentUser.streakDays || 0}d
+              {authoritativeStreak}d
             </span>
           </div>
         </div>

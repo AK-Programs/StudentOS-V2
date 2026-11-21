@@ -61,6 +61,7 @@ import {
   ProfileCosmeticAvatar,
 } from './winter/ProfileCosmeticRenderer';
 import { winterAudio } from '../lib/winterAudio';
+import { useEngagementOverview } from '../lib/engagementService';
 
 interface ToastEventDetail {
   xpAdded: number;
@@ -164,6 +165,9 @@ export const DashboardGamificationCard: React.FC<{
   const [profile, setProfile] = useState<StudentGamificationStats>(() =>
     getLocalGamificationProfile(currentUser)
   );
+  const { overview: engagementOverview } = useEngagementOverview(currentUser);
+  const serverCurrentStreak = engagementOverview?.streak?.currentStreak ?? 0;
+  const serverLongestStreak = engagementOverview?.streak?.longestStreak ?? 0;
   const [rankInfo, setRankInfo] = useState<{ classRank: number; schoolRank: number; totalSchool: number }>({
     classRank: 1,
     schoolRank: 1,
@@ -277,14 +281,14 @@ export const DashboardGamificationCard: React.FC<{
               </span>
               <div className="flex items-baseline gap-1.5 mt-1">
                 <span className="text-lg sm:text-xl font-black text-orange-400">
-                  🔥 {profile.currentStreak}
+                  🔥 {serverCurrentStreak}
                 </span>
                 <span className="text-[11px] font-bold text-slate-300">
-                  {profile.currentStreak === 1 ? 'Day' : 'Days'}
+                  {serverCurrentStreak === 1 ? 'Day' : 'Days'}
                 </span>
               </div>
               <span className="text-[10px] text-slate-500 mt-0.5">
-                Best: {profile.longestStreak}d
+                Best: {serverLongestStreak}d
               </span>
             </div>
 
@@ -390,6 +394,9 @@ export const StudentGamificationHub: React.FC<{
   const [profile, setProfile] = useState<StudentGamificationStats>(() =>
     getLocalGamificationProfile(currentUser)
   );
+  const { overview: engagementOverview } = useEngagementOverview(currentUser);
+  const serverCurrentStreak = engagementOverview?.streak?.currentStreak ?? 0;
+  const serverLongestStreak = engagementOverview?.streak?.longestStreak ?? 0;
   const [leaderboard, setLeaderboard] = useState<StudentGamificationStats[]>([]);
   const [winterBadges, setWinterBadges] = useState<WinterBadgeItem[]>([]);
   const [winterBanners, setWinterBanners] = useState<WinterProfileBanner[]>([]);
@@ -485,9 +492,9 @@ export const StudentGamificationHub: React.FC<{
       case 'first_steps':
         return { current: Math.min(1, profile.counts.totalActions), max: 1 };
       case 'streak_3':
-        return { current: Math.min(3, Math.max(profile.currentStreak, profile.longestStreak)), max: 3 };
+        return { current: Math.min(3, Math.max(serverCurrentStreak, serverLongestStreak)), max: 3 };
       case 'streak_7':
-        return { current: Math.min(7, Math.max(profile.currentStreak, profile.longestStreak)), max: 7 };
+        return { current: Math.min(7, Math.max(serverCurrentStreak, serverLongestStreak)), max: 7 };
       case 'homework_hero':
         return { current: Math.min(5, profile.counts.homeworkCompleted), max: 5 };
       case 'flashcard_master':
@@ -566,7 +573,7 @@ export const StudentGamificationHub: React.FC<{
                   {levelInfo.current.title}
                 </span>
                 <span className="px-2.5 py-0.5 rounded-full bg-orange-500/20 border border-orange-500/40 text-orange-300 text-[10px] font-black inline-flex items-center gap-1">
-                  <Flame className="w-3 h-3" /> {profile.currentStreak} Day Streak
+                  <Flame className="w-3 h-3" /> {serverCurrentStreak} Day Streak
                 </span>
                 {winterCookies > 0 && (
                   <span className="px-2.5 py-0.5 rounded-full bg-sky-500/20 border border-sky-500/40 text-sky-300 text-[10px] font-black">
@@ -607,8 +614,8 @@ export const StudentGamificationHub: React.FC<{
             </div>
             <div className="p-3.5 rounded-2xl bg-slate-950/75 border border-white/10 text-center">
               <p className="text-[10px] font-bold uppercase text-slate-400">Study Streak</p>
-              <p className="text-xl font-black font-mono text-orange-400 mt-1">{profile.currentStreak}d</p>
-              <p className="text-[10px] text-slate-500">Best: {profile.longestStreak}d</p>
+              <p className="text-xl font-black font-mono text-orange-400 mt-1">{serverCurrentStreak}d</p>
+              <p className="text-[10px] text-slate-500">Best: {serverLongestStreak}d</p>
             </div>
             <div className="p-3.5 rounded-2xl bg-slate-950/75 border border-white/10 text-center">
               <p className="text-[10px] font-bold uppercase text-slate-400">Badges Earned</p>

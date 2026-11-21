@@ -17,6 +17,7 @@ import {
 } from '../types';
 import { buildAuthHeadersForUser } from './featureAccessService';
 import { BadgeDefinition, LevelDefinition, calculateLevelInfo } from './gamification';
+import { awardServerActionXp } from './winterFestivalService';
 
 export const ENGAGEMENT_UPDATED_EVENT = 'veylentra-engagement-updated';
 export const LEVEL_UP_EVENT = 'veylentra-level-up';
@@ -268,6 +269,12 @@ export async function recoverUserStreak(
     });
     const data = await res.json().catch(() => ({ success: false, error: 'Failed to process recovery' }));
     if (res.ok && data?.success) {
+      const todayKey = new Date().toISOString().split('T')[0];
+      void awardServerActionXp(user, 'streak_recovery', `recovery_${userId}_${todayKey}`).then(() => {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
+        }
+      });
       dispatchEngagementUpdate(userId);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
@@ -310,6 +317,13 @@ export async function claimEngagementMission(
     });
     const data = await res.json().catch(() => ({ success: false, error: 'Claim failed' }));
     if (res.ok && data?.success) {
+      const actionKey = data.actionKey || 'daily_mission_complete';
+      const itemKey = `${missionId}:${data.periodKey || new Date().toISOString().split('T')[0]}`;
+      void awardServerActionXp(user, actionKey, itemKey).then(() => {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));
+        }
+      });
       dispatchEngagementUpdate(userId);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('studentos-gamification-updated'));

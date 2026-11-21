@@ -44,6 +44,7 @@ export interface ServerStreakHistoryEntry {
 
 export interface ServerStreakRecord {
   userId: string;
+  role?: string;
   currentStreak: number;
   longestStreak: number;
   streakState: ServerStreakState;
@@ -55,7 +56,7 @@ export interface ServerStreakRecord {
   recoveriesThisMonth: number;
   recoveryMonthKey: string | null;
   recoveryCurrentProgress: number;
-  recoveryActivityDates: Record<string, { flashcards: number; quizzes: number; studyMinutes: number; actions: number; missionProgress: Record<string, number> }>;
+  recoveryActivityDates: Record<string, { flashcards: number; quizzes: number; studyMinutes: number; studySteps?: number; actions: number; missionProgress: Record<string, number> }>;
   claimedMissions: Record<string, { claimedAt: string; xpAwarded: number }>;
   history: ServerStreakHistoryEntry[];
   recentReturnContext?: {
@@ -398,31 +399,32 @@ export function getRecoveryProgressForDate(
 
   if (userRole === 'teacher') {
     return (dayEntry.missionProgress?.teacher_daily_attendance || 0) +
-      (dayEntry.missionProgress?.teacher_evaluate_submissions || 0) +
-      Math.min(1, dayEntry.actions || 0);
+      (dayEntry.missionProgress?.teacher_evaluate_submissions || 0);
   }
   if (userRole === 'coordinator') {
-    return (dayEntry.missionProgress?.coordinator_cohort_attendance_audit || 0) +
-      (dayEntry.missionProgress?.coordinator_submission_compliance || 0) +
-      Math.min(1, dayEntry.actions || 0);
+    return Math.max(
+      dayEntry.missionProgress?.coordinator_cohort_attendance_audit || 0,
+      dayEntry.missionProgress?.coordinator_submission_compliance || 0
+    );
   }
   if (userRole === 'admin' || userRole === 'super_admin') {
-    return (dayEntry.missionProgress?.admin_approvals_queue_review || 0) +
-      (dayEntry.missionProgress?.admin_policy_broadcast_audit || 0) +
-      Math.min(1, dayEntry.actions || 0);
+    return Math.max(
+      dayEntry.missionProgress?.admin_approvals_queue_review || 0,
+      dayEntry.missionProgress?.admin_policy_broadcast_audit || 0
+    );
   }
 
-  // Student learning steps
+  // Student learning steps (5 verified actions: flashcards, quizzes, notes, Byte AI, homework)
   switch (policy.requiredRecoveryActivity) {
     case 'review_flashcards':
       return dayEntry.flashcards || 0;
     case 'complete_quiz':
       return dayEntry.quizzes || 0;
     case 'study_session':
-      return dayEntry.studyMinutes || dayEntry.actions || 0;
+      return (dayEntry.studySteps ?? dayEntry.studyMinutes ?? 0) || dayEntry.actions || 0;
     case 'review_flashcards_or_quiz':
     default:
-      return (dayEntry.flashcards || 0) + (dayEntry.quizzes || 0) * 5;
+      return (dayEntry.flashcards || 0) + (dayEntry.quizzes || 0) + (dayEntry.studySteps ?? dayEntry.studyMinutes ?? 0);
   }
 }
 
@@ -503,7 +505,7 @@ export function executeVerifiedStreakRecovery(
         ? ['oversight_review', 'cohort_audit', 'grade_submission', 'attendance_mark']
         : (userRole === 'admin' || userRole === 'super_admin')
           ? ['admin_audit', 'policy_update', 'leave_approval', 'role_approval', 'operational_action']
-          : ['flashcards', 'quiz', 'study_session', 'homework'];
+          : ['flashcards', 'quiz', 'study_session', 'homework', 'daily_checkin'];
 
   const validActivityType = validActivityTypes.includes(
     String(evidence.activityType || '').toLowerCase()
@@ -588,6 +590,7 @@ export function recordVerifiedActivity(
     flashcards: 0,
     quizzes: 0,
     studyMinutes: 0,
+    studySteps: 0,
     actions: 0,
     missionProgress: {},
   };
@@ -595,7 +598,12 @@ export function recordVerifiedActivity(
   dayEntry.actions += 1;
   if (input.activityType === 'flashcards') dayEntry.flashcards += count;
   if (input.activityType === 'quiz') dayEntry.quizzes += count;
-  if (input.activityType === 'study_session') dayEntry.studyMinutes += count;
+  if (input.activityType === 'study_session') {
+    dayEntry.studyMinutes += count;
+    dayEntry.studySteps = (dayEntry.studySteps || 0) + 1;
+  } else if (input.activityType === 'homework' || input.activityType === 'daily_checkin') {
+    dayEntry.studySteps = (dayEntry.studySteps || 0) + 1;
+  }
 
   // Increment relevant mission progress keys
   const incMission = (id: string, delta: number) => {
@@ -819,24 +827,30 @@ async function loadOrInitializeUserStreakRecord(
   grade: string;
   section: string;
   earnedBadges: Record<string, string>;
+  hasDbRow: boolean;
 }> {
   const memExisting = memoryUserRecords.get(userId);
   let xp = 0;
   let name = 'Member';
-  let role = 'student';
+  let role = memExisting?.role || 'student';
   let grade = '';
   let section = '';
   let earnedBadges: Record<string, string> = {};
   let profileRow: any = null;
   let gamificationDoc: any = null;
   let storedStreakDoc: any = null;
+  let engagementStreakRow: any = null;
 
   if (shouldUseDb(url, key)) {
     const effectiveKey = getFeatureAndWinterSupabaseKey(url, key) || WORKING_ANON_KEY;
     const headers = { apikey: effectiveKey, Authorization: `Bearer ${effectiveKey}` };
     const encUid = encodeURIComponent(userId);
 
-    const [pRes, gRes, sRes, lRes] = await Promise.all([
+    const [esRes, pRes, gRes, sRes, lRes] = await Promise.all([
+      supabaseFetchWithAnonRetry(
+        `${url}/rest/v1/engagement_streaks?user_id=eq.${encUid}&select=*&limit=1`,
+        { headers }
+      ).catch(() => null),
       supabaseFetchWithAnonRetry(
         `${url}/rest/v1/user_profiles?or=(id.eq.${encUid},uid.eq.${encUid})&select=*&limit=2`,
         { headers }
@@ -855,6 +869,12 @@ async function loadOrInitializeUserStreakRecord(
       ).catch(() => null),
     ]);
 
+    if (esRes && esRes.ok) {
+      const rows = await esRes.json().catch(() => []);
+      if (Array.isArray(rows) && rows[0]) {
+        engagementStreakRow = rows[0];
+      }
+    }
     if (pRes && pRes.ok) {
       const rows = await pRes.json().catch(() => []);
       if (Array.isArray(rows) && rows[0]) {
@@ -889,8 +909,46 @@ async function loadOrInitializeUserStreakRecord(
     }
   }
 
-  // Build authoritative StreakRecord respecting real DB columns & never inventing an 8-day streak
-  const baseSource = memExisting || storedStreakDoc;
+  let dbStreakRowRecord: ServerStreakRecord | null = null;
+  if (engagementStreakRow) {
+    const sj =
+      engagementStreakRow.state_json && typeof engagementStreakRow.state_json === 'object'
+        ? engagementStreakRow.state_json
+        : {};
+    dbStreakRowRecord = {
+      userId,
+      role: String(engagementStreakRow.role || sj.role || role || 'student').toLowerCase(),
+      currentStreak: Number(engagementStreakRow.current_streak ?? sj.currentStreak ?? 0),
+      longestStreak: Number(engagementStreakRow.longest_streak ?? sj.longestStreak ?? 0),
+      streakState: (engagementStreakRow.streak_state || sj.streakState || 'active') as ServerStreakState,
+      frozenStreakCount: Number(engagementStreakRow.frozen_streak_count ?? sj.frozenStreakCount ?? 0),
+      lastActiveDate: engagementStreakRow.last_active_date ?? sj.lastActiveDate ?? null,
+      timezone: sj.timezone || profileRow?.streak_timezone || policy.defaultTimezone,
+      recoveryDeadline: engagementStreakRow.recovery_deadline ?? sj.recoveryDeadline ?? null,
+      recoveryLastUsedAt: sj.recoveryLastUsedAt || profileRow?.streak_recovery_last_used_at || null,
+      recoveriesThisMonth: Number(engagementStreakRow.recoveries_this_month ?? sj.recoveriesThisMonth ?? 0),
+      recoveryMonthKey: sj.recoveryMonthKey || profileRow?.streak_recovery_month || null,
+      recoveryCurrentProgress: Number(sj.recoveryCurrentProgress || 0),
+      recoveryActivityDates: sj.recoveryActivityDates || {},
+      claimedMissions: sj.claimedMissions || {},
+      history: Array.isArray(sj.history) ? sj.history : [],
+      recentReturnContext: sj.recentReturnContext ?? null,
+      updatedAt: String(engagementStreakRow.updated_at || sj.updatedAt || new Date().toISOString()),
+    };
+  }
+
+  // Prefer newest persisted source between engagement_streaks table and global_data backup; compare timestamps against in-memory cache
+  const esTs = dbStreakRowRecord?.updatedAt ? Date.parse(dbStreakRowRecord.updatedAt) : 0;
+  const gdTs = storedStreakDoc?.updatedAt ? Date.parse(storedStreakDoc.updatedAt) : 0;
+  const dbSource: ServerStreakRecord | null =
+    dbStreakRowRecord && (!storedStreakDoc || esTs >= gdTs)
+      ? dbStreakRowRecord
+      : storedStreakDoc || dbStreakRowRecord || null;
+  const memTs = memExisting?.updatedAt ? Date.parse(memExisting.updatedAt) : 0;
+  const dbTs = dbSource?.updatedAt ? Date.parse(dbSource.updatedAt) : 0;
+  const baseSource: ServerStreakRecord | null =
+    memExisting && (!dbSource || memTs >= dbTs) ? memExisting : dbSource;
+
   const dbStreak = profileRow?.streak_days !== undefined && profileRow?.streak_days !== null
     ? Number(profileRow.streak_days)
     : undefined;
@@ -904,25 +962,29 @@ async function loadOrInitializeUserStreakRecord(
 
   const longestStreakVal = Math.max(
     currentStreakVal,
-    Number(baseSource?.longestStreak ?? dbLongest ?? 0),
-    Number(gamificationDoc?.longestStreak ?? 0)
+    Number(baseSource?.longestStreak ?? dbLongest ?? 0)
   );
 
   const record: ServerStreakRecord = baseSource
     ? {
         ...baseSource,
         userId,
+        role: baseSource.role || role,
         currentStreak: currentStreakVal,
         longestStreak: longestStreakVal,
+        recoveryActivityDates: baseSource.recoveryActivityDates || {},
+        claimedMissions: baseSource.claimedMissions || {},
+        history: Array.isArray(baseSource.history) ? baseSource.history : [],
         timezone: baseSource.timezone || profileRow?.streak_timezone || policy.defaultTimezone,
       }
     : {
         userId,
+        role,
         currentStreak: currentStreakVal,
         longestStreak: longestStreakVal,
         streakState: (profileRow?.streak_state as ServerStreakState) || 'active',
         frozenStreakCount: Number(profileRow?.frozen_streak_count || 0),
-        lastActiveDate: profileRow?.last_active_date || gamificationDoc?.lastActiveDate || null,
+        lastActiveDate: profileRow?.last_active_date || null,
         timezone: profileRow?.streak_timezone || policy.defaultTimezone,
         recoveryDeadline: profileRow?.streak_recovery_deadline || null,
         recoveryLastUsedAt: profileRow?.streak_recovery_last_used_at || null,
@@ -937,15 +999,18 @@ async function loadOrInitializeUserStreakRecord(
       };
 
   memoryUserRecords.set(userId, record);
-  return { record, xp, name, role, grade, section, earnedBadges };
+  return { record, xp, name, role, grade, section, earnedBadges, hasDbRow: Boolean(dbStreakRowRecord) };
 }
 
 async function persistUserStreakRecord(
   url: string,
   key: string,
-  record: ServerStreakRecord
+  record: ServerStreakRecord,
+  roleOverride?: string
 ): Promise<void> {
-  memoryUserRecords.set(record.userId, record);
+  const resolvedRole = String(roleOverride || record.role || 'student').toLowerCase();
+  const recordToSave: ServerStreakRecord = { ...record, role: resolvedRole };
+  memoryUserRecords.set(recordToSave.userId, recordToSave);
   if (!shouldUseDb(url, key)) return;
   const effectiveKey = getFeatureAndWinterSupabaseKey(url, key) || WORKING_ANON_KEY;
   const headers = {
@@ -954,33 +1019,51 @@ async function persistUserStreakRecord(
     'Content-Type': 'application/json',
     Prefer: 'resolution=merge-duplicates',
   };
-  const encUid = encodeURIComponent(record.userId);
+  const encUid = encodeURIComponent(recordToSave.userId);
+  const updatedAtIso = recordToSave.updatedAt || new Date().toISOString();
 
   await Promise.allSettled([
+    supabaseFetchWithAnonRetry(`${url}/rest/v1/engagement_streaks?on_conflict=user_id`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        user_id: recordToSave.userId,
+        role: resolvedRole,
+        current_streak: recordToSave.currentStreak,
+        longest_streak: recordToSave.longestStreak,
+        last_active_date: recordToSave.lastActiveDate,
+        streak_state: recordToSave.streakState,
+        frozen_streak_count: recordToSave.frozenStreakCount,
+        recovery_deadline: recordToSave.recoveryDeadline,
+        recoveries_this_month: recordToSave.recoveriesThisMonth,
+        state_json: recordToSave,
+        updated_at: updatedAtIso,
+      }),
+    }),
     supabaseFetchWithAnonRetry(`${url}/rest/v1/global_data?on_conflict=id`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        id: `${USER_STREAK_DOC_PREFIX}${record.userId}`,
-        data: record,
-        updated_at: record.updatedAt,
+        id: `${USER_STREAK_DOC_PREFIX}${recordToSave.userId}`,
+        data: recordToSave,
+        updated_at: updatedAtIso,
       }),
     }),
     supabaseFetchWithAnonRetry(`${url}/rest/v1/user_profiles?or=(id.eq.${encUid},uid.eq.${encUid})`, {
       method: 'PATCH',
       headers: { apikey: effectiveKey, Authorization: `Bearer ${effectiveKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        streak_days: record.currentStreak,
-        longest_streak: record.longestStreak,
-        streak_state: record.streakState,
-        frozen_streak_count: record.frozenStreakCount,
-        last_active_date: record.lastActiveDate,
-        streak_timezone: record.timezone,
-        streak_recovery_deadline: record.recoveryDeadline,
-        streak_recovery_last_used_at: record.recoveryLastUsedAt,
-        streak_recoveries_this_month: record.recoveriesThisMonth,
-        streak_recovery_month: record.recoveryMonthKey,
-        streak_updated_at: record.updatedAt,
+        streak_days: recordToSave.currentStreak,
+        longest_streak: recordToSave.longestStreak,
+        streak_state: recordToSave.streakState,
+        frozen_streak_count: recordToSave.frozenStreakCount,
+        last_active_date: recordToSave.lastActiveDate,
+        streak_timezone: recordToSave.timezone,
+        streak_recovery_deadline: recordToSave.recoveryDeadline,
+        streak_recovery_last_used_at: recordToSave.recoveryLastUsedAt,
+        streak_recoveries_this_month: recordToSave.recoveriesThisMonth,
+        streak_recovery_month: recordToSave.recoveryMonthKey,
+        streak_updated_at: updatedAtIso,
       }),
     }),
   ]);
@@ -1128,7 +1211,17 @@ export function registerEngagementSystemRoutes(
         }
       }
 
-      await persistUserStreakRecord(cfg.url, cfg.key, evaluated.record);
+      const stateChanged =
+        evaluated.record.streakState !== loaded.record.streakState ||
+        evaluated.record.currentStreak !== loaded.record.currentStreak ||
+        evaluated.record.frozenStreakCount !== loaded.record.frozenStreakCount ||
+        evaluated.record.recoveryMonthKey !== loaded.record.recoveryMonthKey;
+      if (!loaded.hasDbRow || recordUpdated || stateChanged) {
+        if (recordUpdated || stateChanged) {
+          evaluated.record.updatedAt = new Date().toISOString();
+        }
+        await persistUserStreakRecord(cfg.url, cfg.key, evaluated.record, effectiveRole);
+      }
 
       const storeUser = deps.getGamificationStore()?.[userId];
       const authoritativeXp = Math.max(loaded.xp, Number(storeUser?.xp || 0));
@@ -1234,10 +1327,9 @@ export function registerEngagementSystemRoutes(
       const cfg = deps.getSupabaseServerConfig();
       const policy = await loadPolicyConfig(cfg.url, cfg.key);
       const loaded = await loadOrInitializeUserStreakRecord(cfg.url, cfg.key, userId, policy);
-      const result = recordVerifiedActivity(loaded.record, policy, { activityType, count, returnContext });
-      await persistUserStreakRecord(cfg.url, cfg.key, result.record);
-
       const effectiveRole = String(role || actor?.role || loaded.role || 'student').toLowerCase();
+      const result = recordVerifiedActivity(loaded.record, policy, { activityType, count, returnContext });
+      await persistUserStreakRecord(cfg.url, cfg.key, result.record, effectiveRole);
       const roleReqCount = effectiveRole === 'student' ? policy.recoveryRequiredCount : 1;
       return res.json({
         success: true,
@@ -1279,7 +1371,7 @@ export function registerEngagementSystemRoutes(
         verifiedCount,
         role: effectiveRole,
       });
-      await persistUserStreakRecord(cfg.url, cfg.key, outcome.record);
+      await persistUserStreakRecord(cfg.url, cfg.key, outcome.record, effectiveRole);
 
       if (!outcome.ok) {
         return res.status(outcome.status).json({ success: false, error: outcome.error });
@@ -1341,7 +1433,7 @@ export function registerEngagementSystemRoutes(
         xpAwarded,
       };
       evaluated.record.updatedAt = new Date().toISOString();
-      await persistUserStreakRecord(cfg.url, cfg.key, evaluated.record);
+      await persistUserStreakRecord(cfg.url, cfg.key, evaluated.record, effectiveRole);
 
       return res.json({
         success: true,
@@ -1475,7 +1567,7 @@ export async function recordEngagementActivityServer(
     const policy = await loadPolicyConfig(url, key);
     const loaded = await loadOrInitializeUserStreakRecord(url, key, userId, policy);
     const result = recordVerifiedActivity(loaded.record, policy, { activityType, count });
-    await persistUserStreakRecord(url, key, result.record);
+    await persistUserStreakRecord(url, key, result.record, role || loaded.role);
     return { ok: true, streakIncremented: result.streakIncremented, currentStreak: result.record.currentStreak };
   } catch (err) {
     console.warn('[engagement-engine] recordEngagementActivityServer failed:', err);

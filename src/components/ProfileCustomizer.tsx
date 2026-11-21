@@ -18,6 +18,7 @@ import { fetchWinterStatus, WinterStatusResponse } from '../lib/winterFestivalSe
 import { ProfileBannerBackdrop, ProfileCosmeticAvatar } from './winter/ProfileCosmeticRenderer';
 import { WinterCosmeticsStudioSection } from './winter/WinterCosmeticsStudioSection';
 import { SnowflakeVector } from './winter/WinterArtwork';
+import { useEngagementOverview } from '../lib/engagementService';
 
 interface ProfileCustomizerProps {
   currentUser: UserProfile;
@@ -70,6 +71,8 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
   const [customStatus, setCustomStatus] = useState<string>(currentUser.customStatus || '');
   const [avatarFrame, setAvatarFrame] = useState<ProfileFrameStyle>((currentUser.avatarFrame as ProfileFrameStyle) || 'none');
   const [accentColor, setAccentColor] = useState<string>(currentUser.accentColor || 'indigo');
+  const { overview: engagementOverview } = useEngagementOverview(currentUser);
+  const authoritativeStreak = engagementOverview?.streak?.currentStreak ?? 0;
   const [winterStatus, setWinterStatus] = useState<WinterStatusResponse | null>(null);
   const [winterLoading, setWinterLoading] = useState<boolean>(false);
   const [previewBannerId, setPreviewBannerId] = useState<string | null>(null);
@@ -750,7 +753,7 @@ export function ProfileCustomizer({ currentUser, onUpdateUser, onProfileUpdated,
               <div className="pt-2 border-t border-white/5 grid grid-cols-2 gap-2 text-[11px]">
                 <div className="p-2.5 bg-slate-900/50 rounded-xl border border-white/5">
                   <span className="text-slate-500 font-bold uppercase text-[9px] block">Streak</span>
-                  <span className="text-amber-400 font-bold font-mono tabular-nums">{currentUser.streakDays ?? 0} Days</span>
+                  <span className="text-amber-400 font-bold font-mono tabular-nums">{authoritativeStreak} Days</span>
                 </div>
                 <div className="p-2.5 bg-slate-900/50 rounded-xl border border-white/5">
                   <span className="text-slate-500 font-bold uppercase text-[9px] block">House</span>

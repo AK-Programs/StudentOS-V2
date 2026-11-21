@@ -105,9 +105,9 @@ export const UnifiedEngagementPanel: React.FC<UnifiedEngagementPanelProps> = ({
   const [claimingId, setClaimingId] = useState<string | null>(null);
   const [recovering, setRecovering] = useState<boolean>(false);
 
-  const streakCount = overview?.streak?.currentStreak ?? currentUser?.streakDays ?? 0;
-  const longestStreak = overview?.streak?.longestStreak ?? currentUser?.longestStreak ?? streakCount;
-  const streakState = overview?.streak?.streakState ?? currentUser?.streakState ?? 'active';
+  const streakCount = overview?.streak?.currentStreak ?? 0;
+  const longestStreak = overview?.streak?.longestStreak ?? streakCount;
+  const streakState = overview?.streak?.streakState ?? 'active';
   const stateMeta = STREAK_STATE_META[streakState] || STREAK_STATE_META.active;
 
   const authorizedGrades = getAuthorizedGrades(currentUser);

@@ -32,6 +32,7 @@ import {
   markByteReminderHandled,
   snoozeByteReminder
 } from '../../lib/byteReminderEngine';
+import { useEngagementOverview } from '../../lib/engagementService';
 
 interface FloatingByteWidgetProps {
   activeTab: string;
@@ -48,15 +49,9 @@ interface FloatingByteWidgetProps {
 }
 
 const MINIMIZED_STORAGE_KEY = 'studentos_byte_minimized';
-const STREAK_STORAGE_KEY = 'studentos_byte_streak';
 const AUTOVOICE_STORAGE_KEY = 'studentos_byte_autovoice';
 const LONG_PRESS_DURATION_MS = 3000;
 const MOVE_CANCEL_THRESHOLD_PX = 10;
-
-function getTodayString(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
 export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
   activeTab,
@@ -97,26 +92,11 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
     }
   });
 
-  const userStreakStorageKey = `${STREAK_STORAGE_KEY}_${userId}`;
-  const [streakData, setStreakData] = useState<{ count: number; lastDate: string; softened: boolean }>(() => {
-    const today = getTodayString();
-    const initialCount = Number(currentUser.streakDays ?? 0);
-    if (typeof window === 'undefined') return { count: initialCount, lastDate: today, softened: false };
-    try {
-      const raw = localStorage.getItem(userStreakStorageKey);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        return {
-          count: Math.max(initialCount, Number(parsed.count || 0)),
-          lastDate: parsed.lastDate || today,
-          softened: Boolean(parsed.softened),
-        };
-      }
-    } catch {
-      // ignore storage errors
-    }
-    return { count: initialCount, lastDate: today, softened: false };
-  });
+  const { overview: engagementOverview } = useEngagementOverview(currentUser, activeRole);
+  const serverStreakCount = engagementOverview?.streak?.currentStreak ?? 0;
+  const serverStreakProtected =
+    engagementOverview?.streak?.streakState === 'frozen' ||
+    engagementOverview?.streak?.streakState === 'recovery_available';
 
   const [reminderVersion, setReminderVersion] = useState<number>(0);
   const [currentMood, setCurrentMood] = useState<Byte3DMood>('idle');
@@ -284,24 +264,12 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
       } catch {
         // ignore audio errors
       }
-      const today = getTodayString();
-      setStreakData(prev => {
-        const syncedBase = Math.max(prev.count, Number(currentUser.streakDays ?? 0));
-        const nextCount = prev.lastDate === today ? syncedBase : syncedBase + 1;
-        const updated = { count: nextCount, lastDate: today, softened: false };
-        try {
-          localStorage.setItem(userStreakStorageKey, JSON.stringify(updated));
-        } catch {
-          // ignore
-        }
-        return updated;
-      });
       setRewardToast('+15 XP · Task Completed');
       setTimeout(() => setRewardToast(null), 3200);
       setTimeout(() => setCurrentMood('idle'), 2800);
     }
     prevCompletedTasksCount.current = currentCompleted;
-  }, [tasks, currentUser.streakDays, userStreakStorageKey]);
+  }, [tasks]);
 
   if (!isAllowedTab) {
     return null;
@@ -343,10 +311,10 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
                   <span className="font-extrabold text-white text-xs tracking-tight">Byte</span>
                   <div
                     className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-[10px] font-bold text-amber-300 tabular-nums"
-                    title={streakData.softened ? 'Streak protected' : `${streakData.count}-day streak`}
+                    title={serverStreakProtected ? 'Streak protected' : `${serverStreakCount}-day streak`}
                   >
                     <Flame className="w-3 h-3 text-amber-400" />
-                    <span>{streakData.count}</span>
+                    <span>{serverStreakCount}</span>
                   </div>
                   <span className="text-[10px] font-semibold text-slate-400 tabular-nums">
                     {activeReminders.length} queued
