@@ -42,6 +42,13 @@ export interface ServerStreakHistoryEntry {
   createdAt: string;
 }
 
+export interface FrozenStreakSnapshot {
+  streakCount: number;
+  lastActiveDate: string | null;
+  frozenAt: string;
+  recoveryDeadline: string | null;
+}
+
 export interface ServerStreakRecord {
   userId: string;
   role?: string;
@@ -49,6 +56,7 @@ export interface ServerStreakRecord {
   longestStreak: number;
   streakState: ServerStreakState;
   frozenStreakCount: number;
+  frozenSnapshot?: FrozenStreakSnapshot | null;
   lastActiveDate: string | null;
   timezone: string;
   recoveryDeadline: string | null;
@@ -58,6 +66,7 @@ export interface ServerStreakRecord {
   recoveryCurrentProgress: number;
   recoveryActivityDates: Record<string, { flashcards: number; quizzes: number; studyMinutes: number; studySteps?: number; actions: number; missionProgress: Record<string, number> }>;
   claimedMissions: Record<string, { claimedAt: string; xpAwarded: number }>;
+  processedEventIds?: string[];
   history: ServerStreakHistoryEntry[];
   recentReturnContext?: {
     title: string;
@@ -162,6 +171,31 @@ let memoryPolicyConfig: EngagementPolicyConfig = {
 };
 let memoryAuditLogs: EngagementAuditEntry[] = [];
 const memoryUserRecords = new Map<string, ServerStreakRecord>();
+const userStreakLocks = new Map<string, Promise<unknown>>();
+
+export async function withUserStreakLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  const lockKey = userId || '__anonymous__';
+  const prev = userStreakLocks.get(lockKey) || Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  const tail = prev.catch(() => undefined).then(() => gate);
+  userStreakLocks.set(lockKey, tail);
+  await prev.catch(() => undefined);
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (userStreakLocks.get(lockKey) === tail) {
+      userStreakLocks.delete(lockKey);
+    }
+  }
+}
+
+function cloneServerStreakRecord(rec: ServerStreakRecord): ServerStreakRecord {
+  return JSON.parse(JSON.stringify(rec)) as ServerStreakRecord;
+}
 
 const SERVER_LEVELS = [
   { level: 1, title: 'Curious Learner', minXp: 0 },
@@ -256,8 +290,10 @@ export function evaluateStreakTransition(
   const next: ServerStreakRecord = {
     ...record,
     timezone: tz,
+    frozenSnapshot: record.frozenSnapshot ? { ...record.frozenSnapshot } : null,
     recoveryActivityDates: { ...(record.recoveryActivityDates || {}) },
     claimedMissions: { ...(record.claimedMissions || {}) },
+    processedEventIds: Array.isArray(record.processedEventIds) ? [...record.processedEventIds] : [],
     history: [...(record.history || [])],
   };
 
@@ -267,8 +303,15 @@ export function evaluateStreakTransition(
   }
 
   // Zero streak user stays cleanly at 0 (NEVER coerced to 1 or 8!)
-  if (next.currentStreak <= 0 && next.frozenStreakCount <= 0 && !next.lastActiveDate) {
+  if (
+    next.currentStreak <= 0 &&
+    next.frozenStreakCount <= 0 &&
+    !(next.frozenSnapshot && next.frozenSnapshot.streakCount > 0) &&
+    !next.lastActiveDate
+  ) {
     next.currentStreak = 0;
+    next.frozenStreakCount = 0;
+    next.frozenSnapshot = null;
     next.streakState = 'active';
     return {
       record: next,
@@ -312,26 +355,56 @@ export function evaluateStreakTransition(
   // Missed at least 1 full day (daysGap >= 2)
   const missedFullDays = daysGap - 1;
   const recoveryFeatureActive = policy.streakRecoveryEnabled && policy.featureFlags.streakRecovery;
+  const preservedCount = Math.max(
+    next.frozenSnapshot?.streakCount || 0,
+    next.frozenStreakCount || 0,
+    next.currentStreak || 0
+  );
+  const effectiveDeadline = next.frozenSnapshot?.recoveryDeadline || next.recoveryDeadline;
+  const deadlinePassed = Boolean(
+    effectiveDeadline &&
+    Number.isFinite(Date.parse(effectiveDeadline)) &&
+    Date.parse(effectiveDeadline) < nowMs
+  );
 
-  if (recoveryFeatureActive && missedFullDays <= policy.maxMissedDaysForRecovery) {
-    const preservedCount = Math.max(next.frozenStreakCount || 0, next.currentStreak || 0);
+  if (recoveryFeatureActive && missedFullDays <= policy.maxMissedDaysForRecovery && !deadlinePassed) {
     if (preservedCount > 0) {
-      if (next.streakState !== 'recovery_available' && next.streakState !== 'frozen') {
+      const needsFreezeTransition =
+        (next.streakState !== 'recovery_available' && next.streakState !== 'frozen') ||
+        !next.frozenSnapshot ||
+        next.frozenSnapshot.streakCount !== preservedCount ||
+        next.frozenStreakCount !== preservedCount;
+
+      if (needsFreezeTransition) {
+        const deadlineIso =
+          effectiveDeadline ||
+          new Date(
+            nowMs + Math.max(1, policy.maxMissedDaysForRecovery - missedFullDays + 1) * 86400000
+          ).toISOString();
+        const wasFrozenAlready =
+          next.streakState === 'recovery_available' || next.streakState === 'frozen';
+
         next.frozenStreakCount = preservedCount;
         next.streakState = 'recovery_available';
-        // Deadline is end of the last allowed recovery day in UTC approximation
-        next.recoveryDeadline = new Date(
-          nowMs + Math.max(1, policy.maxMissedDaysForRecovery - missedFullDays + 1) * 86400000
-        ).toISOString();
-        next.history.unshift({
-          id: `sh_${crypto.randomBytes(4).toString('hex')}`,
-          activityDate: todayDate,
-          eventType: 'frozen',
-          streakBefore: preservedCount,
-          streakAfter: preservedCount,
-          source: 'server_evaluator',
-          createdAt: new Date(nowMs).toISOString(),
-        });
+        next.recoveryDeadline = deadlineIso;
+        next.frozenSnapshot = {
+          streakCount: preservedCount,
+          lastActiveDate: next.frozenSnapshot?.lastActiveDate ?? next.lastActiveDate,
+          frozenAt: next.frozenSnapshot?.frozenAt || new Date(nowMs).toISOString(),
+          recoveryDeadline: deadlineIso,
+        };
+
+        if (!wasFrozenAlready) {
+          next.history.unshift({
+            id: `sh_${crypto.randomBytes(4).toString('hex')}`,
+            activityDate: todayDate,
+            eventType: 'frozen',
+            streakBefore: preservedCount,
+            streakAfter: preservedCount,
+            source: 'server_evaluator',
+            createdAt: new Date(nowMs).toISOString(),
+          });
+        }
       }
 
       // Check cooldown & monthly limits
@@ -354,14 +427,28 @@ export function evaluateStreakTransition(
         recoveryBlockedReason: blockedReason,
       };
     }
+
+    // In recovery window gap, but no streak > 0 snapshot exists to recover
+    next.frozenStreakCount = 0;
+    next.frozenSnapshot = null;
+    next.currentStreak = 0;
+    next.recoveryDeadline = null;
+    next.streakState = 'expired';
+    return {
+      record: next,
+      todayDate,
+      recoveryEligible: false,
+      recoveryBlockedReason: 'No valid frozen streak snapshot exists to recover.',
+    };
   }
 
-  // Beyond recovery window or recovery disabled -> Expired
-  if (next.currentStreak > 0 || next.frozenStreakCount > 0) {
-    const before = Math.max(next.currentStreak, next.frozenStreakCount);
+  // Beyond recovery window, deadline passed, or recovery disabled -> Expired
+  if (preservedCount > 0 || next.currentStreak > 0 || next.frozenStreakCount > 0) {
+    const before = preservedCount;
     next.longestStreak = Math.max(next.longestStreak, before);
     next.currentStreak = 0;
     next.frozenStreakCount = 0;
+    next.frozenSnapshot = null;
     next.streakState = 'expired';
     next.recoveryDeadline = null;
     if (!next.history.some(h => h.activityDate === todayDate && h.eventType === 'expired')) {
@@ -376,6 +463,10 @@ export function evaluateStreakTransition(
       });
     }
   } else {
+    next.currentStreak = 0;
+    next.frozenStreakCount = 0;
+    next.frozenSnapshot = null;
+    next.recoveryDeadline = null;
     next.streakState = 'expired';
   }
 
@@ -487,30 +578,36 @@ export function executeVerifiedStreakRecovery(
   }
 
   if (rec.recoveryDeadline && new Date(rec.recoveryDeadline).getTime() < nowMs) {
+    const before = Math.max(rec.frozenSnapshot?.streakCount || 0, rec.frozenStreakCount || 0, rec.currentStreak || 0);
+    rec.longestStreak = Math.max(rec.longestStreak, before);
     rec.streakState = 'expired';
     rec.currentStreak = 0;
     rec.frozenStreakCount = 0;
+    rec.frozenSnapshot = null;
+    rec.recoveryDeadline = null;
     return { ok: false, status: 400, error: 'Recovery deadline has passed.', record: rec, restoredFrom: 0, newStreak: 0 };
   }
 
-  // Must satisfy verified role activity count on server OR corroborated server evidence
+  // Require explicit non-zero frozen streak snapshot (NEVER fabricate recovery from 0 -> 1)
+  const snapshotCount =
+    rec.frozenSnapshot && rec.frozenSnapshot.streakCount > 0
+      ? rec.frozenSnapshot.streakCount
+      : rec.frozenStreakCount;
+  if (!snapshotCount || snapshotCount <= 0) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'No valid frozen streak snapshot exists to recover.',
+      record: rec,
+      restoredFrom: 0,
+      newStreak: rec.currentStreak,
+    };
+  }
+
+  // Must satisfy verified role activity count recorded on the server (never trust client-supplied verifiedCount)
   const reqCount = userRole === 'student' ? policy.recoveryRequiredCount : 1;
   const trackedProgress = getRecoveryProgressForDate(rec, todayDate, policy, userRole);
-  const verifiedPayloadCount = Math.max(0, Number(evidence.verifiedCount || 0));
-
-  const validActivityTypes =
-    userRole === 'teacher'
-      ? ['attendance_mark', 'grade_submission', 'teaching_action', 'flashcards', 'quiz']
-      : userRole === 'coordinator'
-        ? ['oversight_review', 'cohort_audit', 'grade_submission', 'attendance_mark']
-        : (userRole === 'admin' || userRole === 'super_admin')
-          ? ['admin_audit', 'policy_update', 'leave_approval', 'role_approval', 'operational_action']
-          : ['flashcards', 'quiz', 'study_session', 'homework', 'daily_checkin'];
-
-  const validActivityType = validActivityTypes.includes(
-    String(evidence.activityType || '').toLowerCase()
-  );
-  const effectiveProgress = validActivityType ? Math.max(trackedProgress, verifiedPayloadCount) : trackedProgress;
+  const effectiveProgress = trackedProgress;
 
   if (effectiveProgress < reqCount) {
     const activityName =
@@ -526,17 +623,18 @@ export function executeVerifiedStreakRecovery(
       status: 400,
       error: `Complete at least ${reqCount} ${activityName} (${effectiveProgress}/${reqCount} completed today) before recovering your streak.`,
       record: rec,
-      restoredFrom: rec.frozenStreakCount,
+      restoredFrom: snapshotCount,
       newStreak: rec.currentStreak,
     };
   }
 
-  const restoredFrom = Math.max(rec.frozenStreakCount, rec.currentStreak);
+  const restoredFrom = snapshotCount;
   const newStreak = restoredFrom + 1;
 
   rec.currentStreak = newStreak;
   rec.longestStreak = Math.max(rec.longestStreak, newStreak);
   rec.frozenStreakCount = 0;
+  rec.frozenSnapshot = null;
   rec.streakState = 'recovered';
   rec.lastActiveDate = todayDate;
   rec.recoveryDeadline = null;
@@ -573,6 +671,7 @@ export function recordVerifiedActivity(
   input: {
     activityType: 'flashcards' | 'quiz' | 'homework' | 'study_session' | 'attendance_mark' | 'grade_submission' | 'oversight_review' | 'admin_audit' | 'daily_checkin';
     count?: number;
+    eventId?: string;
     returnContext?: ServerStreakRecord['recentReturnContext'];
   },
   nowMs: number = Date.now()
@@ -580,10 +679,23 @@ export function recordVerifiedActivity(
   record: ServerStreakRecord;
   todayDate: string;
   streakIncremented: boolean;
+  deduplicated?: boolean;
 } {
   const evaluated = evaluateStreakTransition(record, policy, nowMs);
   const rec = evaluated.record;
   const todayDate = evaluated.todayDate;
+
+  if (input.eventId) {
+    const cleanEventId = String(input.eventId).trim();
+    const seen = Array.isArray(rec.processedEventIds) ? rec.processedEventIds : [];
+    if (cleanEventId && seen.includes(cleanEventId)) {
+      return { record: rec, todayDate, streakIncremented: false, deduplicated: true };
+    }
+    if (cleanEventId) {
+      rec.processedEventIds = [cleanEventId, ...seen].slice(0, 60);
+    }
+  }
+
   const count = Math.max(1, Math.min(200, Number(input.count || 1)));
 
   const dayEntry = rec.recoveryActivityDates[todayDate] || {
@@ -922,6 +1034,7 @@ async function loadOrInitializeUserStreakRecord(
       longestStreak: Number(engagementStreakRow.longest_streak ?? sj.longestStreak ?? 0),
       streakState: (engagementStreakRow.streak_state || sj.streakState || 'active') as ServerStreakState,
       frozenStreakCount: Number(engagementStreakRow.frozen_streak_count ?? sj.frozenStreakCount ?? 0),
+      frozenSnapshot: sj.frozenSnapshot ?? null,
       lastActiveDate: engagementStreakRow.last_active_date ?? sj.lastActiveDate ?? null,
       timezone: sj.timezone || profileRow?.streak_timezone || policy.defaultTimezone,
       recoveryDeadline: engagementStreakRow.recovery_deadline ?? sj.recoveryDeadline ?? null,
@@ -931,6 +1044,7 @@ async function loadOrInitializeUserStreakRecord(
       recoveryCurrentProgress: Number(sj.recoveryCurrentProgress || 0),
       recoveryActivityDates: sj.recoveryActivityDates || {},
       claimedMissions: sj.claimedMissions || {},
+      processedEventIds: Array.isArray(sj.processedEventIds) ? sj.processedEventIds : [],
       history: Array.isArray(sj.history) ? sj.history : [],
       recentReturnContext: sj.recentReturnContext ?? null,
       updatedAt: String(engagementStreakRow.updated_at || sj.updatedAt || new Date().toISOString()),
@@ -946,8 +1060,32 @@ async function loadOrInitializeUserStreakRecord(
       : storedStreakDoc || dbStreakRowRecord || null;
   const memTs = memExisting?.updatedAt ? Date.parse(memExisting.updatedAt) : 0;
   const dbTs = dbSource?.updatedAt ? Date.parse(dbSource.updatedAt) : 0;
-  const baseSource: ServerStreakRecord | null =
+  let baseSource: ServerStreakRecord | null =
     memExisting && (!dbSource || memTs >= dbTs) ? memExisting : dbSource;
+
+  // Never let a stale 0-count record silently discard an un-expired non-zero frozen snapshot from the peer source
+  const altSource = baseSource === memExisting ? dbSource : memExisting;
+  if (
+    baseSource &&
+    altSource &&
+    (baseSource.frozenStreakCount || 0) <= 0 &&
+    !baseSource.frozenSnapshot &&
+    ((altSource.frozenSnapshot && altSource.frozenSnapshot.streakCount > 0) || (altSource.frozenStreakCount || 0) > 0) &&
+    baseSource.streakState !== 'recovered' &&
+    baseSource.streakState !== 'expired'
+  ) {
+    baseSource = {
+      ...baseSource,
+      frozenStreakCount: altSource.frozenSnapshot?.streakCount || altSource.frozenStreakCount,
+      frozenSnapshot: altSource.frozenSnapshot || {
+        streakCount: altSource.frozenStreakCount,
+        lastActiveDate: altSource.lastActiveDate,
+        frozenAt: altSource.updatedAt,
+        recoveryDeadline: altSource.recoveryDeadline,
+      },
+      recoveryDeadline: baseSource.recoveryDeadline || altSource.recoveryDeadline,
+    };
+  }
 
   const dbStreak = profileRow?.streak_days !== undefined && profileRow?.streak_days !== null
     ? Number(profileRow.streak_days)
@@ -972,8 +1110,10 @@ async function loadOrInitializeUserStreakRecord(
         role: baseSource.role || role,
         currentStreak: currentStreakVal,
         longestStreak: longestStreakVal,
+        frozenSnapshot: baseSource.frozenSnapshot ?? null,
         recoveryActivityDates: baseSource.recoveryActivityDates || {},
         claimedMissions: baseSource.claimedMissions || {},
+        processedEventIds: Array.isArray(baseSource.processedEventIds) ? baseSource.processedEventIds : [],
         history: Array.isArray(baseSource.history) ? baseSource.history : [],
         timezone: baseSource.timezone || profileRow?.streak_timezone || policy.defaultTimezone,
       }
@@ -984,6 +1124,15 @@ async function loadOrInitializeUserStreakRecord(
         longestStreak: longestStreakVal,
         streakState: (profileRow?.streak_state as ServerStreakState) || 'active',
         frozenStreakCount: Number(profileRow?.frozen_streak_count || 0),
+        frozenSnapshot:
+          Number(profileRow?.frozen_streak_count || 0) > 0
+            ? {
+                streakCount: Number(profileRow?.frozen_streak_count || 0),
+                lastActiveDate: profileRow?.last_active_date || null,
+                frozenAt: new Date().toISOString(),
+                recoveryDeadline: profileRow?.streak_recovery_deadline || null,
+              }
+            : null,
         lastActiveDate: profileRow?.last_active_date || null,
         timezone: profileRow?.streak_timezone || policy.defaultTimezone,
         recoveryDeadline: profileRow?.streak_recovery_deadline || null,
@@ -993,6 +1142,7 @@ async function loadOrInitializeUserStreakRecord(
         recoveryCurrentProgress: 0,
         recoveryActivityDates: {},
         claimedMissions: {},
+        processedEventIds: [],
         history: [],
         recentReturnContext: null,
         updatedAt: new Date().toISOString(),
@@ -1006,12 +1156,17 @@ async function persistUserStreakRecord(
   url: string,
   key: string,
   record: ServerStreakRecord,
-  roleOverride?: string
-): Promise<void> {
+  roleOverride?: string,
+  previousMemorySnapshot?: ServerStreakRecord | null
+): Promise<{ ok: boolean; target: 'engagement_streaks' | 'global_data' | 'memory'; error?: string }> {
   const resolvedRole = String(roleOverride || record.role || 'student').toLowerCase();
   const recordToSave: ServerStreakRecord = { ...record, role: resolvedRole };
-  memoryUserRecords.set(recordToSave.userId, recordToSave);
-  if (!shouldUseDb(url, key)) return;
+
+  if (!shouldUseDb(url, key)) {
+    memoryUserRecords.set(recordToSave.userId, recordToSave);
+    return { ok: true, target: 'memory' };
+  }
+
   const effectiveKey = getFeatureAndWinterSupabaseKey(url, key) || WORKING_ANON_KEY;
   const headers = {
     apikey: effectiveKey,
@@ -1022,7 +1177,22 @@ async function persistUserStreakRecord(
   const encUid = encodeURIComponent(recordToSave.userId);
   const updatedAtIso = recordToSave.updatedAt || new Date().toISOString();
 
-  await Promise.allSettled([
+  const restoreMemory = () => {
+    if (previousMemorySnapshot) {
+      memoryUserRecords.set(recordToSave.userId, previousMemorySnapshot);
+    } else {
+      memoryUserRecords.delete(recordToSave.userId);
+    }
+  };
+
+  let esOk = false;
+  let esStatus = 0;
+  let esMissingTable = false;
+  let esError = '';
+  let gdOk = false;
+  let gdError = '';
+
+  const [esResult, gdResult] = await Promise.allSettled([
     supabaseFetchWithAnonRetry(`${url}/rest/v1/engagement_streaks?on_conflict=user_id`, {
       method: 'POST',
       headers,
@@ -1067,6 +1237,47 @@ async function persistUserStreakRecord(
       }),
     }),
   ]);
+
+  if (esResult.status === 'fulfilled') {
+    esStatus = esResult.value.status;
+    if (esResult.value.ok) {
+      esOk = true;
+    } else {
+      const errBody = await esResult.value.text().catch(() => '');
+      esError = `engagement_streaks HTTP ${esStatus}${errBody ? `: ${errBody.slice(0, 160)}` : ''}`;
+      if (esStatus === 404 || errBody.includes('PGRST205') || errBody.includes('42P01')) {
+        esMissingTable = true;
+      }
+    }
+  } else {
+    esError = `engagement_streaks network error: ${esResult.reason?.message || 'Unknown'}`;
+  }
+
+  if (gdResult.status === 'fulfilled') {
+    if (gdResult.value.ok) {
+      gdOk = true;
+    } else {
+      const errBody = await gdResult.value.text().catch(() => '');
+      gdError = `global_data HTTP ${gdResult.value.status}${errBody ? `: ${errBody.slice(0, 160)}` : ''}`;
+    }
+  } else {
+    gdError = `global_data network error: ${gdResult.reason?.message || 'Unknown'}`;
+  }
+
+  // Require primary engagement_streaks write to succeed unless the table is explicitly absent (404/PGRST205 fallback to global_data)
+  if (esOk) {
+    memoryUserRecords.set(recordToSave.userId, recordToSave);
+    return { ok: true, target: 'engagement_streaks' };
+  }
+  if (esMissingTable && gdOk) {
+    memoryUserRecords.set(recordToSave.userId, recordToSave);
+    return { ok: true, target: 'global_data' };
+  }
+
+  restoreMemory();
+  const combinedErr = [esError, gdError].filter(Boolean).join(' | ') || 'Database persistence failed.';
+  console.error('[engagement-engine] persistUserStreakRecord failed:', combinedErr);
+  return { ok: false, target: 'memory', error: combinedErr };
 }
 
 export function evaluateMissionsForRecord(
@@ -1155,117 +1366,118 @@ export function registerEngagementSystemRoutes(
       }
       const requestedRole = String(req.query.role || actor?.role || '').toLowerCase().trim();
       const cfg = deps.getSupabaseServerConfig();
-      const policy = await loadPolicyConfig(cfg.url, cfg.key);
-      const loaded = await loadOrInitializeUserStreakRecord(cfg.url, cfg.key, userId, policy);
+      const responsePayload = await withUserStreakLock(userId, async () => {
+        const policy = await loadPolicyConfig(cfg.url, cfg.key);
+        const loaded = await loadOrInitializeUserStreakRecord(cfg.url, cfg.key, userId, policy);
+        const prevSnapshot = cloneServerStreakRecord(loaded.record);
 
-      // Prefer verified actor role, fall back safely
-      const effectiveRole = requestedRole || loaded.role || 'student';
-      const evaluated = evaluateStreakTransition(loaded.record, policy);
+        // Prefer verified actor role, fall back safely
+        const effectiveRole = requestedRole || loaded.role || 'student';
+        const evaluated = evaluateStreakTransition(loaded.record, policy);
 
-      // Reconcile real workflow completions for faculty & admin if already recorded today
-      const todayDate = evaluated.todayDate;
-      const dayEntry = evaluated.record.recoveryActivityDates[todayDate] || {
-        flashcards: 0,
-        quizzes: 0,
-        studyMinutes: 0,
-        actions: 0,
-        missionProgress: {},
-      };
-      let recordUpdated = false;
+        // Reconcile real workflow completions for faculty & admin if already recorded today
+        const todayDate = evaluated.todayDate;
+        const dayEntry = evaluated.record.recoveryActivityDates[todayDate] || {
+          flashcards: 0,
+          quizzes: 0,
+          studyMinutes: 0,
+          actions: 0,
+          missionProgress: {},
+        };
+        let recordUpdated = false;
 
-      if (effectiveRole === 'teacher') {
-        const teacherMarkedMemory = hasTeacherRecordedAttendanceToday(userId, loaded.name, todayDate);
-        let teacherMarkedDb = false;
-        if (!teacherMarkedMemory && shouldUseDb(cfg.url, cfg.key)) {
-          try {
-            const effectiveKey = getFeatureAndWinterSupabaseKey(cfg.url, cfg.key) || WORKING_ANON_KEY;
-            const attRes = await supabaseFetchWithAnonRetry(
-              `${cfg.url}/rest/v1/attendance?date=eq.${todayDate}&select=id&limit=1`,
-              { headers: { apikey: effectiveKey, Authorization: `Bearer ${effectiveKey}` } }
-            );
-            if (attRes.ok) {
-              const rows = await attRes.json().catch(() => []);
-              if (Array.isArray(rows) && rows.length > 0) teacherMarkedDb = true;
+        if (effectiveRole === 'teacher') {
+          const teacherMarkedMemory = hasTeacherRecordedAttendanceToday(userId, loaded.name, todayDate);
+          let teacherMarkedDb = false;
+          if (!teacherMarkedMemory && shouldUseDb(cfg.url, cfg.key)) {
+            try {
+              const effectiveKey = getFeatureAndWinterSupabaseKey(cfg.url, cfg.key) || WORKING_ANON_KEY;
+              const attRes = await supabaseFetchWithAnonRetry(
+                `${cfg.url}/rest/v1/attendance?date=eq.${todayDate}&select=id&limit=1`,
+                { headers: { apikey: effectiveKey, Authorization: `Bearer ${effectiveKey}` } }
+              );
+              if (attRes.ok) {
+                const rows = await attRes.json().catch(() => []);
+                if (Array.isArray(rows) && rows.length > 0) teacherMarkedDb = true;
+              }
+            } catch (_) {}
+          }
+          if (teacherMarkedMemory || teacherMarkedDb) {
+            if (!dayEntry.missionProgress.teacher_daily_attendance) {
+              dayEntry.missionProgress.teacher_daily_attendance = 1;
+              dayEntry.actions = Math.max(1, dayEntry.actions || 0);
+              evaluated.record.recoveryActivityDates[todayDate] = dayEntry;
+              recordUpdated = true;
             }
-          } catch (_) {}
-        }
-        if (teacherMarkedMemory || teacherMarkedDb) {
-          if (!dayEntry.missionProgress.teacher_daily_attendance) {
-            dayEntry.missionProgress.teacher_daily_attendance = 1;
-            dayEntry.actions = Math.max(1, dayEntry.actions || 0);
-            evaluated.record.recoveryActivityDates[todayDate] = dayEntry;
-            recordUpdated = true;
+          }
+        } else if (effectiveRole === 'admin' || effectiveRole === 'super_admin') {
+          const adminAuditedToday = memoryAuditLogs.some(
+            log => log.actorUserId === userId && log.createdAt && log.createdAt.startsWith(todayDate)
+          );
+          if (adminAuditedToday) {
+            if (!dayEntry.missionProgress.admin_policy_broadcast_audit) {
+              dayEntry.missionProgress.admin_policy_broadcast_audit = 1;
+              dayEntry.actions = Math.max(1, dayEntry.actions || 0);
+              evaluated.record.recoveryActivityDates[todayDate] = dayEntry;
+              recordUpdated = true;
+            }
           }
         }
-      } else if (effectiveRole === 'admin' || effectiveRole === 'super_admin') {
-        const adminAuditedToday = memoryAuditLogs.some(
-          log => log.actorUserId === userId && log.createdAt && log.createdAt.startsWith(todayDate)
-        );
-        if (adminAuditedToday) {
-          if (!dayEntry.missionProgress.admin_policy_broadcast_audit) {
-            dayEntry.missionProgress.admin_policy_broadcast_audit = 1;
-            dayEntry.actions = Math.max(1, dayEntry.actions || 0);
-            evaluated.record.recoveryActivityDates[todayDate] = dayEntry;
-            recordUpdated = true;
+
+        const stateChanged =
+          evaluated.record.streakState !== loaded.record.streakState ||
+          evaluated.record.currentStreak !== loaded.record.currentStreak ||
+          evaluated.record.frozenStreakCount !== loaded.record.frozenStreakCount ||
+          (evaluated.record.frozenSnapshot?.streakCount || 0) !== (loaded.record.frozenSnapshot?.streakCount || 0) ||
+          evaluated.record.recoveryMonthKey !== loaded.record.recoveryMonthKey;
+        if (!loaded.hasDbRow || recordUpdated || stateChanged) {
+          if (recordUpdated || stateChanged) {
+            evaluated.record.updatedAt = new Date().toISOString();
+          }
+          await persistUserStreakRecord(cfg.url, cfg.key, evaluated.record, effectiveRole, prevSnapshot);
+        }
+
+        const storeUser = deps.getGamificationStore()?.[userId];
+        const authoritativeXp = Math.max(loaded.xp, Number(storeUser?.xp || 0));
+        const lvl = computeLevelBreakdown(authoritativeXp);
+        const recoveryProgress = getRecoveryProgressForDate(evaluated.record, evaluated.todayDate, policy, effectiveRole);
+        const missions = evaluateMissionsForRecord(effectiveRole, evaluated.record, evaluated.todayDate);
+
+        const weekKey = getWeekPeriodKey(evaluated.todayDate);
+        let activeDaysThisWeek = 0;
+        let actionsCompletedThisWeek = 0;
+        for (const [dKey, entry] of Object.entries(evaluated.record.recoveryActivityDates || {})) {
+          if (getWeekPeriodKey(dKey) === weekKey && (entry.actions || 0) > 0) {
+            activeDaysThisWeek += 1;
+            actionsCompletedThisWeek += entry.actions || 0;
           }
         }
-      }
 
-      const stateChanged =
-        evaluated.record.streakState !== loaded.record.streakState ||
-        evaluated.record.currentStreak !== loaded.record.currentStreak ||
-        evaluated.record.frozenStreakCount !== loaded.record.frozenStreakCount ||
-        evaluated.record.recoveryMonthKey !== loaded.record.recoveryMonthKey;
-      if (!loaded.hasDbRow || recordUpdated || stateChanged) {
-        if (recordUpdated || stateChanged) {
-          evaluated.record.updatedAt = new Date().toISOString();
-        }
-        await persistUserStreakRecord(cfg.url, cfg.key, evaluated.record, effectiveRole);
-      }
+        const defaultSmartReturn =
+          effectiveRole === 'student' && policy.featureFlags.smartReturn
+            ? evaluated.record.recentReturnContext || {
+                title: evaluated.record.streakState === 'recovery_available' || evaluated.record.streakState === 'frozen'
+                  ? `Welcome back — restore your ${evaluated.record.frozenStreakCount}-day streak`
+                  : 'Continue where you left off',
+                subtitle: 'Review your scheduled spaced-repetition flashcards or pending assignments in Study Hub.',
+                ctaLabel: 'Resume Study Hub',
+                actionTab: 'study_hub',
+                actionSubTab: 'flashcards',
+                reason: 'Recommended calm starting point based on your active study queue.',
+              }
+            : null;
 
-      const storeUser = deps.getGamificationStore()?.[userId];
-      const authoritativeXp = Math.max(loaded.xp, Number(storeUser?.xp || 0));
-      const lvl = computeLevelBreakdown(authoritativeXp);
-      const recoveryProgress = getRecoveryProgressForDate(evaluated.record, evaluated.todayDate, policy, effectiveRole);
-      const missions = evaluateMissionsForRecord(effectiveRole, evaluated.record, evaluated.todayDate);
+        const roleReqActivity =
+          effectiveRole === 'teacher'
+            ? 'attendance_mark'
+            : (effectiveRole === 'admin' || effectiveRole === 'super_admin')
+              ? 'admin_audit'
+              : effectiveRole === 'coordinator'
+                ? 'oversight_review'
+                : policy.requiredRecoveryActivity;
+        const roleReqCount = effectiveRole === 'student' ? policy.recoveryRequiredCount : 1;
 
-      const weekKey = getWeekPeriodKey(evaluated.todayDate);
-      let activeDaysThisWeek = 0;
-      let actionsCompletedThisWeek = 0;
-      for (const [dKey, entry] of Object.entries(evaluated.record.recoveryActivityDates || {})) {
-        if (getWeekPeriodKey(dKey) === weekKey && (entry.actions || 0) > 0) {
-          activeDaysThisWeek += 1;
-          actionsCompletedThisWeek += entry.actions || 0;
-        }
-      }
-
-      const defaultSmartReturn =
-        effectiveRole === 'student' && policy.featureFlags.smartReturn
-          ? evaluated.record.recentReturnContext || {
-              title: evaluated.record.streakState === 'recovery_available' || evaluated.record.streakState === 'frozen'
-                ? `Welcome back — restore your ${evaluated.record.frozenStreakCount}-day streak`
-                : 'Continue where you left off',
-              subtitle: 'Review your scheduled spaced-repetition flashcards or pending assignments in Study Hub.',
-              ctaLabel: 'Resume Study Hub',
-              actionTab: 'study_hub',
-              actionSubTab: 'flashcards',
-              reason: 'Recommended calm starting point based on your active study queue.',
-            }
-          : null;
-
-      const roleReqActivity =
-        effectiveRole === 'teacher'
-          ? 'attendance_mark'
-          : (effectiveRole === 'admin' || effectiveRole === 'super_admin')
-            ? 'admin_audit'
-            : effectiveRole === 'coordinator'
-              ? 'oversight_review'
-              : policy.requiredRecoveryActivity;
-      const roleReqCount = effectiveRole === 'student' ? policy.recoveryRequiredCount : 1;
-
-      return res.json({
-        success: true,
-        overview: {
+        return {
           userId,
           role: effectiveRole,
           name: actor?.name || loaded.name,
@@ -1304,7 +1516,12 @@ export function registerEngagementSystemRoutes(
           policy,
           badgeCount: Object.keys(loaded.earnedBadges || {}).length,
           earnedBadges: loaded.earnedBadges || {},
-        },
+        };
+      });
+
+      return res.json({
+        success: true,
+        overview: responsePayload,
       });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err?.message || 'Failed to compute engagement overview' });
@@ -1315,7 +1532,7 @@ export function registerEngagementSystemRoutes(
   app.post('/api/engagement/activity', async (req, res) => {
     try {
       const actor = await deps.getVerifiedUserFromRequest(req);
-      const { userId: bodyUserId, activityType, count, returnContext, role } = req.body || {};
+      const { userId: bodyUserId, activityType, count, eventId, returnContext, role } = req.body || {};
       const userId = String(actor?.id || bodyUserId || '').trim();
       if (!userId || !activityType) {
         return res.status(400).json({ success: false, error: 'userId and activityType are required' });
@@ -1325,25 +1542,43 @@ export function registerEngagementSystemRoutes(
       }
 
       const cfg = deps.getSupabaseServerConfig();
-      const policy = await loadPolicyConfig(cfg.url, cfg.key);
-      const loaded = await loadOrInitializeUserStreakRecord(cfg.url, cfg.key, userId, policy);
-      const effectiveRole = String(role || actor?.role || loaded.role || 'student').toLowerCase();
-      const result = recordVerifiedActivity(loaded.record, policy, { activityType, count, returnContext });
-      await persistUserStreakRecord(cfg.url, cfg.key, result.record, effectiveRole);
-      const roleReqCount = effectiveRole === 'student' ? policy.recoveryRequiredCount : 1;
-      return res.json({
-        success: true,
-        streakIncremented: result.streakIncremented,
-        streak: {
-          currentStreak: result.record.currentStreak,
-          longestStreak: result.record.longestStreak,
-          streakState: result.record.streakState,
-          frozenStreakCount: result.record.frozenStreakCount,
-          recoveryCurrentProgress: getRecoveryProgressForDate(result.record, result.todayDate, policy, effectiveRole),
-          recoveryRequiredCount: roleReqCount,
-        },
-        missions: evaluateMissionsForRecord(effectiveRole, result.record, result.todayDate),
+      const outcome = await withUserStreakLock(userId, async () => {
+        const policy = await loadPolicyConfig(cfg.url, cfg.key);
+        const loaded = await loadOrInitializeUserStreakRecord(cfg.url, cfg.key, userId, policy);
+        const prevSnapshot = cloneServerStreakRecord(loaded.record);
+        const effectiveRole = String(role || actor?.role || loaded.role || 'student').toLowerCase();
+        const result = recordVerifiedActivity(loaded.record, policy, { activityType, count, eventId, returnContext });
+        if (!result.deduplicated) {
+          const persistRes = await persistUserStreakRecord(cfg.url, cfg.key, result.record, effectiveRole, prevSnapshot);
+          if (!persistRes.ok) {
+            return { ok: false as const, status: 503, error: persistRes.error || 'Failed to save activity to database.' };
+          }
+        }
+        const roleReqCount = effectiveRole === 'student' ? policy.recoveryRequiredCount : 1;
+        return {
+          ok: true as const,
+          status: 200,
+          body: {
+            success: true,
+            deduplicated: Boolean(result.deduplicated),
+            streakIncremented: result.streakIncremented,
+            streak: {
+              currentStreak: result.record.currentStreak,
+              longestStreak: result.record.longestStreak,
+              streakState: result.record.streakState,
+              frozenStreakCount: result.record.frozenStreakCount,
+              recoveryCurrentProgress: getRecoveryProgressForDate(result.record, result.todayDate, policy, effectiveRole),
+              recoveryRequiredCount: roleReqCount,
+            },
+            missions: evaluateMissionsForRecord(effectiveRole, result.record, result.todayDate),
+          },
+        };
       });
+
+      if (!outcome.ok) {
+        return res.status(outcome.status).json({ success: false, error: outcome.error });
+      }
+      return res.json(outcome.body);
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err?.message || 'Activity log failed' });
     }
@@ -1353,7 +1588,7 @@ export function registerEngagementSystemRoutes(
   app.post('/api/engagement/streak/recover', async (req, res) => {
     try {
       const actor = await deps.getVerifiedUserFromRequest(req);
-      const { userId: bodyUserId, activityType, verifiedCount, role } = req.body || {};
+      const { userId: bodyUserId, activityType, role } = req.body || {};
       const userId = String(actor?.id || bodyUserId || '').trim();
       if (!userId) {
         return res.status(400).json({ success: false, error: 'userId is required' });
@@ -1363,29 +1598,57 @@ export function registerEngagementSystemRoutes(
       }
 
       const cfg = deps.getSupabaseServerConfig();
-      const policy = await loadPolicyConfig(cfg.url, cfg.key);
-      const loaded = await loadOrInitializeUserStreakRecord(cfg.url, cfg.key, userId, policy);
-      const effectiveRole = String(role || actor?.role || loaded.role || 'student').toLowerCase();
-      const outcome = executeVerifiedStreakRecovery(loaded.record, policy, {
-        activityType,
-        verifiedCount,
-        role: effectiveRole,
-      });
-      await persistUserStreakRecord(cfg.url, cfg.key, outcome.record, effectiveRole);
+      const lockedOutcome = await withUserStreakLock(userId, async () => {
+        const policy = await loadPolicyConfig(cfg.url, cfg.key);
+        const loaded = await loadOrInitializeUserStreakRecord(cfg.url, cfg.key, userId, policy);
+        const prevSnapshot = cloneServerStreakRecord(loaded.record);
+        const effectiveRole = String(role || actor?.role || loaded.role || 'student').toLowerCase();
+        const outcome = executeVerifiedStreakRecovery(loaded.record, policy, {
+          activityType,
+          role: effectiveRole,
+        });
 
-      if (!outcome.ok) {
-        return res.status(outcome.status).json({ success: false, error: outcome.error });
+        const stateChangedOnFailure =
+          !outcome.ok &&
+          (outcome.record.streakState !== loaded.record.streakState ||
+            outcome.record.currentStreak !== loaded.record.currentStreak ||
+            outcome.record.frozenStreakCount !== loaded.record.frozenStreakCount);
+
+        if (outcome.ok || stateChangedOnFailure) {
+          outcome.record.updatedAt = new Date().toISOString();
+          const persistRes = await persistUserStreakRecord(cfg.url, cfg.key, outcome.record, effectiveRole, prevSnapshot);
+          if (!persistRes.ok) {
+            return {
+              ok: false as const,
+              status: 503,
+              error: persistRes.error || 'Failed to persist streak recovery to database.',
+            };
+          }
+        }
+
+        if (!outcome.ok) {
+          return { ok: false as const, status: outcome.status, error: outcome.error || 'Streak recovery rejected.' };
+        }
+
+        const bonusXp = ALLOWED_GAMIFICATION_ACTION_XP.streak_recovery?.xp || 35;
+        return {
+          ok: true as const,
+          status: 200,
+          body: {
+            success: true,
+            restoredFrom: outcome.restoredFrom,
+            newStreak: outcome.newStreak,
+            streakState: outcome.record.streakState,
+            xpRewarded: bonusXp,
+            actionKey: 'streak_recovery',
+          },
+        };
+      });
+
+      if (!lockedOutcome.ok) {
+        return res.status(lockedOutcome.status).json({ success: false, error: lockedOutcome.error });
       }
-
-      const bonusXp = ALLOWED_GAMIFICATION_ACTION_XP.streak_recovery?.xp || 35;
-      return res.json({
-        success: true,
-        restoredFrom: outcome.restoredFrom,
-        newStreak: outcome.newStreak,
-        streakState: outcome.record.streakState,
-        xpRewarded: bonusXp,
-        actionKey: 'streak_recovery',
-      });
+      return res.json(lockedOutcome.body);
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err?.message || 'Streak recovery failed' });
     }
@@ -1405,43 +1668,59 @@ export function registerEngagementSystemRoutes(
       }
 
       const cfg = deps.getSupabaseServerConfig();
-      const policy = await loadPolicyConfig(cfg.url, cfg.key);
-      const loaded = await loadOrInitializeUserStreakRecord(cfg.url, cfg.key, userId, policy);
-      const effectiveRole = String(role || actor?.role || loaded.role || 'student').toLowerCase();
-      const evaluated = evaluateStreakTransition(loaded.record, policy);
-      const missions = evaluateMissionsForRecord(effectiveRole, evaluated.record, evaluated.todayDate);
-      const target = missions.find(m => m.id === missionId);
+      const lockedOutcome = await withUserStreakLock(userId, async () => {
+        const policy = await loadPolicyConfig(cfg.url, cfg.key);
+        const loaded = await loadOrInitializeUserStreakRecord(cfg.url, cfg.key, userId, policy);
+        const prevSnapshot = cloneServerStreakRecord(loaded.record);
+        const effectiveRole = String(role || actor?.role || loaded.role || 'student').toLowerCase();
+        const evaluated = evaluateStreakTransition(loaded.record, policy);
+        const missions = evaluateMissionsForRecord(effectiveRole, evaluated.record, evaluated.todayDate);
+        const target = missions.find(m => m.id === missionId);
 
-      if (!target) {
-        return res.status(404).json({ success: false, error: 'Mission is not eligible for your current role.' });
-      }
-      if (target.status === 'claimed') {
-        return res.status(409).json({ success: false, error: 'Mission reward already claimed for this period.' });
-      }
-      if (target.status !== 'completed') {
-        return res.status(400).json({
-          success: false,
-          error: `Complete the mission requirements first (${target.progressValue}/${target.targetValue}).`,
-        });
-      }
+        if (!target) {
+          return { ok: false as const, status: 404, error: 'Mission is not eligible for your current role.' };
+        }
+        if (target.status === 'claimed') {
+          return { ok: false as const, status: 409, error: 'Mission reward already claimed for this period.' };
+        }
+        if (target.status !== 'completed') {
+          return {
+            ok: false as const,
+            status: 400,
+            error: `Complete the mission requirements first (${target.progressValue}/${target.targetValue}).`,
+          };
+        }
 
-      const serverAction = ALLOWED_GAMIFICATION_ACTION_XP[target.rewardActionKey];
-      const xpAwarded = serverAction ? serverAction.xp : target.rewardXp;
-      const claimKey = `${target.id}:${target.periodKey}`;
-      evaluated.record.claimedMissions[claimKey] = {
-        claimedAt: new Date().toISOString(),
-        xpAwarded,
-      };
-      evaluated.record.updatedAt = new Date().toISOString();
-      await persistUserStreakRecord(cfg.url, cfg.key, evaluated.record, effectiveRole);
+        const serverAction = ALLOWED_GAMIFICATION_ACTION_XP[target.rewardActionKey];
+        const xpAwarded = serverAction ? serverAction.xp : target.rewardXp;
+        const claimKey = `${target.id}:${target.periodKey}`;
+        evaluated.record.claimedMissions[claimKey] = {
+          claimedAt: new Date().toISOString(),
+          xpAwarded,
+        };
+        evaluated.record.updatedAt = new Date().toISOString();
+        const persistRes = await persistUserStreakRecord(cfg.url, cfg.key, evaluated.record, effectiveRole, prevSnapshot);
+        if (!persistRes.ok) {
+          return { ok: false as const, status: 503, error: persistRes.error || 'Failed to persist mission claim to database.' };
+        }
 
-      return res.json({
-        success: true,
-        missionId: target.id,
-        periodKey: target.periodKey,
-        xpAwarded,
-        actionKey: target.rewardActionKey,
+        return {
+          ok: true as const,
+          status: 200,
+          body: {
+            success: true,
+            missionId: target.id,
+            periodKey: target.periodKey,
+            xpAwarded,
+            actionKey: target.rewardActionKey,
+          },
+        };
       });
+
+      if (!lockedOutcome.ok) {
+        return res.status(lockedOutcome.status).json({ success: false, error: lockedOutcome.error });
+      }
+      return res.json(lockedOutcome.body);
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err?.message || 'Mission claim failed' });
     }
@@ -1561,17 +1840,31 @@ export async function recordEngagementActivityServer(
   userId: string,
   role: string,
   activityType: 'flashcards' | 'quiz' | 'homework' | 'study_session' | 'attendance_mark' | 'grade_submission' | 'oversight_review' | 'admin_audit' | 'daily_checkin',
-  count: number = 1
-): Promise<{ ok: boolean; streakIncremented: boolean; currentStreak: number }> {
+  count: number = 1,
+  eventId?: string
+): Promise<{ ok: boolean; streakIncremented: boolean; currentStreak: number; error?: string }> {
   try {
-    const policy = await loadPolicyConfig(url, key);
-    const loaded = await loadOrInitializeUserStreakRecord(url, key, userId, policy);
-    const result = recordVerifiedActivity(loaded.record, policy, { activityType, count });
-    await persistUserStreakRecord(url, key, result.record, role || loaded.role);
-    return { ok: true, streakIncremented: result.streakIncremented, currentStreak: result.record.currentStreak };
-  } catch (err) {
+    return await withUserStreakLock(userId, async () => {
+      const policy = await loadPolicyConfig(url, key);
+      const loaded = await loadOrInitializeUserStreakRecord(url, key, userId, policy);
+      const prevSnapshot = cloneServerStreakRecord(loaded.record);
+      const result = recordVerifiedActivity(loaded.record, policy, { activityType, count, eventId });
+      if (!result.deduplicated) {
+        const persistRes = await persistUserStreakRecord(url, key, result.record, role || loaded.role, prevSnapshot);
+        if (!persistRes.ok) {
+          return {
+            ok: false,
+            streakIncremented: false,
+            currentStreak: prevSnapshot.currentStreak,
+            error: persistRes.error,
+          };
+        }
+      }
+      return { ok: true, streakIncremented: result.streakIncremented, currentStreak: result.record.currentStreak };
+    });
+  } catch (err: any) {
     console.warn('[engagement-engine] recordEngagementActivityServer failed:', err);
-    return { ok: false, streakIncremented: false, currentStreak: 0 };
+    return { ok: false, streakIncremented: false, currentStreak: 0, error: err?.message };
   }
 }
 

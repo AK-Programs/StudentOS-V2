@@ -524,3 +524,69 @@ export async function markTargetedAnnouncementRead(
     return { ok: false, error: err?.message || 'Network error marking announcement read.' };
   }
 }
+
+// ---------------- ROSTER DIRECT STUDENT FEEDBACK ----------------
+
+export interface StudentFeedbackRecord {
+  id: string;
+  studentId: string;
+  studentName: string;
+  title: string;
+  feedback: string;
+  subject: string;
+  grade: string;
+  section: string;
+  authorId: string;
+  authorName: string;
+  authorRole: string;
+  createdAt: string;
+}
+
+export async function fetchStudentFeedback(
+  user?: UserProfile | null,
+  studentId?: string
+): Promise<AcademicApiResult<StudentFeedbackRecord[]>> {
+  try {
+    const headers = await buildAcademicHeaders(user);
+    const qs = studentId ? `?studentId=${encodeURIComponent(studentId)}` : '';
+    const resp = await fetch(`/api/academic/student-feedback${qs}`, { headers });
+    const json = await resp.json().catch(() => ({}));
+    if (!resp.ok || !json.success) {
+      return { ok: false, error: json.error || `Failed to fetch student feedback (${resp.status})` };
+    }
+    return { ok: true, data: Array.isArray(json.feedback) ? json.feedback : [] };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Network error fetching student feedback.' };
+  }
+}
+
+export async function sendStudentFeedback(
+  user: UserProfile | null | undefined,
+  payload: {
+    studentId: string;
+    studentName: string;
+    title: string;
+    feedback: string;
+    subject?: string;
+    grade?: string;
+    section?: string;
+  }
+): Promise<AcademicApiResult<StudentFeedbackRecord>> {
+  try {
+    const headers = await buildAcademicHeaders(user);
+    const resp = await fetch('/api/academic/student-feedback', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload)
+    });
+    const json = await resp.json().catch(() => ({}));
+    if (!resp.ok || !json.success || !json.feedbackRecord) {
+      return { ok: false, error: json.error || `Failed to save student feedback (${resp.status})` };
+    }
+    dispatchAcademicSyncEvent('notifications', 'INSERT', json.feedbackRecord);
+    return { ok: true, data: json.feedbackRecord };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Network error saving student feedback.' };
+  }
+}
+

@@ -73,6 +73,9 @@ import {
   fetchTargetedAnnouncements,
   createTargetedAnnouncement,
   updateTargetedAnnouncement,
+  fetchStudentFeedback,
+  sendStudentFeedback,
+  StudentFeedbackRecord,
   isStudentMatchedToCohort
 } from '../lib/academicWorkflowService';
 import { SyllabusTimetableService } from '../lib/syllabusTimetableService';
@@ -244,10 +247,30 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
   const [orionSubject, setOrionSubject] = useState<string>(currentUser.department || 'General Science');
   const [orionTopic, setOrionTopic] = useState<string>('');
   const [orionGrade, setOrionGrade] = useState<string>(authorizedGrades[0] || 'Grade 10');
+  const [selectedOrionIntent, setSelectedOrionIntent] = useState<OrionFacultyIntent>('draft_assignment');
+  const [lastOrionIntent, setLastOrionIntent] = useState<OrionFacultyIntent>('draft_assignment');
   const [orionLoading, setOrionLoading] = useState<boolean>(false);
   const [orionError, setOrionError] = useState<string | null>(null);
   const [pendingDraft, setPendingDraft] = useState<PendingOrionDraft | null>(null);
   const [committingDraft, setCommittingDraft] = useState<boolean>(false);
+  const [overviewToolTab, setOverviewToolTab] = useState<'orion' | 'circulars'>('orion');
+
+  // Student-Scoped Roster Feedback Drawer/Modal State (Priority 2)
+  const [rosterAttendanceStats, setRosterAttendanceStats] = useState<
+    Record<string, { present: number; total: number; pct: number }>
+  >({});
+  const [rosterFeedbackStudent, setRosterFeedbackStudent] = useState<UserProfile | null>(null);
+  const [rosterFeedbackTitle, setRosterFeedbackTitle] = useState<string>('');
+  const [rosterFeedbackSubject, setRosterFeedbackSubject] = useState<string>(currentUser.department || 'Academic Progress');
+  const [rosterFeedbackPrompt, setRosterFeedbackPrompt] = useState<string>('');
+  const [rosterFeedbackText, setRosterFeedbackText] = useState<string>('');
+  const [rosterFeedbackProvider, setRosterFeedbackProvider] = useState<string | null>(null);
+  const [rosterFeedbackAiLoading, setRosterFeedbackAiLoading] = useState<boolean>(false);
+  const [rosterFeedbackAiError, setRosterFeedbackAiError] = useState<string | null>(null);
+  const [rosterFeedbackSaving, setRosterFeedbackSaving] = useState<boolean>(false);
+  const [rosterFeedbackSaveError, setRosterFeedbackSaveError] = useState<string | null>(null);
+  const [rosterFeedbackHistory, setRosterFeedbackHistory] = useState<StudentFeedbackRecord[]>([]);
+  const [rosterFeedbackHistoryLoading, setRosterFeedbackHistoryLoading] = useState<boolean>(false);
 
   const userId = currentUser?.uid || currentUser?.email || 'faculty_default';
 
@@ -297,28 +320,32 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
         );
         setTodayAttCount(markedToday.size);
 
-        // Compute per-student attendance % for threshold alerts (<75%)
-        const studentRollup: Record<string, { present: number; total: number }> = {};
+        // Compute per-student attendance % for roster context & threshold alerts (<75%)
+        const studentRollup: Record<string, { present: number; total: number; pct: number }> = {};
         scopedAttRows.forEach((r: any) => {
-          if (!studentRollup[r.user_id]) studentRollup[r.user_id] = { present: 0, total: 0 };
+          if (!studentRollup[r.user_id]) studentRollup[r.user_id] = { present: 0, total: 0, pct: 0 };
           studentRollup[r.user_id].total += 1;
           if (r.status === 'present' || r.status === 'late') {
             studentRollup[r.user_id].present += 1;
           }
         });
+        Object.keys(studentRollup).forEach(uidKey => {
+          const rec = studentRollup[uidKey];
+          rec.pct = rec.total > 0 ? Math.round((rec.present / rec.total) * 100) : 0;
+        });
+        setRosterAttendanceStats(studentRollup);
 
         const lowList = studentsInScope
           .map(st => {
             const rec = studentRollup[st.uid];
             if (!rec || rec.total < 3) return null;
-            const pct = Math.round((rec.present / rec.total) * 100);
-            if (pct >= 75) return null;
+            if (rec.pct >= 75) return null;
             return {
               uid: st.uid,
               name: st.name,
               grade: st.grade || 'Grade 10',
               section: st.section || 'Solara',
-              pct,
+              pct: rec.pct,
               total: rec.total
             };
           })
@@ -733,8 +760,138 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
     }
   };
 
+  const handleOpenRosterFeedbackModal = async (student: UserProfile) => {
+    soundService.playButtonClick();
+    if (!isStudentInFacultyScope(student, currentUser, effectiveRole)) {
+      showNotification('Scope denied: this student is outside your authorized cohort.');
+      return;
+    }
+    const studentId = student.uid || student.email;
+    const defaultSubject = currentUser.department || 'Academic Progress';
+    setRosterFeedbackStudent(student);
+    setRosterFeedbackSubject(defaultSubject);
+    setRosterFeedbackTitle(`Progress Feedback — ${student.name}`);
+    setRosterFeedbackPrompt('');
+    setRosterFeedbackText('');
+    setRosterFeedbackProvider(null);
+    setRosterFeedbackAiError(null);
+    setRosterFeedbackSaveError(null);
+    setRosterFeedbackHistory([]);
+    if (studentId) {
+      setRosterFeedbackHistoryLoading(true);
+      const res = await fetchStudentFeedback(currentUser, studentId);
+      setRosterFeedbackHistoryLoading(false);
+      if (res.ok && res.data) {
+        setRosterFeedbackHistory(res.data);
+      }
+    }
+  };
+
+  const handleGenerateRosterFeedbackWithOrion = async () => {
+    if (!rosterFeedbackStudent) return;
+    if (!isStudentInFacultyScope(rosterFeedbackStudent, currentUser, effectiveRole)) {
+      setRosterFeedbackAiError('Scope denied: student is outside your authorized cohort.');
+      return;
+    }
+    soundService.playButtonClick();
+    setRosterFeedbackAiLoading(true);
+    setRosterFeedbackAiError(null);
+
+    const st = rosterFeedbackStudent;
+    const stId = st.uid || st.email || '';
+    const att = rosterAttendanceStats[st.uid];
+    const attSummary = att && att.total > 0
+      ? `${att.present}/${att.total} recorded sessions (${att.pct}%)`
+      : 'No recorded attendance sessions yet';
+
+    const studentHwCompleted = teacherHomework.filter(
+      hw => Array.isArray(hw.completedList) && (hw.completedList.includes(st.uid) || hw.completedList.includes(stId))
+    ).length;
+
+    const focusNote = rosterFeedbackPrompt.trim()
+      ? `Faculty focus note: ${rosterFeedbackPrompt.trim()}.`
+      : 'Provide constructive, encouraging, actionable 2-week next steps.';
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+
+      const resp = await fetch('/api/ai/orion-assist', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+        },
+        body: JSON.stringify({
+          userId,
+          userRole: effectiveRole,
+          intent: 'draft_feedback',
+          subject: rosterFeedbackSubject || 'Academic Progress',
+          grade: st.grade || authorizedGrades[0] || 'Grade 10',
+          topic: `Draft student-specific feedback for ${st.name} (${st.grade || 'Class'} ${st.section || ''})`,
+          contextData: `Student: ${st.name}. Grade/Section: ${st.grade || 'Unknown'} (${st.section || 'Unknown'}). Attendance standing: ${attSummary}. Completed cohort assignments: ${studentHwCompleted}/${teacherHomework.length}. ${focusNote}`
+        })
+      });
+
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data.success || !data.text) {
+        throw new Error(data.error || `Orion returned status ${resp.status}`);
+      }
+      setRosterFeedbackText(String(data.text).trim());
+      setRosterFeedbackProvider(data.providerUsed ? `${data.providerUsed}${data.modelUsed ? ` · ${data.modelUsed}` : ''}` : null);
+      if (data.usage && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('s_os_ai_quota_updated', { detail: { ...data.usage, lastUpdated: Date.now() } }));
+      }
+    } catch (err: any) {
+      setRosterFeedbackAiError(err?.message || 'Could not reach Orion to draft feedback.');
+    } finally {
+      setRosterFeedbackAiLoading(false);
+    }
+  };
+
+  const handleConfirmSendRosterFeedback = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rosterFeedbackStudent) return;
+    if (!isStudentInFacultyScope(rosterFeedbackStudent, currentUser, effectiveRole)) {
+      setRosterFeedbackSaveError('Scope denied: student is outside your authorized cohort.');
+      return;
+    }
+    const cleanTitle = rosterFeedbackTitle.trim();
+    const cleanText = rosterFeedbackText.trim();
+    if (!cleanTitle || !cleanText) {
+      setRosterFeedbackSaveError('Please provide both a feedback title and feedback message before sending.');
+      return;
+    }
+
+    setRosterFeedbackSaving(true);
+    setRosterFeedbackSaveError(null);
+    soundService.playButtonClick();
+
+    const res = await sendStudentFeedback(currentUser, {
+      studentId: rosterFeedbackStudent.uid || rosterFeedbackStudent.email,
+      studentName: rosterFeedbackStudent.name,
+      title: cleanTitle,
+      feedback: cleanText,
+      subject: rosterFeedbackSubject.trim() || 'Academic Progress',
+      grade: rosterFeedbackStudent.grade || authorizedGrades[0] || '',
+      section: rosterFeedbackStudent.section || ''
+    });
+
+    setRosterFeedbackSaving(false);
+    if (!res.ok || !res.data) {
+      setRosterFeedbackSaveError(res.error || 'Failed to save student feedback.');
+      return;
+    }
+
+    setRosterFeedbackHistory(prev => [res.data!, ...prev]);
+    void refreshEngagement();
+    showNotification(`✓ Feedback sent to ${rosterFeedbackStudent.name} and saved to academic record.`);
+    setRosterFeedbackStudent(null);
+  };
+
   // Orion Faculty Copilot Drafting (APInex / Ministral / Groq via /api/ai/orion-assist)
   const handleRunOrionDraft = async (intent: OrionFacultyIntent, customTopic?: string) => {
+    setLastOrionIntent(intent);
     const requestedTopic =
       (customTopic || orionTopic).trim() ||
       (intent === 'summarize_class_insights'
@@ -974,11 +1131,11 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
       ====================================================================== */}
       {subSection === 'overview' && (
         <div className="space-y-6">
-          {/* Faculty Header Card */}
+          {/* Primary Faculty Header: One Dominant Action + Clear Context */}
           <motion.div
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bento-card relative overflow-hidden p-6 bg-slate-900 border border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-6"
+            className="bento-card relative overflow-hidden p-5 sm:p-6 bg-slate-900 border border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-5"
           >
             {winterCosmetics.equippedBanner && (
               <div className="pointer-events-none absolute inset-0 opacity-35" aria-hidden="true">
@@ -993,7 +1150,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
                 equippedBorder={winterCosmetics.equippedBorder}
                 size="md"
               />
-              <div className="space-y-1.5 min-w-0">
+              <div className="space-y-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
                   <span className="font-semibold text-sky-400">{roleConfig.label}</span>
                   <span aria-hidden="true">·</span>
@@ -1001,16 +1158,16 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
                   <span aria-hidden="true">·</span>
                   <span>{authorizedGrades.join(', ')}</span>
                 </div>
-                <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight truncate">
+                <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight truncate">
                   {roleConfig.workspaceTitle}
                 </h1>
-                <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
+                <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
                   {roleConfig.workspaceSubtitle}
                 </p>
               </div>
             </div>
 
-            <div className="relative z-10 flex flex-wrap items-center gap-2.5 shrink-0">
+            <div className="relative z-10 flex flex-wrap items-center gap-3 shrink-0">
               <button
                 type="button"
                 onClick={() => {
@@ -1020,7 +1177,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
                 className="px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer"
               >
                 <VeylentraIcon name="attendance_manager" size="sm" />
-                <span>Mark Attendance</span>
+                <span>Mark Today&apos;s Attendance</span>
               </button>
               <button
                 type="button"
@@ -1028,34 +1185,23 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
                   soundService.playButtonClick();
                   onNavigateTab('whiteboard');
                 }}
-                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                className="px-3 py-2 rounded-xl text-slate-300 hover:text-white hover:bg-slate-800/70 text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
               >
-                <span>Open Whiteboard</span>
+                <span>Whiteboard</span>
                 <ChevronRight className="w-3.5 h-3.5" />
               </button>
             </div>
           </motion.div>
 
-          {/* Faculty & Coordinator Scoped Workflow Checklist & Weekly Summary */}
-          <UnifiedEngagementPanel
-            currentUser={currentUser}
-            effectiveRole={effectiveRole}
-            overview={engagementOverview}
-            loading={engagementLoading}
-            onNavigateTab={(tabId) => {
-              if (tabId === 'attendance_manager') setSubSection('attendance');
-              else if (tabId === 'homework') setSubSection('assignments');
-              else onNavigateTab(tabId);
-            }}
-            showNotification={showNotification}
-            onRefresh={refreshEngagement}
-          />
-
-          {/* Scoped Real KPI Strip */}
+          {/* Compact Scoped Status Strip (Actionable Metrics) */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
-            <div className="bento-card p-4 bg-slate-900 border border-slate-800">
+            <button
+              type="button"
+              onClick={() => setSubSection('classes')}
+              className="bento-card p-4 bg-slate-900 border border-slate-800 hover:border-slate-700 text-left transition-colors cursor-pointer"
+            >
               <span className="text-xs font-semibold text-slate-400">Students in Scope</span>
-              <div className="mt-2 flex items-baseline gap-2">
+              <div className="mt-1.5 flex items-baseline gap-2">
                 <span className="text-2xl font-extrabold text-white tabular-nums">
                   {loadingCohort ? '...' : scopedStudents.length}
                 </span>
@@ -1063,11 +1209,15 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
                   {authorizedGrades.length} grade{authorizedGrades.length === 1 ? '' : 's'}
                 </span>
               </div>
-            </div>
+            </button>
 
-            <div className="bento-card p-4 bg-slate-900 border border-slate-800">
+            <button
+              type="button"
+              onClick={() => setSubSection('attendance')}
+              className="bento-card p-4 bg-slate-900 border border-slate-800 hover:border-slate-700 text-left transition-colors cursor-pointer"
+            >
               <span className="text-xs font-semibold text-slate-400">Attendance Marked Today</span>
-              <div className="mt-2 flex items-baseline gap-2">
+              <div className="mt-1.5 flex items-baseline gap-2">
                 <span className="text-2xl font-extrabold text-emerald-400 tabular-nums">
                   {loadingCohort ? '...' : todayAttCount}
                 </span>
@@ -1075,21 +1225,29 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
                   / {scopedStudents.length}
                 </span>
               </div>
-            </div>
+            </button>
 
-            <div className="bento-card p-4 bg-slate-900 border border-slate-800">
+            <button
+              type="button"
+              onClick={() => setSubSection('assignments')}
+              className="bento-card p-4 bg-slate-900 border border-slate-800 hover:border-slate-700 text-left transition-colors cursor-pointer"
+            >
               <span className="text-xs font-semibold text-slate-400">Submissions to Review</span>
-              <div className="mt-2 flex items-baseline gap-2">
+              <div className="mt-1.5 flex items-baseline gap-2">
                 <span className="text-2xl font-extrabold text-amber-400 tabular-nums">
                   {pendingSubmissionsToReview}
                 </span>
                 <span className="text-[11px] text-slate-500">across {teacherHomework.length} tasks</span>
               </div>
-            </div>
+            </button>
 
-            <div className="bento-card p-4 bg-slate-900 border border-slate-800">
+            <button
+              type="button"
+              onClick={() => setSubSection(isCoordinatorPlus ? 'coordination' : 'attendance')}
+              className="bento-card p-4 bg-slate-900 border border-slate-800 hover:border-slate-700 text-left transition-colors cursor-pointer"
+            >
               <span className="text-xs font-semibold text-slate-400">Below 75% Attendance</span>
-              <div className="mt-2 flex items-baseline gap-2">
+              <div className="mt-1.5 flex items-baseline gap-2">
                 <span
                   className={`text-2xl font-extrabold tabular-nums ${
                     lowAttendanceStudents.length > 0 ? 'text-rose-400' : 'text-slate-200'
@@ -1099,41 +1257,59 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
                 </span>
                 <span className="text-[11px] text-slate-500">need follow-up</span>
               </div>
-            </div>
+            </button>
           </div>
 
-          {/* Byte Faculty Reminders Strip (Non-AI Deterministic) */}
-          <div className="bento-card p-5 bg-slate-900 border border-slate-800 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <VeylentraIcon name="byte" size="sm" />
-                <div>
-                  <h2 className="text-sm font-bold text-white">Byte Action Queue</h2>
-                  <p className="text-[11px] text-slate-400">
-                    Deterministic reminders from your live roster, schedule, and assignments
-                  </p>
-                </div>
-              </div>
-              <span className="text-[11px] font-semibold text-slate-400 tabular-nums">
-                {facultyByteReminders.length} active
-              </span>
-            </div>
+          {/* Faculty & Coordinator Daily Checklist & Streak */}
+          <UnifiedEngagementPanel
+            currentUser={currentUser}
+            effectiveRole={effectiveRole}
+            overview={engagementOverview}
+            loading={engagementLoading}
+            compactMode={true}
+            onNavigateTab={(tabId) => {
+              if (tabId === 'attendance_manager') setSubSection('attendance');
+              else if (tabId === 'homework') setSubSection('assignments');
+              else onNavigateTab(tabId);
+            }}
+            showNotification={showNotification}
+            onRefresh={refreshEngagement}
+          />
 
-            {facultyByteReminders.length === 0 ? (
-              <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 text-xs text-slate-400 flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>All faculty operational items are currently handled or snoozed.</span>
+          {/* Primary Operational Row: Byte Action Queue + Teaching Schedule */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Byte Faculty Reminders */}
+            <div className="bento-card p-5 bg-slate-900 border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <VeylentraIcon name="byte" size="sm" />
+                  <div>
+                    <h2 className="text-sm font-bold text-white">Action Queue</h2>
+                    <p className="text-[11px] text-slate-400">Live workflow reminders from roster &amp; homework</p>
+                  </div>
+                </div>
+                <span className="text-[11px] font-semibold text-slate-400 tabular-nums">
+                  {facultyByteReminders.length} active
+                </span>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {facultyByteReminders.slice(0, 4).map(rem => (
-                  <div
-                    key={rem.id}
-                    className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 flex flex-col justify-between gap-2.5"
-                  >
-                    <div className="space-y-1">
+
+              {facultyByteReminders.length === 0 ? (
+                <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800 text-xs text-slate-400 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>All operational items are handled or snoozed.</span>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {facultyByteReminders.slice(0, 3).map(rem => (
+                    <div
+                      key={rem.id}
+                      className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex flex-col gap-2"
+                    >
                       <div className="flex items-start justify-between gap-2">
-                        <p className="text-xs font-bold text-white leading-snug">{rem.title}</p>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-white leading-snug">{rem.title}</p>
+                          <p className="text-[11px] text-slate-400 mt-0.5">{rem.reason}</p>
+                        </div>
                         <span
                           className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md shrink-0 ${
                             rem.priority === 'urgent'
@@ -1146,69 +1322,64 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
                           {rem.priority}
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-400">{rem.reason}</p>
-                    </div>
 
-                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-800/80">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          soundService.playButtonClick();
-                          if (rem.type === 'faculty_attendance') setSubSection('attendance');
-                          else if (rem.type === 'faculty_grading') setSubSection('assignments');
-                          else if (rem.type === 'coordinator_alert' && isCoordinatorPlus) setSubSection('coordination');
-                          else onNavigateTab(rem.actionTab);
-                        }}
-                        className="text-xs font-bold text-sky-400 hover:text-sky-300 cursor-pointer"
-                      >
-                        {rem.actionLabel}
-                      </button>
-
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-800/80">
                         <button
                           type="button"
                           onClick={() => {
-                            snoozeByteReminder(userId, rem.id);
-                            setReminderVersion(v => v + 1);
-                            showNotification('Snoozed reminder for 1 hour.');
+                            soundService.playButtonClick();
+                            if (rem.type === 'faculty_attendance') setSubSection('attendance');
+                            else if (rem.type === 'faculty_grading') setSubSection('assignments');
+                            else if (rem.type === 'coordinator_alert' && isCoordinatorPlus) setSubSection('coordination');
+                            else onNavigateTab(rem.actionTab);
                           }}
-                          className="px-2 py-1 rounded-md bg-slate-900 hover:bg-slate-800 text-[10px] text-slate-300 border border-slate-700 cursor-pointer"
+                          className="text-xs font-bold text-sky-400 hover:text-sky-300 cursor-pointer"
                         >
-                          Snooze 1h
+                          {rem.actionLabel}
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            markByteReminderHandled(userId, rem.id);
-                            setReminderVersion(v => v + 1);
-                          }}
-                          className="px-2 py-1 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 text-[10px] font-semibold text-emerald-300 border border-emerald-500/30 cursor-pointer"
-                        >
-                          Done
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            dismissByteReminder(userId, rem.id);
-                            setReminderVersion(v => v + 1);
-                          }}
-                          className="p-1 text-slate-500 hover:text-slate-200 cursor-pointer"
-                          title="Dismiss reminder"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              snoozeByteReminder(userId, rem.id);
+                              setReminderVersion(v => v + 1);
+                              showNotification('Snoozed reminder for 1 hour.');
+                            }}
+                            className="px-2 py-0.5 rounded-md bg-slate-900 hover:bg-slate-800 text-[10px] text-slate-300 border border-slate-700 cursor-pointer"
+                          >
+                            Snooze 1h
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              markByteReminderHandled(userId, rem.id);
+                              setReminderVersion(v => v + 1);
+                            }}
+                            className="px-2 py-0.5 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 text-[10px] font-semibold text-emerald-300 border border-emerald-500/30 cursor-pointer"
+                          >
+                            Done
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              dismissByteReminder(userId, rem.id);
+                              setReminderVersion(v => v + 1);
+                            }}
+                            className="p-1 text-slate-500 hover:text-slate-200 cursor-pointer"
+                            title="Dismiss reminder"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
-          {/* Split Row: Today's Schedule + Assignment Completion Chart */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Teaching Schedule */}
-            <div className="bento-card p-5 bg-slate-900 border border-slate-800 space-y-4">
+            <div className="bento-card p-5 bg-slate-900 border border-slate-800 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Calendar className="w-4 h-4 text-sky-400" />
@@ -1255,482 +1426,496 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
                 </div>
               )}
             </div>
-
-            {/* Real Homework Completion Chart */}
-            <div className="bento-card p-5 bg-slate-900 border border-slate-800 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-bold text-white">Assignment Completion Overview</h3>
-                  <p className="text-[11px] text-slate-400">
-                    Real student completion rate across your recent assignments
-                  </p>
-                </div>
-                <span className="text-xs font-bold text-slate-400 tabular-nums">
-                  {teacherHomework.length} total
-                </span>
-              </div>
-
-              {assignmentCompletionChartData.length === 0 ? (
-                <div className="h-52 flex items-center justify-center text-xs text-slate-400 border border-dashed border-slate-800 rounded-xl">
-                  No cohort assignments issued yet. Create one in Assignments.
-                </div>
-              ) : (
-                <div className="h-56 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={assignmentCompletionChartData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                      <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                      <YAxis domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: '#020617',
-                          border: '1px solid #334155',
-                          borderRadius: '10px',
-                          fontSize: '12px',
-                          color: '#f8fafc'
-                        }}
-                        formatter={(value: any, _name: any, entry: any) => [
-                          `${value}% (${entry?.payload?.submitted || 0} completed)`,
-                          entry?.payload?.fullTitle || 'Completion'
-                        ]}
-                      />
-                      <Bar dataKey="completionPct" radius={[6, 6, 0, 0]}>
-                        {assignmentCompletionChartData.map((entry, idx) => (
-                          <Cell
-                            key={`cell-${idx}`}
-                            fill={entry.completionPct >= 75 ? '#10b981' : '#0ea5e9'}
-                          />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </div>
           </div>
 
-          {/* Orion Faculty Drafting Studio (Explicit Confirmation Before Saving) */}
-          {hasFacultyCapability(effectiveRole, 'use_faculty_orion') && (
-            <div className="bento-card p-6 bg-slate-900 border border-slate-800 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div className="flex items-center gap-2.5">
-                  <VeylentraIcon name="orion" size="md" />
-                  <div>
-                    <h3 className="text-sm font-bold text-white">Orion Faculty Drafting & Insights</h3>
-                    <p className="text-[11px] text-slate-400">
-                      Generate drafts cleanly — nothing is saved or sent to students until you review and confirm.
-                    </p>
-                  </div>
+          {/* Faculty Tools Studio: Switch cleanly between Orion AI Drafting & Targeted Circulars */}
+          <div className="bento-card p-5 bg-slate-900 border border-slate-800 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+              <div>
+                <h3 className="text-sm font-bold text-white">Faculty Tools</h3>
+                <p className="text-[11px] text-slate-400">
+                  Draft curriculum materials with Orion or broadcast cohort circulars
+                </p>
+              </div>
+              <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-950 border border-slate-800">
+                {hasFacultyCapability(effectiveRole, 'use_faculty_orion') && (
+                  <button
+                    type="button"
+                    onClick={() => setOverviewToolTab('orion')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
+                      overviewToolTab === 'orion'
+                        ? 'bg-sky-600 text-white'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Orion AI Drafting
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setOverviewToolTab('circulars')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
+                    overviewToolTab === 'circulars' || !hasFacultyCapability(effectiveRole, 'use_faculty_orion')
+                      ? 'bg-sky-600 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Circulars ({targetedAnnouncements.length})
+                </button>
+              </div>
+            </div>
+
+            {overviewToolTab === 'orion' && hasFacultyCapability(effectiveRole, 'use_faculty_orion') ? (
+              <div className="space-y-4">
+                <p className="text-[11px] text-slate-400">
+                  Nothing is published or sent to students until you review and confirm the generated draft.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                  <select
+                    value={selectedOrionIntent}
+                    onChange={e => setSelectedOrionIntent(e.target.value as OrionFacultyIntent)}
+                    className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-semibold text-white focus:outline-none focus:border-sky-500"
+                  >
+                    <option value="draft_assignment">Draft Assignment (+ rubric)</option>
+                    <option value="draft_lesson_plan">Draft Lesson Plan (45 min)</option>
+                    <option value="draft_assessment_outline">Assessment Outline</option>
+                    <option value="draft_quiz">Draft Quick Quiz (5 Qs)</option>
+                    <option value="draft_announcement">Draft Circular Notice</option>
+                    <option value="summarize_submission_progress">Submission Progress Summary</option>
+                    <option value="summarize_class_insights">Cohort Insights Brief</option>
+                    {isCoordinatorPlus && (
+                      <option value="summarize_cohort_coordination">Coordinator Oversight Brief</option>
+                    )}
+                  </select>
+                  <input
+                    type="text"
+                    value={orionSubject}
+                    onChange={e => setOrionSubject(e.target.value)}
+                    placeholder="Subject (e.g. Physics)"
+                    className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500"
+                  />
+                  <select
+                    value={orionGrade}
+                    onChange={e => setOrionGrade(e.target.value)}
+                    className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500"
+                  >
+                    {authorizedGrades.map(g => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={orionTopic}
+                    onChange={e => setOrionTopic(e.target.value)}
+                    placeholder="Topic or instructions..."
+                    className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500"
+                  />
                 </div>
-              </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <input
-                  type="text"
-                  value={orionSubject}
-                  onChange={e => setOrionSubject(e.target.value)}
-                  placeholder="Subject (e.g. Physics)"
-                  className="px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500"
-                />
-                <select
-                  value={orionGrade}
-                  onChange={e => setOrionGrade(e.target.value)}
-                  className="px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500"
-                >
-                  {authorizedGrades.map(g => (
-                    <option key={g} value={g}>
-                      {g}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="text"
-                  value={orionTopic}
-                  onChange={e => setOrionTopic(e.target.value)}
-                  placeholder="Topic or prompt (e.g. Newton's Laws Lab)"
-                  className="px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                <button
-                  type="button"
-                  disabled={orionLoading}
-                  onClick={() => handleRunOrionDraft('draft_assignment')}
-                  className="p-3 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-sky-500/40 text-left transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  <p className="text-xs font-bold text-white">Draft Assignment</p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">Tasks + rubric</p>
-                </button>
-                <button
-                  type="button"
-                  disabled={orionLoading}
-                  onClick={() => handleRunOrionDraft('draft_lesson_plan')}
-                  className="p-3 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-sky-500/40 text-left transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  <p className="text-xs font-bold text-white">Draft Lesson Plan</p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">45-min flow</p>
-                </button>
-                <button
-                  type="button"
-                  disabled={orionLoading}
-                  onClick={() => handleRunOrionDraft('draft_assessment_outline')}
-                  className="p-3 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-sky-500/40 text-left transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  <p className="text-xs font-bold text-white">Assessment Outline</p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">Blueprint + marks</p>
-                </button>
-                <button
-                  type="button"
-                  disabled={orionLoading}
-                  onClick={() => handleRunOrionDraft('draft_quiz')}
-                  className="p-3 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-sky-500/40 text-left transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  <p className="text-xs font-bold text-white">Draft Quick Quiz</p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">5 Qs + key</p>
-                </button>
-                <button
-                  type="button"
-                  disabled={orionLoading}
-                  onClick={() => handleRunOrionDraft('draft_announcement')}
-                  className="p-3 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-sky-500/40 text-left transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  <p className="text-xs font-bold text-white">Draft Circular</p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">Notice preview</p>
-                </button>
-                <button
-                  type="button"
-                  disabled={orionLoading}
-                  onClick={() => handleRunOrionDraft('summarize_submission_progress')}
-                  className="p-3 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/40 text-left transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  <p className="text-xs font-bold text-amber-300">Submission Summary</p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">Pending &amp; late brief</p>
-                </button>
-                <button
-                  type="button"
-                  disabled={orionLoading}
-                  onClick={() => handleRunOrionDraft('summarize_class_insights')}
-                  className="p-3 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-emerald-500/40 text-left transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  <p className="text-xs font-bold text-emerald-300">Cohort Insights</p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">Real data brief</p>
-                </button>
-                {isCoordinatorPlus && (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] text-slate-500 mr-1">Quick presets:</span>
+                    {(
+                      [
+                        ['draft_assignment', 'Assignment'],
+                        ['draft_lesson_plan', 'Lesson Plan'],
+                        ['summarize_class_insights', 'Cohort Brief']
+                      ] as Array<[OrionFacultyIntent, string]>
+                    ).map(([intentKey, label]) => (
+                      <button
+                        key={intentKey}
+                        type="button"
+                        disabled={orionLoading}
+                        onClick={() => {
+                          setSelectedOrionIntent(intentKey);
+                          handleRunOrionDraft(intentKey);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[11px] font-semibold text-slate-300 cursor-pointer disabled:opacity-50"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                   <button
                     type="button"
                     disabled={orionLoading}
-                    onClick={() => handleRunOrionDraft('summarize_cohort_coordination')}
-                    className="p-3 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-sky-500/40 text-left transition-colors cursor-pointer disabled:opacity-50"
+                    onClick={() => handleRunOrionDraft(selectedOrionIntent)}
+                    className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-2 cursor-pointer"
                   >
-                    <p className="text-xs font-bold text-sky-300">Coord. Oversight Brief</p>
-                    <p className="text-[10px] text-slate-400 mt-0.5">Attendance &amp; pacing</p>
-                  </button>
-                )}
-              </div>
-
-              {orionLoading && (
-                <div className="p-4 rounded-xl bg-slate-950 border border-sky-500/30 flex items-center gap-3 text-xs text-sky-300">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Orion is preparing an editable draft for your review...</span>
-                </div>
-              )}
-
-              {orionError && (
-                <div className="p-4 rounded-xl bg-rose-950/30 border border-rose-500/30 flex items-center justify-between gap-3 text-xs text-rose-300">
-                  <span>{orionError}</span>
-                  <button
-                    type="button"
-                    onClick={() => setOrionError(null)}
-                    className="text-rose-200 underline cursor-pointer"
-                  >
-                    Dismiss
+                    {orionLoading ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <VeylentraIcon name="orion" size="xs" />
+                    )}
+                    <span>Generate Editable Draft</span>
                   </button>
                 </div>
-              )}
 
-              {pendingDraft && (
-                <div className="p-5 rounded-2xl bg-slate-950 border border-sky-500/40 space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
-                    <div>
-                      <span className="text-xs font-bold text-sky-400 flex items-center gap-1.5">
-                        <ShieldCheck className="w-4 h-4" />
-                        <span>Draft Ready — Review & Edit Before Saving</span>
-                      </span>
-                      {pendingDraft.provider && (
-                        <p className="text-[10px] text-slate-500 mt-0.5">
-                          Generated via {pendingDraft.provider}
-                        </p>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setPendingDraft(null)}
-                      className="text-xs text-slate-400 hover:text-white cursor-pointer"
-                    >
-                      Discard Draft
-                    </button>
+                {orionLoading && (
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-sky-500/30 flex items-center gap-3 text-xs text-sky-300">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Orion is preparing an editable draft for your review...</span>
                   </div>
+                )}
 
-                  <input
-                    type="text"
-                    value={pendingDraft.title}
-                    onChange={e =>
-                      setPendingDraft(prev => (prev ? { ...prev, title: e.target.value } : null))
-                    }
-                    className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs font-bold text-white focus:outline-none focus:border-sky-500"
-                  />
-
-                  <textarea
-                    rows={8}
-                    value={pendingDraft.content}
-                    onChange={e =>
-                      setPendingDraft(prev => (prev ? { ...prev, content: e.target.value } : null))
-                    }
-                    className="w-full p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-200 leading-relaxed focus:outline-none focus:border-sky-500"
-                  />
-
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                    <p className="text-[11px] text-slate-400">
-                      Target cohort: {pendingDraft.grade} ({pendingDraft.section})
-                    </p>
+                {orionError && (
+                  <div className="p-3.5 rounded-xl bg-rose-950/30 border border-rose-500/30 flex flex-wrap items-center justify-between gap-3 text-xs text-rose-300">
+                    <span>{orionError}</span>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => setPendingDraft(null)}
-                        className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 cursor-pointer"
+                        onClick={() => handleRunOrionDraft(lastOrionIntent)}
+                        className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-white font-semibold cursor-pointer"
                       >
-                        Cancel
+                        Retry
                       </button>
                       <button
                         type="button"
-                        disabled={committingDraft}
-                        onClick={handleConfirmCommitDraft}
-                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                        onClick={() => setOrionError(null)}
+                        className="text-rose-200 underline cursor-pointer"
                       >
-                        {committingDraft ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <Check className="w-3.5 h-3.5" />
-                        )}
-                        <span>
-                          {pendingDraft.intent === 'draft_assignment' ||
-                          pendingDraft.intent === 'draft_quiz'
-                            ? 'Confirm & Publish Assignment'
-                            : pendingDraft.intent === 'draft_announcement'
-                            ? 'Confirm & Send Announcement'
-                            : 'Confirm & Save to Notes'}
-                        </span>
+                        Dismiss
                       </button>
                     </div>
                   </div>
-                </div>
-              )}
-            </div>
-          )}
+                )}
 
-          {/* Targeted Circulars & Announcements Panel */}
-          <div className="bento-card p-5 bg-slate-900 border border-slate-800 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <Megaphone className="w-4 h-4 text-sky-400" />
-                <div>
-                  <h3 className="text-sm font-bold text-white">Targeted Circulars &amp; Announcements</h3>
-                  <p className="text-[11px] text-slate-400">
-                    Publish grade/section-scoped circulars with draft/archive control and read tracking
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  soundService.playButtonClick();
-                  setShowAnnComposer(v => !v);
-                }}
-                className="px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>{showAnnComposer ? 'Close Composer' : 'New Circular'}</span>
-              </button>
-            </div>
+                {pendingDraft && (
+                  <div className="p-5 rounded-2xl bg-slate-950 border border-sky-500/40 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                      <div>
+                        <span className="text-xs font-bold text-sky-400 flex items-center gap-1.5">
+                          <ShieldCheck className="w-4 h-4" />
+                          <span>Draft Ready — Review &amp; Edit Before Saving</span>
+                        </span>
+                        {pendingDraft.provider && (
+                          <p className="text-[10px] text-slate-500 mt-0.5">
+                            Generated via {pendingDraft.provider}
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPendingDraft(null)}
+                        className="text-xs text-slate-400 hover:text-white cursor-pointer"
+                      >
+                        Discard Draft
+                      </button>
+                    </div>
 
-            {showAnnComposer && (
-              <form
-                onSubmit={handleSaveTargetedAnnouncement}
-                className="p-4 rounded-xl bg-slate-950 border border-sky-500/30 space-y-3"
-              >
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
-                  <input
-                    type="text"
-                    required
-                    value={annTitle}
-                    onChange={e => setAnnTitle(e.target.value)}
-                    placeholder="Circular title"
-                    className="sm:col-span-2 px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500"
-                  />
-                  <select
-                    value={annTargetRole}
-                    onChange={e => setAnnTargetRole(e.target.value as any)}
-                    className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white"
-                  >
-                    <option value="student">Students</option>
-                    <option value="all">All Roles</option>
-                    <option value="parent">Parents</option>
-                    <option value="teacher">Faculty Only</option>
-                  </select>
-                  <select
-                    value={annTargetGrade}
-                    onChange={e => setAnnTargetGrade(e.target.value)}
-                    className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white"
-                  >
-                    <option value="all">All Authorized Grades</option>
-                    {authorizedGrades.map(g => (
-                      <option key={g} value={g}>{g}</option>
-                    ))}
-                  </select>
-                  <select
-                    value={annTargetSection}
-                    onChange={e => setAnnTargetSection(e.target.value)}
-                    className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white"
-                  >
-                    <option value="all">All Sections</option>
-                    {(annTargetGrade !== 'all' ? getSectionsForGrade(annTargetGrade) : authorizedSections).map(s => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <textarea
-                  rows={3}
-                  required
-                  value={annContent}
-                  onChange={e => setAnnContent(e.target.value)}
-                  placeholder="Write the circular details for your target cohort..."
-                  className="w-full p-3 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500"
-                />
-
-                <div className="flex flex-wrap items-center justify-between gap-2.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <select
-                      value={annPriority}
-                      onChange={e => setAnnPriority(e.target.value as any)}
-                      className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white"
-                    >
-                      <option value="normal">Priority: Normal</option>
-                      <option value="important">Priority: Important</option>
-                      <option value="urgent">Priority: Urgent</option>
-                    </select>
-                    <select
-                      value={annStatus}
-                      onChange={e => setAnnStatus(e.target.value as any)}
-                      className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white"
-                    >
-                      <option value="published">Publish Immediately</option>
-                      <option value="draft">Save as Draft</option>
-                    </select>
                     <input
-                      type="url"
-                      value={annAttachUrl}
-                      onChange={e => setAnnAttachUrl(e.target.value)}
-                      placeholder="Optional resource URL (https://...)"
-                      className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white w-56"
+                      type="text"
+                      value={pendingDraft.title}
+                      onChange={e =>
+                        setPendingDraft(prev => (prev ? { ...prev, title: e.target.value } : null))
+                      }
+                      className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs font-bold text-white focus:outline-none focus:border-sky-500"
                     />
+
+                    <textarea
+                      rows={8}
+                      value={pendingDraft.content}
+                      onChange={e =>
+                        setPendingDraft(prev => (prev ? { ...prev, content: e.target.value } : null))
+                      }
+                      className="w-full p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-200 leading-relaxed focus:outline-none focus:border-sky-500"
+                    />
+
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                      <p className="text-[11px] text-slate-400">
+                        Target cohort: {pendingDraft.grade} ({pendingDraft.section})
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPendingDraft(null)}
+                          className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          disabled={committingDraft}
+                          onClick={handleConfirmCommitDraft}
+                          className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                        >
+                          {committingDraft ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Check className="w-3.5 h-3.5" />
+                          )}
+                          <span>
+                            {pendingDraft.intent === 'draft_assignment' ||
+                            pendingDraft.intent === 'draft_quiz'
+                              ? 'Confirm & Publish Assignment'
+                              : pendingDraft.intent === 'draft_announcement'
+                              ? 'Confirm & Send Announcement'
+                              : 'Confirm & Save to Notes'}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <Megaphone className="w-4 h-4 text-sky-400 shrink-0" />
+                    <span>Publish grade/section-scoped circulars with draft/archive control and read tracking</span>
                   </div>
                   <button
-                    type="submit"
-                    disabled={savingAnn}
-                    className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    type="button"
+                    onClick={() => {
+                      soundService.playButtonClick();
+                      setShowAnnComposer(v => !v);
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                   >
-                    {savingAnn ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                    <span>{annStatus === 'draft' ? 'Save Draft' : 'Publish Circular'}</span>
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{showAnnComposer ? 'Close Composer' : 'New Circular'}</span>
                   </button>
                 </div>
-              </form>
-            )}
 
-            {targetedAnnouncements.length > 0 && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {targetedAnnouncements.slice(0, 4).map(ann => (
-                  <div
-                    key={ann.id}
-                    className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 flex flex-col justify-between gap-2"
+                {showAnnComposer && (
+                  <form
+                    onSubmit={handleSaveTargetedAnnouncement}
+                    className="p-4 rounded-xl bg-slate-950 border border-sky-500/30 space-y-3"
                   >
-                    <div>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] font-bold uppercase text-sky-400">
-                          {ann.targetGrade === 'all' ? 'All Grades' : ann.targetGrade} · {ann.targetSection === 'all' ? 'All Sections' : ann.targetSection}
-                        </span>
-                        <span
-                          className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
-                            ann.status === 'draft'
-                              ? 'bg-slate-800 text-slate-300'
-                              : ann.status === 'archived'
-                              ? 'bg-slate-900 text-slate-500'
-                              : ann.priority === 'urgent'
-                              ? 'bg-rose-500/20 text-rose-300'
-                              : 'bg-emerald-500/15 text-emerald-300'
-                          }`}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+                      <input
+                        type="text"
+                        required
+                        value={annTitle}
+                        onChange={e => setAnnTitle(e.target.value)}
+                        placeholder="Circular title"
+                        className="sm:col-span-2 px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500"
+                      />
+                      <select
+                        value={annTargetRole}
+                        onChange={e => setAnnTargetRole(e.target.value as any)}
+                        className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white"
+                      >
+                        <option value="student">Students</option>
+                        <option value="all">All Roles</option>
+                        <option value="parent">Parents</option>
+                        <option value="teacher">Faculty Only</option>
+                      </select>
+                      <select
+                        value={annTargetGrade}
+                        onChange={e => setAnnTargetGrade(e.target.value)}
+                        className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white"
+                      >
+                        <option value="all">All Authorized Grades</option>
+                        {authorizedGrades.map(g => (
+                          <option key={g} value={g}>{g}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={annTargetSection}
+                        onChange={e => setAnnTargetSection(e.target.value)}
+                        className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white"
+                      >
+                        <option value="all">All Sections</option>
+                        {(annTargetGrade !== 'all' ? getSectionsForGrade(annTargetGrade) : authorizedSections).map(s => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <textarea
+                      rows={3}
+                      required
+                      value={annContent}
+                      onChange={e => setAnnContent(e.target.value)}
+                      placeholder="Write the circular details for your target cohort..."
+                      className="w-full p-3 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500"
+                    />
+
+                    <div className="flex flex-wrap items-center justify-between gap-2.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <select
+                          value={annPriority}
+                          onChange={e => setAnnPriority(e.target.value as any)}
+                          className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white"
                         >
-                          {ann.status}
-                        </span>
+                          <option value="normal">Priority: Normal</option>
+                          <option value="important">Priority: Important</option>
+                          <option value="urgent">Priority: Urgent</option>
+                        </select>
+                        <select
+                          value={annStatus}
+                          onChange={e => setAnnStatus(e.target.value as any)}
+                          className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white"
+                        >
+                          <option value="published">Publish Immediately</option>
+                          <option value="draft">Save as Draft</option>
+                        </select>
+                        <input
+                          type="url"
+                          value={annAttachUrl}
+                          onChange={e => setAnnAttachUrl(e.target.value)}
+                          placeholder="Optional resource URL (https://...)"
+                          className="px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white w-56"
+                        />
                       </div>
-                      <p className="text-xs font-bold text-white mt-1">{ann.title}</p>
-                      <p className="text-[11px] text-slate-400 line-clamp-2 mt-0.5">{ann.content}</p>
+                      <button
+                        type="submit"
+                        disabled={savingAnn}
+                        className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                      >
+                        {savingAnn ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                        <span>{annStatus === 'draft' ? 'Save Draft' : 'Publish Circular'}</span>
+                      </button>
                     </div>
-                    <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 text-[10px] text-slate-400">
-                      <span>{ann.authorName} · {ann.targetRole}</span>
-                      <div className="flex items-center gap-2">
-                        {ann.status === 'draft' && (
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              const res = await updateTargetedAnnouncement(currentUser, ann.id, { status: 'published' });
-                              if (res.ok && res.data) {
-                                setTargetedAnnouncements(prev => prev.map(x => (x.id === ann.id ? res.data! : x)));
-                                showNotification('Circular published.');
-                              }
-                            }}
-                            className="text-emerald-400 font-bold hover:underline cursor-pointer"
-                          >
-                            Publish
-                          </button>
-                        )}
-                        {ann.status === 'published' && (
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              const res = await updateTargetedAnnouncement(currentUser, ann.id, { status: 'archived' });
-                              if (res.ok && res.data) {
-                                setTargetedAnnouncements(prev => prev.map(x => (x.id === ann.id ? res.data! : x)));
-                                showNotification('Circular archived.');
-                              }
-                            }}
-                            className="text-slate-400 hover:text-white cursor-pointer"
-                          >
-                            Archive
-                          </button>
-                        )}
+                  </form>
+                )}
+
+                {targetedAnnouncements.length === 0 ? (
+                  <p className="text-xs text-slate-400">No targeted circulars published yet.</p>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {targetedAnnouncements.slice(0, 4).map(ann => (
+                      <div
+                        key={ann.id}
+                        className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 flex flex-col justify-between gap-2"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-bold uppercase text-sky-400">
+                              {ann.targetGrade === 'all' ? 'All Grades' : ann.targetGrade} · {ann.targetSection === 'all' ? 'All Sections' : ann.targetSection}
+                            </span>
+                            <span
+                              className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                                ann.status === 'draft'
+                                  ? 'bg-slate-800 text-slate-300'
+                                  : ann.status === 'archived'
+                                  ? 'bg-slate-900 text-slate-500'
+                                  : ann.priority === 'urgent'
+                                  ? 'bg-rose-500/20 text-rose-300'
+                                  : 'bg-emerald-500/15 text-emerald-300'
+                              }`}
+                            >
+                              {ann.status}
+                            </span>
+                          </div>
+                          <p className="text-xs font-bold text-white mt-1">{ann.title}</p>
+                          <p className="text-[11px] text-slate-400 line-clamp-2 mt-0.5">{ann.content}</p>
+                        </div>
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 text-[10px] text-slate-400">
+                          <span>{ann.authorName} · {ann.targetRole}</span>
+                          <div className="flex items-center gap-2">
+                            {ann.status === 'draft' && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const res = await updateTargetedAnnouncement(currentUser, ann.id, { status: 'published' });
+                                  if (res.ok && res.data) {
+                                    setTargetedAnnouncements(prev => prev.map(x => (x.id === ann.id ? res.data! : x)));
+                                    showNotification('Circular published.');
+                                  }
+                                }}
+                                className="text-emerald-400 font-bold hover:underline cursor-pointer"
+                              >
+                                Publish
+                              </button>
+                            )}
+                            {ann.status === 'published' && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const res = await updateTargetedAnnouncement(currentUser, ann.id, { status: 'archived' });
+                                  if (res.ok && res.data) {
+                                    setTargetedAnnouncements(prev => prev.map(x => (x.id === ann.id ? res.data! : x)));
+                                    showNotification('Circular archived.');
+                                  }
+                                }}
+                                className="text-slate-400 hover:text-white cursor-pointer"
+                              >
+                                Archive
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    </div>
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
             )}
           </div>
 
-          <WinterDashboardBanner
-            currentUser={currentUser}
-            showNotification={(msg) => showNotification(msg)}
-            onNavigateTab={(t) => onNavigateTab(t)}
-          />
+          {/* Analytics & Campus Standing (Below primary workflow fold) */}
+          <div className="bento-card p-5 bg-slate-900 border border-slate-800 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-white">Assignment Completion Overview</h3>
+                <p className="text-[11px] text-slate-400">
+                  Real student completion rate across your recent assignments
+                </p>
+              </div>
+              <span className="text-xs font-bold text-slate-400 tabular-nums">
+                {teacherHomework.length} total
+              </span>
+            </div>
 
-          <XpLeaderboardPanel
-            type="faculty"
-            compact
-            maxRows={5}
-            currentUser={currentUser}
-            onViewFull={() => onNavigateTab('leaderboard')}
-          />
+            {assignmentCompletionChartData.length === 0 ? (
+              <div className="h-44 flex items-center justify-center text-xs text-slate-400 border border-dashed border-slate-800 rounded-xl">
+                No cohort assignments issued yet. Create one in Assignments.
+              </div>
+            ) : (
+              <div className="h-52 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={assignmentCompletionChartData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                    <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} />
+                    <YAxis domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#020617',
+                        border: '1px solid #334155',
+                        borderRadius: '10px',
+                        fontSize: '12px',
+                        color: '#f8fafc'
+                      }}
+                      formatter={(value: any, _name: any, entry: any) => [
+                        `${value}% (${entry?.payload?.submitted || 0} completed)`,
+                        entry?.payload?.fullTitle || 'Completion'
+                      ]}
+                    />
+                    <Bar dataKey="completionPct" radius={[6, 6, 0, 0]}>
+                      {assignmentCompletionChartData.map((entry, idx) => (
+                        <Cell
+                          key={`cell-${idx}`}
+                          fill={entry.completionPct >= 75 ? '#10b981' : '#0ea5e9'}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-4 pt-2 border-t border-slate-800/70">
+            <WinterDashboardBanner
+              currentUser={currentUser}
+              showNotification={(msg) => showNotification(msg)}
+              onNavigateTab={(t) => onNavigateTab(t)}
+            />
+
+            <XpLeaderboardPanel
+              type="faculty"
+              compact
+              maxRows={5}
+              currentUser={currentUser}
+              onViewFull={() => onNavigateTab('leaderboard')}
+            />
+          </div>
         </div>
       )}
 
@@ -1786,40 +1971,260 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
                     <tr>
                       <th className="py-3 px-4 font-semibold">Student</th>
                       <th className="py-3 px-4 font-semibold">Grade / Section</th>
+                      <th className="py-3 px-4 font-semibold">Attendance</th>
                       <th className="py-3 px-4 font-semibold">House</th>
                       <th className="py-3 px-4 font-semibold text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/70">
-                    {filteredRoster.slice(0, 60).map(st => (
-                      <tr key={st.uid || st.email} className="hover:bg-slate-800/40">
-                        <td className="py-3 px-4">
-                          <p className="font-bold text-white">{st.name}</p>
-                          <p className="text-[11px] text-slate-500">{st.email}</p>
-                        </td>
-                        <td className="py-3 px-4 text-slate-300">
-                          {st.grade || '—'} · {st.section || '—'}
-                        </td>
-                        <td className="py-3 px-4 text-slate-400">{st.house || '—'}</td>
-                        <td className="py-3 px-4 text-right">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setOrionTopic(`Prepare a supportive 2-week academic follow-up plan for ${st.name}`);
-                              setSubSection('overview');
-                            }}
-                            className="text-xs font-semibold text-sky-400 hover:underline cursor-pointer"
-                          >
-                            Draft Feedback
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {filteredRoster.slice(0, 60).map(st => {
+                      const att = rosterAttendanceStats[st.uid];
+                      return (
+                        <tr key={st.uid || st.email} className="hover:bg-slate-800/40">
+                          <td className="py-3 px-4">
+                            <p className="font-bold text-white">{st.name}</p>
+                            <p className="text-[11px] text-slate-500">{st.email}</p>
+                          </td>
+                          <td className="py-3 px-4 text-slate-300">
+                            {st.grade || '—'} · {st.section || '—'}
+                          </td>
+                          <td className="py-3 px-4">
+                            {att && att.total > 0 ? (
+                              <span
+                                className={`text-[11px] font-bold tabular-nums ${
+                                  att.pct < 75 ? 'text-rose-400' : 'text-emerald-400'
+                                }`}
+                              >
+                                {att.pct}% ({att.present}/{att.total})
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-slate-500">No records</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-slate-400">{st.house || '—'}</td>
+                          <td className="py-3 px-4 text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenRosterFeedbackModal(st)}
+                              className="px-3 py-1.5 rounded-lg bg-sky-600/15 hover:bg-sky-600/25 border border-sky-500/30 text-xs font-semibold text-sky-300 cursor-pointer"
+                            >
+                              Draft Feedback
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             )}
           </div>
+
+          {/* Student-Scoped Roster Feedback Modal (No blind redirect, manual teacher review required) */}
+          {rosterFeedbackStudent && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
+              <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl p-5 sm:p-6 space-y-4">
+                <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-sky-400">
+                        Student-Scoped Feedback
+                      </span>
+                      <span className="text-[11px] text-slate-500">·</span>
+                      <span className="text-[11px] text-slate-300">
+                        {rosterFeedbackStudent.grade || 'Class'} ({rosterFeedbackStudent.section || 'Section'})
+                      </span>
+                    </div>
+                    <h3 className="text-lg font-bold text-white mt-0.5">{rosterFeedbackStudent.name}</h3>
+                    <p className="text-[11px] text-slate-400">{rosterFeedbackStudent.email}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setRosterFeedbackStudent(null)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+                    aria-label="Close student feedback modal"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Scoped Student Context Strip */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                    <p className="text-[10px] font-semibold text-slate-400 uppercase">Attendance Standing</p>
+                    {rosterAttendanceStats[rosterFeedbackStudent.uid]?.total > 0 ? (
+                      <p
+                        className={`text-xs font-bold mt-1 ${
+                          rosterAttendanceStats[rosterFeedbackStudent.uid].pct < 75
+                            ? 'text-rose-400'
+                            : 'text-emerald-400'
+                        }`}
+                      >
+                        {rosterAttendanceStats[rosterFeedbackStudent.uid].pct}% ({rosterAttendanceStats[rosterFeedbackStudent.uid].present}/
+                        {rosterAttendanceStats[rosterFeedbackStudent.uid].total} sessions)
+                      </p>
+                    ) : (
+                      <p className="text-xs text-slate-400 mt-1">No attendance entries yet</p>
+                    )}
+                  </div>
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                    <p className="text-[10px] font-semibold text-slate-400 uppercase">Recent Cohort Work</p>
+                    <p className="text-xs font-bold text-white mt-1">
+                      {
+                        teacherHomework.filter(
+                          hw =>
+                            Array.isArray(hw.completedList) &&
+                            (hw.completedList.includes(rosterFeedbackStudent.uid) ||
+                              hw.completedList.includes(rosterFeedbackStudent.email))
+                        ).length
+                      }{' '}
+                      / {teacherHomework.length} assignments marked done
+                    </p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleConfirmSendRosterFeedback} className="space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-400 mb-1">Subject / Focus Area</label>
+                      <input
+                        type="text"
+                        value={rosterFeedbackSubject}
+                        onChange={e => setRosterFeedbackSubject(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-400 mb-1">Feedback Title</label>
+                      <input
+                        type="text"
+                        required
+                        value={rosterFeedbackTitle}
+                        onChange={e => setRosterFeedbackTitle(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-sky-300 flex items-center gap-1.5">
+                        <VeylentraIcon name="orion" size="xs" />
+                        <span>Draft with Orion (Optional)</span>
+                      </span>
+                      <button
+                        type="button"
+                        disabled={rosterFeedbackAiLoading}
+                        onClick={handleGenerateRosterFeedbackWithOrion}
+                        className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-[11px] font-bold flex items-center gap-1.5 cursor-pointer"
+                      >
+                        {rosterFeedbackAiLoading ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <VeylentraIcon name="orion" size="xs" />
+                        )}
+                        <span>{rosterFeedbackAiLoading ? 'Drafting...' : 'Generate Draft'}</span>
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={rosterFeedbackPrompt}
+                      onChange={e => setRosterFeedbackPrompt(e.target.value)}
+                      placeholder="Optional teacher guidance (e.g. Missed lab report & strong class participation)..."
+                      className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500"
+                    />
+                    {rosterFeedbackAiError && (
+                      <div className="p-2.5 rounded-lg bg-rose-950/40 border border-rose-500/30 flex items-center justify-between gap-2 text-[11px] text-rose-300">
+                        <span>{rosterFeedbackAiError}</span>
+                        <button
+                          type="button"
+                          onClick={handleGenerateRosterFeedbackWithOrion}
+                          className="px-2 py-0.5 rounded bg-rose-500/20 text-white font-semibold cursor-pointer shrink-0"
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    )}
+                    {rosterFeedbackProvider && (
+                      <p className="text-[10px] text-slate-500">Drafted via {rosterFeedbackProvider}</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                      Feedback Message (Review &amp; edit before sending to {rosterFeedbackStudent.name})
+                    </label>
+                    <textarea
+                      rows={5}
+                      required
+                      value={rosterFeedbackText}
+                      onChange={e => {
+                        setRosterFeedbackText(e.target.value);
+                        setRosterFeedbackSaveError(null);
+                      }}
+                      placeholder={`Write or refine feedback for ${rosterFeedbackStudent.name}...`}
+                      className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-100 leading-relaxed focus:outline-none focus:border-sky-500"
+                    />
+                  </div>
+
+                  {rosterFeedbackSaveError && (
+                    <p className="text-xs font-semibold text-rose-400">{rosterFeedbackSaveError}</p>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800">
+                    <span className="text-[11px] text-slate-400">
+                      Never auto-sent · Saves directly to {rosterFeedbackStudent.name}&apos;s record
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setRosterFeedbackStudent(null)}
+                        className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={rosterFeedbackSaving || !rosterFeedbackText.trim()}
+                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                      >
+                        {rosterFeedbackSaving ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Send className="w-3.5 h-3.5" />
+                        )}
+                        <span>Confirm &amp; Send Feedback</span>
+                      </button>
+                    </div>
+                  </div>
+                </form>
+
+                {/* Prior Feedback History for this Student */}
+                <div className="pt-3 border-t border-slate-800 space-y-2">
+                  <h4 className="text-xs font-bold text-slate-300">Previous Feedback Sent</h4>
+                  {rosterFeedbackHistoryLoading ? (
+                    <p className="text-[11px] text-slate-400">Loading feedback history...</p>
+                  ) : rosterFeedbackHistory.length === 0 ? (
+                    <p className="text-[11px] text-slate-500">No prior direct feedback recorded for this student.</p>
+                  ) : (
+                    <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                      {rosterFeedbackHistory.map(item => (
+                        <div key={item.id} className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-bold text-white">{item.title}</span>
+                            <span className="text-[10px] text-slate-500">
+                              {new Date(item.createdAt).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-300 whitespace-pre-line">{item.feedback}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

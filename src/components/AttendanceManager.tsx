@@ -20,7 +20,7 @@ import {
   fetchAttendanceAuditHistory
 } from '../lib/academicWorkflowService';
 import { awardServerActionXp } from '../lib/winterFestivalService';
-import { recordEngagementActivity } from '../lib/engagementService';
+import { recordEngagementActivity, dispatchEngagementUpdate } from '../lib/engagementService';
 
 const SUBJECT_LIST = [
   'General / Homeroom',
@@ -293,6 +293,89 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
       void loadAuditHistory();
     }
 
+    const actorRole = effectiveRole || currentUser.role || 'teacher';
+    let persistedOk = apiRes.ok;
+
+    // Step 2: Persist to Supabase public.attendance when backend API didn't persist directly
+    if (!apiRes.ok) {
+      try {
+        const { data: existingRows } = await supabase
+          .from('attendance')
+          .select('id')
+          .eq('date', date)
+          .or(`user_id.eq.${uid},student_id.eq.${uid}`)
+          .maybeSingle();
+
+        const fullPayload: any = {
+          user_id: uid,
+          student_id: uid,
+          student_name: targetUser?.name || '',
+          date: date,
+          status: status,
+          grade: selectedGrade,
+          section: selectedSection,
+          subject: selectedSubject,
+          updated_by: currentUser.name || currentUser.email,
+          updated_at: new Date().toISOString()
+        };
+
+        let dbErr: any = null;
+        if (existingRows?.id) {
+          let { error: updateError } = await supabase
+            .from('attendance')
+            .update(fullPayload)
+            .eq('id', existingRows.id);
+          dbErr = updateError;
+
+          if (updateError && updateError.code === 'PGRST204') {
+            const fallbackRes = await supabase
+              .from('attendance')
+              .update({
+                student_id: uid,
+                date: date,
+                status: status,
+                grade: selectedGrade,
+                section: selectedSection
+              })
+              .eq('id', existingRows.id);
+            dbErr = fallbackRes.error;
+          }
+        } else {
+          let { error: insertError } = await supabase
+            .from('attendance')
+            .insert(fullPayload);
+          dbErr = insertError;
+
+          if (insertError && insertError.code === 'PGRST204') {
+            const fallbackRes = await supabase
+              .from('attendance')
+              .insert({
+                student_id: uid,
+                date: date,
+                status: status,
+                grade: selectedGrade,
+                section: selectedSection
+              });
+            dbErr = fallbackRes.error;
+          }
+        }
+
+        if (!dbErr) {
+          persistedOk = true;
+        } else {
+          console.warn('[Attendance] Supabase persistence error:', dbErr);
+        }
+      } catch (err: any) {
+        console.warn('[Attendance] Supabase persistence note:', err);
+      }
+    }
+
+    if (!persistedOk) {
+      setErrorMessage(apiRes.error || 'Could not save attendance to the database. Please try again.');
+      setMarkingUid(null);
+      return;
+    }
+
     const updatedRecord: AttendanceRecord & { remarks?: string } = {
       id: `${uid}_${date}`,
       date,
@@ -302,7 +385,7 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
       status
     };
 
-    // Step 2: Update local session state and local storage immediately so refresh keeps the mark
+    // Step 3: Update local session state and local storage ONLY after verified persistence
     setAttendance(prev => {
       const next = {
         ...prev,
@@ -333,72 +416,21 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
       return next;
     });
 
-    // Step 3: Persist to Supabase public.attendance when backend fallback isn't already persisting directly
-    if (!apiRes.ok) {
-      try {
-        const { data: existingRows } = await supabase
-          .from('attendance')
-          .select('id')
-          .eq('date', date)
-          .or(`user_id.eq.${uid},student_id.eq.${uid}`)
-          .maybeSingle();
-
-        const fullPayload: any = {
-          user_id: uid,
-          student_id: uid,
-          student_name: targetUser?.name || '',
-          date: date,
-          status: status,
-          grade: selectedGrade,
-          section: selectedSection,
-          subject: selectedSubject,
-          updated_by: currentUser.name || currentUser.email,
-          updated_at: new Date().toISOString()
-        };
-
-        if (existingRows?.id) {
-          let { error: updateError } = await supabase
-            .from('attendance')
-            .update(fullPayload)
-            .eq('id', existingRows.id);
-
-          if (updateError && updateError.code === 'PGRST204') {
-            await supabase
-              .from('attendance')
-              .update({
-                student_id: uid,
-                date: date,
-                status: status,
-                grade: selectedGrade,
-                section: selectedSection
-              })
-              .eq('id', existingRows.id);
-          }
-        } else {
-          let { error: insertError } = await supabase
-            .from('attendance')
-            .insert(fullPayload);
-
-          if (insertError && insertError.code === 'PGRST204') {
-            await supabase
-              .from('attendance')
-              .insert({
-                student_id: uid,
-                date: date,
-                status: status,
-                grade: selectedGrade,
-                section: selectedSection
-              });
-          }
-        }
-      } catch (err: any) {
-        console.warn('[Attendance] Supabase persistence note:', err);
-      }
-    }
-
     setMarkingUid(null);
     void awardServerActionXp(currentUser, 'faculty_mark_attendance', `${selectedGrade}_${selectedSection}_${date}`);
-    void recordEngagementActivity(currentUser, 'teacher', 'attendance_mark', 1);
+    if (apiRes.ok) {
+      // Backend /api/academic/attendance/record already invoked onActivityRecorded; refresh overview without double-counting
+      dispatchEngagementUpdate(currentUser.uid);
+    } else {
+      void recordEngagementActivity(
+        currentUser,
+        actorRole,
+        'attendance_mark',
+        1,
+        null,
+        `att_${currentUser.uid || 'fac'}_${uid}_${date}_${selectedSubject}`
+      );
+    }
     setSuccessMessage(`✓ Marked as ${status.toUpperCase()}`);
     setTimeout(() => setSuccessMessage(null), 3000);
   };
@@ -413,8 +445,11 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
     if (targetUsers.length === 0) return;
     setLoading(true);
     setErrorMessage(null);
+    const actorRole = effectiveRole || currentUser.role || 'teacher';
     try {
       const newMap = { ...attendance };
+      let apiSavedCount = 0;
+      let fallbackSavedCount = 0;
 
       for (const u of targetUsers) {
         if (!u.uid) continue;
@@ -430,16 +465,10 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
           reason: attendance[u.uid]?.status && attendance[u.uid]?.status !== 'present' ? 'Batch mark all present' : undefined
         });
 
-        newMap[u.uid] = {
-          id: `${u.uid}_${date}`,
-          date,
-          grade: selectedGrade,
-          section: selectedSection,
-          studentId: u.uid,
-          status: 'present'
-        };
-
-        if (!apiRes.ok) {
+        let savedThisRow = apiRes.ok;
+        if (apiRes.ok) {
+          apiSavedCount += 1;
+        } else {
           const fullPayload: any = {
             user_id: u.uid,
             student_id: u.uid,
@@ -461,31 +490,56 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
               .or(`user_id.eq.${u.uid},student_id.eq.${u.uid}`)
               .maybeSingle();
 
+            let rowErr: any = null;
             if (existingRows?.id) {
               let { error: uErr } = await supabase.from('attendance').update(fullPayload).eq('id', existingRows.id);
+              rowErr = uErr;
               if (uErr && uErr.code === 'PGRST204') {
-                await supabase.from('attendance').update({
+                const fRes = await supabase.from('attendance').update({
                   student_id: u.uid,
                   date,
                   status: 'present',
                   grade: selectedGrade,
                   section: selectedSection
                 }).eq('id', existingRows.id);
+                rowErr = fRes.error;
               }
             } else {
               let { error: iErr } = await supabase.from('attendance').insert(fullPayload);
+              rowErr = iErr;
               if (iErr && iErr.code === 'PGRST204') {
-                await supabase.from('attendance').insert({
+                const fRes = await supabase.from('attendance').insert({
                   student_id: u.uid,
                   date,
                   status: 'present',
                   grade: selectedGrade,
                   section: selectedSection
                 });
+                rowErr = fRes.error;
               }
+            }
+            if (!rowErr) {
+              savedThisRow = true;
+              fallbackSavedCount += 1;
             }
           } catch (_) {}
         }
+
+        if (savedThisRow) {
+          newMap[u.uid] = {
+            id: `${u.uid}_${date}`,
+            date,
+            grade: selectedGrade,
+            section: selectedSection,
+            studentId: u.uid,
+            status: 'present'
+          };
+        }
+      }
+
+      if (apiSavedCount + fallbackSavedCount === 0) {
+        setErrorMessage('Failed to save attendance batch to the database. No records were updated.');
+        return;
       }
 
       setAttendance(newMap);
@@ -494,7 +548,18 @@ export default function AttendanceManager({ currentUser, effectiveRole }: { curr
       } catch (_) {}
       void loadAuditHistory();
       void awardServerActionXp(currentUser, 'faculty_mark_attendance', `${selectedGrade}_${selectedSection}_${date}`);
-      void recordEngagementActivity(currentUser, 'teacher', 'attendance_mark', targetUsers.length);
+      if (apiSavedCount > 0) {
+        dispatchEngagementUpdate(currentUser.uid);
+      } else {
+        void recordEngagementActivity(
+          currentUser,
+          actorRole,
+          'attendance_mark',
+          fallbackSavedCount,
+          null,
+          `att_batch_${currentUser.uid || 'fac'}_${selectedGrade}_${selectedSection}_${date}`
+        );
+      }
       setSuccessMessage('✓ All students marked Present.');
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (e: any) {

@@ -221,6 +221,7 @@ interface AcademicStore {
   attendanceAuditLogs: any[];
   announcements: Map<string, any>;
   announcementReads: Map<string, Set<string>>; // announcementId -> Set<userId>
+  studentFeedback: any[];
 }
 
 const memoryStore: AcademicStore = {
@@ -231,7 +232,8 @@ const memoryStore: AcademicStore = {
   attendance: new Map(),
   attendanceAuditLogs: [],
   announcements: new Map(),
-  announcementReads: new Map()
+  announcementReads: new Map(),
+  studentFeedback: []
 };
 
 export function resetTestAcademicStore() {
@@ -243,6 +245,7 @@ export function resetTestAcademicStore() {
   memoryStore.attendanceAuditLogs = [];
   memoryStore.announcements.clear();
   memoryStore.announcementReads.clear();
+  memoryStore.studentFeedback = [];
 }
 
 export interface AcademicRouteDependencies {
@@ -1578,16 +1581,21 @@ export function registerAcademicWorkflowRoutes(
     if (process.env.NODE_ENV !== 'test') {
       const sb = getSb();
       if (sb) {
-        const { data: dbExisting } = await sb
+        const { data: dbExisting, error: lookupErr } = await sb
           .from('attendance')
           .select('id, status')
           .eq('date', date)
           .or(`user_id.eq.${studentId},student_id.eq.${studentId}`)
           .maybeSingle();
 
+        if (lookupErr && !['PGRST116'].includes(lookupErr.code || '')) {
+          return res.status(503).json({ success: false, error: `Failed to verify existing attendance record: ${lookupErr.message}` });
+        }
+
         const dbPrevStatus = dbExisting?.status || previousStatus;
+        let writeErr: any = null;
         if (dbExisting?.id) {
-          await sb.from('attendance').update({
+          const { error: uErr } = await sb.from('attendance').update({
             status,
             subject,
             grade,
@@ -1595,8 +1603,9 @@ export function registerAcademicWorkflowRoutes(
             updated_by: actor.name,
             updated_at: now
           }).eq('id', dbExisting.id);
+          writeErr = uErr;
         } else {
-          await sb.from('attendance').insert({
+          const { error: iErr } = await sb.from('attendance').insert({
             id: record.id,
             user_id: studentId,
             student_id: studentId,
@@ -1609,6 +1618,11 @@ export function registerAcademicWorkflowRoutes(
             updated_by: actor.name,
             updated_at: now
           });
+          writeErr = iErr;
+        }
+
+        if (writeErr) {
+          return res.status(503).json({ success: false, error: `Failed to save attendance record to database: ${writeErr.message}` });
         }
 
         if (dbPrevStatus && dbPrevStatus !== status) {
@@ -1676,7 +1690,7 @@ export function registerAcademicWorkflowRoutes(
 
     try {
       if (deps.onActivityRecorded) {
-        void deps.onActivityRecorded(actor.id, actor.role || 'teacher', 'attendance_mark', 1);
+        await deps.onActivityRecorded(actor.id, actor.role || 'teacher', 'attendance_mark', 1);
       }
     } catch (_) {}
 
@@ -1969,5 +1983,192 @@ export function registerAcademicWorkflowRoutes(
     }
 
     return res.json({ success: true, read: true });
+  });
+
+  // --------------------------------------------------------------------------
+  // 5. FACULTY-TO-STUDENT DIRECT FEEDBACK (ROSTER ACTION)
+  // --------------------------------------------------------------------------
+
+  app.get('/api/academic/student-feedback', async (req, res) => {
+    const resolved = await resolveActor(req);
+    if (!resolved.actor) return res.status(resolved.errorStatus || 401).json({ success: false, error: resolved.errorMsg });
+    const actor = resolved.actor;
+    const role = actor.role.toLowerCase();
+    const targetStudentId = String(req.query.studentId || '').trim();
+
+    if ((role === 'student' || role === 'parent') && targetStudentId && targetStudentId !== actor.id) {
+      return res.status(403).json({ success: false, error: 'Forbidden: cannot inspect another student’s feedback.' });
+    }
+
+    const merged = new Map<string, any>();
+    memoryStore.studentFeedback.forEach(item => {
+      if (item?.id) merged.set(item.id, item);
+    });
+
+    if (process.env.NODE_ENV !== 'test') {
+      try {
+        const sb = getSb();
+        if (sb) {
+          let q = sb.from('notifications').select('*').eq('type', 'feedback').order('created_at', { ascending: false }).limit(80);
+          if (role === 'student') {
+            q = q.eq('target_user_id', actor.id);
+          } else if (targetStudentId) {
+            q = q.eq('target_user_id', targetStudentId);
+          }
+          const { data } = await q;
+          (data || []).forEach((row: any) => {
+            const p = row.payload || {};
+            merged.set(row.id, {
+              id: row.id,
+              studentId: row.target_user_id || p.targetUserId,
+              studentName: p.studentName || 'Student',
+              title: row.title || p.title,
+              feedback: row.message || row.content || p.message,
+              subject: p.subject || 'Academic Progress',
+              grade: row.target_class || p.targetClass || '',
+              section: row.target_section || p.targetSection || '',
+              authorId: p.authorId || '',
+              authorName: p.authorName || 'Faculty',
+              authorRole: p.authorRole || 'teacher',
+              createdAt: row.created_at || p.createdAt,
+            });
+          });
+        }
+      } catch (_) {}
+    }
+
+    let items = Array.from(merged.values());
+    if (role === 'student' || role === 'parent') {
+      items = items.filter(it => it.studentId === actor.id);
+    } else {
+      if (targetStudentId) {
+        items = items.filter(it => it.studentId === targetStudentId);
+      }
+      items = items.filter(it => isFacultyAuthorizedForScope(actor, it.grade, it.section));
+    }
+
+    items.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    return res.json({ success: true, feedback: items });
+  });
+
+  app.post('/api/academic/student-feedback', async (req, res) => {
+    const resolved = await resolveActor(req);
+    if (!resolved.actor) return res.status(resolved.errorStatus || 401).json({ success: false, error: resolved.errorMsg });
+    const actor = resolved.actor;
+
+    if (!isFacultyOrAdminRole(actor.role)) {
+      return res.status(403).json({ success: false, error: 'Permission denied: only faculty or coordinators can send student feedback.' });
+    }
+
+    const b = req.body || {};
+    const studentId = String(b.studentId || '').trim();
+    const studentName = String(b.studentName || 'Student').trim();
+    const title = String(b.title || '').trim();
+    const feedback = String(b.feedback || b.content || '').trim();
+    const subject = String(b.subject || 'Academic Progress').trim();
+    const grade = String(b.grade || '').trim();
+    const section = String(b.section || '').trim();
+
+    if (!studentId || !title || !feedback) {
+      return res.status(400).json({ success: false, error: 'studentId, title, and feedback text are required.' });
+    }
+
+    if (!isFacultyAuthorizedForScope(actor, grade, section)) {
+      return res.status(403).json({ success: false, error: 'Scope denied: student is outside your authorized cohort.' });
+    }
+
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const record = {
+      id,
+      studentId,
+      studentName,
+      title,
+      feedback,
+      subject,
+      grade,
+      section,
+      authorId: actor.id,
+      authorName: actor.name,
+      authorRole: actor.role,
+      createdAt: now
+    };
+
+    if (process.env.NODE_ENV !== 'test') {
+      const sb = getSb();
+      if (!sb) {
+        return res.status(503).json({ success: false, error: 'Database client unavailable.' });
+      }
+      const { error: dbErr } = await sb.from('notifications').upsert({
+        id,
+        title,
+        message: feedback,
+        content: feedback,
+        type: 'feedback',
+        target_user_id: studentId,
+        target_class: grade || 'all',
+        target_section: section || 'all',
+        is_read: false,
+        created_at: now,
+        payload: {
+          id,
+          title,
+          message: feedback,
+          type: 'feedback',
+          targetUserId: studentId,
+          targetRole: 'student',
+          targetClass: grade || 'all',
+          targetSection: section || 'all',
+          studentName,
+          subject,
+          authorId: actor.id,
+          authorName: actor.name,
+          authorRole: actor.role,
+          linkTab: 'student_experience',
+          createdAt: now
+        }
+      });
+      if (dbErr) {
+        return res.status(503).json({ success: false, error: `Failed to save student feedback: ${dbErr.message}` });
+      }
+    }
+
+    memoryStore.studentFeedback.unshift(record);
+
+    if (deps.emitScopedBroadcast) {
+      deps.emitScopedBroadcast(
+        'academic:notification',
+        {
+          id,
+          title,
+          message: feedback,
+          type: 'feedback',
+          targetUserId: studentId,
+          targetRole: 'student',
+          targetClass: grade || 'all',
+          targetSection: section || 'all',
+          linkTab: 'student_experience',
+          createdAt: now
+        },
+        {
+          targetUserId: studentId,
+          targetRole: 'student',
+          targetGrade: grade,
+          targetSection: section,
+          sensitive: true
+        }
+      );
+    }
+
+    try {
+      if (deps.onActivityRecorded) {
+        const actType = ['coordinator', 'hod'].includes(actor.role.toLowerCase())
+          ? 'oversight_review'
+          : 'grade_submission';
+        await deps.onActivityRecorded(actor.id, actor.role || 'teacher', actType, 1);
+      }
+    } catch (_) {}
+
+    return res.status(201).json({ success: true, feedbackRecord: record });
   });
 }

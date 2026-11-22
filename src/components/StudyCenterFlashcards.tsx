@@ -458,7 +458,9 @@ export const StudyCenterFlashcards: React.FC<StudyCenterProps> = ({
     } catch (err: any) {
       console.error('[Flashcards] Failed to persist card review to Supabase:', err);
       setSyncError('Failed to save progress to Supabase: ' + (err?.message || 'Network error'));
-      showNotification('Warning: Progress could not be synced to Supabase. Check your connection.');
+      showNotification('Review not counted: failed to save progress to Supabase. Please try again.');
+      setIsSavingProgress(false);
+      return;
     } finally {
       setIsSavingProgress(false);
     }

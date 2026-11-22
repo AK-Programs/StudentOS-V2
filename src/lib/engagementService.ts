@@ -217,10 +217,11 @@ export async function recordEngagementActivity(
     | 'admin_audit'
     | 'daily_checkin',
   count = 1,
-  returnContext?: SmartReturnContext | null
-): Promise<{ success: boolean; streakIncremented?: boolean; streak?: any; missions?: any[] }> {
+  returnContext?: SmartReturnContext | null,
+  eventId?: string
+): Promise<{ success: boolean; streakIncremented?: boolean; streak?: any; missions?: any[]; error?: string }> {
   const userId = user?.uid || (user as any)?.id;
-  if (!userId) return { success: false };
+  if (!userId) return { success: false, error: 'Sign in required' };
 
   try {
     const headers = await buildAuthHeadersForUser({ ...user, role: (effectiveRole || user?.role || 'student') as any });
@@ -232,6 +233,7 @@ export async function recordEngagementActivity(
         role: effectiveRole || user?.role || 'student',
         activityType,
         count,
+        eventId,
         returnContext,
       }),
     });
@@ -240,8 +242,10 @@ export async function recordEngagementActivity(
       dispatchEngagementUpdate(userId);
       return data;
     }
-  } catch (_) {}
-  return { success: false };
+    return { success: false, error: data?.error || `Activity save failed (${res.status})` };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Network error' };
+  }
 }
 
 export async function recoverUserStreak(
@@ -268,7 +272,14 @@ export async function recoverUserStreak(
       body: JSON.stringify({ userId, activityType, verifiedCount, role }),
     });
     const data = await res.json().catch(() => ({ success: false, error: 'Failed to process recovery' }));
-    if (res.ok && data?.success) {
+    if (
+      res.ok &&
+      data?.success === true &&
+      typeof data.restoredFrom === 'number' &&
+      data.restoredFrom > 0 &&
+      typeof data.newStreak === 'number' &&
+      data.newStreak > 0
+    ) {
       const todayKey = new Date().toISOString().split('T')[0];
       void awardServerActionXp(user, 'streak_recovery', `recovery_${userId}_${todayKey}`).then(() => {
         if (typeof window !== 'undefined') {
@@ -282,8 +293,8 @@ export async function recoverUserStreak(
           new CustomEvent(STREAK_RECOVERED_EVENT, {
             detail: {
               userId,
-              restoredFrom: data.restoredFrom || 0,
-              newStreak: data.newStreak || 1,
+              restoredFrom: data.restoredFrom,
+              newStreak: data.newStreak,
               xpRewarded: data.xpRewarded || 35,
               activityType,
               role,

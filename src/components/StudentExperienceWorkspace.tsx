@@ -206,6 +206,7 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
   const [orionError, setOrionError] = useState<string | null>(null);
   const [reminderVersion, setReminderVersion] = useState<number>(0);
   const [localCompletedHwIds, setLocalCompletedHwIds] = useState<string[]>([]);
+  const [homeFeedTab, setHomeFeedTab] = useState<'reminders' | 'next_steps' | 'circulars'>('reminders');
 
   useEffect(() => {
     let mounted = true;
@@ -760,27 +761,26 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
           </div>
         </div>
 
-        <div className="relative z-10 flex flex-wrap items-center gap-2">
+        <div className="relative z-10 flex flex-wrap items-center gap-2.5 shrink-0">
           <button
             type="button"
-            onClick={() => onNavigateTab('notes')}
-            className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs font-semibold text-slate-200 flex items-center gap-2 cursor-pointer"
+            onClick={() => {
+              soundService.playButtonClick();
+              setSubTab(pendingHomework.length > 0 ? 'assignments' : 'subjects');
+            }}
+            className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-2 cursor-pointer transition-colors"
           >
-            <VeylentraIcon name="notes" size="xs" />
-            <span>Lecture Notes</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onNavigateTab('brain_battle')}
-            className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs font-semibold text-slate-200 flex items-center gap-2 cursor-pointer"
-          >
-            <VeylentraIcon name="brain_battle" size="xs" />
-            <span>Brain Battle</span>
+            <VeylentraIcon name={pendingHomework.length > 0 ? 'homework' : 'syllabus'} size="xs" />
+            <span>
+              {pendingHomework.length > 0
+                ? `Review Assignments (${pendingHomework.length})`
+                : 'Open Academic Hub'}
+            </span>
           </button>
           <button
             type="button"
             onClick={() => onOpenOrionFull()}
-            className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center gap-2 cursor-pointer"
+            className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs font-semibold text-slate-200 flex items-center gap-2 cursor-pointer transition-colors"
           >
             <VeylentraIcon name="orion" size="xs" />
             <span>Open Orion</span>
@@ -902,9 +902,13 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
             onRefresh={refreshEngagement}
           />
 
-          {/* Top KPI Summary Row */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bento-card rounded-2xl p-4 space-y-1.5">
+          {/* Top Actionable KPI Summary Row */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+            <button
+              type="button"
+              onClick={() => onNavigateTab('timetable_viewer')}
+              className="bento-card rounded-2xl p-4 space-y-1.5 text-left hover:border-white/20 transition-colors cursor-pointer"
+            >
               <div className="flex items-center justify-between text-xs text-slate-400">
                 <span>Live / Next Class</span>
                 <Clock className="w-3.5 h-3.5 text-blue-400" />
@@ -917,9 +921,13 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
                   ? `${liveScheduleInfo.dayLabel} · ${liveScheduleInfo.activePeriod.startTime}–${liveScheduleInfo.activePeriod.endTime}`
                   : 'All scheduled classes complete today'}
               </p>
-            </div>
+            </button>
 
-            <div className="bento-card rounded-2xl p-4 space-y-1.5">
+            <button
+              type="button"
+              onClick={() => setSubTab('assignments')}
+              className="bento-card rounded-2xl p-4 space-y-1.5 text-left hover:border-white/20 transition-colors cursor-pointer"
+            >
               <div className="flex items-center justify-between text-xs text-slate-400">
                 <span>Pending Assignments</span>
                 <VeylentraIcon name="homework" size="xs" />
@@ -930,9 +938,13 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
                   ? `Next due ${pendingHomework[0].dueDate}`
                   : 'No urgent homework queued'}
               </p>
-            </div>
+            </button>
 
-            <div className="bento-card rounded-2xl p-4 space-y-1.5">
+            <button
+              type="button"
+              onClick={() => setSubTab('analytics')}
+              className="bento-card rounded-2xl p-4 space-y-1.5 text-left hover:border-white/20 transition-colors cursor-pointer"
+            >
               <div className="flex items-center justify-between text-xs text-slate-400">
                 <span>Recorded Attendance</span>
                 <VeylentraIcon name="attendance" size="xs" />
@@ -951,9 +963,13 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
                   ? `${attendanceStats.effectivePresent}/${attendanceStats.totalConducted} sessions attended`
                   : 'Awaiting attendance entries'}
               </p>
-            </div>
+            </button>
 
-            <div className="bento-card rounded-2xl p-4 space-y-1.5">
+            <button
+              type="button"
+              onClick={() => setSubTab(marksSummary ? 'analytics' : 'study_space')}
+              className="bento-card rounded-2xl p-4 space-y-1.5 text-left hover:border-white/20 transition-colors cursor-pointer"
+            >
               <div className="flex items-center justify-between text-xs text-slate-400">
                 <span>Marks / Active Recall</span>
                 <VeylentraIcon name="quiz" size="xs" />
@@ -966,7 +982,7 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
                   ? `Across ${marksSummary.count} graded assessment${marksSummary.count === 1 ? '' : 's'}`
                   : `${decks.length} flashcard deck${decks.length === 1 ? '' : 's'} synced`}
               </p>
-            </div>
+            </button>
           </div>
 
           {/* Low attendance alert if < 75% and real records exist */}
@@ -991,8 +1007,8 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
             </div>
           )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-            {/* Left 2 Columns: Timetable Schedule + Subject Progress Chart + Quick Orion */}
+          {/* Primary Today Layout: Left = Schedule + Quick Ask + Syllabus Progress | Right = Consolidated Priority Feed */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
             <div className="lg:col-span-2 space-y-5">
               {/* Today's Official Periods Strip */}
               <div className="bento-card rounded-2xl p-5 space-y-3">
@@ -1061,7 +1077,67 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
                     </button>
                   </div>
                 )}
+
+                {/* Quiet Quick-Tools Footer Row */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/5 text-[11px] text-slate-400">
+                  <span>Quick study shortcuts</span>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => onNavigateTab('notes')}
+                      className="hover:text-white flex items-center gap-1 cursor-pointer"
+                    >
+                      <VeylentraIcon name="notes" size="xs" />
+                      <span>Lecture Notes</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onNavigateTab('flashcards')}
+                      className="hover:text-white flex items-center gap-1 cursor-pointer"
+                    >
+                      <VeylentraIcon name="study_hub" size="xs" />
+                      <span>Flashcards</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onNavigateTab('brain_battle')}
+                      className="hover:text-white flex items-center gap-1 cursor-pointer"
+                    >
+                      <VeylentraIcon name="brain_battle" size="xs" />
+                      <span>Brain Battle</span>
+                    </button>
+                  </div>
+                </div>
               </div>
+
+              {/* Single Inline Orion Study Prompt */}
+              <form
+                onSubmit={e => {
+                  e.preventDefault();
+                  const q = orionQuickQuery.trim();
+                  if (!q) return;
+                  handleAskOrionInline('student_explain', selectedSubject || 'General Studies', q);
+                }}
+                className="bento-card rounded-2xl p-3.5 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5"
+              >
+                <div className="flex items-center gap-2.5 flex-1">
+                  <VeylentraIcon name="orion" size="sm" />
+                  <input
+                    type="text"
+                    value={orionQuickQuery}
+                    onChange={e => setOrionQuickQuery(e.target.value)}
+                    placeholder="Quick study question for Orion..."
+                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={!orionQuickQuery.trim() || orionLoading}
+                  className="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold disabled:opacity-50 cursor-pointer shrink-0"
+                >
+                  Ask Orion
+                </button>
+              </form>
 
               {/* Subject Mastery Progress Visualization (Recharts) */}
               <div className="bento-card rounded-2xl p-5 space-y-4">
@@ -1081,7 +1157,7 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
                 </div>
 
                 {subjectChartData.length > 0 ? (
-                  <div className="h-48 w-full">
+                  <div className="h-44 w-full">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={subjectChartData} margin={{ top: 6, right: 8, left: -20, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.12)" vertical={false} />
@@ -1109,82 +1185,74 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
                   <p className="text-xs text-slate-400 py-6 text-center">No published syllabus subjects found for {grade}.</p>
                 )}
               </div>
-
-              {/* Orion Contextual Study Prompt Bar */}
-              <form
-                onSubmit={e => {
-                  e.preventDefault();
-                  const q = orionQuickQuery.trim();
-                  if (!q) return;
-                  handleAskOrionInline('student_explain', selectedSubject || 'General Studies', q);
-                }}
-                className="bento-card rounded-2xl p-4 flex flex-col sm:flex-row items-stretch sm:items-center gap-3"
-              >
-                <div className="flex items-center gap-2.5 flex-1">
-                  <VeylentraIcon name="orion" size="sm" />
-                  <input
-                    type="text"
-                    value={orionQuickQuery}
-                    onChange={e => setOrionQuickQuery(e.target.value)}
-                    placeholder="Ask Orion to explain a concept, summarize notes, or plan study..."
-                    className="w-full bg-slate-950 border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="submit"
-                    disabled={!orionQuickQuery.trim() || orionLoading}
-                    className="px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold disabled:opacity-50 cursor-pointer"
-                  >
-                    Quick Answer
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onOpenOrionFull(orionQuickQuery.trim() || undefined)}
-                    className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-200 text-xs font-semibold cursor-pointer"
-                  >
-                    Full Orion
-                  </button>
-                </div>
-              </form>
             </div>
 
-            {/* Right Column: Byte Deterministic Reminders + Contextual Study Recommendations */}
-            <div className="space-y-5">
-              {/* Byte Smart Reminders Strip */}
-              <div className="bento-card rounded-2xl p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <VeylentraIcon name="byte" size="sm" />
-                    <div>
-                      <h3 className="text-sm font-bold text-white">Byte Reminders</h3>
-                      <p className="text-[11px] text-slate-400">Live priority actions</p>
-                    </div>
-                  </div>
-                  <span className="text-xs font-mono text-slate-400 tabular-nums">{byteReminders.length}</span>
+            {/* Right Column: Consolidated Priority Feed (Reminders / Next Steps / Circulars) */}
+            <div className="bento-card rounded-2xl p-5 space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <VeylentraIcon name="byte" size="sm" />
+                  <h3 className="text-sm font-bold text-white">Today&apos;s Feed</h3>
                 </div>
+                <span className="text-[11px] font-mono text-slate-400 tabular-nums">
+                  {homeFeedTab === 'reminders'
+                    ? `${byteReminders.length} active`
+                    : homeFeedTab === 'circulars'
+                    ? `${eligibleAnnouncements.length} notices`
+                    : `${subjectSummaries.filter(s => s.nextRecommendedChapter).length} topics`}
+                </span>
+              </div>
 
+              <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-slate-950 border border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setHomeFeedTab('reminders')}
+                  className={`py-1.5 px-2 rounded-lg text-[11px] font-semibold cursor-pointer transition-colors ${
+                    homeFeedTab === 'reminders' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Reminders ({byteReminders.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHomeFeedTab('next_steps')}
+                  className={`py-1.5 px-2 rounded-lg text-[11px] font-semibold cursor-pointer transition-colors ${
+                    homeFeedTab === 'next_steps' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Next Steps
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHomeFeedTab('circulars')}
+                  className={`py-1.5 px-2 rounded-lg text-[11px] font-semibold cursor-pointer transition-colors ${
+                    homeFeedTab === 'circulars' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Circulars ({eligibleAnnouncements.length})
+                </button>
+              </div>
+
+              {homeFeedTab === 'reminders' && (
                 <div className="space-y-2.5">
                   {byteReminders.slice(0, 4).map(rem => (
                     <div
                       key={rem.id}
                       className="p-3 rounded-xl bg-slate-950/80 border border-white/10 space-y-2"
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <span
-                            className={`text-[10px] font-bold uppercase tracking-wider ${
-                              rem.priority === 'urgent'
-                                ? 'text-rose-400'
-                                : rem.priority === 'high'
-                                ? 'text-amber-400'
-                                : 'text-blue-400'
-                            }`}
-                          >
-                            {rem.priority} · {rem.type.replace('_', ' ')}
-                          </span>
-                          <p className="text-xs font-bold text-white mt-0.5 leading-snug">{rem.title}</p>
-                        </div>
+                      <div className="min-w-0">
+                        <span
+                          className={`text-[10px] font-bold uppercase tracking-wider ${
+                            rem.priority === 'urgent'
+                              ? 'text-rose-400'
+                              : rem.priority === 'high'
+                              ? 'text-amber-400'
+                              : 'text-blue-400'
+                          }`}
+                        >
+                          {rem.priority} · {rem.type.replace('_', ' ')}
+                        </span>
+                        <p className="text-xs font-bold text-white mt-0.5 leading-snug">{rem.title}</p>
                       </div>
                       <p className="text-[11px] text-slate-400 leading-relaxed">{rem.reason}</p>
                       <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1">
@@ -1205,7 +1273,7 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
                             }}
                             className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] text-slate-400 hover:text-white cursor-pointer"
                           >
-                            Snooze 1h
+                            Snooze
                           </button>
                           <button
                             type="button"
@@ -1238,51 +1306,52 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
                     </div>
                   )}
                 </div>
-              </div>
+              )}
 
-              {/* Contextual Next Study Recommendations */}
-              <div className="bento-card rounded-2xl p-5 space-y-3">
-                <h3 className="text-sm font-bold text-white">Recommended Next Steps</h3>
+              {homeFeedTab === 'next_steps' && (
                 <div className="space-y-2">
-                  {subjectSummaries
-                    .filter(s => s.nextRecommendedChapter)
-                    .slice(0, 3)
-                    .map(summary => (
-                      <button
-                        type="button"
-                        key={summary.subject}
-                        onClick={() => {
-                          setSelectedSubject(summary.subject);
-                          setSubTab('subjects');
-                        }}
-                        className="w-full text-left p-3 rounded-xl bg-slate-950/75 border border-white/10 hover:border-blue-500/40 transition-colors cursor-pointer"
-                      >
-                        <div className="flex items-center justify-between text-[11px] font-semibold text-blue-400">
-                          <span>{summary.subject}</span>
-                          <span className="tabular-nums">{summary.progressPercentage}%</span>
-                        </div>
-                        <p className="text-xs font-bold text-white mt-0.5 truncate">
-                          Ch {summary.nextRecommendedChapter?.chapterNumber}: {summary.nextRecommendedChapter?.title}
-                        </p>
-                        <p className="text-[11px] text-slate-400 truncate mt-0.5">
-                          {summary.nextRecommendedChapter?.reason}
-                        </p>
-                      </button>
-                    ))}
+                  {subjectSummaries.filter(s => s.nextRecommendedChapter).length === 0 ? (
+                    <div className="p-4 text-center rounded-xl bg-slate-950/50 border border-dashed border-white/10 text-xs text-slate-400">
+                      All published syllabus chapters are up to date.
+                    </div>
+                  ) : (
+                    subjectSummaries
+                      .filter(s => s.nextRecommendedChapter)
+                      .slice(0, 4)
+                      .map(summary => (
+                        <button
+                          type="button"
+                          key={summary.subject}
+                          onClick={() => {
+                            setSelectedSubject(summary.subject);
+                            setSubTab('subjects');
+                          }}
+                          className="w-full text-left p-3 rounded-xl bg-slate-950/75 border border-white/10 hover:border-blue-500/40 transition-colors cursor-pointer"
+                        >
+                          <div className="flex items-center justify-between text-[11px] font-semibold text-blue-400">
+                            <span>{summary.subject}</span>
+                            <span className="tabular-nums">{summary.progressPercentage}%</span>
+                          </div>
+                          <p className="text-xs font-bold text-white mt-0.5 truncate">
+                            Ch {summary.nextRecommendedChapter?.chapterNumber}: {summary.nextRecommendedChapter?.title}
+                          </p>
+                          <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                            {summary.nextRecommendedChapter?.reason}
+                          </p>
+                        </button>
+                      ))
+                  )}
                 </div>
-              </div>
+              )}
 
-              {/* Scoped Academic Circulars & Announcements */}
-              <div className="bento-card rounded-2xl p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-white">Academic Circulars</h3>
-                  <span className="text-[11px] font-mono text-slate-400">{eligibleAnnouncements.length}</span>
-                </div>
-                {eligibleAnnouncements.length === 0 ? (
-                  <p className="text-xs text-slate-400">No active circulars for your cohort.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {eligibleAnnouncements.slice(0, 3).map(ann => (
+              {homeFeedTab === 'circulars' && (
+                <div className="space-y-2">
+                  {eligibleAnnouncements.length === 0 ? (
+                    <div className="p-4 text-center rounded-xl bg-slate-950/50 border border-dashed border-white/10 text-xs text-slate-400">
+                      No active circulars for your cohort.
+                    </div>
+                  ) : (
+                    eligibleAnnouncements.slice(0, 4).map(ann => (
                       <div key={ann.id} className="p-3 rounded-xl bg-slate-950/75 border border-white/10 space-y-1.5">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-[10px] font-bold uppercase text-teal-300">
@@ -1306,26 +1375,28 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
                           </button>
                         )}
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
-          <WinterDashboardBanner
-            currentUser={currentUser}
-            showNotification={(msg) => showNotification(msg)}
-            onNavigateTab={(t) => onNavigateTab(t)}
-          />
+          <div className="space-y-4 pt-2 border-t border-white/10">
+            <WinterDashboardBanner
+              currentUser={currentUser}
+              showNotification={(msg) => showNotification(msg)}
+              onNavigateTab={(t) => onNavigateTab(t)}
+            />
 
-          <XpLeaderboardPanel
-            type="student"
-            compact
-            maxRows={5}
-            currentUser={currentUser}
-            onViewFull={() => onNavigateTab('leaderboard')}
-          />
+            <XpLeaderboardPanel
+              type="student"
+              compact
+              maxRows={5}
+              currentUser={currentUser}
+              onViewFull={() => onNavigateTab('leaderboard')}
+            />
+          </div>
         </div>
       )}
 

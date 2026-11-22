@@ -104,6 +104,7 @@ export const UnifiedEngagementPanel: React.FC<UnifiedEngagementPanelProps> = ({
 
   const [claimingId, setClaimingId] = useState<string | null>(null);
   const [recovering, setRecovering] = useState<boolean>(false);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
 
   const streakCount = overview?.streak?.currentStreak ?? 0;
   const longestStreak = overview?.streak?.longestStreak ?? streakCount;
@@ -126,7 +127,14 @@ export const UnifiedEngagementPanel: React.FC<UnifiedEngagementPanelProps> = ({
   };
 
   const handleVerifiedRecovery = async () => {
-    if (!overview) return;
+    if (!overview || recovering) return;
+    if ((overview.streak.frozenStreakCount || 0) <= 0) {
+      const msg = 'No valid frozen streak snapshot exists to recover.';
+      setRecoveryError(msg);
+      showNotification?.(msg);
+      return;
+    }
+    setRecoveryError(null);
     setRecovering(true);
     const reqActivity =
       overview.streak.recoveryRequiredActivity ||
@@ -144,13 +152,15 @@ export const UnifiedEngagementPanel: React.FC<UnifiedEngagementPanelProps> = ({
       role
     );
     setRecovering(false);
-    if (res.success) {
+    if (res.success && typeof res.newStreak === 'number' && res.newStreak > 0) {
       showNotification?.(
         `Streak restored to ${res.newStreak} days! (+${res.xpRewarded || 35} XP)`
       );
-      onRefresh?.();
+      await onRefresh?.();
     } else {
-      showNotification?.(res.error || 'Complete the required recovery mission first.');
+      const errMsg = res.error || 'Complete the required recovery mission first.';
+      setRecoveryError(errMsg);
+      showNotification?.(errMsg);
     }
   };
 
@@ -345,6 +355,12 @@ export const UnifiedEngagementPanel: React.FC<UnifiedEngagementPanelProps> = ({
               )}
             </div>
           </div>
+          {recoveryError && (
+            <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-xs text-rose-200 flex items-center gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+              <span>{recoveryError}</span>
+            </div>
+          )}
         </div>
       )}
 
