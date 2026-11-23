@@ -86,6 +86,8 @@ function getDevWebSocket(): WebSocket | null {
         } else if (msg && msg.type === 'winter:cosmetics_updated') {
           window.dispatchEvent(new CustomEvent('veylentra-winter-updated', { detail: msg }));
           window.dispatchEvent(new CustomEvent('veylentra-cosmetics-updated', { detail: msg }));
+        } else if (msg && (msg.type === 'notification:broadcast' || msg.type === 'academic:notification')) {
+          window.dispatchEvent(new CustomEvent('studentos-notif-state-change', { detail: msg }));
         }
       } catch (_) {}
     };

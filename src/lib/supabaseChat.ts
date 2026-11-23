@@ -94,6 +94,7 @@ export interface AiBuddyThread {
   messages: { role: 'user' | 'assistant'; content: string }[];
   attachedFile?: { name: string; content: string; size: number; type: string } | null;
   attachedFiles?: { name: string; content: string; size: number; type: string }[];
+  isPinned?: boolean;
   userId: string;
   createdAt: number;
 }
@@ -261,6 +262,7 @@ export async function getAiBuddyChats(userId: string): Promise<AiBuddyThread[]> 
             mode: isWrapped ? parsedMsgs.mode : 'explanatory',
             messages: cleanMsgs,
             attachedFiles: isWrapped ? parsedMsgs.attachedFiles : [],
+            isPinned: Boolean((isWrapped && parsedMsgs.isPinned) || (item as any).is_pinned),
             userId: item.user_id,
             createdAt: item.created_at ? new Date(item.created_at).getTime() : Date.now()
           });
@@ -316,7 +318,8 @@ export async function saveAiBuddyChat(thread: AiBuddyThread): Promise<void> {
     messages: cleanMessages,
     personaId: thread.personaId || 'study_buddy',
     mode: thread.mode || 'explanatory',
-    attachedFiles: thread.attachedFiles || []
+    attachedFiles: thread.attachedFiles || [],
+    isPinned: Boolean(thread.isPinned)
   });
 
   try {

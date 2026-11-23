@@ -129,8 +129,6 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
       house: currentUser?.house || 'None',
     });
 
-    await requestWebPushPermission(currentUser?.uid);
-
     if (res.success && currentUser) {
       soundService.playSuccessSound();
       const updated: UserProfile = {

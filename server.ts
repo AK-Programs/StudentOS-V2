@@ -311,6 +311,7 @@ const memoryFCMTokens: FCMTokenItem[] = [];
 app.get('/api/push/fcm-config', (req, res) => {
   res.json({
     vapidPublicKey: vapidKeys.publicKey || CANONICAL_VAPID_PUBLIC_KEY,
+    vapidConfigured: Boolean(vapidKeys.publicKey && vapidKeys.privateKey),
     provider: 'fcm',
     projectId: 'gen-lang-client-0785563242'
   });
@@ -551,8 +552,129 @@ app.post('/api/push/unsubscribe', async (req, res) => {
   return res.json({ status: 'ok' });
 });
 
-// Targeted Server-Side Push Dispatch via FCM & Web Push
-app.post('/api/push/send', async (req, res) => {
+export interface PushDispatchParams {
+  notificationId?: string;
+  title?: string;
+  body?: string;
+  type?: string;
+  linkTab?: string;
+  tag?: string;
+  callId?: string;
+  targetUserId?: string | null;
+  targetRole?: string | null;
+  targetRoles?: string[] | null;
+  targetClass?: string | null;
+  targetSection?: string | null;
+  targetSchoolId?: string | null;
+}
+
+export function expandTargetRoleSet(targetRole?: string | null, targetRoles?: string[] | null): Set<string> {
+  const rawList: string[] = [];
+  if (Array.isArray(targetRoles)) {
+    for (const r of targetRoles) {
+      if (r) rawList.push(String(r));
+    }
+  }
+  if (targetRole) {
+    for (const part of String(targetRole).split(',')) {
+      if (part.trim()) rawList.push(part.trim());
+    }
+  }
+
+  const expanded = new Set<string>();
+  for (const r of rawList) {
+    const norm = r.toLowerCase().trim();
+    if (!norm) continue;
+    if (norm === 'all') {
+      return new Set(['all']);
+    }
+    if (norm === 'faculty' || norm === 'staff') {
+      expanded.add('teacher');
+      expanded.add('coordinator');
+      expanded.add('hod');
+      expanded.add('admin');
+      expanded.add('super_admin');
+    } else {
+      expanded.add(norm);
+    }
+  }
+
+  if (expanded.size === 0) expanded.add('all');
+  return expanded;
+}
+
+function normalizePushGradeToken(val?: string | null): string {
+  const raw = String(val || '').toLowerCase().trim();
+  if (!raw || raw === 'all' || raw === 'all_grades' || raw === 'all grades' || raw === 'all_sections' || raw === 'all sections') {
+    return 'all';
+  }
+  const stripped = raw
+    .replace(/all[_\s]*sections?/gi, '')
+    .replace(/all[_\s]*grades?/gi, '')
+    .replace(/class|grade/gi, '')
+    .replace(/[_\s]+/g, '')
+    .trim();
+  return stripped || 'all';
+}
+
+function normalizePushSectionToken(val?: string | null): string {
+  const raw = String(val || '').toLowerCase().trim();
+  if (!raw || raw === 'all' || raw === 'all_sections' || raw === 'all sections') {
+    return 'all';
+  }
+  return raw.replace(/section/gi, '').replace(/[_\s]+/g, '').trim() || 'all';
+}
+
+export function doesSubscriptionMatchPushTarget(
+  item: {
+    userId?: string;
+    role?: string;
+    grade?: string;
+    section?: string;
+    schoolId?: string;
+  },
+  params: Pick<PushDispatchParams, 'targetSchoolId' | 'targetUserId' | 'targetRole' | 'targetRoles' | 'targetClass' | 'targetSection'>
+): boolean {
+  const { targetSchoolId, targetUserId, targetRole, targetRoles, targetClass, targetSection } = params;
+
+  if (targetSchoolId && targetSchoolId !== 'all' && item.schoolId && item.schoolId !== targetSchoolId) {
+    return false;
+  }
+
+  if (targetUserId && targetUserId !== 'all') {
+    if (!item.userId || item.userId !== targetUserId) {
+      return false;
+    }
+  }
+
+  const expandedRoles = expandTargetRoleSet(targetRole, targetRoles);
+  if (!expandedRoles.has('all') && item.role) {
+    const itemRole = String(item.role).toLowerCase().trim();
+    if (!expandedRoles.has(itemRole)) {
+      return false;
+    }
+  }
+
+  const normTGrade = normalizePushGradeToken(targetClass);
+  if (normTGrade !== 'all') {
+    const normUGrade = normalizePushGradeToken(item.grade);
+    if (!normUGrade || normUGrade === 'all' || normUGrade !== normTGrade) {
+      return false;
+    }
+  }
+
+  const normTSection = normalizePushSectionToken(targetSection);
+  if (normTSection !== 'all') {
+    const normUSection = normalizePushSectionToken(item.section);
+    if (!normUSection || normUSection === 'all' || normUSection !== normTSection) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+export async function dispatchServerWebPush(params: PushDispatchParams) {
   const {
     notificationId,
     title,
@@ -563,10 +685,11 @@ app.post('/api/push/send', async (req, res) => {
     callId,
     targetUserId,
     targetRole,
+    targetRoles,
     targetClass,
     targetSection,
     targetSchoolId
-  } = req.body || {};
+  } = params || {};
 
   const notifId = notificationId || `notif_${Date.now()}`;
   const notifTitle = title || '📢 StudentOS Alert';
@@ -578,7 +701,7 @@ app.post('/api/push/send', async (req, res) => {
   const notifTag = tag || `studentos-notif-${notifId}`;
   const notifUrl = `/?tab=${encodeURIComponent(notifLinkTab)}&notifId=${encodeURIComponent(notifId)}${resolvedCallId ? `&callId=${encodeURIComponent(resolvedCallId)}` : ''}`;
 
-  console.log(`[FCM PUSH SEND] Dispatching Notice: id="${notifId}" | title="${notifTitle}" | targetUser="${targetUserId || 'all'}" | role="${targetRole || 'all'}" | class="${targetClass || 'all'}"`);
+  console.log(`[FCM PUSH SEND] Dispatching Notice: id="${notifId}" | title="${notifTitle}" | targetUser="${targetUserId || 'all'}" | roles="${Array.isArray(targetRoles) && targetRoles.length ? targetRoles.join(',') : (targetRole || 'all')}" | class="${targetClass || 'all'}"`);
 
   // Structured FCM + Web Push payload supporting both notification and data blocks
   const payload = JSON.stringify({
@@ -653,85 +776,78 @@ app.post('/api/push/send', async (req, res) => {
   const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
   const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
 
-  try {
-    const subRes = await fetch(`${supabaseUrl}/rest/v1/push_subscriptions?select=*`, {
-      headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
-    });
+  if (process.env.NODE_ENV !== 'test' || supabaseUrl.includes('127.0.0.1')) {
+    try {
+      const subRes = await fetch(`${supabaseUrl}/rest/v1/push_subscriptions?select=*`, {
+        headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
+      });
 
-    if (subRes.ok) {
-      const dbSubs = await subRes.json();
-      if (Array.isArray(dbSubs)) {
-        dbSubs.forEach((row: any) => {
-          if (row.endpoint && !tokensToTry.some(t => t.endpoint === row.endpoint)) {
-            const rawKeys = row.keys && typeof row.keys === 'object' ? row.keys : {};
-            const p256dh = rawKeys.p256dh || row.p256dh;
-            const auth = rawKeys.auth || row.auth;
-            const isActive = rawKeys.isActive !== false;
+      if (subRes.ok) {
+        const dbSubs = await subRes.json();
+        if (Array.isArray(dbSubs)) {
+          dbSubs.forEach((row: any) => {
+            if (row.endpoint && !tokensToTry.some(t => t.endpoint === row.endpoint)) {
+              const rawKeys = row.keys && typeof row.keys === 'object' ? row.keys : {};
+              const p256dh = rawKeys.p256dh || row.p256dh;
+              const auth = rawKeys.auth || row.auth;
+              const isActive = rawKeys.isActive !== false;
 
-            if (p256dh && auth && isActive) {
-              tokensToTry.push({
-                endpoint: row.endpoint,
-                keys: { p256dh, auth },
-                userId: rawKeys.userId || row.user_id || undefined,
-                deviceId: rawKeys.deviceId || undefined,
-                deviceLabel: rawKeys.deviceLabel || 'Android/Chrome Device',
-                role: rawKeys.role || undefined,
-                grade: rawKeys.grade || undefined,
-                section: rawKeys.section || undefined,
-                schoolId: rawKeys.schoolId || 'default_school',
-                isActive: true
-              });
+              if (p256dh && auth && isActive) {
+                tokensToTry.push({
+                  endpoint: row.endpoint,
+                  keys: { p256dh, auth },
+                  userId: rawKeys.userId || row.user_id || undefined,
+                  deviceId: rawKeys.deviceId || undefined,
+                  deviceLabel: rawKeys.deviceLabel || 'Android/Chrome Device',
+                  role: rawKeys.role || undefined,
+                  grade: rawKeys.grade || undefined,
+                  section: rawKeys.section || undefined,
+                  schoolId: rawKeys.schoolId || 'default_school',
+                  isActive: true
+                });
+              }
             }
-          }
-        });
+          });
+        }
       }
+    } catch (dbErr: any) {
+      console.warn('[FCM PUSH SEND] Database query notice:', dbErr?.message);
     }
-  } catch (dbErr: any) {
-    console.warn('[FCM PUSH SEND] Database query notice:', dbErr?.message);
+  }
+
+  const matchedTargets = tokensToTry.filter(item =>
+    doesSubscriptionMatchPushTarget(item, {
+      targetSchoolId,
+      targetUserId,
+      targetRole,
+      targetRoles,
+      targetClass,
+      targetSection
+    })
+  );
+
+  const vapidConfigured = Boolean(vapidKeys.publicKey && vapidKeys.privateKey);
+  if (!vapidConfigured) {
+    console.warn('[FCM PUSH SEND] VAPID_PRIVATE_KEY is missing in server environment; preserving subscriptions and skipping unsigned webpush delivery.');
+    return {
+      status: 'ok',
+      provider: 'fcm_webpush',
+      vapidConfigured: false,
+      notificationId: notifId,
+      sentCount: 0,
+      failCount: 0,
+      totalCandidates: matchedTargets.length,
+      fcmSendResult: 'VAPID_PRIVATE_KEY_NOT_CONFIGURED',
+      error: 'Server VAPID_PRIVATE_KEY environment variable is not configured.',
+      deliveryLogs: []
+    };
   }
 
   let sentCount = 0;
   let failCount = 0;
   const deliveryLogs: any[] = [];
 
-  for (const item of tokensToTry) {
-    // School isolation: If targetSchoolId is set, prevent cross-school delivery
-    if (targetSchoolId && targetSchoolId !== 'all' && item.schoolId && item.schoolId !== targetSchoolId) {
-      continue;
-    }
-
-    // Strict user-level targeting: If targetUserId is specified, only deliver to matching user's devices
-    if (targetUserId && targetUserId !== 'all') {
-      if (!item.userId || item.userId !== targetUserId) {
-        continue;
-      }
-    }
-
-    // Role targeting
-    if (targetRole && targetRole !== 'all' && item.role) {
-      if (item.role.toLowerCase() !== targetRole.toLowerCase()) {
-        continue;
-      }
-    }
-
-    // Class / Grade targeting (ignore if 'all' or 'All Grades')
-    if (targetClass && targetClass !== 'all' && targetClass !== 'All Grades' && item.grade) {
-      const normT = targetClass.toString().toLowerCase().replace(/class|grade|all\s*sections|_|\s+/g, '');
-      const normU = item.grade.toString().toLowerCase().replace(/class|grade|\s+/g, '');
-      if (normT && normU && !normU.includes(normT) && !normT.includes(normU)) {
-        continue;
-      }
-    }
-
-    // Section targeting (ignore if 'all' or 'All Sections')
-    if (targetSection && targetSection !== 'all' && targetSection !== 'All Sections' && item.section) {
-      const normTS = targetSection.toString().toLowerCase().replace(/section|\s+/g, '').trim();
-      const normUS = item.section.toString().toLowerCase().replace(/section|\s+/g, '').trim();
-      if (normTS && normUS && normUS !== normTS && !normUS.includes(normTS)) {
-        continue;
-      }
-    }
-
+  for (const item of matchedTargets) {
     // Deliver via webpush to FCM endpoint
     if (item.endpoint && item.endpoint.startsWith('http') && item.keys?.p256dh && item.keys?.auth) {
       try {
@@ -803,8 +919,9 @@ app.post('/api/push/send', async (req, res) => {
           error: errBody
         });
 
-        // Clean up expired (410/404) or key-mismatched (401/403) subscriptions from memory & Supabase
-        if (statusCode === 410 || statusCode === 404 || statusCode === 401 || statusCode === 403) {
+        // Only delete genuinely expired/unregistered endpoints (HTTP 410 Gone / 404 Not Found).
+        // Never purge subscriptions on 401/403 so transient or mismatched VAPID envs cannot wipe user devices.
+        if (statusCode === 410 || statusCode === 404) {
           const idx = memoryFCMTokens.findIndex(m => m.token === item.endpoint || m.subscription?.endpoint === item.endpoint);
           if (idx >= 0) memoryFCMTokens.splice(idx, 1);
           try {
@@ -812,23 +929,30 @@ app.post('/api/push/send', async (req, res) => {
               method: 'DELETE',
               headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
             });
-            console.log(`[FCM PUSH CLEANUP] Removed stale/expired push subscription (HTTP ${statusCode}) for user="${item.userId || 'anon'}".`);
+            console.log(`[FCM PUSH CLEANUP] Removed expired push subscription (HTTP ${statusCode}) for user="${item.userId || 'anon'}".`);
           } catch (_) {}
         }
       }
     }
   }
 
-  return res.json({
+  return {
     status: 'ok',
     provider: 'fcm_webpush',
+    vapidConfigured: true,
     notificationId: notifId,
     sentCount,
     failCount,
-    totalCandidates: tokensToTry.length,
-    fcmSendResult: sentCount > 0 ? 'DELIVERED' : (tokensToTry.length === 0 ? 'NO_TOKENS_REGISTERED' : 'DELIVERY_FAILED'),
+    totalCandidates: matchedTargets.length,
+    fcmSendResult: sentCount > 0 ? 'DELIVERED' : (matchedTargets.length === 0 ? 'NO_TOKENS_REGISTERED' : 'DELIVERY_FAILED'),
     deliveryLogs
-  });
+  };
+}
+
+// Targeted Server-Side Push Dispatch via FCM & Web Push
+app.post('/api/push/send', async (req, res) => {
+  const result = await dispatchServerWebPush(req.body || {});
+  return res.json(result);
 });
 
 // Real-time Push Diagnostic Endpoint
@@ -6021,6 +6145,7 @@ registerAcademicWorkflowRoutes(app, {
   getSupabaseServerConfig,
   getVerifiedUserFromRequest,
   emitScopedBroadcast: broadcastScopedWsEvent,
+  dispatchWebPush: dispatchServerWebPush,
   onActivityRecorded: async (userId, role, activityType, count) => {
     try {
       const cfg = getSupabaseServerConfig();
@@ -6262,6 +6387,7 @@ registerNotificationRoutes(app, {
   },
   getVerifiedUserFromRequest: resolveFeatureAndWinterActor,
   broadcastToAllWs,
+  dispatchWebPush: dispatchServerWebPush,
 });
 
 registerEngagementSystemRoutes(app, {

@@ -74,6 +74,19 @@ export interface NotificationEngineDeps {
     isVerifiedJwt: boolean;
   } | null>;
   broadcastToAllWs: (payload: any) => void;
+  dispatchWebPush?: (params: {
+    notificationId?: string;
+    title?: string;
+    body?: string;
+    type?: string;
+    linkTab?: string;
+    tag?: string;
+    targetUserId?: string | null;
+    targetRole?: string | null;
+    targetRoles?: string[] | null;
+    targetClass?: string | null;
+    targetSection?: string | null;
+  }) => Promise<any> | any;
 }
 
 const MEMORY_NOTIFICATIONS_DOC_ID = '__veylentra_notifications_v2__';
@@ -579,8 +592,11 @@ export function registerNotificationRoutes(
         priority = 'high',
         targetRole = 'all',
         targetRoles,
+        targetUserId = null,
         targetGrade = null,
+        targetClass = null,
         targetSection = null,
+        linkTab = 'notice_viewer',
         ttlHours = 72,
         dedupeKey,
       } = req.body || {};
@@ -593,6 +609,7 @@ export function registerNotificationRoutes(
       const safeTtlHours = Math.max(1, Math.min(720, Number(ttlHours || 72)));
       const now = new Date();
       const expiresAt = new Date(now.getTime() + safeTtlHours * 3600 * 1000).toISOString();
+      const resolvedGrade = targetGrade || targetClass || null;
 
       const record: ServerNotificationRecord = {
         id: String(id || crypto.randomUUID()),
@@ -602,11 +619,13 @@ export function registerNotificationRoutes(
         priority: sanitizeNotificationPriority(priority),
         targetRole: roles[0] || 'all',
         targetRoles: roles.length > 0 ? roles : ['all'],
-        targetGrade: targetGrade && targetGrade !== 'all' ? String(targetGrade) : null,
+        targetUserId: targetUserId && targetUserId !== 'all' ? String(targetUserId) : null,
+        targetGrade: resolvedGrade && resolvedGrade !== 'all' ? String(resolvedGrade) : null,
         targetSection: targetSection && targetSection !== 'all' ? String(targetSection) : null,
         senderId: actor?.id || null,
         senderName: actor?.name || 'Administrator',
         dedupeKey: dedupeKey ? String(dedupeKey) : null,
+        linkTab: linkTab ? String(linkTab) : 'notice_viewer',
         expiresAt,
         archivedAt: null,
         createdAt: now.toISOString(),
@@ -667,7 +686,28 @@ export function registerNotificationRoutes(
         notification: record,
       });
 
-      return res.json({ success: true, deduplicated: false, notification: record });
+      let pushDispatch: any = null;
+      if (deps.dispatchWebPush) {
+        try {
+          pushDispatch = await deps.dispatchWebPush({
+            notificationId: record.id,
+            title: record.title,
+            body: record.message,
+            type: record.type,
+            linkTab: record.linkTab || 'notice_viewer',
+            tag: `studentos-notif-${record.id}`,
+            targetUserId: record.targetUserId || 'all',
+            targetRole: record.targetRole,
+            targetRoles: record.targetRoles,
+            targetClass: record.targetGrade || 'all',
+            targetSection: record.targetSection || 'all',
+          });
+        } catch (pushErr: any) {
+          console.warn('[NotificationEngine] Web Push dispatch warning:', pushErr?.message || pushErr);
+        }
+      }
+
+      return res.json({ success: true, deduplicated: false, notification: record, pushDispatch });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err?.message || 'Broadcast creation failed' });
     }

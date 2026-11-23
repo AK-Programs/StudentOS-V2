@@ -505,8 +505,10 @@ export async function saveAppNotification(notif: AppNotification): Promise<{ suc
         tag: deterministicTag,
         targetUserId: notif.targetUserId || 'all',
         targetRole: notif.targetRole || 'all',
+        targetRoles: (notif as any).targetRoles || undefined,
         targetClass: notif.targetClass || 'all',
-        targetSection: notif.targetSection || 'all'
+        targetSection: notif.targetSection || 'all',
+        targetSchoolId: (notif as any).targetSchoolId || undefined
       })
     })
       .then(async (r) => {

@@ -257,6 +257,19 @@ export interface AcademicRouteDependencies {
     user_metadata?: any;
   } | null>;
   emitScopedBroadcast?: (eventType: string, payload: any, scope: AcademicEventScope) => void;
+  dispatchWebPush?: (params: {
+    notificationId?: string;
+    title?: string;
+    body?: string;
+    type?: string;
+    linkTab?: string;
+    tag?: string;
+    targetUserId?: string | null;
+    targetRole?: string | null;
+    targetRoles?: string[] | null;
+    targetClass?: string | null;
+    targetSection?: string | null;
+  }) => Promise<any> | any;
   onActivityRecorded?: (userId: string, role: string, activityType: string, count: number) => Promise<any> | void;
 }
 
@@ -400,6 +413,23 @@ export function registerAcademicWorkflowRoutes(
           targetSection: notif.targetSection
         }
       );
+    }
+
+    if (deps.dispatchWebPush && process.env.NODE_ENV !== 'test') {
+      void Promise.resolve(
+        deps.dispatchWebPush({
+          notificationId: id,
+          title: notif.title,
+          body: notif.message,
+          type: notif.type,
+          linkTab: notif.linkTab || 'homework',
+          tag: `studentos-notif-${id}`,
+          targetUserId: notif.targetUserId || 'all',
+          targetRole: notif.targetRole || 'all',
+          targetClass: notif.targetClass || 'all',
+          targetSection: notif.targetSection || 'all',
+        })
+      ).catch(() => {});
     }
 
     if (process.env.NODE_ENV === 'test') return;
@@ -2158,6 +2188,23 @@ export function registerAcademicWorkflowRoutes(
           sensitive: true
         }
       );
+    }
+
+    if (deps.dispatchWebPush && process.env.NODE_ENV !== 'test') {
+      void Promise.resolve(
+        deps.dispatchWebPush({
+          notificationId: id,
+          title,
+          body: feedback,
+          type: 'feedback',
+          linkTab: 'student_experience',
+          tag: `studentos-notif-${id}`,
+          targetUserId: studentId,
+          targetRole: 'student',
+          targetClass: grade || 'all',
+          targetSection: section || 'all',
+        })
+      ).catch(() => {});
     }
 
     try {

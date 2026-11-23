@@ -124,7 +124,16 @@ export async function getVaultNotes(userId: string): Promise<VaultNote[]> {
         }));
       const mergedMap = new Map<string, VaultNote>();
       for (const ln of localNotes) mergedMap.set(ln.id, ln);
-      for (const rn of remoteNotes) mergedMap.set(rn.id, rn);
+      for (const rn of remoteNotes) {
+        const prev = mergedMap.get(rn.id);
+        mergedMap.set(rn.id, {
+          ...prev,
+          ...rn,
+          isStarred: prev?.isStarred ?? rn.isStarred ?? false,
+          isArchived: prev?.isArchived ?? rn.isArchived ?? false,
+          tags: prev?.tags ?? rn.tags,
+        });
+      }
       const merged = Array.from(mergedMap.values());
       saveLocalVaultNotes(userId, merged);
       return merged;

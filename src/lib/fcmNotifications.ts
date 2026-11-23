@@ -200,8 +200,13 @@ export async function saveFCMTokenToFirestore(
   }
 }
 
+let inFlightFcmRegistration: Promise<{ success: boolean; token?: string; error?: string }> | null = null;
+let inFlightFcmKey = '';
+const recentSwDisplayedTags = new Map<string, number>();
+
 /**
- * Request FCM & Web Push Notification permission and register active device token & subscription
+ * Request FCM & Web Push Notification permission and register active device token & subscription.
+ * Uses single-flight deduplication per user/metadata signature to prevent race conditions during auth hydration.
  */
 export async function requestFCMPermission(
   userId?: string,
@@ -211,6 +216,21 @@ export async function requestFCMPermission(
   if (typeof window === 'undefined' || !('Notification' in window) || !('serviceWorker' in navigator)) {
     return { success: false, error: 'Push notifications are not supported in this browser.' };
   }
+
+  const requestKey = [
+    userId || 'anon',
+    metadata?.role || '',
+    metadata?.grade || '',
+    metadata?.section || '',
+    metadata?.schoolId || '',
+    options?.silentIfDefault ? 'silent' : 'prompt'
+  ].join('|');
+
+  if (inFlightFcmRegistration && inFlightFcmKey === requestKey) {
+    return inFlightFcmRegistration;
+  }
+
+  const runRegistration = async (): Promise<{ success: boolean; token?: string; error?: string }> => {
 
   try {
     // 1. Check / request notification permission
@@ -456,6 +476,17 @@ export async function requestFCMPermission(
     console.error('[FCM] Error requesting FCM permission:', err);
     return { success: false, error: err?.message || 'Failed to enable push notifications.' };
   }
+  };
+
+  inFlightFcmKey = requestKey;
+  const promise = runRegistration().finally(() => {
+    if (inFlightFcmRegistration === promise) {
+      inFlightFcmRegistration = null;
+      inFlightFcmKey = '';
+    }
+  });
+  inFlightFcmRegistration = promise;
+  return promise;
 }
 
 /**
@@ -532,6 +563,9 @@ export async function setupFCMForegroundListener(
     const data = event.data;
     if (!data) return;
     if (data.type === 'FCM_SW_NOTIFICATION_DISPLAYED') {
+      if (data.tag) {
+        recentSwDisplayedTags.set(String(data.tag), Date.now());
+      }
       console.log('[FCM STAGE 4/4] Service Worker received push & displayed system notification:', {
         title: data.title,
         tag: data.tag,
@@ -569,30 +603,35 @@ export async function setupFCMForegroundListener(
         const notifType = payload.data?.type || (callId ? 'call' : 'announcement');
         const linkTab = payload.data?.linkTab || payload.data?.route || payload.data?.tab || (callId ? 'peer_chat' : 'notice_viewer');
         const notifId = payload.data?.notificationId || payload.data?.notifId || '';
+        const tag = payload.data?.tag || (notifId ? `studentos-notif-${notifId}` : `studentos-notif-${Date.now()}`);
         const canonicalUrl = buildNotificationUrl(linkTab, notifId, { callId: callId || undefined });
 
-        soundService.playAnnouncementSound();
+        const recentSwTs = recentSwDisplayedTags.get(tag);
+        const alreadyDisplayedBySw = Boolean(recentSwTs && Date.now() - recentSwTs < 8000);
 
-        // Also display system notification via Service Worker so Android Chrome shows it in system tray
-        if ('serviceWorker' in navigator && Notification.permission === 'granted') {
-          try {
-            const reg = await navigator.serviceWorker.ready;
-            await reg.showNotification(title, {
-              body,
-              icon: '/icons/icon-192.png',
-              badge: '/icons/icon-192.png',
-              tag: notifId ? `studentos-notif-${notifId}` : `studentos-notif-${Date.now()}`,
-              renotify: true,
-              data: {
-                linkTab,
-                tab: linkTab,
-                notifId,
-                callId,
-                type: notifType,
-                url: canonicalUrl,
-              }
-            } as any);
-          } catch (_) {}
+        if (!alreadyDisplayedBySw) {
+          soundService.playAnnouncementSound();
+          // Display system notification via Service Worker so Android Chrome shows it in system tray
+          if ('serviceWorker' in navigator && Notification.permission === 'granted') {
+            try {
+              const reg = await navigator.serviceWorker.ready;
+              await reg.showNotification(title, {
+                body,
+                icon: '/icons/icon-192.png',
+                badge: '/icons/icon-192.png',
+                tag,
+                renotify: true,
+                data: {
+                  linkTab,
+                  tab: linkTab,
+                  notifId,
+                  callId,
+                  type: notifType,
+                  url: canonicalUrl,
+                }
+              } as any);
+            } catch (_) {}
+          }
         }
 
         window.dispatchEvent(new CustomEvent('studentos-fcm-foreground-message', {
@@ -655,10 +694,20 @@ export async function sendTestFCMNotification(
       };
     }
 
-    return { 
-      success: false, 
+    if (data.fcmSendResult === 'VAPID_PRIVATE_KEY_NOT_CONFIGURED' || data.vapidConfigured === false) {
+      return {
+        success: false,
+        message: 'Device subscription is synced, but the server VAPID_PRIVATE_KEY environment variable is not configured yet in this deployment.',
+        details: data
+      };
+    }
+
+    return {
+      success: false,
       message: data.sentCount === 0
-        ? `No active push subscription found on server (${data.totalCandidates || 0} candidates checked). Please toggle Push Notifications OFF and ON once to refresh your device token.`
+        ? (data.totalCandidates > 0
+            ? (data.error || `Push delivery failed for ${data.totalCandidates} subscribed device(s).`)
+            : 'No active push subscription found on server. Please toggle Push Notifications OFF and ON once to refresh your device token.')
         : (data.error || 'Server could not deliver test push notification.'),
       details: data
     };

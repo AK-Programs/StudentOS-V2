@@ -39,6 +39,7 @@ import {
 import { getPersonalTasks, savePersonalTask, updateTaskOrder as saveTaskOrderToSupabase, deletePersonalTask } from './lib/supabaseTasks';
 import { getAppNotifications, saveAppNotification, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification, generateUUID, registerPushSubscription, getDeviceId, triggerBrowserPushNotification, isUserEligibleForNotification, triggerNotificationSound } from './lib/notifications';
 import { requestFCMPermission, setupFCMForegroundListener } from './lib/fcmNotifications';
+import { useContextHoldMenu, useDismissContextMenu, clampContextMenuPosition } from './lib/useContextHoldMenu';
 import { awardStudentXP, isHalloweenBadgeDateRange } from './lib/gamification';
 import { getSavedTheme } from './lib/themeSystem';
 import { ALL_GRADE_OPTIONS, getSectionsForGrade } from './config/academicHierarchy';
@@ -445,12 +446,10 @@ export default function App() {
         role: currentUser?.role || 'student',
         grade: currentUser?.grade || '',
         section: currentUser?.section || '',
-        house: currentUser?.house || ''
+        house: currentUser?.house || '',
+        schoolId: (currentUser as any)?.schoolId || 'default_school'
       };
-      requestFCMPermission(uid, meta);
-      if (Notification.permission === 'granted' && currentUser?.uid) {
-        registerPushSubscription(currentUser.uid, meta);
-      }
+      void requestFCMPermission(uid, meta, { silentIfDefault: !currentUser?.uid });
     }
   }, [currentUser?.uid, currentUser?.role, currentUser?.grade, currentUser?.section, currentUser?.house]);
 
@@ -1640,29 +1639,69 @@ export default function App() {
     return '';
   });
 
-  const [aiThreadHoldMenu, setAiThreadHoldMenu] = useState<{ threadId: string, x: number, y: number } | null>(null);
+  const byteThreadContext = useContextHoldMenu<string>();
+  const aiThreadHoldMenu = byteThreadContext.menu ? { threadId: byteThreadContext.menu.itemId, x: byteThreadContext.menu.x, y: byteThreadContext.menu.y } : null;
+  const setAiThreadHoldMenu = (val: { threadId: string; x: number; y: number } | null) => {
+    if (val) {
+      byteThreadContext.openMenu(val.threadId, val.x, val.y, false);
+    } else {
+      byteThreadContext.closeMenu();
+    }
+  };
+  const byteThreadMenuRef = useRef<HTMLDivElement | null>(null);
+  const [byteDeleteConfirmId, setByteDeleteConfirmId] = useState<string | null>(null);
+  const [renamingByteThread, setRenamingByteThread] = useState<{ threadId: string; title: string } | null>(null);
+
+  useDismissContextMenu(
+    Boolean(byteThreadContext.menu),
+    () => {
+      byteThreadContext.closeMenu();
+      setByteDeleteConfirmId(null);
+    },
+    byteThreadMenuRef
+  );
 
   const handlePinThread = (threadId: string) => {
+    let toggledThread: any = null;
     setAiThreads(prev => {
-      const updated = prev.map(t => t.id === threadId ? { ...t, isPinned: !t.isPinned } : t);
+      const updated = prev.map(t => {
+        if (t.id !== threadId) return t;
+        toggledThread = { ...t, isPinned: !t.isPinned };
+        return toggledThread;
+      });
       return updated.sort((a, b) => {
         if (a.isPinned && !b.isPinned) return -1;
         if (!a.isPinned && b.isPinned) return 1;
         return (b.createdAt || 0) - (a.createdAt || 0);
       });
     });
+    if (toggledThread && currentUser?.uid) {
+      void saveAiBuddyChat({ ...toggledThread, userId: currentUser.uid }).catch(() => {});
+    }
+    showNotification(toggledThread?.isPinned ? '📌 Chat session pinned.' : 'Chat session unpinned.');
+    setByteDeleteConfirmId(null);
     setAiThreadHoldMenu(null);
   };
 
   const handleRenameThread = async (threadId: string) => {
     const thread = aiThreads.find(t => t.id === threadId);
     if (!thread) return;
-    const newTitle = window.prompt('Enter new title:', thread.title);
-    if (newTitle && newTitle.trim() && currentUser?.uid) {
-      setAiThreads(prev => prev.map(t => t.id === threadId ? { ...t, title: newTitle } : t));
+    setRenamingByteThread({ threadId, title: thread.title || '' });
+    setByteDeleteConfirmId(null);
+    setAiThreadHoldMenu(null);
+  };
+
+  const handleConfirmRenameByteThread = async () => {
+    if (!renamingByteThread) return;
+    const newTitle = renamingByteThread.title.trim();
+    if (!newTitle) return;
+    const { threadId } = renamingByteThread;
+    setAiThreads(prev => prev.map(t => t.id === threadId ? { ...t, title: newTitle } : t));
+    if (currentUser?.uid) {
       await renameAiBuddyChat(threadId, newTitle, currentUser.uid);
     }
-    setAiThreadHoldMenu(null);
+    showNotification('✓ Session renamed.');
+    setRenamingByteThread(null);
   };
 
 
@@ -10424,6 +10463,25 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                       }
                       showNotification(`✓ Created "${newNote.title}"!`);
                     }}
+                    onCreateFolder={async (partialFolder) => {
+                      const cleanName = String(partialFolder?.name || '').trim();
+                      if (!cleanName) return;
+                      if (currentUser?.uid) {
+                        try {
+                          const saved = await createFolder(cleanName, 'notes', currentUser.uid);
+                          setVaultFolders(prev => [saved, ...prev]);
+                          return;
+                        } catch (_) {}
+                      }
+                      const localFolder: FolderType = {
+                        id: partialFolder?.id || 'f_' + Date.now(),
+                        name: cleanName,
+                        type: 'notes',
+                        user_id: currentUser?.uid || 'guest',
+                        created_at: new Date().toISOString()
+                      };
+                      setVaultFolders(prev => [localFolder, ...prev]);
+                    }}
                     onDeleteNote={(id) => {
                       setVaultNotes(prev => prev.filter(n => n.id !== id));
                       if (selectedNoteId === id) setSelectedNoteId(null);
@@ -13867,24 +13925,9 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                               aiThreads.map(t => (
                                 <div
                                   key={t.id}
-                                  onMouseDown={(e) => {
-                                    const x = e.clientX;
-                                    const y = e.clientY;
-                                    holdTimerRef.current = setTimeout(() => {
-                                      setAiThreadHoldMenu({ threadId: t.id, x, y });
-                                    }, 1000);
-                                  }}
-                                  onMouseUp={() => clearTimeout(holdTimerRef.current)}
-                                  onMouseLeave={() => clearTimeout(holdTimerRef.current)}
-                                  onTouchStart={(e) => {
-                                    const x = e.touches[0].clientX;
-                                    const y = e.touches[0].clientY;
-                                    holdTimerRef.current = setTimeout(() => {
-                                      setAiThreadHoldMenu({ threadId: t.id, x, y });
-                                    }, 1000);
-                                  }}
-                                  onTouchEnd={() => clearTimeout(holdTimerRef.current)}
+                                  {...byteThreadContext.getItemBindProps(t.id)}
                                   onClick={() => {
+                                    if (byteThreadContext.shouldSuppressClick(t.id)) return;
                                     setActiveThreadId(t.id);
                                     setSelectedPersona(t.personaId);
                                     setAiMode(t.mode);
@@ -13897,7 +13940,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                                     }
                                     setShowAiHistoryDrawer(false);
                                   }}
-                                  className={`group flex items-center justify-between p-2.5 rounded-xl border text-left cursor-pointer transition-all relative ${
+                                  className={`veylentra-context-target group flex items-center justify-between p-2.5 rounded-xl border text-left cursor-pointer transition-all relative ${
                                     activeThreadId === t.id
                                       ? 'border-indigo-500 bg-indigo-500/15 shadow-sm'
                                       : 'border-white/5 bg-slate-900/40 hover:bg-slate-900 hover:border-white/10'
@@ -15567,42 +15610,137 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
         />
       )}
 
-      {/* AI Thread Hold Menu */}
-      {aiThreadHoldMenu && (
-        <div 
-          className="fixed z-[100] w-48 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-1.5 animate-in fade-in zoom-in duration-150"
-          style={{ left: Math.min(window.innerWidth - 200, aiThreadHoldMenu.x), top: Math.min(window.innerHeight - 300, aiThreadHoldMenu.y) }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex flex-col gap-1">
-            <button
-              onClick={() => handlePinThread(aiThreadHoldMenu.threadId)}
-              className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
-            >
-              <Pin className="w-3.5 h-3.5 text-amber-400" />
-              {aiThreads.find(t => t.id === aiThreadHoldMenu.threadId)?.isPinned ? 'Unpin Session' : 'Pin Session'}
-            </button>
-            <button
-              onClick={() => handleRenameThread(aiThreadHoldMenu.threadId)}
-              className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all"
-            >
-              <Edit2 className="w-3.5 h-3.5 text-indigo-400" />
-              Rename
-            </button>
-            <div className="h-px bg-white/5 my-1" />
-            <button
-              onClick={(e) => {
-                handleDeleteThread(aiThreadHoldMenu.threadId);
+      {/* AI Thread Hold / Context Menu */}
+      {aiThreadHoldMenu && (() => {
+        const targetThread = aiThreads.find(t => t.id === aiThreadHoldMenu.threadId);
+        const clampedPos = clampContextMenuPosition(aiThreadHoldMenu.x, aiThreadHoldMenu.y, 208, 178);
+        return (
+          <>
+            <div
+              className="fixed inset-0 z-[209]"
+              onClick={() => {
+                setByteDeleteConfirmId(null);
+                setAiThreadHoldMenu(null);
               }}
-              className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all"
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setByteDeleteConfirmId(null);
+                setAiThreadHoldMenu(null);
+              }}
+            />
+            <div
+              ref={byteThreadMenuRef}
+              role="menu"
+              aria-label={`Actions for ${targetThread?.title || 'Chat Session'}`}
+              className="fixed z-[210] w-52 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-1.5 animate-in fade-in zoom-in-95 duration-150"
+              style={{ left: clampedPos.left, top: clampedPos.top }}
+              onClick={(e) => e.stopPropagation()}
+              onContextMenu={(e) => e.preventDefault()}
             >
-              <Trash2 className="w-3.5 h-3.5" />
-              Delete Session
-            </button>
+              <div className="flex flex-col gap-1">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => handlePinThread(aiThreadHoldMenu.threadId)}
+                  className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all cursor-pointer"
+                >
+                  <Pin className="w-3.5 h-3.5 text-amber-400" />
+                  {targetThread?.isPinned ? 'Unpin Session' : 'Pin Session'}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => handleRenameThread(aiThreadHoldMenu.threadId)}
+                  className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all cursor-pointer"
+                >
+                  <Edit2 className="w-3.5 h-3.5 text-indigo-400" />
+                  Rename
+                </button>
+                <div className="h-px bg-white/5 my-1" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    if (byteDeleteConfirmId === aiThreadHoldMenu.threadId) {
+                      handleDeleteThread(aiThreadHoldMenu.threadId);
+                      setByteDeleteConfirmId(null);
+                    } else {
+                      setByteDeleteConfirmId(aiThreadHoldMenu.threadId);
+                    }
+                  }}
+                  className={`flex items-center gap-3 px-3 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                    byteDeleteConfirmId === aiThreadHoldMenu.threadId
+                      ? 'bg-rose-600 text-white hover:bg-rose-500'
+                      : 'text-rose-400 hover:bg-rose-500/10'
+                  }`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  {byteDeleteConfirmId === aiThreadHoldMenu.threadId ? 'Confirm Delete Session' : 'Delete Session'}
+                </button>
+              </div>
+            </div>
+          </>
+        );
+      })()}
+
+      {/* Rename Byte AI Thread Modal */}
+      {renamingByteThread && (
+        <div
+          className="fixed inset-0 z-[220] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm"
+          onClick={() => setRenamingByteThread(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm bg-slate-900 border border-slate-700 rounded-3xl p-5 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-indigo-400 font-bold text-sm">
+                <Edit2 className="w-4 h-4" />
+                <span>Rename Study Session</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRenamingByteThread(null)}
+                className="text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <input
+              type="text"
+              autoFocus
+              value={renamingByteThread.title}
+              onChange={(e) => setRenamingByteThread(prev => prev ? { ...prev, title: e.target.value } : null)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && renamingByteThread.title.trim()) {
+                  void handleConfirmRenameByteThread();
+                } else if (e.key === 'Escape') {
+                  setRenamingByteThread(null);
+                }
+              }}
+              placeholder="Enter session title..."
+              className="w-full px-3 py-2 text-xs rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRenamingByteThread(null)}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!renamingByteThread.title.trim()}
+                onClick={() => void handleConfirmRenameByteThread()}
+                className="px-4 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-xl shadow-md transition-colors cursor-pointer"
+              >
+                Save Name
+              </button>
+            </div>
           </div>
         </div>
       )}
-      {aiThreadHoldMenu && <div className="fixed inset-0 z-[99]" onClick={() => setAiThreadHoldMenu(null)} />}
 
       {/* Vault Item Hold Menu */}
       {vaultItemHoldMenu && (

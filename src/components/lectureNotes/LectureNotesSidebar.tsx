@@ -15,10 +15,12 @@ import {
   ChevronDown,
   X,
   Sparkles,
-  BrainCircuit
+  BrainCircuit,
+  Pin
 } from 'lucide-react';
 import { VaultNote } from '../../types';
 import { NoteFolder } from '../../lib/lectureNotes/types';
+import { useContextHoldMenu } from '../../lib/useContextHoldMenu';
 
 interface LectureNotesSidebarProps {
   allNotes?: VaultNote[];
@@ -39,6 +41,7 @@ interface LectureNotesSidebarProps {
   onToggleStar?: (noteId: string) => void;
   onDeleteNote?: (noteId: string) => void;
   onOpenCreateWithAI?: () => void;
+  onOpenNoteContextMenu?: (noteId: string, x: number, y: number) => void;
 }
 
 export const LectureNotesSidebar: React.FC<LectureNotesSidebarProps> = ({
@@ -59,10 +62,17 @@ export const LectureNotesSidebar: React.FC<LectureNotesSidebarProps> = ({
   onCreateFolder,
   onToggleStar,
   onDeleteNote,
-  onOpenCreateWithAI
+  onOpenCreateWithAI,
+  onOpenNoteContextMenu
 }) => {
   const [foldersExpanded, setFoldersExpanded] = useState(true);
   const [tagsExpanded, setTagsExpanded] = useState(false);
+
+  const noteHoldContext = useContextHoldMenu<string>({
+    onOpen: ({ itemId, x, y }) => {
+      onOpenNoteContextMenu?.(itemId, x, y);
+    }
+  });
 
   const sourceNotes = allNotes.length > 0 ? allNotes : notes;
 
@@ -271,13 +281,18 @@ export const LectureNotesSidebar: React.FC<LectureNotesSidebarProps> = ({
           ) : (
             notes.map(note => {
               const isSelected = selectedNoteId === note.id;
-              const isStarred = Boolean(note.isStarred || (note as any).isPinned);
+              const isPinned = Boolean((note as any).isPinned);
+              const isStarred = Boolean(note.isStarred || isPinned);
 
               return (
                 <div
                   key={note.id}
-                  onClick={() => onSelectNote(note.id)}
-                  className={`group relative p-2.5 rounded-2xl border transition-all cursor-pointer space-y-1.5 ${
+                  {...noteHoldContext.getItemBindProps(note.id)}
+                  onClick={() => {
+                    if (noteHoldContext.shouldSuppressClick(note.id)) return;
+                    onSelectNote(note.id);
+                  }}
+                  className={`veylentra-context-target group relative p-2.5 rounded-2xl border transition-all cursor-pointer space-y-1.5 ${
                     isSelected 
                       ? 'bg-indigo-600/25 border-indigo-500/50 text-white shadow-md' 
                       : 'bg-slate-900/50 hover:bg-slate-900 border-white/5 text-slate-300 hover:border-slate-700'
@@ -289,6 +304,9 @@ export const LectureNotesSidebar: React.FC<LectureNotesSidebarProps> = ({
                       <h4 className={`text-xs font-bold truncate ${isSelected ? 'text-white' : 'text-slate-200'}`}>
                         {note.title || 'Untitled Note'}
                       </h4>
+                      {isPinned && (
+                        <Pin className="w-3 h-3 text-amber-400 shrink-0 rotate-45" />
+                      )}
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0">

@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   FileText, 
   Sparkles, 
@@ -25,7 +26,11 @@ import {
   ChevronRight,
   BrainCircuit,
   MessageSquarePlus,
-  Wand2
+  Wand2,
+  Pin,
+  Star,
+  Archive,
+  Folder
 } from 'lucide-react';
 import { VaultNote, Homework } from '../../types';
 import { NoteFolder, NoteVersion } from '../../lib/lectureNotes/types';
@@ -40,6 +45,7 @@ import { NoteTemplatesModal } from './NoteTemplatesModal';
 import { VisualMathEditorModal } from './VisualMathEditorModal';
 import { SketchCanvasModal } from './SketchCanvasModal';
 import { generateFormattedPdf } from '../../lib/pdfGenerator';
+import { clampContextMenuPosition, useDismissContextMenu } from '../../lib/useContextHoldMenu';
 
 interface LectureNotesWorkspaceProps {
   notes: VaultNote[];
@@ -100,6 +106,19 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
   const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
   const [isMathWorkspaceOpen, setIsMathWorkspaceOpen] = useState(false);
   const [isSketchModalOpen, setIsSketchModalOpen] = useState(false);
+
+  // Contextual Long-Press / Right-Click Action Menu state
+  const [noteContextMenu, setNoteContextMenu] = useState<{ noteId: string; x: number; y: number } | null>(null);
+  const [noteDeleteConfirmId, setNoteDeleteConfirmId] = useState<string | null>(null);
+  const [renamingNoteModal, setRenamingNoteModal] = useState<{ noteId: string; title: string } | null>(null);
+  const noteContextMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const closeNoteContextMenu = () => {
+    setNoteContextMenu(null);
+    setNoteDeleteConfirmId(null);
+  };
+
+  useDismissContextMenu(Boolean(noteContextMenu), closeNoteContextMenu, noteContextMenuRef);
 
   // Synchronize initialFolders
   useEffect(() => {
@@ -170,8 +189,11 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
     }
   });
 
-  // Sort notes for 'recent' view by created/updated date descending
+  // Sort pinned notes first, then 'recent' view by created/updated date descending
   const sortedFilteredNotes = [...filteredNotes].sort((a, b) => {
+    const pinnedA = (a as any).isPinned ? 1 : 0;
+    const pinnedB = (b as any).isPinned ? 1 : 0;
+    if (pinnedA !== pinnedB) return pinnedB - pinnedA;
     if (currentFilter === 'recent') {
       const dA = new Date(a.createdAt || 0).getTime();
       const dB = new Date(b.createdAt || 0).getTime();
@@ -503,6 +525,10 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                 onOpenCreateWithAI={() => {
                   setIsNotesPanelOpen(false);
                   setIsAICreateModalOpen(true);
+                }}
+                onOpenNoteContextMenu={(noteId, x, y) => {
+                  setNoteDeleteConfirmId(null);
+                  setNoteContextMenu({ noteId, x, y });
                 }}
               />
             </div>
@@ -1049,6 +1075,257 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
           }
         }}
       />
+
+      {/* Contextual Long-Press / Right-Click Action Menu (Portaled above drawer) */}
+      {noteContextMenu && typeof document !== 'undefined' && (() => {
+        const targetNote = notes.find(n => n.id === noteContextMenu.noteId);
+        if (!targetNote) return null;
+
+        const isPinned = Boolean((targetNote as any).isPinned);
+        const isStarred = Boolean(targetNote.isStarred);
+        const isArchived = Boolean(targetNote.isArchived);
+        const currentFolderId = (targetNote as any).folder_id || (targetNote as any).folderId || null;
+        const estimatedHeight = 290 + Math.min(localFolders.length, 4) * 32;
+        const pos = clampContextMenuPosition(noteContextMenu.x, noteContextMenu.y, 232, estimatedHeight);
+
+        return createPortal(
+          <>
+            <div
+              className="fixed inset-0 z-[219]"
+              onClick={closeNoteContextMenu}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                closeNoteContextMenu();
+              }}
+            />
+            <div
+              ref={noteContextMenuRef}
+              role="menu"
+              aria-label={`Actions for ${targetNote.title || 'Untitled Note'}`}
+              style={{ left: pos.left, top: pos.top }}
+              onClick={(e) => e.stopPropagation()}
+              onContextMenu={(e) => e.preventDefault()}
+              className="fixed z-[220] w-58 max-h-[80vh] overflow-y-auto bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-1.5 space-y-0.5 animate-in fade-in zoom-in-95 duration-150"
+            >
+              <div className="px-3 py-1.5 border-b border-white/5 mb-1">
+                <p className="text-[11px] font-bold text-white truncate">{targetNote.title || 'Untitled Note'}</p>
+                <p className="text-[10px] text-slate-400 truncate">{targetNote.subject || 'General'}</p>
+              </div>
+
+              <button
+                type="button"
+                role="menuitem"
+                onClick={async () => {
+                  await onUpdateNote(targetNote.id, { isPinned: !isPinned });
+                  showNotification(isPinned ? 'Note unpinned.' : '📌 Note pinned to top.');
+                  closeNoteContextMenu();
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
+              >
+                <Pin className="w-3.5 h-3.5 text-amber-400" />
+                <span>{isPinned ? 'Unpin Note' : 'Pin Note'}</span>
+              </button>
+
+              <button
+                type="button"
+                role="menuitem"
+                onClick={async () => {
+                  await onUpdateNote(targetNote.id, { isStarred: !isStarred });
+                  showNotification(isStarred ? 'Removed from favorites.' : '⭐ Added to favorites.');
+                  closeNoteContextMenu();
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
+              >
+                <Star className={`w-3.5 h-3.5 text-amber-400 ${isStarred ? 'fill-amber-400' : ''}`} />
+                <span>{isStarred ? 'Remove Star' : 'Star / Favorite'}</span>
+              </button>
+
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setRenamingNoteModal({ noteId: targetNote.id, title: targetNote.title || '' });
+                  closeNoteContextMenu();
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
+              >
+                <Edit3 className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Rename Note</span>
+              </button>
+
+              <button
+                type="button"
+                role="menuitem"
+                onClick={async () => {
+                  const collabCode = targetNote.collabCode || Math.floor(100000 + Math.random() * 900000).toString();
+                  if (!targetNote.collabCode) {
+                    await onUpdateNote(targetNote.id, { collabCode, isCollab: true });
+                  }
+                  if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                    try {
+                      await navigator.clipboard.writeText(collabCode);
+                      showNotification(`Copied 6-digit Collab Code (${collabCode}) to clipboard!`);
+                    } catch (_) {
+                      showNotification(`Collab Code: ${collabCode}`);
+                    }
+                  } else {
+                    showNotification(`Collab Code: ${collabCode}`);
+                  }
+                  closeNoteContextMenu();
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
+              >
+                <Share2 className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Share (6-digit Collab)</span>
+              </button>
+
+              <button
+                type="button"
+                role="menuitem"
+                onClick={async () => {
+                  await onUpdateNote(targetNote.id, { isArchived: !isArchived });
+                  showNotification(isArchived ? 'Note restored from archive.' : 'Note moved to archive.');
+                  closeNoteContextMenu();
+                }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
+              >
+                <Archive className="w-3.5 h-3.5 text-slate-400" />
+                <span>{isArchived ? 'Unarchive Note' : 'Archive Note'}</span>
+              </button>
+
+              <div className="h-px bg-white/5 my-1" />
+              <div className="px-3 py-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider">Move to Folder</div>
+
+              <button
+                type="button"
+                role="menuitem"
+                onClick={async () => {
+                  await onUpdateNote(targetNote.id, { folder_id: null, folderId: null });
+                  showNotification('📂 Moved note to root');
+                  closeNoteContextMenu();
+                }}
+                className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
+              >
+                <span className="flex items-center gap-2 truncate">
+                  <Folder className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span className="truncate">Root (No Folder)</span>
+                </span>
+                {!currentFolderId && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+              </button>
+
+              {localFolders.map(folder => (
+                <button
+                  key={folder.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={async () => {
+                    await onUpdateNote(targetNote.id, { folder_id: folder.id, folderId: folder.id });
+                    showNotification(`📁 Moved note to "${folder.name}"`);
+                    closeNoteContextMenu();
+                  }}
+                  className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
+                >
+                  <span className="flex items-center gap-2 truncate">
+                    <Folder className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span className="truncate">{folder.name}</span>
+                  </span>
+                  {currentFolderId === folder.id && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                </button>
+              ))}
+
+              <div className="h-px bg-white/5 my-1" />
+
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  if (noteDeleteConfirmId === targetNote.id) {
+                    onDeleteNote(targetNote.id);
+                    closeNoteContextMenu();
+                  } else {
+                    setNoteDeleteConfirmId(targetNote.id);
+                  }
+                }}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold rounded-xl transition-colors cursor-pointer ${
+                  noteDeleteConfirmId === targetNote.id
+                    ? 'bg-rose-600 text-white hover:bg-rose-500'
+                    : 'text-rose-400 hover:bg-rose-500/10'
+                }`}
+              >
+                <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                <span>{noteDeleteConfirmId === targetNote.id ? 'Confirm Delete Note' : 'Delete Note'}</span>
+              </button>
+            </div>
+          </>,
+          document.body
+        );
+      })()}
+
+      {/* Rename Note Modal */}
+      {renamingNoteModal && (
+        <div
+          className="fixed inset-0 z-[230] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm"
+          onClick={() => setRenamingNoteModal(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm bg-slate-900 border border-slate-700 rounded-3xl p-5 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-indigo-400 font-bold text-sm">
+                <Edit3 className="w-4 h-4" />
+                <span>Rename Lecture Note</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRenamingNoteModal(null)}
+                className="text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <input
+              type="text"
+              autoFocus
+              value={renamingNoteModal.title}
+              onChange={(e) => setRenamingNoteModal(prev => prev ? { ...prev, title: e.target.value } : null)}
+              onKeyDown={async (e) => {
+                if (e.key === 'Enter' && renamingNoteModal.title.trim()) {
+                  await onUpdateNote(renamingNoteModal.noteId, { title: renamingNoteModal.title.trim() });
+                  showNotification('✓ Note title updated.');
+                  setRenamingNoteModal(null);
+                } else if (e.key === 'Escape') {
+                  setRenamingNoteModal(null);
+                }
+              }}
+              placeholder="Enter note title..."
+              className="w-full px-3 py-2 text-xs rounded-xl bg-slate-950 border border-slate-800 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRenamingNoteModal(null)}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!renamingNoteModal.title.trim()}
+                onClick={async () => {
+                  if (!renamingNoteModal.title.trim()) return;
+                  await onUpdateNote(renamingNoteModal.noteId, { title: renamingNoteModal.title.trim() });
+                  showNotification('✓ Note title updated.');
+                  setRenamingNoteModal(null);
+                }}
+                className="px-4 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 rounded-xl shadow-md transition-colors cursor-pointer"
+              >
+                Save Name
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
