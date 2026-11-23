@@ -2,6 +2,7 @@ import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { installServiceWorkerNavigationBridge } from './lib/notificationNavigation';
 
 class RootErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -83,11 +84,7 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
     });
   });
 
-  navigator.serviceWorker.addEventListener('message', (event) => {
-    if (event.data && event.data.type === 'STUDENTOS_NAVIGATE_TAB') {
-      window.dispatchEvent(new CustomEvent('studentos-navigate-tab', { detail: { tab: event.data.tab, linkTab: event.data.linkTab || event.data.tab } }));
-    }
-  });
+  installServiceWorkerNavigationBridge();
 }
 
 createRoot(document.getElementById('root')!).render(

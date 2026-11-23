@@ -399,11 +399,11 @@ button, a, [role="button"], input, select, textarea {
   }
 }
 
-/* Standalone PWA display mode viewport tweaks */
+/* Standalone PWA display mode viewport tweaks — preserve natural text selection and copy context menu */
 @media (display-mode: standalone) {
   body {
-    user-select: none;
-    -webkit-user-select: none;
+    user-select: auto;
+    -webkit-user-select: auto;
   }
   input, textarea, [contenteditable="true"] {
     user-select: text;

@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import { AppNotification } from '../types';
 import { soundService } from './soundService';
+import { buildNotificationUrl, dispatchNotificationNavigation } from './notificationNavigation';
 
 function isValidUUID(str?: string): boolean {
   if (!str) return false;
@@ -376,26 +377,29 @@ export async function triggerBrowserPushNotification(
     const deterministicTag =
       options?.tag ||
       (notifId ? `studentos-notif-${notifId}` : `studentos-notif-${Date.now()}`);
-    const linkTab = options?.linkTab || (options?.data as any)?.linkTab || 'notice_viewer';
+    const extraData =
+      options?.data && typeof options.data === 'object' ? (options.data as Record<string, any>) : {};
+    const linkTab = options?.linkTab || extraData.linkTab || extraData.tab || 'notice_viewer';
+    const callId = extraData.callId || '';
+    const canonicalUrl = extraData.url || buildNotificationUrl(linkTab, notifId, { callId: callId || undefined });
 
     const notifOptions: any = {
+      ...options,
       icon: '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
       tag: deterministicTag,
-      renotify: true,
-      requireInteraction: false,
+      renotify: (options as any)?.renotify ?? true,
+      requireInteraction: options?.requireInteraction ?? false,
       vibrate: [200, 100, 200],
       body: options?.body || '',
       data: {
+        ...extraData,
         linkTab,
+        tab: extraData.tab || linkTab,
         notifId,
-        url: `/?tab=${encodeURIComponent(linkTab)}${notifId ? `&notifId=${encodeURIComponent(notifId)}` : ''}`
+        url: canonicalUrl,
       },
-      ...options
     };
-    notifOptions.icon = '/icons/icon-192.png';
-    notifOptions.badge = '/icons/icon-192.png';
-    notifOptions.tag = deterministicTag;
 
     try {
       if ('serviceWorker' in navigator) {
@@ -419,8 +423,16 @@ export async function triggerBrowserPushNotification(
       n.onclick = (e) => {
         e.preventDefault();
         window.focus();
-        if (notifOptions.data?.linkTab && typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('studentos-navigate-tab', { detail: { tab: notifOptions.data.linkTab, linkTab: notifOptions.data.linkTab } }));
+        if (typeof window !== 'undefined') {
+          dispatchNotificationNavigation({
+            tab: notifOptions.data?.tab || notifOptions.data?.linkTab,
+            linkTab: notifOptions.data?.linkTab || notifOptions.data?.tab,
+            notifId: notifOptions.data?.notifId,
+            callId: notifOptions.data?.callId,
+            type: notifOptions.data?.type,
+            url: notifOptions.data?.url,
+            source: 'local',
+          });
         }
       };
     } catch (e) {

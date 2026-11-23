@@ -2,7 +2,7 @@
 // StudentOS Service Worker — FCM Web Push & PWA Engine
 // ========================================================
 
-const SW_VERSION = 'studentos-v3.15.0';
+const SW_VERSION = 'studentos-v3.16.0';
 const CACHE_NAME = `studentos-cache-${SW_VERSION}`;
 
 // Service Worker Installation — Activate immediately
@@ -30,6 +30,40 @@ self.addEventListener('message', (event) => {
   }
 });
 
+function buildCanonicalNotificationUrl(targetTab, notifId, isCall, callId, action) {
+  const safeTab = targetTab || (isCall ? 'peer_chat' : 'notice_viewer');
+  const params = new URLSearchParams();
+  params.set('tab', safeTab);
+  if (notifId) params.set('notifId', notifId);
+  if (isCall && callId) params.set('callId', callId);
+  if (isCall && action === 'accept') params.set('autoAccept', '1');
+  return `/?${params.toString()}`;
+}
+
+function mergeTargetUrl(rawUrl, targetTab, notifId, isCall, callId, action) {
+  if (!rawUrl || rawUrl === '/') {
+    return buildCanonicalNotificationUrl(targetTab, notifId, isCall, callId, action);
+  }
+  try {
+    const parsed = new URL(rawUrl, self.location.origin);
+    if (!parsed.searchParams.get('tab') && targetTab) {
+      parsed.searchParams.set('tab', targetTab);
+    }
+    if (notifId && !parsed.searchParams.get('notifId')) {
+      parsed.searchParams.set('notifId', notifId);
+    }
+    if (isCall && callId && !parsed.searchParams.get('callId')) {
+      parsed.searchParams.set('callId', callId);
+    }
+    if (isCall && action === 'accept') {
+      parsed.searchParams.set('autoAccept', '1');
+    }
+    return parsed.pathname + parsed.search + parsed.hash;
+  } catch (_) {
+    return buildCanonicalNotificationUrl(targetTab, notifId, isCall, callId, action);
+  }
+}
+
 // ========================================================
 // FCM / Web Push Background & Foreground Notification Handler
 // ========================================================
@@ -41,6 +75,7 @@ self.addEventListener('push', (event) => {
     body: 'You have a new school broadcast.',
     linkTab: 'notice_viewer',
     notifId: '',
+    callId: '',
     type: 'announcement',
     schoolId: 'default_school',
     url: '/?tab=notice_viewer',
@@ -62,21 +97,23 @@ self.addEventListener('push', (event) => {
         if (parsed.data) {
           payloadData.title = parsed.data.title || payloadData.title;
           payloadData.body = parsed.data.body || parsed.data.message || payloadData.body;
-          payloadData.linkTab = parsed.data.linkTab || parsed.data.route || payloadData.linkTab;
+          payloadData.linkTab = parsed.data.linkTab || parsed.data.tab || parsed.data.route || payloadData.linkTab;
           payloadData.notifId = parsed.data.notificationId || parsed.data.notifId || parsed.data.id || '';
-          payloadData.type = parsed.data.type || payloadData.type;
+          payloadData.callId = parsed.data.callId || parsed.callId || '';
+          payloadData.type = parsed.data.type || parsed.type || payloadData.type;
           payloadData.schoolId = parsed.data.schoolId || payloadData.schoolId;
-          payloadData.tag = parsed.data.tag || '';
-          payloadData.url = parsed.data.url || `/?tab=${encodeURIComponent(payloadData.linkTab)}`;
+          payloadData.tag = parsed.data.tag || parsed.tag || '';
+          payloadData.url = parsed.data.url || parsed.url || '';
         }
         if (!parsed.notification && !parsed.data) {
           payloadData.title = parsed.title || payloadData.title;
           payloadData.body = parsed.body || parsed.message || payloadData.body;
-          payloadData.linkTab = parsed.linkTab || parsed.route || payloadData.linkTab;
+          payloadData.linkTab = parsed.linkTab || parsed.tab || parsed.route || payloadData.linkTab;
           payloadData.notifId = parsed.notificationId || parsed.notifId || parsed.id || '';
+          payloadData.callId = parsed.callId || '';
           payloadData.type = parsed.type || payloadData.type;
           payloadData.tag = parsed.tag || '';
-          payloadData.url = parsed.url || `/?tab=${encodeURIComponent(payloadData.linkTab)}`;
+          payloadData.url = parsed.url || '';
         }
       }
     }
@@ -87,17 +124,14 @@ self.addEventListener('push', (event) => {
   }
 
   // Deterministic tag so foreground & background pushes for the same notice coalesce into ONE notification
-  const isCallNotification = payloadData.type === 'call' || payloadData.type === 'incoming_call';
-  const callId = payloadData.data?.callId || payloadData.notifId || '';
+  const isCallNotification = payloadData.type === 'call' || payloadData.type === 'incoming_call' || Boolean(payloadData.callId);
+  const callId = payloadData.callId || (isCallNotification ? payloadData.notifId : '') || '';
   const deterministicTag =
     payloadData.tag ||
     (isCallNotification ? `studentos-call-${callId || Date.now()}` : (payloadData.notifId ? `studentos-notif-${payloadData.notifId}` : `studentos-notif-${Date.now()}`));
 
-  const targetUrl = payloadData.url && payloadData.url !== '/'
-    ? payloadData.url
-    : (isCallNotification
-        ? `/?tab=peer_chat&callId=${encodeURIComponent(callId)}`
-        : `/?tab=${encodeURIComponent(payloadData.linkTab || 'notice_viewer')}${payloadData.notifId ? `&notifId=${encodeURIComponent(payloadData.notifId)}` : ''}`);
+  const resolvedTab = payloadData.linkTab || (isCallNotification ? 'peer_chat' : 'notice_viewer');
+  const targetUrl = mergeTargetUrl(payloadData.url, resolvedTab, payloadData.notifId, isCallNotification, callId, 'open');
 
   const notificationOptions = {
     body: payloadData.body || (isCallNotification ? '📞 Incoming Veylentra Call... Tap to answer.' : 'Tap to view in Veylentra.'),
@@ -109,7 +143,7 @@ self.addEventListener('push', (event) => {
     vibrate: isCallNotification ? [500, 250, 500, 250, 500, 250, 500] : [200, 100, 200],
     timestamp: Date.now(),
     data: {
-      linkTab: payloadData.linkTab || (isCallNotification ? 'peer_chat' : 'notice_viewer'),
+      linkTab: resolvedTab,
       notifId: payloadData.notifId || '',
       type: payloadData.type || 'announcement',
       callId: callId,
@@ -133,7 +167,7 @@ self.addEventListener('push', (event) => {
         title: payloadData.title,
         tag: deterministicTag,
         isCall: isCallNotification,
-        linkTab: payloadData.linkTab
+        linkTab: resolvedTab
       });
       return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
         clients.forEach((client) => {
@@ -141,7 +175,7 @@ self.addEventListener('push', (event) => {
             type: isCallNotification ? 'FCM_SW_INCOMING_CALL' : 'FCM_SW_NOTIFICATION_DISPLAYED',
             title: payloadData.title,
             body: payloadData.body,
-            linkTab: payloadData.linkTab,
+            linkTab: resolvedTab,
             notifId: payloadData.notifId,
             callId: callId,
             tag: deterministicTag
@@ -162,9 +196,9 @@ self.addEventListener('notificationclick', (event) => {
 
   const data = event.notification.data || {};
   const isCall = data.type === 'call' || data.type === 'incoming_call' || Boolean(data.callId);
-  const targetTab = data.linkTab || (isCall ? 'peer_chat' : 'notice_viewer');
-  const notifId = data.notifId || '';
-  const callId = data.callId || notifId || '';
+  const targetTab = data.linkTab || data.tab || data.route || (isCall ? 'peer_chat' : 'notice_viewer');
+  const notifId = data.notifId || data.notificationId || '';
+  const callId = data.callId || (isCall ? notifId : '') || '';
   const action = event.action || 'open';
 
   if (isCall && action === 'decline') {
@@ -187,37 +221,54 @@ self.addEventListener('notificationclick', (event) => {
     return;
   }
 
-  const targetUrl = data.url && data.url !== '/'
-    ? (isCall && action === 'accept' ? `${data.url}&autoAccept=1` : data.url)
-    : (isCall
-        ? `/?tab=peer_chat&callId=${encodeURIComponent(callId)}${action === 'accept' ? '&autoAccept=1' : ''}`
-        : `/?tab=${encodeURIComponent(targetTab)}${notifId ? `&notifId=${encodeURIComponent(notifId)}` : ''}`);
+  const targetUrl = mergeTargetUrl(data.url, targetTab, notifId, isCall, callId, action);
 
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      for (const client of clientList) {
-        if ('focus' in client) {
-          return client.focus().then((focusedClient) => {
-            const activeClient = focusedClient || client;
-            activeClient.postMessage({
-              type: isCall ? 'STUDENTOS_INCOMING_CALL' : 'STUDENTOS_NAVIGATE_TAB',
-              tab: targetTab,
-              linkTab: targetTab,
-              notifId: notifId,
-              callId: callId,
-              action: action,
-              url: targetUrl
-            });
-            if (isCall) {
-              activeClient.postMessage({
-                type: 'INCOMING_CALL_ACTION',
-                action: action,
-                callId: callId
-              });
-            }
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clientList) => {
+      const sameOriginClients = clientList.filter((client) => {
+        try {
+          const parsed = new URL(client.url);
+          return parsed.origin === self.location.origin && !parsed.pathname.includes('auth-debug');
+        } catch (_) {
+          return false;
+        }
+      });
+
+      const prioritizedClient =
+        sameOriginClients.find((c) => c.focused) ||
+        sameOriginClients.find((c) => c.visibilityState === 'visible') ||
+        sameOriginClients[0];
+
+      if (prioritizedClient) {
+        try {
+          const focusedClient = 'focus' in prioritizedClient
+            ? await prioritizedClient.focus()
+            : prioritizedClient;
+          const activeClient = focusedClient || prioritizedClient;
+          activeClient.postMessage({
+            type: isCall ? 'STUDENTOS_INCOMING_CALL' : 'STUDENTOS_NAVIGATE_TAB',
+            tab: targetTab,
+            linkTab: targetTab,
+            notifId: notifId,
+            notifType: data.type || 'announcement',
+            callId: callId,
+            action: action,
+            url: targetUrl,
+            ts: Date.now()
           });
+          if (isCall) {
+            activeClient.postMessage({
+              type: 'INCOMING_CALL_ACTION',
+              action: action,
+              callId: callId
+            });
+          }
+          return activeClient;
+        } catch (focusErr) {
+          console.warn('[SW FCM] Focus existing client failed, falling back to openWindow:', focusErr);
         }
       }
+
       if (self.clients.openWindow) {
         return self.clients.openWindow(targetUrl);
       }

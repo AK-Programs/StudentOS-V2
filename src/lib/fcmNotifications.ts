@@ -11,6 +11,11 @@ import { getMessaging, getToken, onMessage, isSupported, deleteToken, Messaging 
 import { getFirestore, doc, setDoc } from 'firebase/firestore';
 import { supabase } from './supabase';
 import { soundService } from './soundService';
+import {
+  buildNotificationUrl,
+  dispatchNotificationNavigation,
+  isServiceWorkerNavigationBridgeInstalled,
+} from './notificationNavigation';
 
 // Default public Firebase config (safe for client, matches firebase-applet-config.json)
 const defaultFirebaseConfig = {
@@ -533,9 +538,17 @@ export async function setupFCMForegroundListener(
         linkTab: data.linkTab
       });
     } else if (data.type === 'STUDENTOS_NAVIGATE_TAB' && (data.tab || data.linkTab)) {
-      window.dispatchEvent(new CustomEvent('studentos-navigate-tab', {
-        detail: { linkTab: data.tab || data.linkTab, notifId: data.notifId }
-      }));
+      if (!isServiceWorkerNavigationBridgeInstalled()) {
+        dispatchNotificationNavigation({
+          tab: data.tab || data.linkTab,
+          linkTab: data.linkTab || data.tab,
+          notifId: data.notifId || data.notificationId,
+          callId: data.callId,
+          type: data.notifType || data.type,
+          url: data.url,
+          source: 'sw',
+        });
+      }
     }
   };
 
@@ -552,8 +565,11 @@ export async function setupFCMForegroundListener(
         console.log('[FCM] Foreground Message Received:', payload);
         const title = payload.notification?.title || payload.data?.title || '📢 StudentOS Notification';
         const body = payload.notification?.body || payload.data?.body || payload.data?.message || '';
-        const linkTab = payload.data?.linkTab || payload.data?.route || 'notice_viewer';
+        const callId = payload.data?.callId || '';
+        const notifType = payload.data?.type || (callId ? 'call' : 'announcement');
+        const linkTab = payload.data?.linkTab || payload.data?.route || payload.data?.tab || (callId ? 'peer_chat' : 'notice_viewer');
         const notifId = payload.data?.notificationId || payload.data?.notifId || '';
+        const canonicalUrl = buildNotificationUrl(linkTab, notifId, { callId: callId || undefined });
 
         soundService.playAnnouncementSound();
 
@@ -567,13 +583,20 @@ export async function setupFCMForegroundListener(
               badge: '/icons/icon-192.png',
               tag: notifId ? `studentos-notif-${notifId}` : `studentos-notif-${Date.now()}`,
               renotify: true,
-              data: { linkTab, notifId, url: `/?tab=${encodeURIComponent(linkTab)}` }
+              data: {
+                linkTab,
+                tab: linkTab,
+                notifId,
+                callId,
+                type: notifType,
+                url: canonicalUrl,
+              }
             } as any);
           } catch (_) {}
         }
 
         window.dispatchEvent(new CustomEvent('studentos-fcm-foreground-message', {
-          detail: { title, body, linkTab, data: payload.data }
+          detail: { title, body, linkTab, notifId, callId, type: notifType, data: payload.data }
         }));
 
         if (onNotificationReceived) {

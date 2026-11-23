@@ -162,6 +162,16 @@ import {
   fetchAIUsageStatus, 
   BASE_ROLE_LIMITS 
 } from './lib/aiUsageManager';
+import { DashboardTopBar } from './components/DashboardTopBar';
+import {
+  consumePendingNotificationIntent,
+  NotificationNavIntent,
+  parseNotificationIntentFromLocation,
+  peekPendingNotificationIntent,
+  persistPendingNotificationIntent,
+  resolveNotificationDestination,
+  stripNotificationParamsFromUrl,
+} from './lib/notificationNavigation';
 import { MOCK_QUIZZES, AI_PERSONAS, INITIAL_ANNOUNCEMENTS, INITIAL_FEEDBACK, INITIAL_MATERIALS, MOCK_SCHEDULES } from './mockData';
 import { FloatingByteWidget } from './components/byte/FloatingByteWidget';
 import { StudentOSOnboardingModal } from './components/onboarding/StudentOSOnboardingModal';
@@ -460,12 +470,20 @@ export default function App() {
     };
   }, []);
 
-  // Listen for navigation messages from Service Worker (e.g. when clicking a browser push notification)
+  const applyNotificationNavigationRef = useRef<(intent: NotificationNavIntent) => void>(() => {});
+  const authReadyForNavRef = useRef<boolean>(false);
+
+  // Listen for normalized notification navigation events (from SW postMessage, foreground push, or local clicks)
   useEffect(() => {
     const handleNavigateEvent = (e: Event) => {
-      const customEvent = e as CustomEvent;
-      if (customEvent.detail?.linkTab) {
-        setActiveTab(customEvent.detail.linkTab);
+      const customEvent = e as CustomEvent<NotificationNavIntent>;
+      const intent = customEvent?.detail;
+      if (!intent) return;
+      if (authReadyForNavRef.current) {
+        consumePendingNotificationIntent();
+        applyNotificationNavigationRef.current(intent);
+      } else {
+        persistPendingNotificationIntent(intent);
       }
     };
     window.addEventListener('studentos-navigate-tab', handleNavigateEvent);
@@ -506,24 +524,26 @@ export default function App() {
       navigator.serviceWorker.addEventListener('message', handleSWMessage);
     }
 
-    try {
-      const urlParams = new URLSearchParams(window.location.search);
-      const callAction = urlParams.get('callAction');
-      const autoAccept = urlParams.get('autoAccept');
-      const callId = urlParams.get('callId') || undefined;
-      if (callAction === 'accept' || autoAccept === '1') {
-        acceptSchoolCall(callId, currentUser);
-      } else if (callAction === 'decline') {
-        declineSchoolCall(callId, 'declined_via_url', currentUser);
-      }
-      if (urlParams.has('callAction') || urlParams.has('callId') || urlParams.has('autoAccept')) {
-        urlParams.delete('callAction');
-        urlParams.delete('callId');
-        urlParams.delete('autoAccept');
-        const newUrl = window.location.pathname + (urlParams.toString() ? `?${urlParams.toString()}` : '');
-        window.history.replaceState(null, '', newUrl);
-      }
-    } catch (_) {}
+    if (currentUser) {
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const callAction = urlParams.get('callAction');
+        const autoAccept = urlParams.get('autoAccept');
+        const callId = urlParams.get('callId') || undefined;
+        if (callAction === 'accept' || autoAccept === '1') {
+          acceptSchoolCall(callId, currentUser);
+        } else if (callAction === 'decline') {
+          declineSchoolCall(callId, 'declined_via_url', currentUser);
+        }
+        if (urlParams.has('callAction') || urlParams.has('callId') || urlParams.has('autoAccept')) {
+          urlParams.delete('callAction');
+          urlParams.delete('callId');
+          urlParams.delete('autoAccept');
+          const newUrl = window.location.pathname + (urlParams.toString() ? `?${urlParams.toString()}` : '');
+          window.history.replaceState(null, '', newUrl);
+        }
+      } catch (_) {}
+    }
 
     return () => {
       if ('serviceWorker' in navigator) {
@@ -647,6 +667,16 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>(() => {
     try {
       if (typeof window !== 'undefined') {
+        const cachedRole = currentUser?.role;
+        const urlIntent = parseNotificationIntentFromLocation(window.location.search, window.location.hash);
+        if (urlIntent) {
+          persistPendingNotificationIntent(urlIntent);
+          return resolveNotificationDestination(urlIntent, cachedRole).tab;
+        }
+        const pendingIntent = peekPendingNotificationIntent();
+        if (pendingIntent) {
+          return resolveNotificationDestination(pendingIntent, cachedRole).tab;
+        }
         const path = window.location.pathname.toLowerCase();
         if (path === '/whats-new' || path === '/whats_new' || path === '/updates') {
           return 'whats_new';
@@ -2011,6 +2041,69 @@ export default function App() {
       console.error('Error marking notification as read:', err);
     }
   };
+
+  // Canonical notification deep-link execution once auth/session is restored and workspace is unlocked
+  applyNotificationNavigationRef.current = (intent: NotificationNavIntent) => {
+    const resolved = resolveNotificationDestination(intent, effectiveRole || currentUser?.role);
+
+    if (resolved.subTab) {
+      setStudyHubSubTab(resolved.subTab);
+    }
+
+    if (presentationMode && !isTabAllowedInPresentation(resolved.tab)) {
+      setShowNotifCenter(true);
+      showNotification('🔒 Destination restricted in Presentation Mode.');
+      stripNotificationParamsFromUrl();
+      return;
+    }
+
+    if (!['study_hub', 'tasks', 'planner', 'flashcards'].includes(resolved.tab)) {
+      setSelectedFlashcardDeckId(null);
+    }
+
+    setActiveTab(resolved.tab);
+    try {
+      localStorage.setItem('s_os_active_tab', resolved.tab);
+    } catch (_) {}
+
+    if (resolved.tab === 'whats_new') {
+      window.history.pushState(null, '', '/whats-new');
+    } else if (typeof window !== 'undefined' && (window.location.pathname === '/whats-new' || window.location.pathname === '/whats_new')) {
+      window.history.pushState(null, '', '/');
+    }
+
+    if (resolved.openNotificationCenter) {
+      setShowNotifCenter(true);
+    }
+
+    if (resolved.notifId && currentUser?.uid && currentUser.uid !== 'usr_guest') {
+      void handleMarkAsRead(resolved.notifId);
+    }
+
+    if (intent.action === 'accept' && resolved.callId) {
+      acceptSchoolCall(resolved.callId, currentUser);
+    } else if (intent.action === 'decline' && resolved.callId) {
+      declineSchoolCall(resolved.callId, 'declined_via_sw', currentUser);
+    }
+
+    stripNotificationParamsFromUrl();
+  };
+
+  useEffect(() => {
+    const isReady = Boolean(currentUser && !firebaseLoading && !dataLoading && !isLocked);
+    authReadyForNavRef.current = isReady;
+    if (!isReady) return;
+
+    const pending = consumePendingNotificationIntent();
+    const fromLocation =
+      typeof window !== 'undefined'
+        ? parseNotificationIntentFromLocation(window.location.search, window.location.hash)
+        : null;
+    const intentToApply = pending || fromLocation;
+    if (intentToApply) {
+      applyNotificationNavigationRef.current(intentToApply);
+    }
+  }, [currentUser?.uid, effectiveRole, firebaseLoading, dataLoading, isLocked]);
 
   const handleMarkAllAsRead = async () => {
     try {
@@ -9200,197 +9293,42 @@ CRITICAL WEB GROUNDING DIRECTIVE:
             <LiveBroadcastBanner currentUser={currentUser} effectiveRole={effectiveRole} />
 
             {/* Global Workspace Header bar */}
-            <header className="sticky top-0 z-40 px-3 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between gap-3 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md">
-              <div className="flex items-center gap-2.5 sm:gap-4 min-w-0 flex-1">
-                <button 
-                  onClick={() => setSidebarOpen(!sidebarOpen)}
-                  className="p-1.5 sm:p-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors shrink-0 cursor-pointer"
-                  title="Toggle sidebar navigation"
-                  aria-label="Toggle sidebar navigation"
-                >
-                  <ChevronLeft className={`w-4 h-4 sm:w-4.5 sm:h-4.5 transition-transform duration-200 ${sidebarOpen ? '' : 'rotate-180'}`} />
-                </button>
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-sm sm:text-lg font-semibold tracking-tight text-white font-display truncate min-w-0">
-                    {activeTab === 'dashboard' && 'My Dashboard'}
-                    {activeTab === 'about' && 'About Veylentra'}
-                    {activeTab === 'meet' && 'Veylentra Meet (Virtual Classroom)'}
-                    {['study_hub', 'tasks', 'planner', 'flashcards'].includes(activeTab) && (
-                      studyHubSubTab === 'tasks' ? 'Tasks & Focus Objectives' :
-                      studyHubSubTab === 'planner' ? 'Study Schedule Planner' :
-                      'Study Center & Flashcards'
-                    )}
-                    {activeTab === 'whiteboard' && 'Drawing Board'}
-                    {activeTab === 'houses' && 'House Standings'}
-                    {activeTab === 'leaderboard' && 'XP Leaderboard'}
-                    {activeTab === 'winter_festival' && 'Winter Festival'}
-                    {activeTab === 'materials' && 'Class Files & Materials'}
-                    {activeTab === 'assignments' && 'Assignment Center'}
-                    {activeTab === 'homework' && 'My Homework'}
-                    {(activeTab === 'brain_battle' || activeTab === 'quiz') && 'Brain Battle Arena'}
-                    {activeTab === 'feedback' && 'Feedback Box'}
-                    {activeTab === 'ai_teacher' && 'My AI Tutor'}
-                    {activeTab === 'peer_chat' && 'Class Chat Room'}
-                    {activeTab === 'faculty' && 'Teacher Dashboard'}
-                    {activeTab === 'notes' && 'My Personal Notes'}
-                    {activeTab === 'pomodoro' && 'Focus Timer'}
-                    {activeTab === 'analytics' && 'My Progress'}
-                    {activeTab === 'profile' && 'My Profile'}
-                    {activeTab === 'blogs' && 'Educational Blogs'}
-                    {activeTab === 'calendar' && 'Academic Calendar'}
-                    {activeTab === 'gradebook' && 'Digital Gradebook'}
-                    {activeTab === 'report_cards' && 'Official Report Cards'}
-                    {(activeTab === 'whats_new' || activeTab === 'whats-new') && "What's New & Release Logs"}
-                  </h2>
-                </div>
-              </div>
-
-              {/* Status and Clock widget */}
-              <div className="flex items-center gap-1 sm:gap-3 text-xs font-semibold shrink-0">
-                
-                {/* Classroom Security Center */}
-                {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '') && (
-                  <button
-                    type="button"
-                    onClick={() => setSecurityMenuOpen(true)}
-                    className={`p-1.5 sm:px-3 sm:py-2 rounded-xl border flex items-center gap-1.5 sm:gap-2 cursor-pointer transition-all min-h-[32px] sm:min-h-[38px] ${
-                      presentationMode 
-                        ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg' 
-                        : 'bg-slate-900 border-white/5 hover:bg-slate-800 text-slate-300'
-                    }`}
-                    title="Classroom Security Center"
-                  >
-                    <Lock className="w-3.5 h-3.5 shrink-0" />
-                    <span className="hidden sm:inline">Security</span>
-                    {presentationMode && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
-                    )}
-                  </button>
-                )}
-                
-                {/* Accessibility Toolbar panel */}
-                <div className="hidden sm:flex items-center gap-1 p-1 rounded-lg bg-slate-900 border border-slate-800 shadow-sm">
-                  <button 
-                    onClick={() => setFontSize(prev => prev === 'standard' ? 'large' : prev === 'large' ? 'huge' : 'standard')}
-                    className="p-1.5 hover:bg-slate-800 rounded-md text-slate-300 transition-colors cursor-pointer"
-                    title="Toggle Font Size"
-                  >
-                    <span className="font-bold text-xs">A</span>
-                    {fontSize === 'large' && <span className="text-[9px] text-indigo-400 ml-0.5">+</span>}
-                    {fontSize === 'huge' && <span className="text-[9px] text-indigo-400 ml-0.5">++</span>}
-                  </button>
-                  <button 
-                    onClick={() => setHighContrast(!highContrast)}
-                    className={`p-1.5 rounded-md text-slate-300 transition-colors cursor-pointer ${highContrast ? 'bg-indigo-600 text-white' : 'hover:bg-slate-800'}`}
-                    title="Toggle High Contrast Mode"
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                  </button>
-                  <button 
-                    onClick={() => setTtsEnabled(!ttsEnabled)}
-                    className={`p-1.5 rounded-md transition-colors cursor-pointer ${ttsEnabled ? 'bg-amber-500/20 text-amber-400' : 'text-slate-400 hover:bg-slate-800'}`}
-                    title="Toggle TTS Assistance"
-                  >
-                    {ttsEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => {
-                      soundService.playButtonClick();
-                      setIsSoundSettingsModalOpen(true);
-                    }}
-                    className={`p-1.5 rounded-md flex items-center gap-1 transition-colors cursor-pointer ${
-                      soundService.getPreferences().muted 
-                        ? 'bg-rose-500/15 text-rose-400 hover:bg-rose-500/25' 
-                        : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                    }`}
-                    title="Audio Settings"
-                  >
-                    {soundService.getPreferences().muted ? (
-                      <VolumeX className="w-3.5 h-3.5" />
-                    ) : (
-                      <Volume2 className="w-3.5 h-3.5 text-indigo-400" />
-                    )}
-                    <span className="hidden xl:inline text-[10px] font-medium">Audio</span>
-                  </button>
-                </div>
-
-                <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 font-mono text-xs text-slate-300 shadow-sm">
-                  <Clock className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="tabular-nums">{clock}</span>
-                </div>
-
-                {/* Broadcast Action Button */}
-                {['super_admin', 'admin', 'teacher', 'coordinator'].includes(effectiveRole) && (
-                  <button
-                    onClick={() => {
-                      soundService.playAppearSound();
-                      setIsBroadcastModalOpen(true);
-                    }}
-                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
-                    title="Send School/Class Broadcast Announcement"
-                  >
-                    <Send className="w-3.5 h-3.5 shrink-0" />
-                    <span className="hidden sm:inline">Broadcast</span>
-                  </button>
-                )}
-
-                {/* Notification Center */}
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      soundService.playAppearSound();
-                      setShowNotifCenter(!showNotifCenter);
-                    }}
-                    className="relative p-2 rounded-lg bg-slate-900 border border-slate-800 hover:bg-slate-800 hover:border-indigo-500/40 text-slate-300 hover:text-white transition-all flex items-center justify-center cursor-pointer shadow-sm"
-                    title="Academic Notification Hub"
-                    aria-label="Open Notifications Panel"
-                    aria-expanded={showNotifCenter}
-                  >
-                    <VeylentraIcon name="notification" size={18} />
-                    {notifications.filter(n => !n.isRead).length > 0 && (
-                      <span className="absolute -top-1 -right-1 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-indigo-600 text-[9px] font-bold text-white font-mono tabular-nums leading-none shadow-sm">
-                        {notifications.filter(n => !n.isRead).length}
-                      </span>
-                    )}
-                  </button>
-
-                  <NotificationCenter
-                    currentUser={currentUser}
-                    isOpen={showNotifCenter}
-                    onClose={() => setShowNotifCenter(false)}
-                    onNavigateTab={(tab) => setActiveTab(tab)}
-                  />
-                </div>
-
-                {/* What's New Header Indicator Button */}
-                <button
-                  onClick={() => handleTabSelect('whats_new')}
-                  className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 relative border shadow-sm cursor-pointer ${
-                    activeTab === 'whats_new' || activeTab === 'whats-new'
-                      ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm'
-                      : 'bg-slate-900 border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white'
-                  }`}
-                  title="What's New in Veylentra"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                  <span className="hidden sm:inline">What's New</span>
-                  {whatsNewUnreadCount > 0 && (
-                    <span className="flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white font-mono leading-none">
-                      {whatsNewUnreadCount}
-                    </span>
-                  )}
-                </button>
-
-                {effectiveRole === 'student' && currentUser.house && (
-                  <span className="hidden lg:inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-800 bg-slate-900 text-slate-300 font-medium text-xs">
-                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
-                    <span>{currentUser.house} House</span>
-                  </span>
-                )}
-              </div>
-            </header>
+            <DashboardTopBar
+              activeTab={activeTab}
+              studyHubSubTab={studyHubSubTab}
+              sidebarOpen={sidebarOpen}
+              onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+              effectiveRole={effectiveRole}
+              currentUser={currentUser}
+              clock={clock}
+              ttsEnabled={ttsEnabled}
+              onToggleTts={() => setTtsEnabled(!ttsEnabled)}
+              onOpenSoundSettings={() => setIsSoundSettingsModalOpen(true)}
+              onOpenVoiceAssistant={() => {
+                if (currentUser) {
+                  setByteOrionModalMode('select');
+                  setIsByteOrionModalOpen(true);
+                }
+              }}
+              fontSize={fontSize}
+              onCycleFontSize={() =>
+                setFontSize((prev) =>
+                  prev === 'standard' ? 'large' : prev === 'large' ? 'huge' : 'standard'
+                )
+              }
+              highContrast={highContrast}
+              onToggleHighContrast={() => setHighContrast(!highContrast)}
+              presentationMode={presentationMode}
+              hasPinConfigured={hasPinConfigured}
+              onOpenSecurityCenter={() => setSecurityMenuOpen(true)}
+              onOpenBroadcast={() => setIsBroadcastModalOpen(true)}
+              unreadNotificationsCount={notifications.filter((n) => !n.isRead).length}
+              showNotifCenter={showNotifCenter}
+              onToggleNotifCenter={() => setShowNotifCenter(!showNotifCenter)}
+              onCloseNotifCenter={() => setShowNotifCenter(false)}
+              onNavigateTab={(tab) => handleTabSelect(tab)}
+              whatsNewUnreadCount={whatsNewUnreadCount}
+            />
 
             {/* Base View Layout Wrapper */}
             <main className={`flex-1 p-2 sm:p-6 md:p-8 pb-24 sm:pb-12 max-w-7xl w-full mx-auto space-y-4 sm:space-y-8 min-w-0 ${fontSize === 'large' ? 'text-lg' : fontSize === 'huge' ? 'text-xl' : 'text-sm'}`}>
@@ -13255,7 +13193,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                                   })()}
                                 </div>
                               ) : (
-                                <div className="p-4 bg-slate-900 border border-white/5 rounded-xl text-xs space-y-3 font-serif min-h-[220px] max-h-[285px] text-slate-350 leading-relaxed overflow-y-auto select-none">
+                                <div className="p-4 bg-slate-900 border border-white/5 rounded-xl text-xs space-y-3 font-serif min-h-[220px] max-h-[285px] text-slate-350 leading-relaxed overflow-y-auto">
                                   <h4 className="font-bold text-center text-xs border-b border-white/5 pb-1 text-white truncate px-2">{previewMaterial.fileName || previewMaterial.title}</h4>
                                   <div className="space-y-4 pt-4 flex flex-col items-center justify-center h-full">
                                     <div className="text-4xl text-slate-500">📎</div>

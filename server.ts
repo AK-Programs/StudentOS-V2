@@ -560,6 +560,7 @@ app.post('/api/push/send', async (req, res) => {
     type,
     linkTab,
     tag,
+    callId,
     targetUserId,
     targetRole,
     targetClass,
@@ -571,10 +572,11 @@ app.post('/api/push/send', async (req, res) => {
   const notifTitle = title || '📢 StudentOS Alert';
   const notifBody = body || '';
   const notifType = type || 'announcement';
-  const notifLinkTab = linkTab || 'notice_viewer';
+  const resolvedCallId = callId || (notifType === 'call' || notifType === 'incoming_call' ? notifId : '');
+  const notifLinkTab = linkTab || (resolvedCallId ? 'peer_chat' : 'notice_viewer');
   const notifSchoolId = targetSchoolId || 'default_school';
   const notifTag = tag || `studentos-notif-${notifId}`;
-  const notifUrl = `/?tab=${encodeURIComponent(notifLinkTab)}&notifId=${encodeURIComponent(notifId)}`;
+  const notifUrl = `/?tab=${encodeURIComponent(notifLinkTab)}&notifId=${encodeURIComponent(notifId)}${resolvedCallId ? `&callId=${encodeURIComponent(resolvedCallId)}` : ''}`;
 
   console.log(`[FCM PUSH SEND] Dispatching Notice: id="${notifId}" | title="${notifTitle}" | targetUser="${targetUserId || 'all'}" | role="${targetRole || 'all'}" | class="${targetClass || 'all'}"`);
 
@@ -589,6 +591,7 @@ app.post('/api/push/send', async (req, res) => {
     data: {
       notificationId: notifId,
       notifId: notifId,
+      callId: resolvedCallId,
       title: notifTitle,
       body: notifBody,
       route: notifLinkTab,
@@ -602,6 +605,7 @@ app.post('/api/push/send', async (req, res) => {
     body: notifBody,
     linkTab: notifLinkTab,
     notifId: notifId,
+    callId: resolvedCallId,
     type: notifType,
     schoolId: notifSchoolId,
     url: notifUrl,
