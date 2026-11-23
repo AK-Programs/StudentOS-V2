@@ -9338,16 +9338,19 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                 {/* Notification Center */}
                 <div className="relative">
                   <button
+                    type="button"
                     onClick={() => {
                       soundService.playAppearSound();
                       setShowNotifCenter(!showNotifCenter);
                     }}
-                    className="relative p-2 rounded-lg bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors flex items-center justify-center cursor-pointer shadow-sm"
+                    className="relative p-2 rounded-lg bg-slate-900 border border-slate-800 hover:bg-slate-800 hover:border-indigo-500/40 text-slate-300 hover:text-white transition-all flex items-center justify-center cursor-pointer shadow-sm"
                     title="Academic Notification Hub"
+                    aria-label="Open Notifications Panel"
+                    aria-expanded={showNotifCenter}
                   >
                     <VeylentraIcon name="notification" size={18} />
                     {notifications.filter(n => !n.isRead).length > 0 && (
-                      <span className="absolute -top-1 -right-1 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-blue-600 text-[9px] font-bold text-white font-mono leading-none shadow-sm">
+                      <span className="absolute -top-1 -right-1 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-indigo-600 text-[9px] font-bold text-white font-mono tabular-nums leading-none shadow-sm">
                         {notifications.filter(n => !n.isRead).length}
                       </span>
                     )}
@@ -15360,15 +15363,13 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
         </div>
       )}
 
-      {isBroadcastModalOpen && (
-        <BroadcastModal
-          currentUser={currentUser}
-          effectiveRole={effectiveRole}
-          isOpen={isBroadcastModalOpen}
-          onClose={() => setIsBroadcastModalOpen(false)}
-          showNotification={showNotification}
-        />
-      )}
+      <BroadcastModal
+        currentUser={currentUser}
+        effectiveRole={effectiveRole}
+        isOpen={isBroadcastModalOpen}
+        onClose={() => setIsBroadcastModalOpen(false)}
+        showNotification={showNotification}
+      />
 
       {showQuotaModal && (
         <AIQuotaManagerModal
