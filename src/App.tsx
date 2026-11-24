@@ -21,7 +21,7 @@ import {
   UserRole, HouseType, SectionType, UserProfile, HouseStats, 
   Task, ScheduleItem, VaultNote, Lesson, FeedbackPost, 
   MaterialResource, QuizQuestion, ChatMessage, ChatRoom, AITeacherPersona,
-  Homework, RecentAccount
+  Homework, RecentAccount, AppNotification
 } from './types';
 import { supabase } from './lib/supabase';
 import { getVaultNotes, saveVaultNoteToSupabase, deleteVaultNoteFromSupabase, getNoteByCollabCode, updateNoteOrder } from './lib/supabaseNotes';
@@ -39,7 +39,7 @@ import {
 import { getPersonalTasks, savePersonalTask, updateTaskOrder as saveTaskOrderToSupabase, deletePersonalTask } from './lib/supabaseTasks';
 import { getAppNotifications, saveAppNotification, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification, generateUUID, registerPushSubscription, getDeviceId, triggerBrowserPushNotification, isUserEligibleForNotification, triggerNotificationSound } from './lib/notifications';
 import { requestFCMPermission, setupFCMForegroundListener } from './lib/fcmNotifications';
-import { useContextHoldMenu, useDismissContextMenu, clampContextMenuPosition } from './lib/useContextHoldMenu';
+import { useContextHoldMenu, useDismissContextMenu } from './lib/useContextHoldMenu';
 import { awardStudentXP, isHalloweenBadgeDateRange } from './lib/gamification';
 import { getSavedTheme } from './lib/themeSystem';
 import { ALL_GRADE_OPTIONS, getSectionsForGrade } from './config/academicHierarchy';
@@ -124,6 +124,7 @@ import { LectureNotesAiModal } from './components/LectureNotesAiModal';
 import { LectureNotesWorkspace } from './components/lectureNotes/LectureNotesWorkspace';
 import { HomeworkLinkedNotesSection } from './components/lectureNotes/HomeworkLinkedNotesSection';
 import { NotificationFlyout } from './components/NotificationFlyout';
+import { NativeContextMenu } from './components/ui/NativeContextMenu';
 import { LevelUpCelebrationModal } from './components/gamification/LevelUpCelebrationModal';
 import { RegularBadgeUnlockModal } from './components/gamification/RegularBadgeUnlockModal';
 import { StreakRecoveryCelebrationModal } from './components/gamification/StreakRecoveryCelebrationModal';
@@ -453,18 +454,48 @@ export default function App() {
     }
   }, [currentUser?.uid, currentUser?.role, currentUser?.grade, currentUser?.section, currentUser?.house]);
 
-  // Setup FCM Foreground message listener
+  // Setup FCM Foreground message listener & merge incoming SW/FCM pushes into in-app notifications/flyout
   useEffect(() => {
     let cleanupListener: (() => void) | null = null;
+    const mergeForegroundPush = (detail: any) => {
+      const user = currentUserRef.current;
+      if (!detail || !user?.uid) return;
+      const d = detail?.data && typeof detail.data === 'object' ? detail.data : detail;
+      const incomingId = String(detail.notifId || d.notifId || d.notificationId || detail.tag || `fcm-${Date.now()}`).trim();
+      const incomingType = (String(detail.type || d.type || 'announcement').toLowerCase() || 'announcement') as AppNotification['type'];
+      const incomingLinkTab = String(detail.linkTab || d.linkTab || d.tab || 'notice_viewer').trim();
+      const nextNotif: AppNotification = {
+        id: incomingId,
+        title: String(detail.title || d.title || '📢 Veylentra Notice'),
+        message: String(detail.body || d.body || d.message || ''),
+        type: incomingType,
+        createdAt: new Date().toISOString(),
+        isRead: false,
+        targetUserId: user.uid,
+        targetRole: 'all',
+        linkTab: incomingLinkTab,
+      };
+      setNotifications((prev) => {
+        if (prev.some((n) => n.id === nextNotif.id)) {
+          return prev;
+        }
+        return [nextNotif, ...prev];
+      });
+    };
+
+    const handleForegroundPushEvent = (e: Event) => {
+      mergeForegroundPush((e as CustomEvent)?.detail);
+    };
+    window.addEventListener('studentos-fcm-foreground-message', handleForegroundPushEvent);
+
     setupFCMForegroundListener((payload) => {
-      if (payload.data?.linkTab) {
-        // Optionally update in-app notifications
-      }
+      mergeForegroundPush(payload);
     }).then(unsub => {
       cleanupListener = unsub;
     });
 
     return () => {
+      window.removeEventListener('studentos-fcm-foreground-message', handleForegroundPushEvent);
       if (cleanupListener) cleanupListener();
     };
   }, []);
@@ -2722,6 +2753,26 @@ export default function App() {
       }
 
       if (event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+        if (
+          event === 'TOKEN_REFRESHED' &&
+          session?.user?.id &&
+          currentUserRef.current?.uid &&
+          typeof window !== 'undefined' &&
+          'Notification' in window &&
+          Notification.permission === 'granted'
+        ) {
+          void requestFCMPermission(
+            currentUserRef.current.uid,
+            {
+              role: currentUserRef.current.role || 'student',
+              grade: currentUserRef.current.grade || '',
+              section: currentUserRef.current.section || '',
+              house: currentUserRef.current.house || '',
+              schoolId: (currentUserRef.current as any)?.schoolId || 'default_school',
+            },
+            { silentIfDefault: true }
+          );
+        }
         return;
       }
 
@@ -13931,10 +13982,15 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                             {aiThreads.length === 0 ? (
                               <p className="text-center text-slate-500 text-xs py-8">No previous study threads</p>
                             ) : (
-                              aiThreads.map(t => (
+                              aiThreads.map(t => {
+                                const isHolding = byteThreadContext.holdingItemId === t.id;
+                                const isContextActive = aiThreadHoldMenu?.threadId === t.id;
+                                return (
                                 <div
                                   key={t.id}
                                   {...byteThreadContext.getItemBindProps(t.id)}
+                                  data-holding={isHolding ? 'true' : undefined}
+                                  data-context-active={isContextActive ? 'true' : undefined}
                                   onClick={() => {
                                     if (byteThreadContext.shouldSuppressClick(t.id)) return;
                                     setActiveThreadId(t.id);
@@ -13950,6 +14006,8 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                                     setShowAiHistoryDrawer(false);
                                   }}
                                   className={`veylentra-context-target group flex items-center justify-between p-2.5 rounded-xl border text-left cursor-pointer transition-all relative ${
+                                    isHolding ? 'veylentra-context-holding' : ''
+                                  } ${isContextActive ? 'veylentra-context-active' : ''} ${
                                     activeThreadId === t.id
                                       ? 'border-indigo-500 bg-indigo-500/15 shadow-sm'
                                       : 'border-white/5 bg-slate-900/40 hover:bg-slate-900 hover:border-white/10'
@@ -13966,7 +14024,8 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                                     </div>
                                   </div>
                                 </div>
-                              ))
+                                );
+                              })
                             )}
                           </div>
                         </motion.div>
@@ -15621,81 +15680,75 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
       {/* AI Thread Hold / Context Menu */}
       {aiThreadHoldMenu && (() => {
         const targetThread = aiThreads.find(t => t.id === aiThreadHoldMenu.threadId);
-        const clampedPos = clampContextMenuPosition(aiThreadHoldMenu.x, aiThreadHoldMenu.y, 208, 178);
         return (
-          <>
-            <div
-              className="fixed inset-0 z-[209]"
-              onClick={() => {
-                if (byteThreadContext.isInteractionGuarded()) return;
-                setByteDeleteConfirmId(null);
-                setAiThreadHoldMenu(null);
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setByteDeleteConfirmId(null);
-                setAiThreadHoldMenu(null);
-              }}
-            />
-            <div
-              ref={byteThreadMenuRef}
-              role="menu"
-              aria-label={`Actions for ${targetThread?.title || 'Chat Session'}`}
-              className="fixed z-[210] w-52 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-1.5 animate-in fade-in zoom-in-95 duration-150"
-              style={{ left: clampedPos.left, top: clampedPos.top }}
-              onClick={(e) => e.stopPropagation()}
-              onContextMenu={(e) => e.preventDefault()}
-            >
-              <div className="flex flex-col gap-1">
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    if (byteThreadContext.isInteractionGuarded()) return;
-                    handlePinThread(aiThreadHoldMenu.threadId);
-                  }}
-                  className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all cursor-pointer"
-                >
-                  <Pin className="w-3.5 h-3.5 text-amber-400" />
-                  {targetThread?.isPinned ? 'Unpin Session' : 'Pin Session'}
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    if (byteThreadContext.isInteractionGuarded()) return;
-                    handleRenameThread(aiThreadHoldMenu.threadId);
-                  }}
-                  className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all cursor-pointer"
-                >
-                  <Edit2 className="w-3.5 h-3.5 text-indigo-400" />
-                  Rename
-                </button>
-                <div className="h-px bg-white/5 my-1" />
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    if (byteThreadContext.isInteractionGuarded()) return;
-                    if (byteDeleteConfirmId === aiThreadHoldMenu.threadId) {
-                      handleDeleteThread(aiThreadHoldMenu.threadId);
-                      setByteDeleteConfirmId(null);
-                    } else {
-                      setByteDeleteConfirmId(aiThreadHoldMenu.threadId);
-                    }
-                  }}
-                  className={`flex items-center gap-3 px-3 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-                    byteDeleteConfirmId === aiThreadHoldMenu.threadId
-                      ? 'bg-rose-600 text-white hover:bg-rose-500'
-                      : 'text-rose-400 hover:bg-rose-500/10'
-                  }`}
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  {byteDeleteConfirmId === aiThreadHoldMenu.threadId ? 'Confirm Delete Session' : 'Delete Session'}
-                </button>
-              </div>
+          <NativeContextMenu
+            isOpen={true}
+            x={aiThreadHoldMenu.x}
+            y={aiThreadHoldMenu.y}
+            menuWidth={216}
+            menuHeight={196}
+            ariaLabel={`Actions for ${targetThread?.title || 'Chat Session'}`}
+            headerTitle={targetThread?.title || 'Chat Session'}
+            headerSubtitle={targetThread?.mode ? `${targetThread.mode} mode` : 'Byte Study Thread'}
+            menuRef={byteThreadMenuRef}
+            isInteractionGuarded={byteThreadContext.isInteractionGuarded}
+            onClose={() => {
+              setByteDeleteConfirmId(null);
+              setAiThreadHoldMenu(null);
+            }}
+            zIndexBackdrop={209}
+            zIndexMenu={210}
+            className="w-54"
+          >
+            <div className="flex flex-col gap-1">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  if (byteThreadContext.isInteractionGuarded()) return;
+                  handlePinThread(aiThreadHoldMenu.threadId);
+                }}
+                className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all cursor-pointer"
+              >
+                <Pin className="w-3.5 h-3.5 text-amber-400" />
+                {targetThread?.isPinned ? 'Unpin Session' : 'Pin Session'}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  if (byteThreadContext.isInteractionGuarded()) return;
+                  handleRenameThread(aiThreadHoldMenu.threadId);
+                }}
+                className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all cursor-pointer"
+              >
+                <Edit2 className="w-3.5 h-3.5 text-indigo-400" />
+                Rename
+              </button>
+              <div className="h-px bg-white/5 my-1" />
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  if (byteThreadContext.isInteractionGuarded()) return;
+                  if (byteDeleteConfirmId === aiThreadHoldMenu.threadId) {
+                    handleDeleteThread(aiThreadHoldMenu.threadId);
+                    setByteDeleteConfirmId(null);
+                  } else {
+                    setByteDeleteConfirmId(aiThreadHoldMenu.threadId);
+                  }
+                }}
+                className={`flex items-center gap-3 px-3 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                  byteDeleteConfirmId === aiThreadHoldMenu.threadId
+                    ? 'bg-rose-600 text-white hover:bg-rose-500'
+                    : 'text-rose-400 hover:bg-rose-500/10'
+                }`}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {byteDeleteConfirmId === aiThreadHoldMenu.threadId ? 'Confirm Delete Session' : 'Delete Session'}
+              </button>
             </div>
-          </>
+          </NativeContextMenu>
         );
       })()}
 

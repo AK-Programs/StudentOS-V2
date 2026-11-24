@@ -6,6 +6,7 @@ import http from 'node:http';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
+import vm from 'node:vm';
 import {
   expandTargetRoleSet,
   doesSubscriptionMatchPushTarget,
@@ -20,7 +21,13 @@ import {
   didPointerMoveExceedThreshold,
   shouldIgnoreHoldStartTarget,
   shouldBlockPostHoldInteraction,
+  isTouchTriggeredContextMenu,
 } from '../src/lib/useContextHoldMenu';
+import {
+  setupFCMForegroundListener,
+  hasPushTagRecentlyHandled,
+  buildForegroundPushDetail,
+} from '../src/lib/fcmNotifications';
 import { LectureNotesSidebar } from '../src/components/lectureNotes/LectureNotesSidebar';
 
 async function startTempServer(app: express.Express): Promise<{ baseUrl: string; close: () => Promise<void> }> {
@@ -200,11 +207,25 @@ async function runTests() {
     assert.equal(shouldBlockPostHoldInteraction(true, 0, 1000), true);
     assert.equal(shouldBlockPostHoldInteraction(false, 1500, 1200), true);
     assert.equal(shouldBlockPostHoldInteraction(false, 1500, 1501), false);
+
+    // Touch-triggered onContextMenu (Android Chrome emitting contextmenu before JS holdDelayMs):
+    assert.equal(
+      isTouchTriggeredContextMenu({ sourceCapabilities: { firesTouchEvents: true } }, null, 't1', 0, 1000),
+      true
+    );
+    assert.equal(
+      isTouchTriggeredContextMenu({ pointerType: 'mouse' }, 't1', 't1', 700, 1000),
+      true
+    );
+    assert.equal(
+      isTouchTriggeredContextMenu({ pointerType: 'mouse' }, 'other', 't1', 700, 1000),
+      false
+    );
     console.log('PASS: Test 5 - Shared context-menu clamping, scroll threshold, and finger-lift synthetic-click guards work');
     passed++;
   }
 
-  // Test 6: LectureNotesSidebar renders .veylentra-context-target and decouples Starred from Pinned
+  // Test 6: LectureNotesSidebar renders .veylentra-context-target, active highlight, and decouples Starred from Pinned
   {
     const html = renderToStaticMarkup(
       React.createElement(LectureNotesSidebar, {
@@ -231,6 +252,7 @@ async function runTests() {
           },
         ],
         selectedNoteId: 'n1',
+        activeMenuNoteId: 'n1',
         folders: [{ id: 'f1', name: 'Physics', color: 'indigo', createdAt: '2026-11-23' }],
         activeFolderId: null,
         currentFilter: 'all',
@@ -247,12 +269,14 @@ async function runTests() {
       })
     );
     assert.ok(html.includes('veylentra-context-target'));
+    assert.ok(html.includes('veylentra-context-active'));
+    assert.ok(html.includes('data-context-active="true"'));
     assert.ok(html.includes('Pinned Physics Derivation'));
     // A pinned note with isStarred: false must NOT render Starred filter count >= 1 or star badge text
     const sidebarSource = fs.readFileSync(path.join(process.cwd(), 'src/components/lectureNotes/LectureNotesSidebar.tsx'), 'utf8');
     assert.ok(sidebarSource.includes('const isStarred = Boolean(note.isStarred);'));
     assert.ok(!sidebarSource.includes('Boolean(note.isStarred || isPinned)'));
-    console.log('PASS: Test 6 - LectureNotesSidebar renders scoped context-target class and decouples Starred from Pinned');
+    console.log('PASS: Test 6 - LectureNotesSidebar renders scoped context-target, active highlight, and decouples Starred from Pinned');
     passed++;
   }
 
@@ -260,6 +284,8 @@ async function runTests() {
   {
     const indexCss = fs.readFileSync(path.join(process.cwd(), 'src/index.css'), 'utf8');
     assert.ok(indexCss.includes('.veylentra-context-target'));
+    assert.ok(indexCss.includes('.veylentra-context-holding'));
+    assert.ok(indexCss.includes('.veylentra-context-active'));
     assert.ok(!/body\s*\{[^}]*user-select\s*:\s*none/i.test(indexCss));
 
     const swJs = fs.readFileSync(path.join(process.cwd(), 'public/sw.js'), 'utf8');
@@ -270,11 +296,15 @@ async function runTests() {
     assert.ok(appTsx.includes('byteThreadContext.getItemBindProps'));
     assert.ok(appTsx.includes('byteThreadContext.shouldSuppressClick'));
     assert.ok(appTsx.includes('byteThreadContext.isInteractionGuarded'));
+    assert.ok(appTsx.includes('studentos-fcm-foreground-message'));
+    assert.ok(appTsx.includes('NativeContextMenu'));
     assert.ok(appTsx.includes('vaultNotesRef'));
     assert.ok(!appTsx.includes('holdTimerRef.current = setTimeout'));
 
     const notesWs = fs.readFileSync(path.join(process.cwd(), 'src/components/lectureNotes/LectureNotesWorkspace.tsx'), 'utf8');
     assert.ok(notesWs.includes('noteHoldGuardRef'));
+    assert.ok(notesWs.includes('NativeContextMenu'));
+    assert.ok(notesWs.includes('activeMenuNoteId={noteContextMenu?.noteId || null}'));
 
     for (const sqlRelPath of ['supabase-complete-schema.sql', 'supabase/setup.sql']) {
       const sql = fs.readFileSync(path.join(process.cwd(), sqlRelPath), 'utf8');
@@ -283,8 +313,190 @@ async function runTests() {
       assert.ok(!sql.includes('CREATE POLICY "push rw"'));
     }
 
-    console.log('PASS: Test 7 - Scoped CSS, Byte/Notes hold-menu guards, SW navigation, and restrictive RLS SQL verified');
+    console.log('PASS: Test 7 - Scoped CSS, Byte/Notes NativeContextMenu & active highlights, SW navigation, and RLS SQL verified');
     passed++;
+  }
+
+  // Test 8: Service Worker push + fallback showNotification + postMessage + notificationclick navigation runtime check
+  {
+    const swCode = fs.readFileSync(path.join(process.cwd(), 'public/sw.js'), 'utf8');
+    const listeners = new Map<string, (ev: any) => void>();
+    const shownNotifications: Array<{ title: string; opts: any }> = [];
+    const clientMessages: any[] = [];
+    const openedUrls: string[] = [];
+    let failRichShowNotificationOnce = true;
+
+    const fakeClient = {
+      url: 'https://veylentra-web.vercel.app/',
+      focused: true,
+      visibilityState: 'visible',
+      postMessage: (msg: any) => clientMessages.push(msg),
+      focus: async () => fakeClient,
+    };
+
+    const swGlobal: any = {
+      location: { origin: 'https://veylentra-web.vercel.app' },
+      URL,
+      URLSearchParams,
+      Date,
+      console: { log: () => {}, warn: () => {} },
+      addEventListener: (name: string, fn: (ev: any) => void) => listeners.set(name, fn),
+      skipWaiting: () => {},
+      registration: {
+        showNotification: async (title: string, opts: any) => {
+          if (failRichShowNotificationOnce && opts?.actions) {
+            failRichShowNotificationOnce = false;
+            throw new Error('Actions unsupported in simulated environment');
+          }
+          shownNotifications.push({ title, opts });
+        },
+      },
+      clients: {
+        claim: async () => {},
+        matchAll: async () => [fakeClient],
+        openWindow: async (u: string) => {
+          openedUrls.push(u);
+          return null;
+        },
+      },
+      caches: {
+        keys: async () => [],
+        match: async () => null,
+        delete: async () => true,
+      },
+      fetch: async () => ({ ok: true }),
+    };
+    swGlobal.self = swGlobal;
+
+    vm.runInNewContext(swCode, swGlobal);
+    const pushHandler = listeners.get('push');
+    const clickHandler = listeners.get('notificationclick');
+    assert.ok(pushHandler && clickHandler, 'Service Worker must register push and notificationclick listeners');
+
+    let waitPromise: Promise<any> = Promise.resolve();
+    pushHandler!({
+      data: {
+        json: () => ({
+          notification: { title: 'Exam Schedule Posted', body: 'Finals start Monday' },
+          linkTab: 'calendar',
+          notifId: 'exam_99',
+          fcmOptions: { link: '/?tab=calendar&notifId=exam_99' },
+        }),
+      },
+      waitUntil: (p: Promise<any>) => {
+        waitPromise = p;
+      },
+    });
+    await waitPromise;
+
+    assert.equal(shownNotifications.length, 1, 'SW must fall back cleanly if rich options fail and still display OS notification');
+    assert.equal(shownNotifications[0].title, 'Exam Schedule Posted');
+    assert.equal(shownNotifications[0].opts.data.linkTab, 'calendar');
+    assert.equal(shownNotifications[0].opts.data.notifId, 'exam_99');
+
+    assert.equal(clientMessages.length, 1);
+    assert.equal(clientMessages[0].type, 'FCM_SW_NOTIFICATION_DISPLAYED');
+    assert.equal(clientMessages[0].linkTab, 'calendar');
+    assert.equal(clientMessages[0].notifId, 'exam_99');
+
+    // Now simulate notification click in background/open window
+    let clickWait: Promise<any> = Promise.resolve();
+    let notificationClosed = false;
+    clickHandler!({
+      action: 'open',
+      notification: {
+        data: shownNotifications[0].opts.data,
+        close: () => {
+          notificationClosed = true;
+        },
+      },
+      waitUntil: (p: Promise<any>) => {
+        clickWait = p;
+      },
+    });
+    await clickWait;
+    assert.equal(notificationClosed, true);
+    const navMsg = clientMessages.find((m) => m.type === 'STUDENTOS_NAVIGATE_TAB');
+    assert.ok(navMsg, 'Notification click must post STUDENTOS_NAVIGATE_TAB to active client');
+    assert.equal(navMsg.tab, 'calendar');
+    assert.equal(navMsg.notifId, 'exam_99');
+    console.log('PASS: Test 8 - SW runtime push payload normalization, fallback showNotification, foreground bridge & click nav verified');
+    passed++;
+  }
+
+  // Test 9: Foreground SW -> Window bridge emits studentos-fcm-foreground-message and prevents duplicate OS toast
+  {
+    const detail = buildForegroundPushDetail({
+      title: 'Live Broadcast',
+      body: 'Assembly in 5 minutes',
+      linkTab: 'notice_viewer',
+      notifId: 'fg_test_1',
+    });
+    assert.equal(detail.tag, 'studentos-notif-fg_test_1');
+
+    const prevWin = (globalThis as any).window;
+    const prevNavDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    const swListeners = new Map<string, (ev: any) => void>();
+    const dispatchedWinEvents: any[] = [];
+    const callbackPayloads: any[] = [];
+
+    const mockWin: any = {
+      dispatchEvent: (ev: any) => dispatchedWinEvents.push(ev),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      CustomEvent: class MockCustomEvent {
+        type: string;
+        detail: any;
+        constructor(type: string, init?: any) {
+          this.type = type;
+          this.detail = init?.detail;
+        }
+      },
+    };
+    (globalThis as any).CustomEvent = mockWin.CustomEvent;
+    (globalThis as any).window = mockWin;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      writable: true,
+      value: {
+        userAgent: 'TestBrowser',
+        serviceWorker: {
+          addEventListener: (name: string, fn: (ev: any) => void) => swListeners.set(name, fn),
+          removeEventListener: () => {},
+        },
+      },
+    });
+
+    try {
+      const cleanup = await setupFCMForegroundListener((p) => callbackPayloads.push(p));
+      const msgHandler = swListeners.get('message');
+      assert.ok(msgHandler, 'setupFCMForegroundListener must bind serviceWorker message handler');
+
+      msgHandler!({
+        data: {
+          type: 'FCM_SW_NOTIFICATION_DISPLAYED',
+          title: 'Live Broadcast',
+          body: 'Assembly in 5 minutes',
+          linkTab: 'notice_viewer',
+          notifId: 'fg_test_1',
+          tag: 'studentos-notif-fg_test_1',
+        },
+      });
+
+      assert.equal(callbackPayloads.length, 1);
+      assert.equal(callbackPayloads[0].title, 'Live Broadcast');
+      assert.equal(dispatchedWinEvents.length, 1);
+      assert.equal(dispatchedWinEvents[0].type, 'studentos-fcm-foreground-message');
+      assert.equal(hasPushTagRecentlyHandled('studentos-notif-fg_test_1'), true);
+      if (cleanup) cleanup();
+      console.log('PASS: Test 9 - Foreground SW message bridge triggers in-app event + deduplication cleanly');
+      passed++;
+    } finally {
+      (globalThis as any).window = prevWin;
+      if (prevNavDescriptor) {
+        Object.defineProperty(globalThis, 'navigator', prevNavDescriptor);
+      }
+    }
   }
 
   console.log(`\nALL ${passed} TESTS PASSED!`);

@@ -73,8 +73,37 @@ export function shouldBlockPostHoldInteraction(
   return holdActive || nowMs < graceUntilMs;
 }
 
+/**
+ * Detect whether a React/native contextmenu event originated from a touch hold
+ * (e.g., Android Chrome emitting contextmenu around ~400ms before JS holdDelayMs).
+ */
+export function isTouchTriggeredContextMenu(
+  nativeEvent: any,
+  recentTouchItemId: unknown,
+  currentItemId: unknown,
+  recentTouchAtMs: number,
+  nowMs: number = Date.now()
+): boolean {
+  if (nativeEvent?.sourceCapabilities?.firesTouchEvents === true) {
+    return true;
+  }
+  if (nativeEvent?.pointerType === 'touch') {
+    return true;
+  }
+  if (
+    recentTouchItemId !== null &&
+    recentTouchItemId === currentItemId &&
+    recentTouchAtMs > 0 &&
+    nowMs - recentTouchAtMs < 1600
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export interface UseContextHoldMenuOptions<TId = string> {
   holdDelayMs?: number;
+  holdFeedbackDelayMs?: number;
   moveThresholdPx?: number;
   onOpen?: (state: ContextHoldMenuState<TId>) => void;
 }
@@ -93,22 +122,29 @@ export interface ContextHoldBindProps {
 
 /**
  * Unified mobile long-press + desktop right-click handler.
+ * - Exposes holdingItemId for subtle native-app hold visual feedback
  * - Suppresses native browser context menu ONLY on bound items
- * - Cancels hold cleanly if pointer/finger scrolls (>10px)
+ * - Cancels hold cleanly if pointer/finger moves (>10px) or container scrolls
+ * - Protects opened menus when touch contextmenu fires before holdDelayMs
  * - Suppresses trailing short-tap onClick after a long-press triggers
  */
 export function useContextHoldMenu<TId = string>(
   options?: UseContextHoldMenuOptions<TId>
 ) {
   const holdDelayMs = options?.holdDelayMs ?? 480;
+  const holdFeedbackDelayMs = options?.holdFeedbackDelayMs ?? 70;
   const moveThresholdPx = options?.moveThresholdPx ?? 10;
   const onOpenRef = useRef(options?.onOpen);
   onOpenRef.current = options?.onOpen;
 
   const [menu, setMenu] = useState<ContextHoldMenuState<TId> | null>(null);
+  const [holdingItemId, setHoldingItemId] = useState<TId | null>(null);
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollCancelCleanupRef = useRef<(() => void) | null>(null);
   const pointerStartRef = useRef<{ itemId: TId; x: number; y: number } | null>(null);
+  const lastTouchStartRef = useRef<{ itemId: TId; at: number } | null>(null);
   const suppressedClickRef = useRef<{ itemId: TId; expiresAt: number } | null>(null);
   const lastTimerOpenedRef = useRef<{ itemId: TId; openedAt: number } | null>(null);
   const holdActiveRef = useRef<boolean>(false);
@@ -119,7 +155,16 @@ export function useContextHoldMenu<TId = string>(
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
+    if (feedbackTimerRef.current !== null) {
+      clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = null;
+    }
+    if (scrollCancelCleanupRef.current) {
+      scrollCancelCleanupRef.current();
+      scrollCancelCleanupRef.current = null;
+    }
     pointerStartRef.current = null;
+    setHoldingItemId((prev) => (prev !== null ? null : prev));
   }, []);
 
   const isInteractionGuarded = useCallback((): boolean => {
@@ -158,6 +203,7 @@ export function useContextHoldMenu<TId = string>(
         navigator.vibrate(12);
       } catch (_) {}
     }
+    setHoldingItemId(null);
     setMenu(nextState);
     onOpenRef.current?.(nextState);
   }, [armPostHoldReleaseGuard]);
@@ -197,13 +243,39 @@ export function useContextHoldMenu<TId = string>(
     (itemId: TId, x: number, y: number) => {
       clearHoldTimer();
       pointerStartRef.current = { itemId, x, y };
+
+      if (typeof window !== 'undefined') {
+        const onAnyScroll = () => {
+          clearHoldTimer();
+        };
+        window.addEventListener('scroll', onAnyScroll, true);
+        scrollCancelCleanupRef.current = () => {
+          window.removeEventListener('scroll', onAnyScroll, true);
+        };
+      }
+
+      feedbackTimerRef.current = setTimeout(() => {
+        feedbackTimerRef.current = null;
+        if (pointerStartRef.current?.itemId === itemId) {
+          setHoldingItemId(itemId);
+        }
+      }, holdFeedbackDelayMs);
+
       timerRef.current = setTimeout(() => {
         timerRef.current = null;
+        if (feedbackTimerRef.current !== null) {
+          clearTimeout(feedbackTimerRef.current);
+          feedbackTimerRef.current = null;
+        }
+        if (scrollCancelCleanupRef.current) {
+          scrollCancelCleanupRef.current();
+          scrollCancelCleanupRef.current = null;
+        }
         pointerStartRef.current = null;
         openMenu(itemId, x, y, true);
       }, holdDelayMs);
     },
-    [clearHoldTimer, holdDelayMs, openMenu]
+    [clearHoldTimer, holdDelayMs, holdFeedbackDelayMs, openMenu]
   );
 
   const getItemBindProps = useCallback(
@@ -214,6 +286,7 @@ export function useContextHoldMenu<TId = string>(
           return;
         }
         if (shouldIgnoreHoldStartTarget(e.target)) return;
+        lastTouchStartRef.current = { itemId, at: Date.now() };
         const touch = e.touches[0];
         startHold(itemId, touch.clientX, touch.clientY);
       },
@@ -226,7 +299,7 @@ export function useContextHoldMenu<TId = string>(
         }
       },
       onTouchEnd: () => {
-        if (timerRef.current !== null) {
+        if (timerRef.current !== null || feedbackTimerRef.current !== null) {
           clearHoldTimer();
         }
         if (holdActiveRef.current) {
@@ -242,8 +315,9 @@ export function useContextHoldMenu<TId = string>(
         }
       },
       onMouseDown: (e) => {
-        // Right-click is handled cleanly via onContextMenu; ignore non-primary mouse buttons here.
+        // Right-click is handled cleanly via onContextMenu; ignore non-primary mouse buttons or touch-emulated mousedown.
         if (e.button !== 0) return;
+        if ((e.nativeEvent as any)?.sourceCapabilities?.firesTouchEvents) return;
         if (shouldIgnoreHoldStartTarget(e.target)) return;
         startHold(itemId, e.clientX, e.clientY);
       },
@@ -276,11 +350,19 @@ export function useContextHoldMenu<TId = string>(
           return;
         }
 
+        const recentTouch = lastTouchStartRef.current;
+        const fromTouchContext = isTouchTriggeredContextMenu(
+          e.nativeEvent,
+          recentTouch?.itemId ?? null,
+          itemId,
+          recentTouch?.at ?? 0
+        );
+
         const fallbackStart = pointerStartRef.current;
         clearHoldTimer();
         const x = e.clientX || fallbackStart?.x || 24;
         const y = e.clientY || fallbackStart?.y || 24;
-        openMenu(itemId, x, y, false);
+        openMenu(itemId, x, y, fromTouchContext);
       },
     }),
     [clearHoldTimer, moveThresholdPx, openMenu, startHold]
@@ -288,6 +370,7 @@ export function useContextHoldMenu<TId = string>(
 
   return {
     menu,
+    holdingItemId,
     setMenu,
     openMenu,
     closeMenu,
@@ -306,24 +389,29 @@ export function useDismissContextMenu(
   menuRef?: React.RefObject<HTMLElement | null>,
   isInteractionGuarded?: () => boolean
 ) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const isGuardedRef = useRef(isInteractionGuarded);
+  isGuardedRef.current = isInteractionGuarded;
+
   useEffect(() => {
     if (!isOpen || typeof window === 'undefined') return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose();
+        onCloseRef.current();
       }
     };
 
     const handleOutsidePointer = (e: MouseEvent | TouchEvent) => {
-      if (e.type === 'mousedown' && isInteractionGuarded?.()) {
+      if (e.type === 'mousedown' && isGuardedRef.current?.()) {
         return;
       }
       const target = e.target as Node | null;
       if (menuRef?.current && target && menuRef.current.contains(target)) {
         return;
       }
-      onClose();
+      onCloseRef.current();
     };
 
     const handleScroll = (e: Event) => {
@@ -331,21 +419,25 @@ export function useDismissContextMenu(
       if (menuRef?.current && target && menuRef.current.contains(target)) {
         return;
       }
-      onClose();
+      onCloseRef.current();
+    };
+
+    const handleResize = () => {
+      onCloseRef.current();
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('resize', onClose);
+    window.addEventListener('resize', handleResize);
     document.addEventListener('mousedown', handleOutsidePointer, true);
     document.addEventListener('touchstart', handleOutsidePointer, { capture: true, passive: true });
     window.addEventListener('scroll', handleScroll, true);
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('resize', onClose);
+      window.removeEventListener('resize', handleResize);
       document.removeEventListener('mousedown', handleOutsidePointer, true);
       document.removeEventListener('touchstart', handleOutsidePointer, true);
       window.removeEventListener('scroll', handleScroll, true);
     };
-  }, [isOpen, onClose, menuRef, isInteractionGuarded]);
+  }, [isOpen, menuRef]);
 }

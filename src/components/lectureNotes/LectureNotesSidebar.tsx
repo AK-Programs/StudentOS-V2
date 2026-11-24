@@ -41,6 +41,7 @@ interface LectureNotesSidebarProps {
   onToggleStar?: (noteId: string) => void;
   onDeleteNote?: (noteId: string) => void;
   onOpenCreateWithAI?: () => void;
+  activeMenuNoteId?: string | null;
   onOpenNoteContextMenu?: (noteId: string, x: number, y: number, isGuarded?: () => boolean) => void;
 }
 
@@ -63,6 +64,7 @@ export const LectureNotesSidebar: React.FC<LectureNotesSidebarProps> = ({
   onToggleStar,
   onDeleteNote,
   onOpenCreateWithAI,
+  activeMenuNoteId = null,
   onOpenNoteContextMenu
 }) => {
   const [foldersExpanded, setFoldersExpanded] = useState(true);
@@ -283,16 +285,22 @@ export const LectureNotesSidebar: React.FC<LectureNotesSidebarProps> = ({
               const isSelected = selectedNoteId === note.id;
               const isPinned = Boolean((note as any).isPinned);
               const isStarred = Boolean(note.isStarred);
+              const isHolding = noteHoldContext.holdingItemId === note.id;
+              const isContextActive = activeMenuNoteId === note.id;
 
               return (
                 <div
                   key={note.id}
                   {...noteHoldContext.getItemBindProps(note.id)}
+                  data-holding={isHolding ? 'true' : undefined}
+                  data-context-active={isContextActive ? 'true' : undefined}
                   onClick={() => {
                     if (noteHoldContext.shouldSuppressClick(note.id)) return;
                     onSelectNote(note.id);
                   }}
                   className={`veylentra-context-target group relative p-2.5 rounded-2xl border transition-all cursor-pointer space-y-1.5 ${
+                    isHolding ? 'veylentra-context-holding' : ''
+                  } ${isContextActive ? 'veylentra-context-active' : ''} ${
                     isSelected 
                       ? 'bg-indigo-600/25 border-indigo-500/50 text-white shadow-md' 
                       : 'bg-slate-900/50 hover:bg-slate-900 border-white/5 text-slate-300 hover:border-slate-700'

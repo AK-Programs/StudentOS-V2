@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
 import { 
   FileText, 
   Sparkles, 
@@ -33,6 +32,7 @@ import {
   Folder
 } from 'lucide-react';
 import { VaultNote, Homework } from '../../types';
+import { NativeContextMenu } from '../ui/NativeContextMenu';
 import { NoteFolder, NoteVersion } from '../../lib/lectureNotes/types';
 import { LectureNotesSidebar } from './LectureNotesSidebar';
 import { LectureNotesEditor } from './LectureNotesEditor';
@@ -45,7 +45,7 @@ import { NoteTemplatesModal } from './NoteTemplatesModal';
 import { VisualMathEditorModal } from './VisualMathEditorModal';
 import { SketchCanvasModal } from './SketchCanvasModal';
 import { generateFormattedPdf } from '../../lib/pdfGenerator';
-import { clampContextMenuPosition, useDismissContextMenu } from '../../lib/useContextHoldMenu';
+import { useDismissContextMenu } from '../../lib/useContextHoldMenu';
 
 interface LectureNotesWorkspaceProps {
   notes: VaultNote[];
@@ -532,6 +532,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                   setIsNotesPanelOpen(false);
                   setIsAICreateModalOpen(true);
                 }}
+                activeMenuNoteId={noteContextMenu?.noteId || null}
                 onOpenNoteContextMenu={(noteId, x, y, isGuarded) => {
                   noteHoldGuardRef.current = isGuarded || (() => false);
                   setNoteDeleteConfirmId(null);
@@ -1083,8 +1084,8 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
         }}
       />
 
-      {/* Contextual Long-Press / Right-Click Action Menu (Portaled above drawer) */}
-      {noteContextMenu && typeof document !== 'undefined' && (() => {
+      {/* Contextual Long-Press / Right-Click Action Menu (Animated & Portaled above drawer) */}
+      {noteContextMenu && (() => {
         const targetNote = notes.find(n => n.id === noteContextMenu.noteId);
         if (!targetNote) return null;
 
@@ -1093,189 +1094,176 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
         const isArchived = Boolean(targetNote.isArchived);
         const currentFolderId = (targetNote as any).folder_id || (targetNote as any).folderId || null;
         const estimatedHeight = 290 + Math.min(localFolders.length, 4) * 32;
-        const pos = clampContextMenuPosition(noteContextMenu.x, noteContextMenu.y, 232, estimatedHeight);
 
-        return createPortal(
-          <>
-            <div
-              className="fixed inset-0 z-[219]"
+        return (
+          <NativeContextMenu
+            isOpen={true}
+            x={noteContextMenu.x}
+            y={noteContextMenu.y}
+            menuWidth={232}
+            menuHeight={estimatedHeight}
+            ariaLabel={`Actions for ${targetNote.title || 'Untitled Note'}`}
+            headerTitle={targetNote.title || 'Untitled Note'}
+            headerSubtitle={targetNote.subject || 'General'}
+            menuRef={noteContextMenuRef}
+            isInteractionGuarded={() => noteHoldGuardRef.current()}
+            onClose={closeNoteContextMenu}
+            zIndexBackdrop={219}
+            zIndexMenu={220}
+            className="w-58 space-y-0.5"
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={async () => {
+                if (noteHoldGuardRef.current()) return;
+                await onUpdateNote(targetNote.id, { isPinned: !isPinned });
+                showNotification(isPinned ? 'Note unpinned.' : '📌 Note pinned to top.');
+                closeNoteContextMenu();
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
+            >
+              <Pin className="w-3.5 h-3.5 text-amber-400" />
+              <span>{isPinned ? 'Unpin Note' : 'Pin Note'}</span>
+            </button>
+
+            <button
+              type="button"
+              role="menuitem"
+              onClick={async () => {
+                if (noteHoldGuardRef.current()) return;
+                await onUpdateNote(targetNote.id, { isStarred: !isStarred });
+                showNotification(isStarred ? 'Removed from favorites.' : '⭐ Added to favorites.');
+                closeNoteContextMenu();
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
+            >
+              <Star className={`w-3.5 h-3.5 text-amber-400 ${isStarred ? 'fill-amber-400' : ''}`} />
+              <span>{isStarred ? 'Remove Star' : 'Star / Favorite'}</span>
+            </button>
+
+            <button
+              type="button"
+              role="menuitem"
               onClick={() => {
                 if (noteHoldGuardRef.current()) return;
+                setRenamingNoteModal({ noteId: targetNote.id, title: targetNote.title || '' });
                 closeNoteContextMenu();
               }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                closeNoteContextMenu();
-              }}
-            />
-            <div
-              ref={noteContextMenuRef}
-              role="menu"
-              aria-label={`Actions for ${targetNote.title || 'Untitled Note'}`}
-              style={{ left: pos.left, top: pos.top }}
-              onClick={(e) => e.stopPropagation()}
-              onContextMenu={(e) => e.preventDefault()}
-              className="fixed z-[220] w-58 max-h-[80vh] overflow-y-auto bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-1.5 space-y-0.5 animate-in fade-in zoom-in-95 duration-150"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
             >
-              <div className="px-3 py-1.5 border-b border-white/5 mb-1">
-                <p className="text-[11px] font-bold text-white truncate">{targetNote.title || 'Untitled Note'}</p>
-                <p className="text-[10px] text-slate-400 truncate">{targetNote.subject || 'General'}</p>
-              </div>
+              <Edit3 className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Rename Note</span>
+            </button>
 
-              <button
-                type="button"
-                role="menuitem"
-                onClick={async () => {
-                  if (noteHoldGuardRef.current()) return;
-                  await onUpdateNote(targetNote.id, { isPinned: !isPinned });
-                  showNotification(isPinned ? 'Note unpinned.' : '📌 Note pinned to top.');
-                  closeNoteContextMenu();
-                }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
-              >
-                <Pin className="w-3.5 h-3.5 text-amber-400" />
-                <span>{isPinned ? 'Unpin Note' : 'Pin Note'}</span>
-              </button>
-
-              <button
-                type="button"
-                role="menuitem"
-                onClick={async () => {
-                  if (noteHoldGuardRef.current()) return;
-                  await onUpdateNote(targetNote.id, { isStarred: !isStarred });
-                  showNotification(isStarred ? 'Removed from favorites.' : '⭐ Added to favorites.');
-                  closeNoteContextMenu();
-                }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
-              >
-                <Star className={`w-3.5 h-3.5 text-amber-400 ${isStarred ? 'fill-amber-400' : ''}`} />
-                <span>{isStarred ? 'Remove Star' : 'Star / Favorite'}</span>
-              </button>
-
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  if (noteHoldGuardRef.current()) return;
-                  setRenamingNoteModal({ noteId: targetNote.id, title: targetNote.title || '' });
-                  closeNoteContextMenu();
-                }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
-              >
-                <Edit3 className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Rename Note</span>
-              </button>
-
-              <button
-                type="button"
-                role="menuitem"
-                onClick={async () => {
-                  if (noteHoldGuardRef.current()) return;
-                  const collabCode = targetNote.collabCode || Math.floor(100000 + Math.random() * 900000).toString();
-                  if (!targetNote.collabCode) {
-                    await onUpdateNote(targetNote.id, { collabCode, isCollab: true });
-                  }
-                  if (typeof navigator !== 'undefined' && navigator.clipboard) {
-                    try {
-                      await navigator.clipboard.writeText(collabCode);
-                      showNotification(`Copied 6-digit Collab Code (${collabCode}) to clipboard!`);
-                    } catch (_) {
-                      showNotification(`Collab Code: ${collabCode}`);
-                    }
-                  } else {
+            <button
+              type="button"
+              role="menuitem"
+              onClick={async () => {
+                if (noteHoldGuardRef.current()) return;
+                const collabCode = targetNote.collabCode || Math.floor(100000 + Math.random() * 900000).toString();
+                if (!targetNote.collabCode) {
+                  await onUpdateNote(targetNote.id, { collabCode, isCollab: true });
+                }
+                if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                  try {
+                    await navigator.clipboard.writeText(collabCode);
+                    showNotification(`Copied 6-digit Collab Code (${collabCode}) to clipboard!`);
+                  } catch (_) {
                     showNotification(`Collab Code: ${collabCode}`);
                   }
-                  closeNoteContextMenu();
-                }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
-              >
-                <Share2 className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Share (6-digit Collab)</span>
-              </button>
+                } else {
+                  showNotification(`Collab Code: ${collabCode}`);
+                }
+                closeNoteContextMenu();
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
+            >
+              <Share2 className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Share (6-digit Collab)</span>
+            </button>
 
+            <button
+              type="button"
+              role="menuitem"
+              onClick={async () => {
+                if (noteHoldGuardRef.current()) return;
+                await onUpdateNote(targetNote.id, { isArchived: !isArchived });
+                showNotification(isArchived ? 'Note restored from archive.' : 'Note moved to archive.');
+                closeNoteContextMenu();
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
+            >
+              <Archive className="w-3.5 h-3.5 text-slate-400" />
+              <span>{isArchived ? 'Unarchive Note' : 'Archive Note'}</span>
+            </button>
+
+            <div className="h-px bg-white/5 my-1" />
+            <div className="px-3 py-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider">Move to Folder</div>
+
+            <button
+              type="button"
+              role="menuitem"
+              onClick={async () => {
+                if (noteHoldGuardRef.current()) return;
+                await onUpdateNote(targetNote.id, { folder_id: null, folderId: null });
+                showNotification('📂 Moved note to root');
+                closeNoteContextMenu();
+              }}
+              className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
+            >
+              <span className="flex items-center gap-2 truncate">
+                <Folder className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                <span className="truncate">Root (No Folder)</span>
+              </span>
+              {!currentFolderId && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+            </button>
+
+            {localFolders.map(folder => (
               <button
+                key={folder.id}
                 type="button"
                 role="menuitem"
                 onClick={async () => {
                   if (noteHoldGuardRef.current()) return;
-                  await onUpdateNote(targetNote.id, { isArchived: !isArchived });
-                  showNotification(isArchived ? 'Note restored from archive.' : 'Note moved to archive.');
-                  closeNoteContextMenu();
-                }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
-              >
-                <Archive className="w-3.5 h-3.5 text-slate-400" />
-                <span>{isArchived ? 'Unarchive Note' : 'Archive Note'}</span>
-              </button>
-
-              <div className="h-px bg-white/5 my-1" />
-              <div className="px-3 py-1 text-[9px] font-bold text-slate-500 uppercase tracking-wider">Move to Folder</div>
-
-              <button
-                type="button"
-                role="menuitem"
-                onClick={async () => {
-                  if (noteHoldGuardRef.current()) return;
-                  await onUpdateNote(targetNote.id, { folder_id: null, folderId: null });
-                  showNotification('📂 Moved note to root');
+                  await onUpdateNote(targetNote.id, { folder_id: folder.id, folderId: folder.id });
+                  showNotification(`📁 Moved note to "${folder.name}"`);
                   closeNoteContextMenu();
                 }}
                 className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
               >
                 <span className="flex items-center gap-2 truncate">
-                  <Folder className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  <span className="truncate">Root (No Folder)</span>
+                  <Folder className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span className="truncate">{folder.name}</span>
                 </span>
-                {!currentFolderId && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                {currentFolderId === folder.id && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
               </button>
+            ))}
 
-              {localFolders.map(folder => (
-                <button
-                  key={folder.id}
-                  type="button"
-                  role="menuitem"
-                  onClick={async () => {
-                    if (noteHoldGuardRef.current()) return;
-                    await onUpdateNote(targetNote.id, { folder_id: folder.id, folderId: folder.id });
-                    showNotification(`📁 Moved note to "${folder.name}"`);
-                    closeNoteContextMenu();
-                  }}
-                  className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-white/5 rounded-xl transition-colors cursor-pointer"
-                >
-                  <span className="flex items-center gap-2 truncate">
-                    <Folder className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                    <span className="truncate">{folder.name}</span>
-                  </span>
-                  {currentFolderId === folder.id && <Check className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
-                </button>
-              ))}
+            <div className="h-px bg-white/5 my-1" />
 
-              <div className="h-px bg-white/5 my-1" />
-
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  if (noteHoldGuardRef.current()) return;
-                  if (noteDeleteConfirmId === targetNote.id) {
-                    onDeleteNote(targetNote.id);
-                    closeNoteContextMenu();
-                  } else {
-                    setNoteDeleteConfirmId(targetNote.id);
-                  }
-                }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold rounded-xl transition-colors cursor-pointer ${
-                  noteDeleteConfirmId === targetNote.id
-                    ? 'bg-rose-600 text-white hover:bg-rose-500'
-                    : 'text-rose-400 hover:bg-rose-500/10'
-                }`}
-              >
-                <Trash2 className="w-3.5 h-3.5 shrink-0" />
-                <span>{noteDeleteConfirmId === targetNote.id ? 'Confirm Delete Note' : 'Delete Note'}</span>
-              </button>
-            </div>
-          </>,
-          document.body
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                if (noteHoldGuardRef.current()) return;
+                if (noteDeleteConfirmId === targetNote.id) {
+                  onDeleteNote(targetNote.id);
+                  closeNoteContextMenu();
+                } else {
+                  setNoteDeleteConfirmId(targetNote.id);
+                }
+              }}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold rounded-xl transition-colors cursor-pointer ${
+                noteDeleteConfirmId === targetNote.id
+                  ? 'bg-rose-600 text-white hover:bg-rose-500'
+                  : 'text-rose-400 hover:bg-rose-500/10'
+              }`}
+            >
+              <Trash2 className="w-3.5 h-3.5 shrink-0" />
+              <span>{noteDeleteConfirmId === targetNote.id ? 'Confirm Delete Note' : 'Delete Note'}</span>
+            </button>
+          </NativeContextMenu>
         );
       })()}
 

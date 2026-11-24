@@ -36,6 +36,24 @@ body {
   -webkit-user-select: none !important;
   -webkit-tap-highlight-color: transparent;
   touch-action: pan-y;
+  transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1), border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+}
+
+.veylentra-context-target.veylentra-context-holding {
+  transform: scale(0.982);
+  border-color: rgba(99, 102, 241, 0.65) !important;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25), 0 8px 20px -6px rgba(79, 70, 229, 0.35);
+}
+
+.veylentra-context-target.veylentra-context-active {
+  border-color: rgba(99, 102, 241, 0.8) !important;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3), 0 10px 24px -8px rgba(79, 70, 229, 0.4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .veylentra-context-target.veylentra-context-holding {
+    transform: none;
+  }
 }
 
 .chat-input, input, textarea, [contenteditable="true"] {

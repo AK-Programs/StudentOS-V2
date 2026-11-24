@@ -287,14 +287,77 @@ async function runTests() {
       assert.equal(recordedUpserts[0].section, 'A');
       assert.equal(recordedUpserts[0].school_id, 'sch_central');
 
-      // 3e. dispatchServerWebPush does NOT delete on 401/403, ONLY deletes on 404/410
+      // 3e. Multi-device registration & dispatch + /api/push/send authorization + 403/410 handling
       const origSendNotification = webpush.sendNotification;
       const generatedVapid = webpush.generateVAPIDKeys();
       webpush.setVapidDetails('mailto:test@veylentra.edu', generatedVapid.publicKey, generatedVapid.privateKey);
       process.env.VAPID_PUBLIC_KEY = generatedVapid.publicKey;
       process.env.VAPID_PRIVATE_KEY = generatedVapid.privateKey;
 
+      // Register a second device for the same user (e.g., Chrome Android + Desktop Web)
+      const secondDeviceResp = await fetch(`${appSrv.baseUrl}/api/push/fcm-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer valid-student-jwt',
+        },
+        body: JSON.stringify({
+          schoolId: 'sch_central',
+          deviceId: 'dev_desktop_chrome',
+          deviceLabel: 'macOS Chrome (PWA Standalone)',
+          subscription: {
+            endpoint: 'https://fcm.googleapis.com/fcm/send/real-sub-2',
+            keys: { p256dh: 'p256dh-real-2', auth: 'auth-real-2' },
+          },
+        }),
+      });
+      assert.equal(secondDeviceResp.status, 200);
+      assert.equal(recordedUpserts.length, 2, 'Both user devices must be saved to public.push_subscriptions');
+
       try {
+        // Student cannot broadcast globally via /api/push/send
+        const studentBroadcastResp = await fetch(`${appSrv.baseUrl}/api/push/send`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer valid-student-jwt',
+          },
+          body: JSON.stringify({
+            notificationId: 'n_forbid_all',
+            title: 'Unauthorized School Broadcast',
+            body: 'Should be rejected',
+            targetUserId: 'all',
+          }),
+        });
+        assert.equal(studentBroadcastResp.status, 403);
+
+        // Student CAN push to their own registered devices (test notification across both devices)
+        const deliveredEndpoints: string[] = [];
+        (webpush as any).sendNotification = async (sub: any) => {
+          deliveredEndpoints.push(sub.endpoint);
+          return { statusCode: 201, headers: { location: `https://fcm.googleapis.com/msg/${deliveredEndpoints.length}` } };
+        };
+
+        const selfPushResp = await fetch(`${appSrv.baseUrl}/api/push/send`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer valid-student-jwt',
+          },
+          body: JSON.stringify({
+            notificationId: 'n_multi_device',
+            title: 'Student Self Verification',
+            body: 'Delivered to both devices',
+            targetUserId: 'usr_student_real_1',
+            targetSchoolId: 'sch_central',
+          }),
+        });
+        assert.equal(selfPushResp.status, 200);
+        const selfPushJson = await selfPushResp.json();
+        assert.equal(selfPushJson.sentCount, 2, 'Must deliver to ALL registered active devices for the user');
+        assert.ok(deliveredEndpoints.includes('https://fcm.googleapis.com/fcm/send/real-sub-1'));
+        assert.ok(deliveredEndpoints.includes('https://fcm.googleapis.com/fcm/send/real-sub-2'));
+
         (webpush as any).sendNotification = async () => {
           const err: any = new Error('Unauthorized VAPID');
           err.statusCode = 403;
@@ -321,13 +384,14 @@ async function runTests() {
           targetUserId: 'usr_student_real_1',
           targetSchoolId: 'sch_central',
         });
-        assert.equal(recordedDeletes.length, 1, 'Must delete expired push_subscriptions on 410 Gone');
-        assert.ok(recordedDeletes[0].includes('real-sub-1'));
+        assert.equal(recordedDeletes.length, 2, 'Must delete expired push_subscriptions on 410 Gone');
+        assert.ok(recordedDeletes.some(u => u.includes('real-sub-1')));
+        assert.ok(recordedDeletes.some(u => u.includes('real-sub-2')));
       } finally {
         (webpush as any).sendNotification = origSendNotification;
       }
 
-      console.log('PASS: Test 3 - /api/push/fcm-token auth, full DB upsert, error propagation, and 410-only pruning verified');
+      console.log('PASS: Test 3 - /api/push/fcm-token multi-device DB upsert, scope checks, and 410-only pruning verified');
     } finally {
       if (prevSupabaseUrl === undefined) delete process.env.VITE_SUPABASE_URL;
       else process.env.VITE_SUPABASE_URL = prevSupabaseUrl;
@@ -343,6 +407,68 @@ async function runTests() {
 
       await appSrv.close();
       await mockSupabase.close();
+    }
+  }
+
+  // 4. probeServiceRoleKey does NOT permanently blacklist key on 404/503, only on 401
+  {
+    const {
+      probeServiceRoleKey,
+      isKnownInvalidSupabaseKey,
+      verifiedServiceRoleKeys,
+      knownInvalidSupabaseKeys,
+    } = await import('../server/supabaseKeyManager');
+
+    let stage = 0;
+    const probeSrv = await startHttpServer((req, res) => {
+      if (req.url?.startsWith('/rest/v1/user_profiles')) {
+        if (stage === 0) {
+          res.writeHead(503);
+          res.end('temporary overload');
+          return;
+        }
+        res.writeHead(404);
+        res.end('not found');
+        return;
+      }
+      if (req.url === '/rest/v1/') {
+        if (stage === 2) {
+          res.writeHead(401);
+          res.end('Invalid API key');
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{}');
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    const transientKey = 'transient_service_role_key_long_enough_for_probe_check';
+    const badKey = 'invalid_service_role_key_long_enough_for_probe_check';
+    try {
+      // Transient 503 should return false without permanently blacklisting
+      const r0 = await probeServiceRoleKey(probeSrv.baseUrl, transientKey);
+      assert.equal(r0, false);
+      assert.equal(isKnownInvalidSupabaseKey(transientKey, probeSrv.baseUrl), false);
+
+      // Missing user_profiles (404) falls back to /rest/v1/ -> 200 verified
+      stage = 1;
+      const r1 = await probeServiceRoleKey(probeSrv.baseUrl, transientKey);
+      assert.equal(r1, true);
+      assert.ok(verifiedServiceRoleKeys.has(transientKey));
+
+      // Actual 401 Invalid API key DOES mark badKey invalid
+      stage = 2;
+      const r2 = await probeServiceRoleKey(probeSrv.baseUrl, badKey);
+      assert.equal(r2, false);
+      assert.equal(isKnownInvalidSupabaseKey(badKey, probeSrv.baseUrl), true);
+      console.log('PASS: Test 4 - probeServiceRoleKey distinguishes transient 5xx/404 from real 401 invalid keys');
+    } finally {
+      verifiedServiceRoleKeys.delete(transientKey);
+      knownInvalidSupabaseKeys.delete(badKey);
+      await probeSrv.close();
     }
   }
 

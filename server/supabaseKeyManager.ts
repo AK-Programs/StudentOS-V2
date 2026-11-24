@@ -78,17 +78,29 @@ export async function probeServiceRoleKey(url: string, serviceRoleKey?: string |
 
   const probe = (async () => {
     try {
-      const res = await fetch(`${url}/rest/v1/user_profiles?select=id&limit=1`, {
-        headers: {
-          apikey: trimmed,
-          Authorization: `Bearer ${trimmed}`,
-        },
-      });
+      const headers = {
+        apikey: trimmed,
+        Authorization: `Bearer ${trimmed}`,
+      };
+      let res = await fetch(`${url}/rest/v1/user_profiles?select=id&limit=1`, { headers });
+      if (res.status === 404) {
+        // Fallback to PostgREST OpenAPI root if user_profiles table/view is not exposed on this endpoint
+        res = await fetch(`${url}/rest/v1/`, { headers });
+      }
       if (res.status === 200) {
         verifiedServiceRoleKeys.add(trimmed);
         return true;
       }
-      markSupabaseKeyInvalid(trimmed);
+      const errBody = await res.text().catch(() => '');
+      const lower = errBody.toLowerCase();
+      if (
+        res.status === 401 ||
+        lower.includes('invalid api key') ||
+        lower.includes('invalid signature') ||
+        lower.includes('jwt expired')
+      ) {
+        markSupabaseKeyInvalid(trimmed);
+      }
       return false;
     } catch {
       return false;

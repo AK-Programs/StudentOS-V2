@@ -1096,13 +1096,37 @@ app.post('/api/push/send', async (req, res) => {
       error: 'Authentication is required to dispatch server web push notifications.'
     });
   }
-  const result = await dispatchServerWebPush(req.body || {});
+
+  const actorRole = String(actor.role || 'student').toLowerCase().trim();
+  const isStaff = ['teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes(actorRole);
+  const body = req.body || {};
+  const requestedTargetUser = String(body.targetUserId || '').trim();
+  const notifType = String(body.type || '').toLowerCase().trim();
+  const isPeerDirect = ['chat', 'mention', 'call', 'incoming_call'].includes(notifType);
+
+  if (!isStaff) {
+    if (!requestedTargetUser || requestedTargetUser === 'all') {
+      return res.status(403).json({
+        status: 'error',
+        error: 'Broadcast push notifications require faculty or administrator privileges.'
+      });
+    }
+    if (requestedTargetUser !== actor.id && !isPeerDirect) {
+      return res.status(403).json({
+        status: 'error',
+        error: 'Students may only dispatch push notifications to themselves or direct peer chats/calls.'
+      });
+    }
+  }
+
+  const result = await dispatchServerWebPush(body);
   return res.json(result);
 });
 
 // Real-time Push Diagnostic Endpoint
 app.get('/api/push/debug-status', async (req, res) => {
   const activeMemoryTokens = memoryFCMTokens.filter(t => t.isActive);
+  const runtimeVapid = getOrGenerateVapidKeys();
   const sb = await resolvePushSupabaseConfig();
   let supabaseSubscriptions: any[] = [];
   let supabaseError: string | null = null;
@@ -1139,8 +1163,9 @@ app.get('/api/push/debug-status', async (req, res) => {
   }
 
   res.json({
-    vapidConfigured: Boolean(vapidKeys.publicKey && vapidKeys.privateKey),
-    vapidPublicKeyPrefix: (vapidKeys.publicKey || '').slice(0, 16) + '...',
+    vapidConfigured: Boolean(runtimeVapid.publicKey && runtimeVapid.privateKey),
+    vapidPublicKeyPrefix: (runtimeVapid.publicKey || '').slice(0, 16) + '...',
+    serviceRoleMissing: !process.env.SUPABASE_SERVICE_ROLE_KEY?.trim(),
     serviceRoleConfigured: sb.serviceRoleConfigured,
     serviceRoleVerified: sb.serviceRoleVerified,
     supabaseError,
@@ -2445,25 +2470,19 @@ async function checkAndPublishScheduledUpdates(): Promise<{ publishedCount: numb
                 });
               }
 
-              // 2. Dispatch push notification if webpush is enabled
-              if (vapidKeys.publicKey && vapidKeys.privateKey) {
-                try {
-                  const pushPayload = JSON.stringify({
-                    title: `🚀 What's New in StudentOS ${row.version}`,
-                    body: row.title || 'A new official update has been published.',
-                    linkTab: 'whats_new',
-                    url: '/whats-new',
-                    tag: `whats-new-${row.id}`
-                  });
-
-                  // Dispatch to memory tokens
-                  memoryFCMTokens.forEach(sub => {
-                    if (sub.subscription?.endpoint && sub.subscription?.keys) {
-                      webpush.sendNotification(sub.subscription, pushPayload, { TTL: 86400 }).catch(() => {});
-                    }
-                  });
-                } catch (_) {}
-              }
+              // 2. Dispatch push notification via authoritative dispatchServerWebPush (covers all Supabase + memory devices)
+              try {
+                await dispatchServerWebPush({
+                  notificationId: `whats-new-${row.id}`,
+                  title: `🚀 What's New in StudentOS ${row.version}`,
+                  body: row.title || 'A new official update has been published.',
+                  type: 'announcement',
+                  linkTab: 'whats_new',
+                  tag: `whats-new-${row.id}`,
+                  targetUserId: 'all',
+                  targetRole: 'all',
+                });
+              } catch (_) {}
 
               // 3. Write audit log
               await fetch(`${supabaseUrl}/rest/v1/system_update_audit_logs`, {

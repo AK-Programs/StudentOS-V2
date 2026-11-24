@@ -2,7 +2,7 @@
 // StudentOS Service Worker — FCM Web Push & PWA Engine
 // ========================================================
 
-const SW_VERSION = 'studentos-v3.16.0';
+const SW_VERSION = 'studentos-v3.17.0';
 const CACHE_NAME = `studentos-cache-${SW_VERSION}`;
 
 // Service Worker Installation — Activate immediately
@@ -87,7 +87,7 @@ self.addEventListener('push', (event) => {
   try {
     if (event.data) {
       const parsed = event.data.json();
-      if (parsed) {
+      if (parsed && typeof parsed === 'object') {
         if (parsed.notification) {
           payloadData.title = parsed.notification.title || payloadData.title;
           payloadData.body = parsed.notification.body || payloadData.body;
@@ -98,23 +98,23 @@ self.addEventListener('push', (event) => {
           payloadData.title = parsed.data.title || payloadData.title;
           payloadData.body = parsed.data.body || parsed.data.message || payloadData.body;
           payloadData.linkTab = parsed.data.linkTab || parsed.data.tab || parsed.data.route || payloadData.linkTab;
-          payloadData.notifId = parsed.data.notificationId || parsed.data.notifId || parsed.data.id || '';
-          payloadData.callId = parsed.data.callId || parsed.callId || '';
+          payloadData.notifId = parsed.data.notificationId || parsed.data.notifId || parsed.data.id || payloadData.notifId;
+          payloadData.callId = parsed.data.callId || parsed.callId || payloadData.callId;
           payloadData.type = parsed.data.type || parsed.type || payloadData.type;
           payloadData.schoolId = parsed.data.schoolId || payloadData.schoolId;
-          payloadData.tag = parsed.data.tag || parsed.tag || '';
-          payloadData.url = parsed.data.url || parsed.url || '';
+          payloadData.tag = parsed.data.tag || parsed.tag || payloadData.tag;
+          payloadData.url = parsed.data.url || parsed.url || payloadData.url;
         }
-        if (!parsed.notification && !parsed.data) {
-          payloadData.title = parsed.title || payloadData.title;
-          payloadData.body = parsed.body || parsed.message || payloadData.body;
-          payloadData.linkTab = parsed.linkTab || parsed.tab || parsed.route || payloadData.linkTab;
-          payloadData.notifId = parsed.notificationId || parsed.notifId || parsed.id || '';
-          payloadData.callId = parsed.callId || '';
-          payloadData.type = parsed.type || payloadData.type;
-          payloadData.tag = parsed.tag || '';
-          payloadData.url = parsed.url || '';
-        }
+        // Always check top-level & fcmOptions fields too (some senders attach notification + top-level linkTab/url)
+        payloadData.title = parsed.title || payloadData.title;
+        payloadData.body = parsed.body || parsed.message || payloadData.body;
+        payloadData.linkTab = parsed.linkTab || parsed.tab || parsed.route || payloadData.linkTab;
+        payloadData.notifId = parsed.notificationId || parsed.notifId || parsed.id || payloadData.notifId;
+        payloadData.callId = parsed.callId || payloadData.callId;
+        payloadData.type = parsed.type || payloadData.type;
+        payloadData.schoolId = parsed.schoolId || payloadData.schoolId;
+        payloadData.tag = parsed.tag || payloadData.tag;
+        payloadData.url = parsed.url || (parsed.fcmOptions && parsed.fcmOptions.link) || payloadData.url;
       }
     }
   } catch (e) {
@@ -135,8 +135,8 @@ self.addEventListener('push', (event) => {
 
   const notificationOptions = {
     body: payloadData.body || (isCallNotification ? '📞 Incoming Veylentra Call... Tap to answer.' : 'Tap to view in Veylentra.'),
-    icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
+    icon: payloadData.icon || '/icons/icon-192.png',
+    badge: payloadData.badge || '/icons/icon-192.png',
     tag: deterministicTag,
     renotify: true,
     requireInteraction: isCallNotification,
@@ -161,8 +161,22 @@ self.addEventListener('push', (event) => {
         ]
   };
 
+  const displaySystemNotification = () => {
+    return self.registration.showNotification(payloadData.title, notificationOptions).catch(() => {
+      // Fallback without actions/vibrate in case a platform rejects rich options
+      return self.registration.showNotification(payloadData.title, {
+        body: notificationOptions.body,
+        icon: '/icons/icon-192.png',
+        badge: '/icons/icon-192.png',
+        tag: deterministicTag,
+        renotify: true,
+        data: notificationOptions.data
+      });
+    });
+  };
+
   event.waitUntil(
-    self.registration.showNotification(payloadData.title, notificationOptions).then(() => {
+    displaySystemNotification().then(() => {
       console.log('[SW FCM] Chrome/Android notification displayed successfully:', {
         title: payloadData.title,
         tag: deterministicTag,
@@ -178,7 +192,11 @@ self.addEventListener('push', (event) => {
             linkTab: resolvedTab,
             notifId: payloadData.notifId,
             callId: callId,
-            tag: deterministicTag
+            notifType: payloadData.type || 'announcement',
+            schoolId: payloadData.schoolId || 'default_school',
+            url: targetUrl,
+            tag: deterministicTag,
+            timestamp: Date.now()
           });
         });
       });

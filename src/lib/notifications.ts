@@ -384,6 +384,12 @@ export async function triggerBrowserPushNotification(
     const callId = extraData.callId || '';
     const canonicalUrl = extraData.url || buildNotificationUrl(linkTab, notifId, { callId: callId || undefined });
 
+    const { hasPushTagRecentlyHandled, markPushTagHandled } = await import('./fcmNotifications');
+    if (hasPushTagRecentlyHandled(deterministicTag, 12000)) {
+      return;
+    }
+    markPushTagHandled(deterministicTag);
+
     const notifOptions: any = {
       ...options,
       icon: '/icons/icon-192.png',
@@ -406,7 +412,15 @@ export async function triggerBrowserPushNotification(
       if ('serviceWorker' in navigator) {
         const registration = await navigator.serviceWorker.ready;
         if (registration && registration.showNotification) {
-          await registration.showNotification(title, notifOptions);
+          await registration.showNotification(title, notifOptions).catch(() =>
+            registration.showNotification(title, {
+              body: notifOptions.body,
+              icon: '/icons/icon-192.png',
+              badge: '/icons/icon-192.png',
+              tag: deterministicTag,
+              data: notifOptions.data,
+            })
+          );
           console.log('[FCM / SW SYSTEM NOTIFICATION] Displayed in Chrome/Android notification tray:', {
             title,
             tag: deterministicTag,

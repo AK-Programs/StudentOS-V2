@@ -98,7 +98,12 @@ export async function buildPushApiAuthHeaders(
 }
 
 async function waitForActiveServiceWorker(registration: ServiceWorkerRegistration): Promise<ServiceWorkerRegistration> {
-  if (registration.active) {
+  if (registration.waiting) {
+    try {
+      registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+    } catch (_) {}
+  }
+  if (registration.active && !registration.waiting && !registration.installing) {
     return registration;
   }
   const worker = registration.installing || registration.waiting;
@@ -295,7 +300,29 @@ export async function saveFCMTokenToFirestore(
 
 let inFlightFcmRegistration: Promise<{ success: boolean; token?: string; error?: string }> | null = null;
 let inFlightFcmKey = '';
-const recentSwDisplayedTags = new Map<string, number>();
+const recentPushTags = new Map<string, number>();
+
+export function markPushTagHandled(tag?: string | null): void {
+  const key = String(tag || '').trim();
+  if (!key) return;
+  const now = Date.now();
+  recentPushTags.set(key, now);
+  if (recentPushTags.size > 200) {
+    for (const [k, ts] of recentPushTags.entries()) {
+      if (now - ts > 30000) recentPushTags.delete(k);
+    }
+  }
+}
+
+export function hasPushTagRecentlyHandled(tag?: string | null, windowMs: number = 12000): boolean {
+  const key = String(tag || '').trim();
+  if (!key) return false;
+  const ts = recentPushTags.get(key);
+  if (!ts) return false;
+  if (Date.now() - ts <= windowMs) return true;
+  recentPushTags.delete(key);
+  return false;
+}
 
 /**
  * Request FCM & Web Push Notification permission and register active device token & subscription.
@@ -358,9 +385,10 @@ export async function requestFCMPermission(
       }
     }
 
-    let swRegistration = await navigator.serviceWorker.getRegistration('/');
-    if (!swRegistration) {
-      swRegistration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    // Always ensure the unified /sw.js worker is registered and updated (activates waiting workers too)
+    let swRegistration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    if (!options?.silentIfDefault) {
+      swRegistration.update().catch(() => {});
     }
     swRegistration = await waitForActiveServiceWorker(swRegistration);
     if (!swRegistration?.pushManager) {
@@ -677,6 +705,60 @@ export async function disableFCMPush(userId?: string): Promise<boolean> {
 }
 
 /**
+ * Build a normalized foreground push notification event payload from either Service Worker postMessage or Firebase onMessage.
+ */
+export function buildForegroundPushDetail(raw: {
+  title?: string;
+  body?: string;
+  linkTab?: string;
+  notifId?: string;
+  notificationId?: string;
+  callId?: string;
+  type?: string;
+  notifType?: string;
+  schoolId?: string;
+  url?: string;
+  tag?: string;
+  data?: any;
+}) {
+  const d = raw?.data && typeof raw.data === 'object' ? raw.data : {};
+  const callId = String(raw?.callId || d.callId || '').trim();
+  const notifType = String(raw?.notifType || raw?.type || d.type || (callId ? 'call' : 'announcement')).trim();
+  const linkTab = String(
+    raw?.linkTab || d.linkTab || d.route || d.tab || (callId ? 'peer_chat' : 'notice_viewer')
+  ).trim();
+  const notifId = String(raw?.notifId || raw?.notificationId || d.notificationId || d.notifId || '').trim();
+  const title = String(raw?.title || d.title || '📢 Veylentra Notice').trim();
+  const body = String(raw?.body || d.body || d.message || '').trim();
+  const tag = String(
+    raw?.tag || d.tag || (notifId ? `studentos-notif-${notifId}` : `studentos-notif-${Date.now()}`)
+  ).trim();
+  const url = String(raw?.url || d.url || buildNotificationUrl(linkTab, notifId, { callId: callId || undefined }));
+  return {
+    title,
+    body,
+    linkTab,
+    notifId,
+    callId,
+    type: notifType,
+    schoolId: String(raw?.schoolId || d.schoolId || 'default_school'),
+    tag,
+    url,
+    data: {
+      ...d,
+      title,
+      body,
+      linkTab,
+      notifId,
+      callId,
+      type: notifType,
+      url,
+      tag,
+    },
+  };
+}
+
+/**
  * Setup Foreground FCM Message listener + ServiceWorker notification bridge
  */
 export async function setupFCMForegroundListener(
@@ -684,19 +766,34 @@ export async function setupFCMForegroundListener(
 ): Promise<(() => void) | null> {
   if (typeof window === 'undefined') return null;
 
-  // Listen for Service Worker postMessage events (e.g. when SW displays a push notification or user clicks it)
+  // Listen for Service Worker postMessage events (when SW receives a push while app is open OR user clicks notification)
   const swMessageHandler = (event: MessageEvent) => {
     const data = event.data;
     if (!data) return;
-    if (data.type === 'FCM_SW_NOTIFICATION_DISPLAYED') {
-      if (data.tag) {
-        recentSwDisplayedTags.set(String(data.tag), Date.now());
-      }
-      console.log('[FCM STAGE 4/4] Service Worker received push & displayed system notification:', {
-        title: data.title,
-        tag: data.tag,
-        linkTab: data.linkTab
+    if (data.type === 'FCM_SW_NOTIFICATION_DISPLAYED' || data.type === 'FCM_SW_INCOMING_CALL') {
+      const detail = buildForegroundPushDetail({
+        ...data,
+        type: data.notifType || (data.type === 'FCM_SW_INCOMING_CALL' ? 'call' : 'announcement'),
       });
+      const alreadyHandled = hasPushTagRecentlyHandled(detail.tag, 8000);
+      markPushTagHandled(detail.tag);
+
+      console.log('[FCM STAGE 4/4] Service Worker received push while app active:', {
+        title: detail.title,
+        tag: detail.tag,
+        linkTab: detail.linkTab,
+        alreadyHandled,
+      });
+
+      if (!alreadyHandled) {
+        if (detail.type !== 'call' && detail.type !== 'incoming_call') {
+          soundService.playAnnouncementSound();
+        }
+        window.dispatchEvent(new CustomEvent('studentos-fcm-foreground-message', { detail }));
+        if (onNotificationReceived) {
+          onNotificationReceived({ title: detail.title, body: detail.body, data: detail.data });
+        }
+      }
     } else if (data.type === 'STUDENTOS_NAVIGATE_TAB' && (data.tab || data.linkTab)) {
       if (!isServiceWorkerNavigationBridgeInstalled()) {
         dispatchNotificationNavigation({
@@ -723,49 +820,43 @@ export async function setupFCMForegroundListener(
     try {
       fcmUnsub = onMessage(messaging, async (payload) => {
         console.log('[FCM] Foreground Message Received:', payload);
-        const title = payload.notification?.title || payload.data?.title || '📢 StudentOS Notification';
-        const body = payload.notification?.body || payload.data?.body || payload.data?.message || '';
-        const callId = payload.data?.callId || '';
-        const notifType = payload.data?.type || (callId ? 'call' : 'announcement');
-        const linkTab = payload.data?.linkTab || payload.data?.route || payload.data?.tab || (callId ? 'peer_chat' : 'notice_viewer');
-        const notifId = payload.data?.notificationId || payload.data?.notifId || '';
-        const tag = payload.data?.tag || (notifId ? `studentos-notif-${notifId}` : `studentos-notif-${Date.now()}`);
-        const canonicalUrl = buildNotificationUrl(linkTab, notifId, { callId: callId || undefined });
+        const detail = buildForegroundPushDetail({
+          title: payload.notification?.title || payload.data?.title || '📢 StudentOS Notification',
+          body: payload.notification?.body || payload.data?.body || payload.data?.message || '',
+          data: payload.data,
+        });
 
-        const recentSwTs = recentSwDisplayedTags.get(tag);
-        const alreadyDisplayedBySw = Boolean(recentSwTs && Date.now() - recentSwTs < 8000);
+        const alreadyDisplayed = hasPushTagRecentlyHandled(detail.tag, 8000);
+        markPushTagHandled(detail.tag);
 
-        if (!alreadyDisplayedBySw) {
+        if (!alreadyDisplayed) {
           soundService.playAnnouncementSound();
-          // Display system notification via Service Worker so Android Chrome shows it in system tray
+          // Display system notification via Service Worker so Android Chrome / Desktop shows it in system tray too
           if ('serviceWorker' in navigator && Notification.permission === 'granted') {
             try {
               const reg = await navigator.serviceWorker.ready;
-              await reg.showNotification(title, {
-                body,
+              await reg.showNotification(detail.title, {
+                body: detail.body,
                 icon: '/icons/icon-192.png',
                 badge: '/icons/icon-192.png',
-                tag,
+                tag: detail.tag,
                 renotify: true,
                 data: {
-                  linkTab,
-                  tab: linkTab,
-                  notifId,
-                  callId,
-                  type: notifType,
-                  url: canonicalUrl,
+                  linkTab: detail.linkTab,
+                  tab: detail.linkTab,
+                  notifId: detail.notifId,
+                  callId: detail.callId,
+                  type: detail.type,
+                  url: detail.url,
                 }
               } as any);
             } catch (_) {}
           }
-        }
 
-        window.dispatchEvent(new CustomEvent('studentos-fcm-foreground-message', {
-          detail: { title, body, linkTab, notifId, callId, type: notifType, data: payload.data }
-        }));
-
-        if (onNotificationReceived) {
-          onNotificationReceived({ title, body, data: payload.data });
+          window.dispatchEvent(new CustomEvent('studentos-fcm-foreground-message', { detail }));
+          if (onNotificationReceived) {
+            onNotificationReceived({ title: detail.title, body: detail.body, data: detail.data });
+          }
         }
       });
     } catch (err) {
@@ -802,6 +893,9 @@ export async function sendTestFCMNotification(
     const deviceLabel = getDevicePlatformLabel();
     const notifId = `test_${Date.now()}`;
     const authHeaders = await buildPushApiAuthHeaders(userId, { role: userRole || 'student' });
+    const resolvedTargetUid = !isAnonymousPushUserId(userId)
+      ? userId
+      : (authHeaders['x-veylentra-uid'] || localStorage.getItem('s_os_fcm_user_id') || 'all');
     const res = await fetch('/api/push/send', {
       method: 'POST',
       headers: authHeaders,
@@ -811,7 +905,7 @@ export async function sendTestFCMNotification(
         body: `Real FCM / Web Push delivered to ${deviceLabel} at ${new Date().toLocaleTimeString()}!`,
         linkTab: 'notifications',
         type: 'announcement',
-        targetUserId: userId || 'all',
+        targetUserId: resolvedTargetUid,
         targetRole: 'all'
       })
     });
