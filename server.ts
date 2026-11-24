@@ -2344,9 +2344,11 @@ async function checkAndPublishScheduledUpdates(): Promise<{ publishedCount: numb
 }
 
 // Background scheduler interval (runs every 30 seconds)
-setInterval(() => {
-  checkAndPublishScheduledUpdates().catch(() => {});
-}, 30000);
+if (process.env.NODE_ENV !== 'test') {
+  setInterval(() => {
+    checkAndPublishScheduledUpdates().catch(() => {});
+  }, 30000);
+}
 
 // API endpoint to manually trigger or check scheduled updates engine
 app.get('/api/updates/check-scheduled', async (req, res) => {
