@@ -12,7 +12,7 @@
  * - General chat, complex tasks, revision guides, lecture notes, or modelOverride containing ministral or mistral
  *   -> Ministral (POST https://api.mistral.ai/v1/chat/completions with MINISTRAL_API_KEY, model: ministral-8b-2410)
  * - Fast chat and normal Buddy chat
- *   -> APInex (POST https://api.apinex.bond/v1/chat/completions with APINEX_API_KEY, model: free/gpt-6-luna, tools: free/glm-5.3-flash)
+ *   -> APInex (POST https://api.apinex.bond/v1/chat/completions with APINEX_API_KEY, model: free/glm-5.3-flash, tools: free/glm-5.3-flash)
  * - Approved AI Providers strictly: APInex, Ministral, Groq.
  */
 
@@ -84,13 +84,12 @@ function isApinexFreeModel(modelName?: string): boolean {
   if (!modelName || typeof modelName !== 'string') return false;
   const clean = modelName.trim().toLowerCase();
   const validFreeModels = [
-    'free/gpt-6-luna',
     'free/glm-5.3-flash'
   ];
   return validFreeModels.includes(clean);
 }
 
-function resolveApinexModel(modelOverride?: string, fallbackModel = 'free/gpt-6-luna'): string {
+function resolveApinexModel(modelOverride?: string, fallbackModel = 'free/glm-5.3-flash'): string {
   if (modelOverride && isApinexFreeModel(modelOverride)) {
     return modelOverride.trim().toLowerCase();
   }
@@ -141,7 +140,6 @@ function isLongOrComplexPrompt(
     override.includes('ministral') ||
     override.includes('mistral') ||
     override.includes('apinex') ||
-    override.includes('gpt-6-luna') ||
     override.includes('glm-5.3-flash') ||
     taskType === 'short' ||
     taskType === 'general' ||
@@ -232,7 +230,7 @@ export function classifyTaskComplexity(
   ) {
     return {
       provider: 'apinex',
-      model: resolveApinexModel(options?.modelOverride, 'free/gpt-6-luna'),
+      model: resolveApinexModel(options?.modelOverride, 'free/glm-5.3-flash'),
       tier: override.includes('glm-5.3-flash') ? 'tool' : 'fast'
     };
   }
@@ -268,7 +266,7 @@ export function classifyTaskComplexity(
   if (taskType === 'fast') {
     return {
       provider: 'apinex',
-      model: 'free/gpt-6-luna',
+      model: 'free/glm-5.3-flash',
       tier: 'fast'
     };
   }
@@ -320,8 +318,8 @@ export function classifyTaskComplexity(
     };
   }
 
-  // 6. Fast chat and normal Buddy chat stay on APInex free/gpt-6-luna
-  return { provider: 'apinex', model: 'free/gpt-6-luna', tier: 'fast' };
+  // 6. Fast chat and normal Buddy chat stay on APInex free/glm-5.3-flash
+  return { provider: 'apinex', model: 'free/glm-5.3-flash', tier: 'fast' };
 }
 
 /**
@@ -1517,7 +1515,7 @@ async function generateSearchSummary(
 
   try {
     const res1 = await callRoutedCompletion(userPrompt, systemPrompt, [], {
-      modelOverride: 'free/gpt-6-luna',
+      modelOverride: 'free/glm-5.3-flash',
       taskType: 'fast',
       maxTokens: 1200,
       requestId,
@@ -1531,7 +1529,7 @@ async function generateSearchSummary(
     if (isLengthError) {
       try {
         const res2 = await callRoutedCompletion(userPrompt, systemPrompt, [], {
-          modelOverride: 'free/gpt-6-luna',
+          modelOverride: 'free/glm-5.3-flash',
           taskType: 'fast',
           maxTokens: 2000,
           requestId,
@@ -1876,7 +1874,7 @@ export default async function handler(req: any, res: any) {
       provider: 'multi-provider',
       groqModels: GROQ_MODELS,
       ministralModel: 'ministral-8b-2410',
-      apinexModel: 'free/gpt-6-luna',
+      apinexModel: 'free/glm-5.3-flash',
       runtime: 'vercel-serverless'
     });
   }
@@ -2125,7 +2123,7 @@ Schema:
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-              model: 'free/gpt-6-luna',
+              model: 'free/glm-5.3-flash',
               messages: [
                 {
                   role: 'user',
@@ -2344,7 +2342,7 @@ ${combinedContext}
     } catch (err: any) {
       const statusCode = typeof err?.status === 'number' && err.status >= 400 ? err.status : 500;
       const errProvider = err?.providerUsed || 'apinex';
-      const errModel = err?.modelUsed || 'free/gpt-6-luna';
+      const errModel = err?.modelUsed || 'free/glm-5.3-flash';
       const errTier = err?.tier || (errProvider === 'ministral' ? 'general' : errProvider === 'groq' ? 'short' : 'fast');
 
       return sendJson(res, statusCode, {
@@ -2548,7 +2546,7 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
       telemetry: {
         requestId,
         providerUsed: 'apinex',
-        modelUsed: 'free/gpt-6-luna',
+        modelUsed: 'free/glm-5.3-flash',
         resultsCount: searchResults.length
       }
     });

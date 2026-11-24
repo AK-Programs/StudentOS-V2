@@ -71,6 +71,8 @@ export interface UserProfile {
   enableWebPush?: boolean;
   fcmToken?: string;
   fcmDeviceId?: string;
+  schoolId?: string;
+  school_id?: string;
   raw_data?: any;
 }
 

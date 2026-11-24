@@ -3,7 +3,8 @@ import {
   User, Palette, ShieldCheck, Smartphone, Bell, Sliders, Sparkles, 
   Camera, Check, AlertCircle, Save, ExternalLink, Plus, Trash2, 
   RefreshCw, Lock, Mail, Phone, ShieldAlert, Monitor, CheckCircle2, ChevronRight,
-  BellRing
+  BellRing,
+  Send
 } from 'lucide-react';
 import { UserProfile, ProfileFrameStyle } from '../types';
 import { saveSupabaseUserProfile } from '../lib/supabaseUsers';
@@ -22,7 +23,8 @@ import {
   requestFCMPermission, 
   disableFCMPush, 
   getFCMStatus,
-  sendTestFCMNotification
+  sendTestFCMNotification,
+  registerAndVerifyPushSubscription
 } from '../lib/fcmNotifications';
 import { soundService } from '../lib/soundService';
 import { fetchWinterStatus, WinterStatusResponse } from '../lib/winterFestivalService';
@@ -192,6 +194,8 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
     deviceId: 'dev'
   });
 
+  const [isTestingDevice, setIsTestingDevice] = useState<boolean>(false);
+
   useEffect(() => {
     const status = getFCMStatus();
     setFcmStatus(status);
@@ -199,6 +203,42 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
       setEnableWebPush(true);
     }
   }, []);
+
+  const handleTestAndRegisterDevice = async () => {
+    setIsTestingDevice(true);
+    setPushNotice({ text: 'Registering device with public.push_subscriptions and running test...', type: 'info' });
+    try {
+      const res = await registerAndVerifyPushSubscription(currentUser.uid || currentUser.email, {
+        role: currentUser.role,
+        grade: currentUser.grade || '10',
+        section: currentUser.section || 'A',
+        house: currentUser.house || 'None',
+        schoolId: currentUser.schoolId || 'default_school'
+      });
+
+      if (res.success) {
+        soundService.playSuccessSound();
+        setEnableWebPush(true);
+        setFcmStatus(getFCMStatus());
+        setPushNotice({
+          text: res.message,
+          type: 'success'
+        });
+      } else {
+        setPushNotice({
+          text: res.message,
+          type: 'error'
+        });
+      }
+    } catch (err: any) {
+      setPushNotice({
+        text: `Error registering device: ${err?.message || err}`,
+        type: 'error'
+      });
+    } finally {
+      setIsTestingDevice(false);
+    }
+  };
 
   const handleToggleWebPush = async (newVal: boolean) => {
     setPushStatusLoading(true);
@@ -1661,23 +1701,38 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                   )}
                 </div>
 
-                {enableWebPush && (
+                <div className="flex items-center gap-2 self-start sm:self-auto shrink-0 flex-wrap">
                   <button
                     type="button"
-                    onClick={async () => {
-                      const res = await sendTestFCMNotification(currentUser.uid || currentUser.email, currentUser.role);
-                      if (res.success) {
-                        soundService.playSuccess();
-                        setPushNotice({ text: '✓ FCM test notification delivered to your device!', type: 'success' });
-                      } else {
-                        setPushNotice({ text: `⚠️ ${res.message}`, type: 'error' });
-                      }
-                    }}
-                    className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 text-[11px] font-bold transition-all shrink-0 cursor-pointer self-start sm:self-auto"
+                    disabled={isTestingDevice}
+                    onClick={handleTestAndRegisterDevice}
+                    className="px-3 py-1.5 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 text-[11px] font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                   >
-                    Send Test Alert
+                    {isTestingDevice ? (
+                      <RefreshCw className="w-3 h-3 animate-spin text-indigo-300" />
+                    ) : (
+                      <Send className="w-3 h-3 text-indigo-300" />
+                    )}
+                    <span>{isTestingDevice ? 'Registering...' : 'Register & Test This Device'}</span>
                   </button>
-                )}
+                  {enableWebPush && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const res = await sendTestFCMNotification(currentUser.uid || currentUser.email, currentUser.role);
+                        if (res.success) {
+                          soundService.playSuccess();
+                          setPushNotice({ text: '✓ FCM test notification delivered to your device!', type: 'success' });
+                        } else {
+                          setPushNotice({ text: `⚠️ ${res.message}`, type: 'error' });
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 text-[11px] font-bold transition-all shrink-0 cursor-pointer"
+                    >
+                      Send Test Alert
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 

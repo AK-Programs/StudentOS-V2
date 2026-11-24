@@ -9,7 +9,7 @@
  * - General chat, complex tasks, revision guides, lecture notes, or modelOverride containing ministral or mistral:
  *   -> Ministral (https://api.mistral.ai/v1/chat/completions with MINISTRAL_API_KEY, model: ministral-8b-2410)
  * - Fast chat and normal Buddy chat:
- *   -> APInex (https://api.apinex.bond/v1/chat/completions with APINEX_API_KEY, model: free/gpt-6-luna, tools: free/glm-5.3-flash)
+ *   -> APInex (https://api.apinex.bond/v1/chat/completions with APINEX_API_KEY, model: free/glm-5.3-flash, tools: free/glm-5.3-flash)
  * - Approved AI Providers strictly: APInex, Ministral, Groq.
  */
 
@@ -133,7 +133,6 @@ export function isLongOrComplexPrompt(
     override.includes('ministral') ||
     override.includes('mistral') ||
     override.includes('apinex') ||
-    override.includes('gpt-6-luna') ||
     override.includes('glm-5.3-flash') ||
     taskType === 'short' ||
     taskType === 'general' ||
@@ -198,7 +197,7 @@ export function classifyTaskComplexity(
   if (override.includes('apinex') || override.includes('gpt-6-luna') || override.includes('glm-5.3-flash')) {
     return {
       provider: 'apinex',
-      model: override.includes('glm-5.3-flash') ? 'free/glm-5.3-flash' : 'free/gpt-6-luna',
+      model: 'free/glm-5.3-flash',
       tier: override.includes('glm-5.3-flash') ? 'tool' : 'fast'
     };
   }
@@ -216,7 +215,7 @@ export function classifyTaskComplexity(
     return { provider: 'ministral', model: 'ministral-8b-2410', tier: 'general' };
   }
   if (taskType === 'fast') {
-    return { provider: 'apinex', model: 'free/gpt-6-luna', tier: 'fast' };
+    return { provider: 'apinex', model: 'free/glm-5.3-flash', tier: 'fast' };
   }
   if (taskType === 'tool' || taskType === 'orion_command') {
     return { provider: 'apinex', model: 'free/glm-5.3-flash', tier: 'tool' };
@@ -252,10 +251,10 @@ export function classifyTaskComplexity(
     return { provider: 'ministral', model: 'ministral-8b-2410', tier: 'general' };
   }
 
-  // 6. Fast chat and normal Buddy chat stay on APInex free/gpt-6-luna
+  // 6. Fast chat and normal Buddy chat stay on APInex free/glm-5.3-flash
   return {
     provider: 'apinex',
-    model: 'free/gpt-6-luna',
+    model: 'free/glm-5.3-flash',
     tier: 'fast'
   };
 }
@@ -519,7 +518,7 @@ export async function generateAICompletionWithTelemetry(
       candidates.push({ p: 'ministral', m: 'ministral-8b-2410' });
     }
     if (getApinexApiKey() && primaryProvider !== 'apinex') {
-      candidates.push({ p: 'apinex', m: routing.tier === 'tool' ? 'free/glm-5.3-flash' : 'free/gpt-6-luna' });
+      candidates.push({ p: 'apinex', m: 'free/glm-5.3-flash' });
     }
     if (!hasImages && getGroqApiKey() && primaryProvider !== 'groq') {
       candidates.push({ p: 'groq', m: getNextGroqModel() });
@@ -810,7 +809,7 @@ export async function streamAICompletion(
       }
       if (!streamResult || !streamResult.fullText.trim()) {
         finalProvider = 'apinex';
-        activeModel = 'free/gpt-6-luna';
+        activeModel = 'free/glm-5.3-flash';
         streamResult = await tryStreamOnce('apinex', activeModel);
       }
     }
@@ -834,7 +833,7 @@ export async function streamAICompletion(
       // Controlled fallback to APInex
       try {
         finalProvider = 'apinex';
-        activeModel = 'free/gpt-6-luna';
+        activeModel = 'free/glm-5.3-flash';
         streamResult = await tryStreamOnce('apinex', activeModel);
       } catch {
         if (lastErr) throw lastErr;

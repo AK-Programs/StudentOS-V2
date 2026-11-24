@@ -10,7 +10,8 @@ import {
   requestFCMPermission,
   disableFCMPush,
   getFCMStatus,
-  sendTestFCMNotification
+  sendTestFCMNotification,
+  registerAndVerifyPushSubscription
 } from '../lib/fcmNotifications';
 import { saveSupabaseUserProfile } from '../lib/supabaseUsers';
 import { soundService } from '../lib/soundService';
@@ -148,6 +149,47 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
     setLoading(false);
   };
 
+  const [isTestingDevice, setIsTestingDevice] = useState<boolean>(false);
+
+  const handleTestAndRegisterDevice = async () => {
+    if (!currentUser) return;
+    setIsTestingDevice(true);
+    setNotice({ text: 'Registering device with public.push_subscriptions and running test...', type: 'info' });
+    try {
+      const res = await registerAndVerifyPushSubscription(currentUser.uid || currentUser.email || 'user', {
+        role: currentUser.role,
+        grade: currentUser.grade || '10',
+        section: currentUser.section || 'A',
+        house: currentUser.house || 'None',
+        schoolId: currentUser.schoolId || 'default_school'
+      });
+
+      if (res.success) {
+        soundService.playSuccessSound();
+        setIsEnabled(true);
+        setFcmStatus(getFCMStatus());
+        setNotice({
+          text: res.message,
+          type: 'success'
+        });
+        showNotification?.(res.message);
+      } else {
+        setNotice({
+          text: res.message,
+          type: 'error'
+        });
+        showNotification?.(`⚠️ ${res.message}`);
+      }
+    } catch (err: any) {
+      setNotice({
+        text: `Error registering device: ${err?.message || err}`,
+        type: 'error'
+      });
+    } finally {
+      setIsTestingDevice(false);
+    }
+  };
+
   const handleSendTestPush = async () => {
     if (!currentUser) return;
     const res = await sendTestFCMNotification(currentUser.uid || currentUser.email || 'user', currentUser.role);
@@ -266,16 +308,31 @@ export const WebPushNotificationToggle: React.FC<WebPushNotificationToggleProps>
           )}
         </div>
 
-        {isEnabled && fcmStatus.permission === 'granted' && (
+        <div className="flex items-center gap-2 self-start sm:self-auto shrink-0 flex-wrap">
           <button
             type="button"
-            onClick={handleSendTestPush}
-            className="uiverse-btn-primary px-3 py-1 rounded-lg text-blue-100 hover:text-white text-[11px] font-bold transition-all flex items-center gap-1.5 self-start sm:self-auto shrink-0 cursor-pointer"
+            disabled={isTestingDevice}
+            onClick={handleTestAndRegisterDevice}
+            className="px-3 py-1.5 rounded-lg bg-blue-600/30 hover:bg-blue-600/50 text-blue-200 border border-blue-500/40 text-[11px] font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
           >
-            <Send className="w-3 h-3" />
-            <span>Send FCM Test Alert</span>
+            {isTestingDevice ? (
+              <RefreshCw className="w-3 h-3 animate-spin text-blue-300" />
+            ) : (
+              <Send className="w-3 h-3 text-blue-300" />
+            )}
+            <span>{isTestingDevice ? 'Registering...' : 'Register & Test This Device'}</span>
           </button>
-        )}
+          {isEnabled && fcmStatus.permission === 'granted' && (
+            <button
+              type="button"
+              onClick={handleSendTestPush}
+              className="uiverse-btn-primary px-3 py-1.5 rounded-lg text-blue-100 hover:text-white text-[11px] font-bold transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
+            >
+              <Send className="w-3 h-3" />
+              <span>Send FCM Test Alert</span>
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

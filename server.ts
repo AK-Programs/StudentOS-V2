@@ -335,7 +335,7 @@ async function persistSubscriptionToSupabase(params: {
   house?: string;
   schoolId?: string;
   fcmToken?: string;
-}) {
+}): Promise<{ success: boolean; error?: string }> {
   const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
   const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
   const now = new Date().toISOString();
@@ -356,6 +356,19 @@ async function persistSubscriptionToSupabase(params: {
     updatedAt: now
   };
 
+  const payload: Record<string, any> = {
+    user_id: params.userId || 'usr_anonymous',
+    endpoint: params.endpoint,
+    p256dh: params.p256dh,
+    auth: params.auth,
+    role: params.role || 'student',
+    grade: params.grade || '',
+    section: params.section || '',
+    school_id: params.schoolId || 'default_school',
+    keys: richKeys,
+    updated_at: now
+  };
+
   const resp = await fetch(`${supabaseUrl}/rest/v1/push_subscriptions?on_conflict=endpoint`, {
     method: 'POST',
     headers: {
@@ -364,45 +377,17 @@ async function persistSubscriptionToSupabase(params: {
       'Content-Type': 'application/json',
       'Prefer': 'resolution=merge-duplicates'
     },
-    body: JSON.stringify({
-      user_id: isValidUUIDServer(params.userId) ? params.userId : null,
-      endpoint: params.endpoint,
-      keys: richKeys,
-      p256dh: params.p256dh,
-      auth: params.auth,
-      updated_at: now
-    })
+    body: JSON.stringify(payload)
   });
 
   if (!resp.ok) {
     const errText = await resp.text();
-    if (resp.status === 409 || errText.includes('push_subscriptions_user_id_fkey') || errText.includes('foreign key')) {
-      console.warn('[FCM SERVER] user_id violates foreign key constraint in push_subscriptions. Retrying with user_id: null');
-      try {
-        await fetch(`${supabaseUrl}/rest/v1/push_subscriptions?on_conflict=endpoint`, {
-          method: 'POST',
-          headers: {
-            'apikey': supabaseKey,
-            'Authorization': `Bearer ${supabaseKey}`,
-            'Content-Type': 'application/json',
-            'Prefer': 'resolution=merge-duplicates'
-          },
-          body: JSON.stringify({
-            user_id: null,
-            endpoint: params.endpoint,
-            keys: { ...richKeys, userId: null },
-            p256dh: params.p256dh,
-            auth: params.auth,
-            updated_at: now
-          })
-        });
-      } catch (_) {}
-    } else {
-      console.warn(`[FCM SERVER] Supabase push_subscriptions upsert notice (${resp.status}):`, errText);
-    }
-  } else {
-    console.log(`[FCM SERVER] Stored active push subscription in Supabase: userId=${params.userId || 'anon'}, role=${params.role || 'student'}, device="${params.deviceLabel || 'Browser'}"`);
+    console.error(`[FCM SERVER] Supabase push_subscriptions upsert failed (${resp.status}):`, errText);
+    return { success: false, error: errText };
   }
+
+  console.log(`[FCM SERVER] Stored active push subscription in Supabase: userId=${params.userId || 'anon'}, role=${params.role || 'student'}, device="${params.deviceLabel || 'Browser'}"`);
+  return { success: true };
 }
 
 // Register FCM Device Token & WebPush Subscription for authenticated user & device
@@ -445,23 +430,28 @@ app.post('/api/push/fcm-token', async (req, res) => {
 
   // Persist to Supabase push_subscriptions table using exact verified schema
   if (subscription?.endpoint && subscription?.keys?.p256dh && subscription?.keys?.auth) {
-    try {
-      await persistSubscriptionToSupabase({
-        endpoint: subscription.endpoint,
-        p256dh: subscription.keys.p256dh,
-        auth: subscription.keys.auth,
-        userId: userId || null,
-        deviceId: devId,
-        deviceLabel: deviceLabel || 'Web Browser',
-        role: role || 'student',
-        grade: grade || '',
-        section: section || '',
-        house: house || '',
-        schoolId: schoolId || 'default_school',
-        fcmToken: fcmToken || token
+    const sbResult = await persistSubscriptionToSupabase({
+      endpoint: subscription.endpoint,
+      p256dh: subscription.keys.p256dh,
+      auth: subscription.keys.auth,
+      userId: userId || null,
+      deviceId: devId,
+      deviceLabel: deviceLabel || 'Web Browser',
+      role: role || 'student',
+      grade: grade || '',
+      section: section || '',
+      house: house || '',
+      schoolId: schoolId || 'default_school',
+      fcmToken: fcmToken || token
+    });
+
+    if (!sbResult.success) {
+      return res.status(502).json({
+        status: 'error',
+        error: 'Failed to save push subscription to Supabase public.push_subscriptions',
+        details: sbResult.error,
+        tokenStored: false
       });
-    } catch (sbErr: any) {
-      console.warn('[FCM SERVER] Supabase token sync notice:', sbErr?.message);
     }
   }
 
@@ -521,21 +511,27 @@ app.post('/api/push/subscribe', async (req, res) => {
     }
 
     if (subscription.keys?.p256dh && subscription.keys?.auth) {
-      try {
-        await persistSubscriptionToSupabase({
-          endpoint: subscription.endpoint,
-          p256dh: subscription.keys.p256dh,
-          auth: subscription.keys.auth,
-          userId: userId || null,
-          deviceId: devId,
-          deviceLabel: userAgent || 'Web Browser',
-          role: role || 'student',
-          grade: grade || '',
-          section: section || '',
-          house: house || '',
-          schoolId: schoolId || 'default_school'
+      const sbResult = await persistSubscriptionToSupabase({
+        endpoint: subscription.endpoint,
+        p256dh: subscription.keys.p256dh,
+        auth: subscription.keys.auth,
+        userId: userId || null,
+        deviceId: devId,
+        deviceLabel: userAgent || 'Web Browser',
+        role: role || 'student',
+        grade: grade || '',
+        section: section || '',
+        house: house || '',
+        schoolId: schoolId || 'default_school'
+      });
+
+      if (!sbResult.success) {
+        return res.status(502).json({
+          status: 'error',
+          error: 'Failed to save push subscription to Supabase public.push_subscriptions',
+          details: sbResult.error
         });
-      } catch (_) {}
+      }
     }
   }
   return res.json({ status: 'ok' });
@@ -788,21 +784,21 @@ export async function dispatchServerWebPush(params: PushDispatchParams) {
           dbSubs.forEach((row: any) => {
             if (row.endpoint && !tokensToTry.some(t => t.endpoint === row.endpoint)) {
               const rawKeys = row.keys && typeof row.keys === 'object' ? row.keys : {};
-              const p256dh = rawKeys.p256dh || row.p256dh;
-              const auth = rawKeys.auth || row.auth;
+              const p256dh = row.p256dh || rawKeys.p256dh;
+              const auth = row.auth || rawKeys.auth;
               const isActive = rawKeys.isActive !== false;
 
               if (p256dh && auth && isActive) {
                 tokensToTry.push({
                   endpoint: row.endpoint,
                   keys: { p256dh, auth },
-                  userId: rawKeys.userId || row.user_id || undefined,
+                  userId: row.user_id || rawKeys.userId || undefined,
                   deviceId: rawKeys.deviceId || undefined,
                   deviceLabel: rawKeys.deviceLabel || 'Android/Chrome Device',
-                  role: rawKeys.role || undefined,
-                  grade: rawKeys.grade || undefined,
-                  section: rawKeys.section || undefined,
-                  schoolId: rawKeys.schoolId || 'default_school',
+                  role: row.role || rawKeys.role || undefined,
+                  grade: row.grade || rawKeys.grade || undefined,
+                  section: row.section || rawKeys.section || undefined,
+                  schoolId: row.school_id || rawKeys.schoolId || 'default_school',
                   isActive: true
                 });
               }
@@ -970,10 +966,12 @@ app.get('/api/push/debug-status', async (req, res) => {
       if (Array.isArray(rows)) {
         supabaseSubscriptions = rows.map(r => ({
           id: r.id,
-          userId: r.keys?.userId || r.user_id || 'anonymous',
-          role: r.keys?.role || 'student',
-          grade: r.keys?.grade || '',
-          section: r.keys?.section || '',
+          userId: r.user_id || r.keys?.userId || 'anonymous',
+          role: r.role || r.keys?.role || 'student',
+          grade: r.grade || r.keys?.grade || '',
+          section: r.section || r.keys?.section || '',
+          schoolId: r.school_id || r.keys?.schoolId || 'default_school',
+          endpoint: r.endpoint ? (r.endpoint.slice(0, 32) + '...') : '',
           deviceLabel: r.keys?.deviceLabel || 'Browser',
           tokenExists: Boolean(r.endpoint),
           tokenActive: r.keys?.isActive !== false,
@@ -2576,7 +2574,7 @@ app.all('/api/ai/minimal-test', async (req, res) => {
     const { text, telemetry } = await generateAICompletionWithTelemetry({
       prompt: 'Reply with exactly: APINEX TEST OK',
       endpointName: 'MinimalApinexTest',
-      modelOverride: 'free/gpt-6-luna',
+      modelOverride: 'free/glm-5.3-flash',
       maxTokens: 500,
       requestId
     });

@@ -404,14 +404,15 @@ export async function requestFCMPermission(
     }
 
     // 7. Persist directly to Supabase push_subscriptions table using exact verified schema
-    // Columns in public.push_subscriptions: id, user_id (UUID nullable), endpoint (TEXT UNIQUE), keys (JSONB NOT NULL), p256dh, auth, created_at, updated_at
+    // Columns in public.push_subscriptions: id, user_id (text), endpoint (text unique), p256dh (text), auth (text), role (text), grade (text), section (text), school_id (text), keys (jsonb), created_at, updated_at
+    let directSbError: string | null = null;
     if (subscriptionJson?.endpoint && subscriptionJson?.keys?.p256dh && subscriptionJson?.keys?.auth) {
       try {
         const now = new Date().toISOString();
         const richKeys = {
           p256dh: subscriptionJson.keys.p256dh,
           auth: subscriptionJson.keys.auth,
-          userId: effectiveUserId,
+          userId: effectiveUserId || null,
           deviceId,
           deviceLabel,
           role: effectiveMeta.role || 'student',
@@ -425,45 +426,54 @@ export async function requestFCMPermission(
         };
 
         const { error: sbErr } = await supabase.from('push_subscriptions').upsert({
-          user_id: isValidUUID(effectiveUserId) ? effectiveUserId : null,
+          user_id: effectiveUserId || 'usr_anonymous',
           endpoint: subscriptionJson.endpoint,
-          keys: richKeys,
           p256dh: subscriptionJson.keys.p256dh,
           auth: subscriptionJson.keys.auth,
+          role: effectiveMeta.role || 'student',
+          grade: effectiveMeta.grade || '',
+          section: effectiveMeta.section || '',
+          school_id: effectiveMeta.schoolId || 'default_school',
+          keys: richKeys,
           updated_at: now
         }, { onConflict: 'endpoint' });
 
         if (sbErr) {
-          console.warn('[FCM] Supabase push_subscriptions upsert warning:', sbErr.message);
+          directSbError = sbErr.message;
+          console.error('[FCM] Supabase push_subscriptions upsert warning:', sbErr.message);
         } else {
           console.log(`[FCM STAGE 3/4] FCM token & WebPush subscription stored in Supabase (userId: ${effectiveUserId || 'anon'}, active: yes)`);
         }
-      } catch (sbEx) {
-        console.warn('[FCM] Supabase token persistence exception:', sbEx);
+      } catch (sbEx: any) {
+        directSbError = sbEx?.message || String(sbEx);
+        console.error('[FCM] Supabase token persistence exception:', sbEx);
       }
     }
 
     // 8. Register token & subscription with backend server
-    try {
-      await fetch('/api/push/fcm-token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token: primaryEndpoint,
-          fcmToken: fcmToken || primaryEndpoint,
-          subscription: subscriptionJson,
-          userId: effectiveUserId,
-          deviceId,
-          deviceLabel,
-          role: effectiveMeta.role || 'student',
-          grade: effectiveMeta.grade || '',
-          section: effectiveMeta.section || '',
-          house: effectiveMeta.house || '',
-          schoolId: effectiveMeta.schoolId || 'default_school'
-        })
-      });
-    } catch (apiErr) {
-      console.warn('[FCM] Backend token registration notice:', apiErr);
+    const apiRes = await fetch('/api/push/fcm-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: primaryEndpoint,
+        fcmToken: fcmToken || primaryEndpoint,
+        subscription: subscriptionJson,
+        userId: effectiveUserId,
+        deviceId,
+        deviceLabel,
+        role: effectiveMeta.role || 'student',
+        grade: effectiveMeta.grade || '',
+        section: effectiveMeta.section || '',
+        house: effectiveMeta.house || '',
+        schoolId: effectiveMeta.schoolId || 'default_school'
+      })
+    });
+
+    const apiData = await apiRes.json().catch(() => ({}));
+    if (!apiRes.ok || apiData.status === 'error' || apiData.error) {
+      const errMsg = apiData.details || apiData.error || directSbError || `Server registration failed (${apiRes.status})`;
+      console.error('[FCM] Backend subscription persistence failed:', errMsg);
+      return { success: false, error: errMsg };
     }
 
     // 9. Register token directly in Firestore 'fcmTokens' collection
@@ -664,7 +674,14 @@ export async function sendTestFCMNotification(
 ): Promise<{ success: boolean; message: string; details?: any }> {
   try {
     // Ensure current device token is registered and synced before testing
-    await requestFCMPermission(userId, { role: userRole || 'student' });
+    const regRes = await requestFCMPermission(userId, { role: userRole || 'student' });
+    if (!regRes.success) {
+      return {
+        success: false,
+        message: `Subscription registration failed: ${regRes.error || 'Could not save subscription to public.push_subscriptions'}`,
+        details: regRes
+      };
+    }
 
     const deviceLabel = getDevicePlatformLabel();
     const notifId = `test_${Date.now()}`;
@@ -713,6 +730,48 @@ export async function sendTestFCMNotification(
     };
   } catch (err: any) {
     return { success: false, message: err?.message || 'Network error sending test push notification.' };
+  }
+}
+
+/**
+ * Notification Settings Test Helper:
+ * Registers this device to public.push_subscriptions and triggers a live verification push.
+ * Displays the real success or exact Supabase/server error.
+ */
+export async function registerAndVerifyPushSubscription(
+  userId: string,
+  meta?: { role?: string; grade?: string; section?: string; house?: string; schoolId?: string }
+): Promise<{ success: boolean; message: string; details?: any }> {
+  try {
+    const regRes = await requestFCMPermission(userId, meta);
+    if (!regRes.success) {
+      return {
+        success: false,
+        message: `Registration failed: ${regRes.error || 'Could not save subscription to public.push_subscriptions'}`,
+        details: regRes
+      };
+    }
+
+    const testRes = await sendTestFCMNotification(userId, meta?.role);
+    if (testRes.success) {
+      return {
+        success: true,
+        message: `✓ Device registered in public.push_subscriptions! Test push delivered to tray.`,
+        details: testRes.details
+      };
+    }
+
+    return {
+      success: false,
+      message: `Device registered, but test push notice: ${testRes.message}`,
+      details: testRes.details
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err?.message || 'Error executing push subscription test.',
+      details: err
+    };
   }
 }
 
