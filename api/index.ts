@@ -6,20 +6,17 @@
  * Completely self-contained handler with ZERO top-level server imports.
  *
  * Routing Architecture:
- * - Short chat, taskType "short", or modelOverride containing groq, llama, qwen, or gpt-oss
+ * - Short chat, fast/normal Buddy chat, taskType "short"/"fast", or modelOverride containing groq, llama, qwen, or gpt-oss
  *   -> Groq (POST https://api.groq.com/openai/v1/chat/completions with GROQ_API_KEY)
- *   -> Rotates models: llama-3.1-8b-instant, openai/gpt-oss-120b, qwen/qwen3.8-27b
- * - General chat, complex tasks, revision guides, lecture notes, or modelOverride containing ministral or mistral
+ *   -> Models: llama-3.1-8b-instant, openai/gpt-oss-120b, qwen/qwen3.8-27b
+ * - General chat, complex tasks, revision guides, lecture notes, tools, or modelOverride containing ministral or mistral
  *   -> Ministral (POST https://api.mistral.ai/v1/chat/completions with MINISTRAL_API_KEY, model: ministral-8b-2410)
- * - Fast chat and normal Buddy chat
- *   -> APInex (POST https://api.apinex.bond/v1/chat/completions with APINEX_API_KEY, model: free/glm-5.3-flash, tools: free/glm-5.3-flash)
- * - Approved AI Providers strictly: APInex, Ministral, Groq.
+ * - Approved AI Providers strictly: Ministral, Groq.
  */
 
-export type AIProviderName = 'apinex' | 'groq' | 'ministral';
+export type AIProviderName = 'groq' | 'ministral';
 export type TaskComplexityTier = 'short' | 'fast' | 'general' | 'complex' | 'tool';
 
-const APINEX_CHAT_COMPLETIONS_URL = 'https://api.apinex.bond/v1/chat/completions';
 const GROQ_CHAT_COMPLETIONS_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MINISTRAL_CHAT_COMPLETIONS_URL = 'https://api.mistral.ai/v1/chat/completions';
 
@@ -54,14 +51,6 @@ function resolveGroqModel(modelOverride?: string): { model: string; isExplicitMo
   return { model: getNextGroqModel(), isExplicitModel: false };
 }
 
-function getApinexApiKey(): string {
-  const rawKey =
-    process.env.APINEX_API_KEY ||
-    process.env.VITE_APINEX_API_KEY ||
-    '';
-  return rawKey.trim().replace(/^["']|["']$/g, '');
-}
-
 function getGroqApiKey(): string {
   const rawKey =
     process.env.GROQ_API_KEY ||
@@ -77,23 +66,6 @@ function getMinistralApiKey(): string {
     process.env.VITE_MINISTRAL_API_KEY ||
     '';
   return rawKey.trim().replace(/^["']|["']$/g, '');
-}
-
-
-function isApinexFreeModel(modelName?: string): boolean {
-  if (!modelName || typeof modelName !== 'string') return false;
-  const clean = modelName.trim().toLowerCase();
-  const validFreeModels = [
-    'free/glm-5.3-flash'
-  ];
-  return validFreeModels.includes(clean);
-}
-
-function resolveApinexModel(modelOverride?: string, fallbackModel = 'free/glm-5.3-flash'): string {
-  if (modelOverride && isApinexFreeModel(modelOverride)) {
-    return modelOverride.trim().toLowerCase();
-  }
-  return fallbackModel;
 }
 
 function isShortPrompt(prompt: string): boolean {
@@ -139,8 +111,6 @@ function isLongOrComplexPrompt(
     override.includes('gpt-oss') ||
     override.includes('ministral') ||
     override.includes('mistral') ||
-    override.includes('apinex') ||
-    override.includes('glm-5.3-flash') ||
     taskType === 'short' ||
     taskType === 'general' ||
     taskType === 'fast' ||
@@ -223,18 +193,6 @@ export function classifyTaskComplexity(
     };
   }
 
-  if (
-    override.includes('apinex') ||
-    override.includes('gpt-6-luna') ||
-    override.includes('glm-5.3-flash')
-  ) {
-    return {
-      provider: 'apinex',
-      model: resolveApinexModel(options?.modelOverride, 'free/glm-5.3-flash'),
-      tier: override.includes('glm-5.3-flash') ? 'tool' : 'fast'
-    };
-  }
-
   // 2. Explicit taskType checks
   if (taskType === 'complex') {
     if (!isShortPrompt(clean)) {
@@ -264,22 +222,23 @@ export function classifyTaskComplexity(
   }
 
   if (taskType === 'fast') {
+    const { model } = resolveGroqModel(options?.modelOverride);
     return {
-      provider: 'apinex',
-      model: 'free/glm-5.3-flash',
+      provider: 'groq',
+      model,
       tier: 'fast'
     };
   }
 
   if (taskType === 'tool' || taskType === 'orion_command') {
     return {
-      provider: 'apinex',
-      model: 'free/glm-5.3-flash',
+      provider: 'ministral',
+      model: 'ministral-8b-2410',
       tier: 'tool'
     };
   }
 
-  // 3. Long context, revision guides, essays, multi-chapter explanations, analysis -> Ministral (or Groq/APInex)
+  // 3. Long context, revision guides, essays, multi-chapter explanations, analysis -> Ministral
   if (isLongOrComplexPrompt(clean, options)) {
     return {
       provider: 'ministral',
@@ -288,7 +247,7 @@ export function classifyTaskComplexity(
     };
   }
 
-  // 4. Tool / JSON / Diagram / Flashcard / 3D task -> free/glm-5.3-flash
+  // 4. Tool / JSON / Diagram / Flashcard / 3D task -> Ministral
   if (
     endpoint.includes('json') ||
     endpoint.includes('diagram') ||
@@ -298,7 +257,7 @@ export function classifyTaskComplexity(
     lower.includes('raw json format') ||
     lower.includes('structured output')
   ) {
-    return { provider: 'apinex', model: 'free/glm-5.3-flash', tier: 'tool' };
+    return { provider: 'ministral', model: 'ministral-8b-2410', tier: 'tool' };
   }
 
   // 5. Mode-based routing if mode explicitly specifies short or general
@@ -318,8 +277,8 @@ export function classifyTaskComplexity(
     };
   }
 
-  // 6. Fast chat and normal Buddy chat stay on APInex free/glm-5.3-flash
-  return { provider: 'apinex', model: 'free/glm-5.3-flash', tier: 'fast' };
+  // 6. Fast chat and normal Buddy chat stay on Groq
+  return { provider: 'groq', model: getNextGroqModel(), tier: 'fast' };
 }
 
 /**
@@ -466,7 +425,7 @@ function buildChatMessages(
  * Self-contained Groq completion handler.
  * - Calls POST https://api.groq.com/openai/v1/chat/completions with GROQ_API_KEY
  * - Rotates models: llama-3.1-8b-instant, openai/gpt-oss-120b, qwen/qwen3.8-27b
- * - Never falls back to APInex; returns real Groq HTTP status and error if Groq fails.
+ * - Never falls back silently to unapproved providers; returns real HTTP status and error if Groq fails.
  */
 async function callGroqCompletion(
   prompt: string,
@@ -588,7 +547,7 @@ async function callGroqCompletion(
 /**
  * Self-contained Ministral completion handler.
  * - Calls POST https://api.mistral.ai/v1/chat/completions with MINISTRAL_API_KEY and model ministral-8b-2410
- * - Never falls back to APInex; returns real Ministral HTTP status and error if Ministral fails.
+ * - Returns real Ministral HTTP status and error if Ministral fails.
  */
 async function callMinistralCompletion(
   prompt: string,
@@ -700,8 +659,7 @@ async function callMinistralCompletion(
 
 /**
  * Unified non-streaming completion router for api/index.ts.
- * Dispatches strictly to the classified provider (Groq, Ministral, or APInex)
- * and never silently replaces a failed provider with APInex.
+ * Dispatches strictly across approved providers: Groq and Ministral.
  */
 async function callRoutedCompletion(
   prompt: string,
@@ -727,9 +685,18 @@ async function callRoutedCompletion(
   retries?: number;
 }> {
   const { provider, model: classifiedModel, tier } = classifyTaskComplexity(prompt, options);
+  const hasImages = Boolean(options?.images && options.images.length > 0);
 
-  // 1. General / Complex -> Ministral (with fallback to Groq)
-  if (provider === 'ministral' || tier === 'complex') {
+  if (hasImages) {
+    return await callMinistralCompletion(prompt, systemPrompt, history, {
+      jsonMode: options?.jsonMode,
+      maxTokens: options?.maxTokens,
+      requestId: options?.requestId
+    });
+  }
+
+  // 1. General / Complex / Tool -> Ministral (cross-fallback to Groq)
+  if (provider === 'ministral' || tier === 'complex' || tier === 'tool') {
     try {
       return await callMinistralCompletion(prompt, systemPrompt, history, {
         jsonMode: options?.jsonMode,
@@ -750,8 +717,8 @@ async function callRoutedCompletion(
     }
   }
 
-  // 2. Short / Groq -> Groq ONLY
-  if (provider === 'groq') {
+  // 2. Short / Fast / Groq -> Groq (cross-fallback to Ministral)
+  try {
     return await callGroqCompletion(prompt, systemPrompt, history, {
       initialModel: classifiedModel,
       modelOverride: options?.modelOverride,
@@ -759,101 +726,21 @@ async function callRoutedCompletion(
       maxTokens: options?.maxTokens,
       requestId: options?.requestId
     });
-  }
-
-  // 4. Fast / Tool / Normal Buddy chat -> APInex
-  const apiKey = getApinexApiKey();
-  const effectiveModel = resolveApinexModel(options?.modelOverride, classifiedModel);
-
-  if (!apiKey) {
-    const err: any = new Error('APINEX_API_KEY environment variable is not configured on the server.');
-    err.status = 500;
-    err.providerUsed = 'apinex';
-    err.modelUsed = effectiveModel;
-    throw err;
-  }
-
-  const start = Date.now();
-  const messages = buildChatMessages(systemPrompt, history, prompt, options?.images);
-
-  const effectiveMaxTokens = options?.maxTokens
-    ? Math.min(Math.max(options.maxTokens, 300), 8192)
-    : (tier === 'fast' ? 1200 : 2048);
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25000);
-
-  try {
-    const resp = await fetch(APINEX_CHAT_COMPLETIONS_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({
-        model: effectiveModel,
-        messages,
-        temperature: 0.6,
-        max_tokens: effectiveMaxTokens,
-        ...(options?.jsonMode ? { response_format: { type: 'json_object' } } : {})
-      }),
-      signal: controller.signal
-    });
-
-    clearTimeout(timeout);
-
-    if (resp.ok) {
-      const data = await resp.json();
-      const choice = data.choices?.[0];
-      const text = extractTextFromChoiceMessage(choice, data);
-
-      if (text) {
-        return {
-          text: text.trim(),
-          providerUsed: 'apinex',
-          modelUsed: effectiveModel,
-          tier,
-          totalMs: Date.now() - start
-        };
-      } else {
-        const finishReason = choice?.finish_reason || data?.finish_reason || 'unknown';
-        const rawDump = JSON.stringify(choice || data || {}).slice(0, 220);
-        const err: any = new Error(
-          `APInex HTTP 200 returned empty content (finish_reason=${finishReason}). Response: ${rawDump}`
-        );
-        err.status = 502;
-        err.providerUsed = 'apinex';
-        err.modelUsed = effectiveModel;
-        throw err;
-      }
-    } else {
-      const errText = await resp.text().catch(() => '');
-      const err: any = new Error(
-        `APInex HTTP ${resp.status}: ${errText || resp.statusText || 'APInex request failed'}`
-      );
-      err.status = resp.status;
-      err.providerUsed = 'apinex';
-      err.modelUsed = effectiveModel;
-      throw err;
+  } catch (groqErr: any) {
+    if (getMinistralApiKey()) {
+      return await callMinistralCompletion(prompt, systemPrompt, history, {
+        jsonMode: options?.jsonMode,
+        maxTokens: options?.maxTokens,
+        requestId: options?.requestId
+      });
     }
-  } catch (err: any) {
-    clearTimeout(timeout);
-    if (err?.providerUsed === 'apinex') {
-      throw err;
-    }
-    const wrapped: any = new Error(err?.message || 'APInex request failed');
-    wrapped.status = err?.status || 502;
-    wrapped.providerUsed = 'apinex';
-    wrapped.modelUsed = effectiveModel;
-    throw wrapped;
+    throw groqErr;
   }
 }
 
 /**
- * Unified SSE streaming router for Groq, Ministral, and APInex.
+ * Unified SSE streaming router strictly for Groq and Ministral.
  * Keeps raw streamed token text (including spaces) and trims only the finished reply.
- * Never silently replaces Groq or Ministral with APInex on failure.
  */
 async function streamRoutedCompletion(
   prompt: string,
@@ -872,40 +759,64 @@ async function streamRoutedCompletion(
   res: any
 ) {
   const { provider, model: classifiedModel, tier } = classifyTaskComplexity(prompt, options);
-
-
   const requestId = options.requestId || 'req_' + Math.random().toString(36).substring(2, 10);
+  const hasImages = Boolean(options.images && options.images.length > 0);
 
-  let targetUrl = APINEX_CHAT_COMPLETIONS_URL;
-  let apiKey = '';
-  let candidateModels: string[] = [];
-  let missingKeyError = '';
+  const targets: { provider: AIProviderName; targetUrl: string; apiKey: string; candidateModels: string[]; missingKeyError: string }[] = [];
+  const groqKey = getGroqApiKey();
+  const ministralKey = getMinistralApiKey();
 
-  if (provider === 'groq') {
-    targetUrl = GROQ_CHAT_COMPLETIONS_URL;
-    apiKey = getGroqApiKey();
-    const primaryModel = classifiedModel || getNextGroqModel();
-    candidateModels = [primaryModel, ...GROQ_MODELS.filter((m) => m !== primaryModel)];
-    missingKeyError = 'GROQ_API_KEY environment variable is not configured on the server.';
-  } else if (provider === 'ministral') {
-    targetUrl = MINISTRAL_CHAT_COMPLETIONS_URL;
-    apiKey = getMinistralApiKey();
-    candidateModels = ['ministral-8b-2410'];
-    missingKeyError = 'MINISTRAL_API_KEY environment variable is not configured on the server.';
+  if (provider === 'ministral' || hasImages) {
+    if (ministralKey) {
+      targets.push({
+        provider: 'ministral',
+        targetUrl: MINISTRAL_CHAT_COMPLETIONS_URL,
+        apiKey: ministralKey,
+        candidateModels: ['ministral-8b-2410'],
+        missingKeyError: 'MINISTRAL_API_KEY environment variable is not configured on the server.'
+      });
+    }
+    if (!hasImages && groqKey) {
+      const fallbackGroq = getNextGroqModel();
+      targets.push({
+        provider: 'groq',
+        targetUrl: GROQ_CHAT_COMPLETIONS_URL,
+        apiKey: groqKey,
+        candidateModels: [fallbackGroq, ...GROQ_MODELS.filter((m) => m !== fallbackGroq)],
+        missingKeyError: 'GROQ_API_KEY environment variable is not configured on the server.'
+      });
+    }
   } else {
-    targetUrl = APINEX_CHAT_COMPLETIONS_URL;
-    apiKey = getApinexApiKey();
-    candidateModels = [resolveApinexModel(options.modelOverride, classifiedModel)];
-    missingKeyError = 'APINEX_API_KEY environment variable is not configured on the server.';
+    if (groqKey) {
+      const primaryModel = classifiedModel || getNextGroqModel();
+      targets.push({
+        provider: 'groq',
+        targetUrl: GROQ_CHAT_COMPLETIONS_URL,
+        apiKey: groqKey,
+        candidateModels: [primaryModel, ...GROQ_MODELS.filter((m) => m !== primaryModel)],
+        missingKeyError: 'GROQ_API_KEY environment variable is not configured on the server.'
+      });
+    }
+    if (ministralKey) {
+      targets.push({
+        provider: 'ministral',
+        targetUrl: MINISTRAL_CHAT_COMPLETIONS_URL,
+        apiKey: ministralKey,
+        candidateModels: ['ministral-8b-2410'],
+        missingKeyError: 'MINISTRAL_API_KEY environment variable is not configured on the server.'
+      });
+    }
   }
 
-  if (!apiKey) {
+  if (targets.length === 0) {
     return sendJson(res, 500, {
       success: false,
       status: 500,
-      error: missingKeyError,
+      error: provider === 'ministral'
+        ? 'MINISTRAL_API_KEY environment variable is not configured on the server.'
+        : 'GROQ_API_KEY and MINISTRAL_API_KEY environment variables are not configured on the server.',
       providerUsed: provider,
-      modelUsed: candidateModels[0],
+      modelUsed: classifiedModel,
       requestId
     });
   }
@@ -927,69 +838,139 @@ async function streamRoutedCompletion(
 
   let lastStatus = 500;
   let lastErrorText = `${provider} stream request failed`;
-  let activeModel = candidateModels[0];
+  let activeProvider: AIProviderName = targets[0].provider;
+  let activeModel = targets[0].candidateModels[0];
 
-  for (let i = 0; i < candidateModels.length; i++) {
-    activeModel = candidateModels[i];
+  for (const target of targets) {
+    activeProvider = target.provider;
+    for (let i = 0; i < target.candidateModels.length; i++) {
+      activeModel = target.candidateModels[i];
 
-    try {
-      const resp = await fetch(targetUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'Accept': 'text/event-stream, application/json'
-        },
-        body: JSON.stringify({
-          model: activeModel,
-          messages,
-          temperature: 0.6,
-          max_tokens: effectiveMaxTokens,
-          stream: true
-        })
-      });
+      try {
+        const resp = await fetch(target.targetUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${target.apiKey}`,
+            'Content-Type': 'application/json',
+            'Accept': 'text/event-stream, application/json'
+          },
+          body: JSON.stringify({
+            model: activeModel,
+            messages,
+            temperature: 0.6,
+            max_tokens: effectiveMaxTokens,
+            stream: true
+          })
+        });
 
-      if (!resp.ok) {
-        const errText = await resp.text().catch(() => '');
-        lastStatus = resp.status;
-        lastErrorText = errText || resp.statusText || `${provider} stream failed`;
-        if (resp.status === 401 || resp.status === 403 || candidateModels.length === 1) {
-          break;
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '');
+          lastStatus = resp.status;
+          lastErrorText = errText || resp.statusText || `${activeProvider} stream failed`;
+          continue;
         }
-        continue;
-      }
 
-      if (!resp.body) {
-        lastStatus = 502;
-        lastErrorText = `${provider} stream response body is empty`;
-        continue;
-      }
+        if (!resp.body) {
+          lastStatus = 502;
+          lastErrorText = `${activeProvider} stream response body is empty`;
+          continue;
+        }
 
-      res.write(
-        `data: ${JSON.stringify({
-          type: 'meta',
-          requestId,
-          model: activeModel,
-          provider,
-          tier
-        })}\n\n`
-      );
+        res.write(
+          `data: ${JSON.stringify({
+            type: 'meta',
+            requestId,
+            model: activeModel,
+            provider: activeProvider,
+            tier
+          })}\n\n`
+        );
 
-      const contentType = (resp.headers.get('content-type') || '').toLowerCase();
-      if (contentType.includes('application/json') && !contentType.includes('text/event-stream')) {
-        const data = await resp.json();
-        const choice = data?.choices?.[0];
-        const text = extractTextFromChoiceMessage(choice, data);
-        if (text) {
-          const latency = Date.now() - start;
-          res.write(`data: ${JSON.stringify({ type: 'token', token: text, firstTokenLatencyMs: latency })}\n\n`);
-          const finishedReply = text.trim();
+        const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+        if (contentType.includes('application/json') && !contentType.includes('text/event-stream')) {
+          const data = await resp.json();
+          const choice = data?.choices?.[0];
+          const text = extractTextFromChoiceMessage(choice, data);
+          if (text) {
+            const latency = Date.now() - start;
+            res.write(`data: ${JSON.stringify({ type: 'token', token: text, firstTokenLatencyMs: latency })}\n\n`);
+            const finishedReply = text.trim();
+            let committedUsage: any = undefined;
+            if (options.onUsageCommit) {
+              try {
+                committedUsage = await options.onUsageCommit();
+              } catch (uErr) {
+                console.warn('[Vercel AI Quota] Commit warning:', uErr);
+              }
+            }
+            res.write(
+              `data: ${JSON.stringify({
+                type: 'done',
+                text: finishedReply,
+                requestId,
+                providerUsed: activeProvider,
+                modelUsed: activeModel,
+                telemetry: {
+                  requestId,
+                  providerUsed: activeProvider,
+                  modelUsed: activeModel,
+                  complexityTier: tier,
+                  firstTokenLatencyMs: latency,
+                  totalGenerationTimeMs: Date.now() - start,
+                  streamed: true
+                },
+                ...(committedUsage ? { usage: committedUsage } : {})
+              })}\n\n`
+            );
+            res.end();
+            return;
+          }
+        }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        let fullText = '';
+        let firstTokenLatencyMs: number | null = null;
+        let lastChoice: any = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const rawLine of lines) {
+            const line = rawLine.trim();
+            if (!line || !line.startsWith('data:')) continue;
+            const payload = line.slice(5).trim();
+            if (payload === '[DONE]') continue;
+
+            try {
+              const parsed = JSON.parse(payload);
+              const choice = parsed.choices?.[0];
+              if (choice) lastChoice = choice;
+
+              const token = extractStreamingToken(choice);
+              if (token.length > 0) {
+                if (firstTokenLatencyMs === null) firstTokenLatencyMs = Date.now() - start;
+                fullText += token;
+                res.write(`data: ${JSON.stringify({ type: 'token', token, firstTokenLatencyMs })}\n\n`);
+              }
+            } catch {}
+          }
+        }
+
+        const finishedReply = fullText.trim();
+        if (finishedReply.length > 0) {
           let committedUsage: any = undefined;
           if (options.onUsageCommit) {
             try {
               committedUsage = await options.onUsageCommit();
             } catch (uErr) {
-              console.warn('[Vercel AI Quota] Commit warning:', uErr);
+              console.warn('[Vercel AI Quota] Stream commit warning:', uErr);
             }
           }
           res.write(
@@ -997,14 +978,14 @@ async function streamRoutedCompletion(
               type: 'done',
               text: finishedReply,
               requestId,
-              providerUsed: provider,
+              providerUsed: activeProvider,
               modelUsed: activeModel,
               telemetry: {
                 requestId,
-                providerUsed: provider,
+                providerUsed: activeProvider,
                 modelUsed: activeModel,
                 complexityTier: tier,
-                firstTokenLatencyMs: latency,
+                firstTokenLatencyMs: firstTokenLatencyMs ?? (Date.now() - start),
                 totalGenerationTimeMs: Date.now() - start,
                 streamed: true
               },
@@ -1013,84 +994,15 @@ async function streamRoutedCompletion(
           );
           res.end();
           return;
+        } else {
+          const finishReason = lastChoice?.finish_reason || 'unknown';
+          lastStatus = 502;
+          lastErrorText = `Stream finished without returning text tokens (finish_reason=${finishReason})`;
         }
+      } catch (err: any) {
+        lastStatus = err?.status || 502;
+        lastErrorText = err?.message || `${activeProvider} stream request failed`;
       }
-
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let buffer = '';
-      let fullText = '';
-      let firstTokenLatencyMs: number | null = null;
-      let lastChoice: any = null;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const rawLine of lines) {
-          const line = rawLine.trim();
-          if (!line || !line.startsWith('data:')) continue;
-          const payload = line.slice(5).trim();
-          if (payload === '[DONE]') continue;
-
-          try {
-            const parsed = JSON.parse(payload);
-            const choice = parsed.choices?.[0];
-            if (choice) lastChoice = choice;
-
-            const token = extractStreamingToken(choice);
-            if (token.length > 0) {
-              if (firstTokenLatencyMs === null) firstTokenLatencyMs = Date.now() - start;
-              fullText += token;
-              res.write(`data: ${JSON.stringify({ type: 'token', token, firstTokenLatencyMs })}\n\n`);
-            }
-          } catch {}
-        }
-      }
-
-      const finishedReply = fullText.trim();
-      if (finishedReply.length > 0) {
-        let committedUsage: any = undefined;
-        if (options.onUsageCommit) {
-          try {
-            committedUsage = await options.onUsageCommit();
-          } catch (uErr) {
-            console.warn('[Vercel AI Quota] Stream commit warning:', uErr);
-          }
-        }
-        res.write(
-          `data: ${JSON.stringify({
-            type: 'done',
-            text: finishedReply,
-            requestId,
-            providerUsed: provider,
-            modelUsed: activeModel,
-            telemetry: {
-              requestId,
-              providerUsed: provider,
-              modelUsed: activeModel,
-              complexityTier: tier,
-              firstTokenLatencyMs: firstTokenLatencyMs ?? (Date.now() - start),
-              totalGenerationTimeMs: Date.now() - start,
-              streamed: true
-            },
-            ...(committedUsage ? { usage: committedUsage } : {})
-          })}\n\n`
-        );
-        res.end();
-        return;
-      } else {
-        const finishReason = lastChoice?.finish_reason || 'unknown';
-        lastStatus = 502;
-        lastErrorText = `Stream finished without returning text tokens (finish_reason=${finishReason})`;
-      }
-    } catch (err: any) {
-      lastStatus = err?.status || 502;
-      lastErrorText = err?.message || `${provider} stream request failed`;
     }
   }
 
@@ -1098,8 +1010,8 @@ async function streamRoutedCompletion(
     `data: ${JSON.stringify({
       type: 'error',
       status: lastStatus,
-      error: `${provider} HTTP ${lastStatus}: ${lastErrorText}`,
-      providerUsed: provider,
+      error: `${activeProvider} HTTP ${lastStatus}: ${lastErrorText}`,
+      providerUsed: activeProvider,
       modelUsed: activeModel,
       requestId
     })}\n\n`
@@ -1421,58 +1333,11 @@ async function searchViaFallbackHtml(query: string): Promise<any[]> {
   }
 }
 
-async function callApinexWebSearch(query: string, apiKey: string): Promise<any[]> {
+async function searchLiveAcademicWeb(query: string): Promise<any[]> {
   const results: any[] = [];
 
-  if (apiKey) {
-    try {
-      const resp = await fetch('https://api.apinex.bond/v1/tools/web/search', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json'
-        },
-        body: JSON.stringify({ query, num: 5, limit: 5 })
-      });
-
-      if (resp.ok) {
-        const data = await resp.json();
-        const rawItems = data.results || data.data || data.items || (Array.isArray(data) ? data : []);
-        if (Array.isArray(rawItems)) {
-          for (const item of rawItems) {
-            if (!item) continue;
-            const title = String(item.title || item.name || '').trim();
-            const url = String(item.url || item.link || item.href || '').trim();
-            const snippet = String(item.snippet || item.description || item.content || item.summary || '').trim();
-            let domain = 'web-source';
-            try {
-              if (url) domain = new URL(url).hostname.replace(/^www\./, '');
-            } catch {}
-
-            if (url || snippet || title) {
-              results.push({
-                title: title || 'Educational Resource',
-                url: url || '',
-                snippet: snippet || '',
-                uri: url || '',
-                description: snippet || '',
-                published_source: domain,
-                sourceType: domain.includes('.edu') || domain.includes('.gov') ? 'academic' : 'web'
-              });
-            }
-          }
-        }
-      }
-    } catch (e: any) {
-      console.warn('[Vercel Web Search] APInex tool search notice:', e?.message);
-    }
-  }
-
-  if (results.length === 0) {
-    const wikiResults = await searchViaWikipediaApi(query);
-    results.push(...wikiResults);
-  }
+  const wikiResults = await searchViaWikipediaApi(query);
+  results.push(...wikiResults);
 
   if (results.length === 0) {
     const ddgApiResults = await searchViaDuckDuckGoApi(query);
@@ -1503,7 +1368,7 @@ async function generateSearchSummary(
   query: string,
   results: any[],
   requestId: string
-): Promise<string> {
+): Promise<{ text: string; providerUsed: string; modelUsed: string }> {
   const contextText = results
     .slice(0, 5)
     .map((r, i) => `[Source ${i + 1}] Title: ${r.title}\nURL: ${r.url}\nExcerpt: ${r.snippet}`)
@@ -1515,34 +1380,44 @@ async function generateSearchSummary(
 
   try {
     const res1 = await callRoutedCompletion(userPrompt, systemPrompt, [], {
-      modelOverride: 'free/glm-5.3-flash',
       taskType: 'fast',
       maxTokens: 1200,
       requestId,
       endpointName: 'WebSearchSummary'
     });
     if (res1.text && res1.text.trim()) {
-      return res1.text.trim();
+      return {
+        text: res1.text.trim(),
+        providerUsed: res1.providerUsed,
+        modelUsed: res1.modelUsed
+      };
     }
   } catch (err: any) {
     const isLengthError = err?.message && (err.message.includes('finish_reason=length') || err.message.includes('length'));
     if (isLengthError) {
       try {
         const res2 = await callRoutedCompletion(userPrompt, systemPrompt, [], {
-          modelOverride: 'free/glm-5.3-flash',
           taskType: 'fast',
           maxTokens: 2000,
           requestId,
           endpointName: 'WebSearchSummary'
         });
         if (res2.text && res2.text.trim()) {
-          return res2.text.trim();
+          return {
+            text: res2.text.trim(),
+            providerUsed: res2.providerUsed,
+            modelUsed: res2.modelUsed
+          };
         }
       } catch {}
     }
   }
 
-  return `Retrieved ${results.length} verified educational web sources for "${query}". Review the key sources, explanations, and excerpts below.`;
+  return {
+    text: `Retrieved ${results.length} verified educational web sources for "${query}". Review the key sources, explanations, and excerpts below.`,
+    providerUsed: 'none',
+    modelUsed: 'none'
+  };
 }
 
 async function parseJsonBody(req: any): Promise<any> {
@@ -1874,72 +1749,17 @@ export default async function handler(req: any, res: any) {
       provider: 'multi-provider',
       groqModels: GROQ_MODELS,
       ministralModel: 'ministral-8b-2410',
-      apinexModel: 'free/glm-5.3-flash',
       runtime: 'vercel-serverless'
     });
   }
 
-  // 2. APInex Debug & Diagnostic Route
-  if (
-    pathname === '/api/ai/debug-apinex' ||
-    pathname === '/api/ai/debug-apinex/' ||
-    pathname === '/api/debug/apinex' ||
-    pathname === '/api/debug/nvidia'
-  ) {
-    const key = getApinexApiKey();
-    const configured = Boolean(key);
-
-    if (!configured) {
-      return sendJson(res, 200, {
-        success: false,
-        providerUsed: 'none',
-        modelUsed: 'none',
-        apinexKeyConfigured: false,
-        requestId,
-        message: 'APINEX_API_KEY environment variable is not configured on the server process.'
-      });
-    }
-
-    try {
-      const result = await callRoutedCompletion(
-        'Hi',
-        'You are an APInex diagnostic agent.',
-        [],
-        {
-          endpointName: 'ApinexDiagnostic',
-          taskType: 'fast',
-          maxTokens: 500,
-          requestId
-        }
-      );
-
-      return sendJson(res, 200, {
-        success: true,
-        providerUsed: result.providerUsed,
-        modelUsed: result.modelUsed,
-        apinexKeyConfigured: true,
-        httpStatus: 200,
-        response: result.text,
-        requestId,
-        telemetry: {
-          requestId,
-          providerUsed: result.providerUsed,
-          modelUsed: result.modelUsed,
-          complexityTier: result.tier,
-          totalGenerationTimeMs: result.totalMs,
-          streamed: false
-        }
-      });
-    } catch (err: any) {
-      return sendJson(res, err?.status || 500, {
-        success: false,
-        providerUsed: err?.providerUsed || 'error',
-        modelUsed: err?.modelUsed || 'error',
-        apinexKeyConfigured: true,
-        requestId,
-        error: err.message || 'APInex diagnostic test failed'
-      });
-    }
+  // 2. Disabled legacy diagnostic endpoint
+  if (pathname === '/api/debug/nvidia') {
+    return sendJson(res, 410, {
+      success: false,
+      error: 'This diagnostic endpoint has been disabled. Veylentra AI routes strictly through Ministral and Groq.',
+      requestId
+    });
   }
 
 function repairTruncatedStrokesJson(raw: string): any {
@@ -2066,8 +1886,7 @@ Schema:
         systemInstruction,
         [],
         {
-          taskType: 'fast',
-          modelOverride: 'apinex',
+          taskType: 'tool',
           jsonMode: true,
           maxTokens: 8192,
           requestId
@@ -2082,8 +1901,8 @@ Schema:
           success: true,
           title: parsed.title || userPrompt,
           strokes: parsed.strokes,
-          providerUsed: 'ai',
-          modelUsed: resResult?.modelUsed || 'byte-model',
+          providerUsed: resResult?.providerUsed || 'ministral',
+          modelUsed: resResult?.modelUsed || 'ministral-8b-2410',
           requestId
         });
       }
@@ -2106,24 +1925,22 @@ Schema:
   // 2.6 Formula Pen Handwriting & Equation Recognition endpoint
   if (pathname === '/api/ai/handwriting-formula' || pathname === '/api/ai/handwriting-formula/') {
     const body = await parseJsonBody(req);
-    const { image, prompt, strokePoints } = body;
+    const { image, prompt } = body;
     let recognizedText = '';
 
     if (image && String(image).startsWith('data:image/')) {
-      // Vision model OCR can be routed via APInex / Mistral or fallback
       try {
         const cleanBase64 = String(image).replace(/^data:image\/[a-zA-Z]+;base64,/, '').trim();
-        // APInex vision or text recognition
-        const apinexKey = getApinexApiKey();
-        if (apinexKey) {
-          const resOcr = await fetch(APINEX_CHAT_COMPLETIONS_URL, {
+        const ministralKey = getMinistralApiKey();
+        if (ministralKey) {
+          const resOcr = await fetch(MINISTRAL_CHAT_COMPLETIONS_URL, {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${apinexKey}`,
+              'Authorization': `Bearer ${ministralKey}`,
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-              model: 'free/glm-5.3-flash',
+              model: 'ministral-8b-2410',
               messages: [
                 {
                   role: 'user',
@@ -2142,7 +1959,7 @@ Schema:
           }
         }
       } catch (e) {
-        console.warn('[Handwriting OCR] API attempt error:', e);
+        console.warn('[Handwriting OCR] Ministral attempt error:', e);
       }
     }
 
@@ -2291,7 +2108,7 @@ ${combinedContext}
       return;
     }
 
-    // Non-streaming completion across Groq, Ministral, and APInex
+    // Non-streaming completion across Groq and Ministral
     try {
       const result = await callRoutedCompletion(
         prompt,
@@ -2341,9 +2158,9 @@ ${combinedContext}
       });
     } catch (err: any) {
       const statusCode = typeof err?.status === 'number' && err.status >= 400 ? err.status : 500;
-      const errProvider = err?.providerUsed || 'apinex';
-      const errModel = err?.modelUsed || 'free/glm-5.3-flash';
-      const errTier = err?.tier || (errProvider === 'ministral' ? 'general' : errProvider === 'groq' ? 'short' : 'fast');
+      const errProvider = err?.providerUsed || 'groq';
+      const errModel = err?.modelUsed || 'llama-3.1-8b-instant';
+      const errTier = err?.tier || (errProvider === 'ministral' ? 'general' : 'fast');
 
       return sendJson(res, statusCode, {
         success: false,
@@ -2490,23 +2307,13 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
       });
     }
 
-    const apiKey = getApinexApiKey();
     let searchResults: any[] = [];
     try {
-      searchResults = await callApinexWebSearch(cleanQuery, apiKey);
+      searchResults = await searchLiveAcademicWeb(cleanQuery);
     } catch (searchErr: any) {
       console.warn(`[Vercel Web Search Notice] requestId=${requestId}:`, searchErr?.message || searchErr);
     }
 
-    if (!Array.isArray(searchResults) || searchResults.length === 0) {
-      searchResults = await searchViaWikipediaApi(cleanQuery);
-    }
-    if (!Array.isArray(searchResults) || searchResults.length === 0) {
-      searchResults = await searchViaDuckDuckGoApi(cleanQuery);
-    }
-    if (!Array.isArray(searchResults) || searchResults.length === 0) {
-      searchResults = await searchViaFallbackHtml(cleanQuery);
-    }
     if (!Array.isArray(searchResults) || searchResults.length === 0) {
       searchResults = [{
         title: `${cleanQuery} - Educational Reference Guide`,
@@ -2526,13 +2333,18 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
       videos = [];
     }
 
-    let summary = '';
+    let summaryResult = {
+      text: `Retrieved verified educational references and live web sources for "${cleanQuery}".`,
+      providerUsed: 'none',
+      modelUsed: 'none'
+    };
     try {
-      summary = await generateSearchSummary(cleanQuery, searchResults, requestId);
+      summaryResult = await generateSearchSummary(cleanQuery, searchResults, requestId);
     } catch {
-      summary = `Retrieved verified educational references and live web sources for "${cleanQuery}".`;
+      // fallback already set
     }
 
+    let summary = summaryResult.text;
     if (cleanQuery.toLowerCase().includes('video') && (!videos || videos.length === 0)) {
       summary += '\n\nNote: No verified playable educational videos could be found for this specific query.';
     }
@@ -2545,8 +2357,8 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
       requestId,
       telemetry: {
         requestId,
-        providerUsed: 'apinex',
-        modelUsed: 'free/glm-5.3-flash',
+        providerUsed: summaryResult.providerUsed,
+        modelUsed: summaryResult.modelUsed,
         resultsCount: searchResults.length
       }
     });

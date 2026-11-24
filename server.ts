@@ -7,8 +7,8 @@ import express from 'express';
 import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
-import { generateAICompletion, generateAICompletionWithTelemetry, streamAICompletion, classifyTaskComplexity, getApinexApiKey } from './server/aiClient';
-import { generateApinexTTS, transcribeApinexSTT } from './server/voiceService';
+import { generateAICompletion, generateAICompletionWithTelemetry, streamAICompletion, classifyTaskComplexity, getGroqApiKey, getMinistralApiKey } from './server/aiClient';
+import { generateVoiceTTS, transcribeVoiceSTT } from './server/voiceService';
 import { synthesizeEdgeSpeech, VERIFIED_EDGE_VOICES, cleanTextForSpeech } from './server/edgeTtsService';
 import { getVerified3DModelsCatalog, getAllThreeDRequests, createThreeDRequest, updateThreeDRequestStatus } from './server/threeDModelService';
 import dotenv from 'dotenv';
@@ -321,12 +321,51 @@ app.get('/api/push/vapid-public-key', (req, res) => {
   res.json({ publicKey: vapidKeys.publicKey || CANONICAL_VAPID_PUBLIC_KEY });
 });
 
+function isAnonymousPushUserIdServer(uid?: string | null): boolean {
+  const norm = String(uid || '').trim().toLowerCase();
+  return !norm || norm === 'usr_anonymous' || norm === 'anonymous' || norm === 'guest' || norm === 'user_guest';
+}
+
+async function resolvePushSupabaseConfig(userJwt?: string): Promise<{
+  url: string;
+  apiKey: string;
+  authHeader: string;
+  usingServiceRole: boolean;
+  serviceRoleConfigured: boolean;
+  serviceRoleVerified: boolean;
+}> {
+  const cfg = getSupabaseServerConfig();
+  const rawSrKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || '';
+  const serviceRoleConfigured = Boolean(rawSrKey && !isKnownInvalidSupabaseKey(rawSrKey, cfg.url));
+  if (serviceRoleConfigured && !verifiedServiceRoleKeys.has(rawSrKey) && (process.env.NODE_ENV !== 'test' || cfg.url.includes('127.0.0.1'))) {
+    await probeServiceRoleKey(cfg.url, rawSrKey);
+  }
+  const serviceRoleVerified = Boolean(serviceRoleConfigured && verifiedServiceRoleKeys.has(rawSrKey));
+  const serverKey = getFeatureAndWinterSupabaseKey(cfg.url, cfg.key) || WORKING_ANON_KEY;
+  const usingServiceRole = Boolean(
+    serviceRoleVerified ||
+    ((cfg.url.includes('127.0.0.1') || cfg.url.includes('localhost')) && Boolean(rawSrKey) && serverKey === rawSrKey)
+  );
+  const authHeader = usingServiceRole
+    ? `Bearer ${serverKey}`
+    : (userJwt ? `Bearer ${userJwt}` : `Bearer ${serverKey}`);
+  return {
+    url: cfg.url,
+    apiKey: serverKey,
+    authHeader,
+    usingServiceRole,
+    serviceRoleConfigured,
+    serviceRoleVerified,
+  };
+}
+
 // Helper to persist subscription to Supabase push_subscriptions with verified schema
 async function persistSubscriptionToSupabase(params: {
   endpoint: string;
   p256dh: string;
   auth: string;
-  userId?: string | null;
+  userId: string;
+  userJwt?: string;
   deviceId?: string;
   deviceLabel?: string;
   role?: string;
@@ -335,15 +374,14 @@ async function persistSubscriptionToSupabase(params: {
   house?: string;
   schoolId?: string;
   fcmToken?: string;
-}): Promise<{ success: boolean; error?: string }> {
-  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
-  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+}): Promise<{ success: boolean; status?: number; error?: string }> {
+  const sb = await resolvePushSupabaseConfig(params.userJwt);
   const now = new Date().toISOString();
 
   const richKeys = {
     p256dh: params.p256dh,
     auth: params.auth,
-    userId: params.userId || null,
+    userId: params.userId,
     deviceId: params.deviceId || 'dev_web',
     deviceLabel: params.deviceLabel || 'Web Browser',
     role: params.role || 'student',
@@ -357,7 +395,7 @@ async function persistSubscriptionToSupabase(params: {
   };
 
   const payload: Record<string, any> = {
-    user_id: params.userId || 'usr_anonymous',
+    user_id: params.userId,
     endpoint: params.endpoint,
     p256dh: params.p256dh,
     auth: params.auth,
@@ -369,52 +407,105 @@ async function persistSubscriptionToSupabase(params: {
     updated_at: now
   };
 
-  const resp = await fetch(`${supabaseUrl}/rest/v1/push_subscriptions?on_conflict=endpoint`, {
-    method: 'POST',
-    headers: {
-      'apikey': supabaseKey,
-      'Authorization': `Bearer ${supabaseKey}`,
-      'Content-Type': 'application/json',
-      'Prefer': 'resolution=merge-duplicates'
-    },
-    body: JSON.stringify(payload)
-  });
+  try {
+    const resp = await supabaseFetchWithAnonRetry(
+      `${sb.url}/rest/v1/push_subscriptions?on_conflict=endpoint`,
+      {
+        method: 'POST',
+        headers: {
+          apikey: sb.apiKey,
+          Authorization: sb.authHeader,
+          'Content-Type': 'application/json',
+          Prefer: 'resolution=merge-duplicates,return=minimal'
+        },
+        body: JSON.stringify(payload)
+      }
+    );
 
-  if (!resp.ok) {
-    const errText = await resp.text();
-    console.error(`[FCM SERVER] Supabase push_subscriptions upsert failed (${resp.status}):`, errText);
-    return { success: false, error: errText };
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => resp.statusText || 'Supabase upsert failed');
+      console.error(`[FCM SERVER] Supabase push_subscriptions upsert failed (${resp.status}):`, errText);
+      return { success: false, status: resp.status, error: errText || `HTTP ${resp.status}` };
+    }
+
+    console.log(`[FCM SERVER] Stored active push subscription in Supabase: userId=${params.userId}, role=${params.role || 'student'}, device="${params.deviceLabel || 'Browser'}"`);
+    return { success: true, status: resp.status };
+  } catch (err: any) {
+    const msg = err?.message || 'Supabase push_subscriptions request failed';
+    console.error('[FCM SERVER] Supabase push_subscriptions network error:', msg);
+    return { success: false, status: 502, error: msg };
   }
-
-  console.log(`[FCM SERVER] Stored active push subscription in Supabase: userId=${params.userId || 'anon'}, role=${params.role || 'student'}, device="${params.deviceLabel || 'Browser'}"`);
-  return { success: true };
 }
 
 // Register FCM Device Token & WebPush Subscription for authenticated user & device
 app.post('/api/push/fcm-token', async (req, res) => {
-  const { token, fcmToken, userId, deviceId, deviceLabel, role, grade, section, house, schoolId, subscription, userAgent } = req.body || {};
-  const primaryToken = subscription?.endpoint || token || fcmToken;
-  if (!primaryToken) {
-    return res.status(400).json({ error: 'FCM registration token or subscription endpoint is required.' });
+  const actor = await resolveFeatureAndWinterActor(req).catch(() => null);
+  if (!actor || isAnonymousPushUserIdServer(actor.id)) {
+    return res.status(401).json({
+      status: 'error',
+      error: 'Authentication is required to register push notifications.',
+      tokenStored: false
+    });
   }
 
+  const { token, fcmToken, deviceId, deviceLabel, role, grade, section, house, schoolId, subscription, userAgent } = req.body || {};
+  if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
+    return res.status(400).json({
+      status: 'error',
+      error: 'A complete Web Push subscription with endpoint, p256dh, and auth keys is required.',
+      tokenStored: false
+    });
+  }
+
+  const primaryToken = String(subscription.endpoint).trim();
+  const effectiveUserId = actor.id;
+  const effectiveRole = actor.role || role || 'student';
+  const effectiveGrade = actor.grade || grade || '';
+  const effectiveSection = actor.section || section || '';
   const devId = deviceId || 'dev_' + Math.random().toString(36).substring(2, 10);
+
+  const sbResult = await persistSubscriptionToSupabase({
+    endpoint: primaryToken,
+    p256dh: String(subscription.keys.p256dh),
+    auth: String(subscription.keys.auth),
+    userId: effectiveUserId,
+    userJwt: actor.authToken,
+    deviceId: devId,
+    deviceLabel: deviceLabel || 'Web Browser',
+    role: effectiveRole,
+    grade: effectiveGrade,
+    section: effectiveSection,
+    house: house || '',
+    schoolId: schoolId || 'default_school',
+    fcmToken: fcmToken || token || primaryToken
+  });
+
+  if (!sbResult.success) {
+    return res.status(502).json({
+      status: 'error',
+      error: 'Failed to save push subscription to Supabase public.push_subscriptions',
+      details: sbResult.error,
+      supabaseStatus: sbResult.status || 502,
+      tokenStored: false
+    });
+  }
+
   const existingIdx = memoryFCMTokens.findIndex(
-    t => t.token === primaryToken || (t.deviceId === devId && t.userId === userId)
+    t => t.token === primaryToken || (t.deviceId === devId && t.userId === effectiveUserId)
   );
 
   const newItem: FCMTokenItem = {
     token: primaryToken,
-    fcmToken: fcmToken || token,
-    userId: userId || null,
+    fcmToken: fcmToken || token || primaryToken,
+    userId: effectiveUserId,
     deviceId: devId,
     deviceLabel: deviceLabel || 'Web Browser',
-    role: role || 'student',
-    grade: grade || '',
-    section: section || '',
+    role: effectiveRole,
+    grade: effectiveGrade,
+    section: effectiveSection,
     house: house || '',
     schoolId: schoolId || 'default_school',
-    subscription: subscription || null,
+    subscription,
     userAgent: userAgent || '',
     isActive: true,
     updatedAt: Date.now()
@@ -426,57 +517,57 @@ app.post('/api/push/fcm-token', async (req, res) => {
     memoryFCMTokens.push(newItem);
   }
 
-  console.log(`[FCM SERVER] Registered device token: userId=${userId || 'anonymous'}, tokenExists=yes, tokenActive=yes, role=${role || 'student'}, label="${newItem.deviceLabel}"`);
-
-  // Persist to Supabase push_subscriptions table using exact verified schema
-  if (subscription?.endpoint && subscription?.keys?.p256dh && subscription?.keys?.auth) {
-    const sbResult = await persistSubscriptionToSupabase({
-      endpoint: subscription.endpoint,
-      p256dh: subscription.keys.p256dh,
-      auth: subscription.keys.auth,
-      userId: userId || null,
-      deviceId: devId,
-      deviceLabel: deviceLabel || 'Web Browser',
-      role: role || 'student',
-      grade: grade || '',
-      section: section || '',
-      house: house || '',
-      schoolId: schoolId || 'default_school',
-      fcmToken: fcmToken || token
-    });
-
-    if (!sbResult.success) {
-      return res.status(502).json({
-        status: 'error',
-        error: 'Failed to save push subscription to Supabase public.push_subscriptions',
-        details: sbResult.error,
-        tokenStored: false
-      });
-    }
-  }
-
-  return res.json({ status: 'ok', deviceId: devId, tokenStored: true });
+  console.log(`[FCM SERVER] Registered device token: userId=${effectiveUserId}, tokenExists=yes, tokenActive=yes, role=${effectiveRole}, label="${newItem.deviceLabel}"`);
+  return res.json({ status: 'ok', deviceId: devId, userId: effectiveUserId, tokenStored: true });
 });
 
 // Deactivate FCM Device Token
 app.post('/api/push/fcm-token/delete', async (req, res) => {
-  const { token, deviceId, userId } = req.body || {};
+  const actor = await resolveFeatureAndWinterActor(req).catch(() => null);
+  if (!actor || isAnonymousPushUserIdServer(actor.id)) {
+    return res.status(401).json({
+      status: 'error',
+      error: 'Authentication is required to remove push subscriptions.'
+    });
+  }
+
+  const { token, deviceId } = req.body || {};
   for (let i = memoryFCMTokens.length - 1; i >= 0; i--) {
     const item = memoryFCMTokens[i];
-    if ((token && (item.token === token || item.subscription?.endpoint === token)) || (deviceId && item.deviceId === deviceId)) {
+    if (
+      item.userId === actor.id &&
+      ((token && (item.token === token || item.subscription?.endpoint === token)) ||
+        (deviceId && item.deviceId === deviceId))
+    ) {
       item.isActive = false;
     }
   }
 
-  if (token && token.startsWith('http')) {
+  if (token && String(token).startsWith('http')) {
     try {
-      const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
-      const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
-      await fetch(`${supabaseUrl}/rest/v1/push_subscriptions?endpoint=eq.${encodeURIComponent(token)}`, {
-        method: 'DELETE',
-        headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
+      const sb = await resolvePushSupabaseConfig(actor.authToken);
+      const delRes = await supabaseFetchWithAnonRetry(
+        `${sb.url}/rest/v1/push_subscriptions?endpoint=eq.${encodeURIComponent(String(token))}&user_id=eq.${encodeURIComponent(actor.id)}`,
+        {
+          method: 'DELETE',
+          headers: { apikey: sb.apiKey, Authorization: sb.authHeader }
+        }
+      );
+      if (!delRes.ok) {
+        const errText = await delRes.text().catch(() => '');
+        return res.status(502).json({
+          status: 'error',
+          error: 'Failed to delete push subscription from Supabase public.push_subscriptions',
+          details: errText || `HTTP ${delRes.status}`
+        });
+      }
+    } catch (err: any) {
+      return res.status(502).json({
+        status: 'error',
+        error: 'Failed to delete push subscription from Supabase public.push_subscriptions',
+        details: err?.message || String(err)
       });
-    } catch (_) {}
+    }
   }
 
   return res.json({ status: 'ok' });
@@ -484,64 +575,93 @@ app.post('/api/push/fcm-token/delete', async (req, res) => {
 
 // Backward-compatible subscribe endpoint
 app.post('/api/push/subscribe', async (req, res) => {
-  const { subscription, userId, deviceId, userAgent, role, grade, section, house, schoolId } = req.body || {};
-  if (subscription && subscription.endpoint) {
-    const devId = deviceId || 'dev_' + Math.random().toString(36).substring(2, 10);
-    const existingIdx = memoryFCMTokens.findIndex(t => t.token === subscription.endpoint || t.deviceId === devId);
-    
-    const newItem: FCMTokenItem = {
-      token: subscription.endpoint,
-      userId: userId || null,
-      deviceId: devId,
-      role: role || 'student',
-      grade: grade || '',
-      section: section || '',
-      house: house || '',
-      schoolId: schoolId || 'default_school',
-      subscription,
-      userAgent: userAgent || '',
-      isActive: true,
-      updatedAt: Date.now()
-    };
-
-    if (existingIdx >= 0) {
-      memoryFCMTokens[existingIdx] = newItem;
-    } else {
-      memoryFCMTokens.push(newItem);
-    }
-
-    if (subscription.keys?.p256dh && subscription.keys?.auth) {
-      const sbResult = await persistSubscriptionToSupabase({
-        endpoint: subscription.endpoint,
-        p256dh: subscription.keys.p256dh,
-        auth: subscription.keys.auth,
-        userId: userId || null,
-        deviceId: devId,
-        deviceLabel: userAgent || 'Web Browser',
-        role: role || 'student',
-        grade: grade || '',
-        section: section || '',
-        house: house || '',
-        schoolId: schoolId || 'default_school'
-      });
-
-      if (!sbResult.success) {
-        return res.status(502).json({
-          status: 'error',
-          error: 'Failed to save push subscription to Supabase public.push_subscriptions',
-          details: sbResult.error
-        });
-      }
-    }
+  const actor = await resolveFeatureAndWinterActor(req).catch(() => null);
+  if (!actor || isAnonymousPushUserIdServer(actor.id)) {
+    return res.status(401).json({
+      status: 'error',
+      error: 'Authentication is required to subscribe to push notifications.',
+      tokenStored: false
+    });
   }
-  return res.json({ status: 'ok' });
+
+  const { subscription, deviceId, userAgent, role, grade, section, house, schoolId } = req.body || {};
+  if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
+    return res.status(400).json({
+      status: 'error',
+      error: 'A complete Web Push subscription with endpoint, p256dh, and auth keys is required.',
+      tokenStored: false
+    });
+  }
+
+  const devId = deviceId || 'dev_' + Math.random().toString(36).substring(2, 10);
+  const effectiveUserId = actor.id;
+  const effectiveRole = actor.role || role || 'student';
+  const effectiveGrade = actor.grade || grade || '';
+  const effectiveSection = actor.section || section || '';
+
+  const sbResult = await persistSubscriptionToSupabase({
+    endpoint: String(subscription.endpoint).trim(),
+    p256dh: String(subscription.keys.p256dh),
+    auth: String(subscription.keys.auth),
+    userId: effectiveUserId,
+    userJwt: actor.authToken,
+    deviceId: devId,
+    deviceLabel: userAgent || 'Web Browser',
+    role: effectiveRole,
+    grade: effectiveGrade,
+    section: effectiveSection,
+    house: house || '',
+    schoolId: schoolId || 'default_school'
+  });
+
+  if (!sbResult.success) {
+    return res.status(502).json({
+      status: 'error',
+      error: 'Failed to save push subscription to Supabase public.push_subscriptions',
+      details: sbResult.error,
+      supabaseStatus: sbResult.status || 502,
+      tokenStored: false
+    });
+  }
+
+  const existingIdx = memoryFCMTokens.findIndex(t => t.token === subscription.endpoint || t.deviceId === devId);
+  const newItem: FCMTokenItem = {
+    token: subscription.endpoint,
+    userId: effectiveUserId,
+    deviceId: devId,
+    role: effectiveRole,
+    grade: effectiveGrade,
+    section: effectiveSection,
+    house: house || '',
+    schoolId: schoolId || 'default_school',
+    subscription,
+    userAgent: userAgent || '',
+    isActive: true,
+    updatedAt: Date.now()
+  };
+
+  if (existingIdx >= 0) {
+    memoryFCMTokens[existingIdx] = newItem;
+  } else {
+    memoryFCMTokens.push(newItem);
+  }
+
+  return res.json({ status: 'ok', deviceId: devId, userId: effectiveUserId, tokenStored: true });
 });
 
 app.post('/api/push/unsubscribe', async (req, res) => {
-  const { deviceId, userId } = req.body || {};
+  const actor = await resolveFeatureAndWinterActor(req).catch(() => null);
+  if (!actor || isAnonymousPushUserIdServer(actor.id)) {
+    return res.status(401).json({
+      status: 'error',
+      error: 'Authentication is required to unsubscribe.'
+    });
+  }
+
+  const { deviceId } = req.body || {};
   for (let i = memoryFCMTokens.length - 1; i >= 0; i--) {
     const item = memoryFCMTokens[i];
-    if ((deviceId && item.deviceId === deviceId) || (userId && item.userId === userId)) {
+    if (item.userId === actor.id && (!deviceId || item.deviceId === deviceId)) {
       item.isActive = false;
     }
   }
@@ -769,14 +889,17 @@ export async function dispatchServerWebPush(params: PushDispatchParams) {
   });
 
   // 2. Query push_subscriptions from Supabase (authoritative persistent store across Vercel serverless invocations)
-  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
-  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
+  const sb = await resolvePushSupabaseConfig();
+  let supabaseQueryError: string | null = null;
 
-  if (process.env.NODE_ENV !== 'test' || supabaseUrl.includes('127.0.0.1')) {
+  if (process.env.NODE_ENV !== 'test' || sb.url.includes('127.0.0.1')) {
     try {
-      const subRes = await fetch(`${supabaseUrl}/rest/v1/push_subscriptions?select=*`, {
-        headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
-      });
+      const subRes = await supabaseFetchWithAnonRetry(
+        `${sb.url}/rest/v1/push_subscriptions?select=*`,
+        {
+          headers: { apikey: sb.apiKey, Authorization: sb.authHeader }
+        }
+      );
 
       if (subRes.ok) {
         const dbSubs = await subRes.json();
@@ -805,9 +928,14 @@ export async function dispatchServerWebPush(params: PushDispatchParams) {
             }
           });
         }
+      } else {
+        const errText = await subRes.text().catch(() => subRes.statusText);
+        supabaseQueryError = `HTTP ${subRes.status}: ${errText || 'Failed to read public.push_subscriptions'}`;
+        console.warn('[FCM PUSH SEND] Supabase query failed:', supabaseQueryError);
       }
     } catch (dbErr: any) {
-      console.warn('[FCM PUSH SEND] Database query notice:', dbErr?.message);
+      supabaseQueryError = dbErr?.message || 'Supabase query exception';
+      console.warn('[FCM PUSH SEND] Database query notice:', supabaseQueryError);
     }
   }
 
@@ -822,7 +950,8 @@ export async function dispatchServerWebPush(params: PushDispatchParams) {
     })
   );
 
-  const vapidConfigured = Boolean(vapidKeys.publicKey && vapidKeys.privateKey);
+  const runtimeVapid = getOrGenerateVapidKeys();
+  const vapidConfigured = Boolean(runtimeVapid.publicKey && runtimeVapid.privateKey);
   if (!vapidConfigured) {
     console.warn('[FCM PUSH SEND] VAPID_PRIVATE_KEY is missing in server environment; preserving subscriptions and skipping unsigned webpush delivery.');
     return {
@@ -837,6 +966,15 @@ export async function dispatchServerWebPush(params: PushDispatchParams) {
       error: 'Server VAPID_PRIVATE_KEY environment variable is not configured.',
       deliveryLogs: []
     };
+  }
+  if (!vapidKeys.privateKey && runtimeVapid.privateKey) {
+    try {
+      webpush.setVapidDetails(
+        'mailto:notifications@studentos.internal',
+        runtimeVapid.publicKey,
+        runtimeVapid.privateKey
+      );
+    } catch (_) {}
   }
 
   let sentCount = 0;
@@ -921,10 +1059,13 @@ export async function dispatchServerWebPush(params: PushDispatchParams) {
           const idx = memoryFCMTokens.findIndex(m => m.token === item.endpoint || m.subscription?.endpoint === item.endpoint);
           if (idx >= 0) memoryFCMTokens.splice(idx, 1);
           try {
-            await fetch(`${supabaseUrl}/rest/v1/push_subscriptions?endpoint=eq.${encodeURIComponent(item.endpoint)}`, {
-              method: 'DELETE',
-              headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
-            });
+            await supabaseFetchWithAnonRetry(
+              `${sb.url}/rest/v1/push_subscriptions?endpoint=eq.${encodeURIComponent(item.endpoint)}`,
+              {
+                method: 'DELETE',
+                headers: { apikey: sb.apiKey, Authorization: sb.authHeader }
+              }
+            );
             console.log(`[FCM PUSH CLEANUP] Removed expired push subscription (HTTP ${statusCode}) for user="${item.userId || 'anon'}".`);
           } catch (_) {}
         }
@@ -941,12 +1082,20 @@ export async function dispatchServerWebPush(params: PushDispatchParams) {
     failCount,
     totalCandidates: matchedTargets.length,
     fcmSendResult: sentCount > 0 ? 'DELIVERED' : (matchedTargets.length === 0 ? 'NO_TOKENS_REGISTERED' : 'DELIVERY_FAILED'),
+    supabaseError: supabaseQueryError || undefined,
     deliveryLogs
   };
 }
 
 // Targeted Server-Side Push Dispatch via FCM & Web Push
 app.post('/api/push/send', async (req, res) => {
+  const actor = await resolveFeatureAndWinterActor(req).catch(() => null);
+  if (!actor || isAnonymousPushUserIdServer(actor.id)) {
+    return res.status(401).json({
+      status: 'error',
+      error: 'Authentication is required to dispatch server web push notifications.'
+    });
+  }
   const result = await dispatchServerWebPush(req.body || {});
   return res.json(result);
 });
@@ -954,13 +1103,16 @@ app.post('/api/push/send', async (req, res) => {
 // Real-time Push Diagnostic Endpoint
 app.get('/api/push/debug-status', async (req, res) => {
   const activeMemoryTokens = memoryFCMTokens.filter(t => t.isActive);
+  const sb = await resolvePushSupabaseConfig();
   let supabaseSubscriptions: any[] = [];
+  let supabaseError: string | null = null;
   try {
-    const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zwpoutanhsujezglbson.supabase.co';
-    const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3cG91dGFuaHN1amV6Z2xic29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2OTA2MDEsImV4cCI6MjA5NzI2NjYwMX0.Y48u9duD3WohxzDD6czXevPaG1mFRFS0rdRuu4840pQ';
-    const subRes = await fetch(`${supabaseUrl}/rest/v1/push_subscriptions?select=*`, {
-      headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
-    });
+    const subRes = await supabaseFetchWithAnonRetry(
+      `${sb.url}/rest/v1/push_subscriptions?select=*`,
+      {
+        headers: { apikey: sb.apiKey, Authorization: sb.authHeader }
+      }
+    );
     if (subRes.ok) {
       const rows = await subRes.json();
       if (Array.isArray(rows)) {
@@ -978,12 +1130,20 @@ app.get('/api/push/debug-status', async (req, res) => {
           updatedAt: r.updated_at
         }));
       }
+    } else {
+      const errText = await subRes.text().catch(() => subRes.statusText);
+      supabaseError = `HTTP ${subRes.status}: ${errText || 'Supabase read failed'}`;
     }
-  } catch (_) {}
+  } catch (err: any) {
+    supabaseError = err?.message || 'Supabase read exception';
+  }
 
   res.json({
     vapidConfigured: Boolean(vapidKeys.publicKey && vapidKeys.privateKey),
     vapidPublicKeyPrefix: (vapidKeys.publicKey || '').slice(0, 16) + '...',
+    serviceRoleConfigured: sb.serviceRoleConfigured,
+    serviceRoleVerified: sb.serviceRoleVerified,
+    supabaseError,
     activeMemoryTokenCount: activeMemoryTokens.length,
     supabaseSubscriptionCount: supabaseSubscriptions.length,
     supabaseSubscriptions,
@@ -2543,39 +2703,38 @@ app.post('/api/config/apk', async (req, res) => {
   });
 });
 
-// Disabled NVIDIA diagnostic route per approved AI provider lock (APInex, Ministral, Groq only)
+// Disabled NVIDIA diagnostic route per approved AI provider lock (Ministral, Groq only)
 app.all(['/api/debug/nvidia', '/api/debug/nvidia/'], (_req, res) => {
   return res.status(410).json({
     success: false,
-    error: 'This diagnostic endpoint has been disabled. Veylentra AI routes strictly through APInex, Ministral, and Groq.'
+    error: 'This diagnostic endpoint has been disabled. Veylentra AI routes strictly through Ministral and Groq.'
   });
 });
 
-// Minimal Server Diagnostic Route for APInex AI
+// Minimal Server Diagnostic Route for AI Routing (Ministral + Groq)
 app.all('/api/ai/minimal-test', async (req, res) => {
-  const key = getApinexApiKey();
-  const keyPresent = Boolean(key);
+  const groqKey = getGroqApiKey();
+  const ministralKey = getMinistralApiKey();
+  const keyPresent = Boolean(groqKey || ministralKey);
   const requestId = 'test_' + Math.random().toString(36).substring(2, 10);
 
-  console.log(`[APINEX AI DEBUG] Request ID: ${requestId}`);
-  console.log(`[APINEX AI DEBUG] Route: /api/ai/minimal-test`);
-  console.log(`[APINEX AI DEBUG] APINEX_API_KEY present: ${keyPresent}`);
+  console.log(`[AI DEBUG] Request ID: ${requestId} | Route: /api/ai/minimal-test | Providers configured: groq=${Boolean(groqKey)}, ministral=${Boolean(ministralKey)}`);
 
   if (!keyPresent) {
     return res.status(500).json({
       success: false,
       requestId,
-      error: 'APINEX_API_KEY is not configured on the server.',
+      error: 'Neither GROQ_API_KEY nor MINISTRAL_API_KEY is configured on the server.',
       keyPresent: false
     });
   }
 
   try {
     const { text, telemetry } = await generateAICompletionWithTelemetry({
-      prompt: 'Reply with exactly: APINEX TEST OK',
-      endpointName: 'MinimalApinexTest',
-      modelOverride: 'free/glm-5.3-flash',
-      maxTokens: 500,
+      prompt: 'Reply with exactly: AI TEST OK',
+      endpointName: 'MinimalAITest',
+      taskType: groqKey ? 'fast' : 'general',
+      maxTokens: 200,
       requestId
     });
     return res.json({
@@ -2598,12 +2757,13 @@ app.all('/api/ai/minimal-test', async (req, res) => {
   }
 });
 
-// Server-side diagnostic test route for APInex API connection
+// Server-side diagnostic test route for Ministral / Groq AI connection
 app.get('/api/ai/diagnostic', async (req, res) => {
-  const apinexKey = getApinexApiKey();
-  const keyPresent = Boolean(apinexKey);
+  const groqKey = getGroqApiKey();
+  const ministralKey = getMinistralApiKey();
+  const keyPresent = Boolean(groqKey || ministralKey);
   const requestId = 'diag_' + Math.random().toString(36).substring(2, 10);
-  
+
   try {
     const { text, telemetry } = await generateAICompletionWithTelemetry({
       prompt: 'Say hello in 5 words.',
@@ -2615,7 +2775,8 @@ app.get('/api/ai/diagnostic', async (req, res) => {
       success: true,
       requestId,
       keyPresent,
-      keyLength: apinexKey.length,
+      groqConfigured: Boolean(groqKey),
+      ministralConfigured: Boolean(ministralKey),
       providerUsed: telemetry.providerUsed,
       modelUsed: telemetry.modelUsed,
       response: text
@@ -2625,53 +2786,9 @@ app.get('/api/ai/diagnostic', async (req, res) => {
       success: false,
       requestId,
       keyPresent,
-      keyLength: apinexKey.length,
+      groqConfigured: Boolean(groqKey),
+      ministralConfigured: Boolean(ministralKey),
       error: err.message || 'Diagnostic request failed'
-    });
-  }
-});
-
-// APInex Server-Side Health & Test Diagnostic Route
-app.get('/api/ai/debug-apinex', async (req, res) => {
-  const key = getApinexApiKey();
-  const configured = Boolean(key);
-  console.log(`[APINEX DIAGNOSTIC ROUTE] APINEX_API_KEY configured = ${configured}`);
-
-  if (!configured) {
-    return res.status(200).json({
-      success: false,
-      providerUsed: 'none',
-      modelUsed: 'none',
-      apinexKeyConfigured: false,
-      message: 'APINEX_API_KEY environment variable is not configured on the server process.'
-    });
-  }
-
-  try {
-    const { text, telemetry } = await generateAICompletionWithTelemetry({
-      systemInstruction: 'You are an APInex diagnostic agent.',
-      prompt: 'Hi',
-      endpointName: 'ApinexDiagnostic',
-      taskType: 'fast',
-      maxTokens: 500
-    });
-
-    return res.json({
-      success: true,
-      providerUsed: telemetry.providerUsed,
-      modelUsed: telemetry.modelUsed,
-      apinexKeyConfigured: true,
-      httpStatus: 200,
-      response: text,
-      telemetry
-    });
-  } catch (err: any) {
-    return res.status(500).json({
-      success: false,
-      providerUsed: 'error',
-      modelUsed: 'error',
-      apinexKeyConfigured: true,
-      error: err.message || 'APInex diagnostic test failed'
     });
   }
 });
@@ -3023,13 +3140,13 @@ app.post(['/api/ai/chat', '/api/ai/chat/stream'], async (req, res) => {
 
   const isStreamingRequest = Boolean(stream || req.path.endsWith('/stream'));
 
-  const apinexKey = getApinexApiKey();
-  const keyPresent = Boolean(apinexKey);
+  const groqKeyPresent = Boolean(getGroqApiKey());
+  const ministralKeyPresent = Boolean(getMinistralApiKey());
 
   console.log(`[AI DEBUG] Request ID: ${requestId} | Stream: ${isStreamingRequest}`);
   console.log(`[AI DEBUG] Route: ${req.path}`);
   console.log(`[AI DEBUG] Authenticated user: ${Boolean(userId && userId !== 'user_guest' && userId !== 'guest')}`);
-  console.log(`[AI DEBUG] APINEX_API_KEY present: ${keyPresent}`);
+  console.log(`[AI DEBUG] Providers configured: groq=${groqKeyPresent}, ministral=${ministralKeyPresent}`);
 
   if (!prompt) {
     return res.status(400).json({ error: 'Prompt is required' });
@@ -3837,7 +3954,7 @@ Schema:
         });
         rawText = aiResponse;
     } catch (err) {
-        console.error('[Magic Draw AI] Initial attempt failed, retrying with Byte AI model:', err);
+        console.error('[Magic Draw AI] Initial attempt failed, retrying with Ministral tool model:', err);
         try {
             const retryResponse = await generateAICompletion({
                 systemInstruction: systemInstruction,
@@ -3845,7 +3962,8 @@ Schema:
                 jsonMode: true,
                 temperature: 0.2,
                 maxTokens: 12000,
-                modelOverride: 'apinex' 
+                taskType: 'tool',
+                modelOverride: 'ministral'
         });
             rawText = retryResponse;
         } catch (retryErr) {
@@ -4189,7 +4307,7 @@ app.post('/api/ai/search', async (req, res) => {
   }
 });
 
-// APInex Server-Side Text-To-Speech (TTS) Endpoint
+// Server-Side Text-To-Speech (TTS) Endpoint (Microsoft Edge Neural TTS)
 app.post('/api/voice/tts', async (req, res) => {
   const { text, voice = 'nova', speed = 1.0 } = req.body || {};
   if (!text) {
@@ -4197,20 +4315,20 @@ app.post('/api/voice/tts', async (req, res) => {
   }
 
   try {
-    const { audioBuffer, contentType } = await generateApinexTTS({ text, voice, speed });
+    const { audioBuffer, contentType } = await generateVoiceTTS({ text, voice, speed });
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'no-cache');
     return res.send(audioBuffer);
   } catch (err: any) {
-    console.error('[Voice Server] APInex TTS error:', err?.message || err);
+    console.error('[Voice Server] TTS error:', err?.message || err);
     return res.status(502).json({
-      error: 'APInex Voice TTS is temporarily unavailable.',
+      error: 'Voice TTS is temporarily unavailable.',
       details: err?.message || String(err)
     });
   }
 });
 
-// APInex Server-Side Speech-To-Text (STT) Endpoint
+// Server-Side Speech-To-Text (STT) Endpoint
 app.post('/api/voice/stt', async (req, res) => {
   const { audioBase64, mimeType = 'audio/webm' } = req.body || {};
   if (!audioBase64) {
@@ -4219,13 +4337,13 @@ app.post('/api/voice/stt', async (req, res) => {
 
   try {
     const buffer = Buffer.from(audioBase64.replace(/^data:audio\/[a-z]+;base64,/, ''), 'base64');
-    const result = await transcribeApinexSTT(buffer, mimeType);
+    const result = await transcribeVoiceSTT(buffer, mimeType);
     if (result.success) {
       return res.json({ success: true, text: result.text });
     }
-    return res.status(502).json({ success: false, error: result.error || 'STT transcription failed.' });
+    return res.status(501).json({ success: false, error: result.error || 'Server-side audio STT is not supported on Ministral/Groq text models.' });
   } catch (err: any) {
-    console.error('[Voice Server] APInex STT error:', err?.message || err);
+    console.error('[Voice Server] STT error:', err?.message || err);
     return res.status(500).json({ success: false, error: 'Voice transcription failed.' });
   }
 });
@@ -4664,7 +4782,7 @@ Format beautifully in Markdown.`;
 });
 
 // Role-Scoped Orion Workspace Draft & Academic Assist Endpoint
-// Strictly uses approved providers (APInex, Ministral, Groq) and enforces faculty role bounds.
+// Strictly uses approved providers (Ministral, Groq) and enforces faculty role bounds.
 app.post('/api/ai/orion-assist', async (req, res) => {
   const {
     userId = 'anonymous',

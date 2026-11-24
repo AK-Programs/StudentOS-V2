@@ -198,13 +198,16 @@ runTest('Byte reminder engine deterministically prioritizes role-scoped items wi
   assert.ok(coordReminders.some(r => r.type === 'coordinator_alert'));
 });
 
-runTest('Backend AI client strictly locks providers to APInex, Ministral, and Groq (no Gemini)', () => {
+runTest('Backend AI client strictly locks providers to Ministral and Groq (zero APinex or Gemini)', () => {
   const aiClientPath = path.resolve(process.cwd(), 'server/aiClient.ts');
   const content = fs.readFileSync(aiClientPath, 'utf8');
   assert.equal(content.includes('@google/genai'), false);
   assert.equal(content.includes('getGeminiClient'), false);
   assert.equal(content.includes('getGeminiApiKey'), false);
-  assert.ok(content.includes("'apinex'") && content.includes("'groq'") && content.includes("'ministral'"));
+  assert.equal(content.toLowerCase().includes('apinex'), false);
+  assert.equal(content.includes('gpt-6-luna'), false);
+  assert.equal(content.includes('glm-5.3'), false);
+  assert.ok(content.includes("'groq'") && content.includes("'ministral'"));
 });
 
 console.log(`\n🎉 All ${passed} Experience Upgrade tests passed!`);

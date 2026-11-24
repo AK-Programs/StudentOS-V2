@@ -6,7 +6,7 @@
  * - Explicit Byte (non-AI deterministic reminders & schedule) vs Orion (AI academic assistant)
  * - Explicit user-triggered voice capture with listening indicator, Cancel/Stop controls,
  *   editable transcript textarea before sending, and clean typing fallback on permission denial
- * - Calls /api/ai/orion-assist strictly through APInex / Ministral / Groq for Orion
+ * - Calls /api/ai/orion-assist strictly through Ministral / Groq for Orion
  * - Explicit user confirmation required before saving any Orion draft as a Note
  */
 

@@ -163,7 +163,7 @@ function getDefaultAiThreadsForUser(userId: string): AiBuddyThread[] {
         personaId: 'study_buddy',
         mode: 'explanatory',
         messages: [
-          { role: 'assistant', content: 'Welcome, Naitik (Super Admin)! All multi-provider LLM routers (Groq, Ministral, APInex) and Supabase realtime channels are operational. What would you like to build or analyze today?' }
+          { role: 'assistant', content: 'Welcome, Naitik (Super Admin)! All multi-provider LLM routers (Groq and Ministral) and Supabase realtime channels are operational. What would you like to build or analyze today?' }
         ],
         attachedFiles: [],
         userId,

@@ -11,6 +11,7 @@ import { supabase } from './supabase';
 import { sendRealtimeEvent, subscribeRealtimeEvents } from './wsHelper';
 import { UserProfile, UserRole } from '../types';
 import { soundService } from './soundService';
+import { buildPushApiAuthHeaders } from './fcmNotifications';
 
 export type CallStatus =
   | 'IDLE'
@@ -117,23 +118,28 @@ async function dispatchCallPushNotification(session: SchoolCallSession, targetUi
 
   const body = session.contextSubtitle || `${session.contextTitle} • Tap to join now.`;
 
+  const authHeadersPromise = buildPushApiAuthHeaders(session.caller.uid, { role: session.caller.role });
   for (const uid of targetUids) {
     if (uid === session.caller.uid) continue;
     try {
-      fetch('/api/push/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          notificationId: session.callId,
-          title,
-          body,
-          type: 'call',
-          linkTab: 'peer_chat',
-          tag: `call-${session.callId}`,
-          targetUserId: uid,
-          targetSchoolId: session.schoolId
-        })
-      }).catch(err => console.warn('[CallService] Push dispatch warning:', err));
+      authHeadersPromise
+        .then((authHeaders) =>
+          fetch('/api/push/send', {
+            method: 'POST',
+            headers: authHeaders,
+            body: JSON.stringify({
+              notificationId: session.callId,
+              title,
+              body,
+              type: 'call',
+              linkTab: 'peer_chat',
+              tag: `call-${session.callId}`,
+              targetUserId: uid,
+              targetSchoolId: session.schoolId
+            })
+          })
+        )
+        .catch(err => console.warn('[CallService] Push dispatch warning:', err));
     } catch (_) {}
   }
 }

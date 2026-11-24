@@ -889,7 +889,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
     setRosterFeedbackStudent(null);
   };
 
-  // Orion Faculty Copilot Drafting (APInex / Ministral / Groq via /api/ai/orion-assist)
+  // Orion Faculty Copilot Drafting (Ministral / Groq via /api/ai/orion-assist)
   const handleRunOrionDraft = async (intent: OrionFacultyIntent, customTopic?: string) => {
     setLastOrionIntent(intent);
     const requestedTopic =

@@ -41,7 +41,7 @@ interface LectureNotesSidebarProps {
   onToggleStar?: (noteId: string) => void;
   onDeleteNote?: (noteId: string) => void;
   onOpenCreateWithAI?: () => void;
-  onOpenNoteContextMenu?: (noteId: string, x: number, y: number) => void;
+  onOpenNoteContextMenu?: (noteId: string, x: number, y: number, isGuarded?: () => boolean) => void;
 }
 
 export const LectureNotesSidebar: React.FC<LectureNotesSidebarProps> = ({
@@ -70,7 +70,7 @@ export const LectureNotesSidebar: React.FC<LectureNotesSidebarProps> = ({
 
   const noteHoldContext = useContextHoldMenu<string>({
     onOpen: ({ itemId, x, y }) => {
-      onOpenNoteContextMenu?.(itemId, x, y);
+      onOpenNoteContextMenu?.(itemId, x, y, noteHoldContext.isInteractionGuarded);
     }
   });
 
@@ -282,7 +282,7 @@ export const LectureNotesSidebar: React.FC<LectureNotesSidebarProps> = ({
             notes.map(note => {
               const isSelected = selectedNoteId === note.id;
               const isPinned = Boolean((note as any).isPinned);
-              const isStarred = Boolean(note.isStarred || isPinned);
+              const isStarred = Boolean(note.isStarred);
 
               return (
                 <div

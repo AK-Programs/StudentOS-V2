@@ -2,6 +2,7 @@ import { supabase } from './supabase';
 import { AppNotification } from '../types';
 import { soundService } from './soundService';
 import { buildNotificationUrl, dispatchNotificationNavigation } from './notificationNavigation';
+import { buildPushApiAuthHeaders } from './fcmNotifications';
 
 function isValidUUID(str?: string): boolean {
   if (!str) return false;
@@ -493,24 +494,27 @@ export async function saveAppNotification(notif: AppNotification): Promise<{ suc
 
   // Call server push endpoint (FCM + targeted Web Push) cleanly; push errors must not fail DB save
   try {
-    fetch('/api/push/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        notificationId: finalId,
-        title: notif.title,
-        body: notif.message,
-        type: notif.type || 'announcement',
-        linkTab: notif.linkTab || 'notice_viewer',
-        tag: deterministicTag,
-        targetUserId: notif.targetUserId || 'all',
-        targetRole: notif.targetRole || 'all',
-        targetRoles: (notif as any).targetRoles || undefined,
-        targetClass: notif.targetClass || 'all',
-        targetSection: notif.targetSection || 'all',
-        targetSchoolId: (notif as any).targetSchoolId || undefined
-      })
-    })
+    buildPushApiAuthHeaders()
+      .then((authHeaders) =>
+        fetch('/api/push/send', {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify({
+            notificationId: finalId,
+            title: notif.title,
+            body: notif.message,
+            type: notif.type || 'announcement',
+            linkTab: notif.linkTab || 'notice_viewer',
+            tag: deterministicTag,
+            targetUserId: notif.targetUserId || 'all',
+            targetRole: notif.targetRole || 'all',
+            targetRoles: (notif as any).targetRoles || undefined,
+            targetClass: notif.targetClass || 'all',
+            targetSection: notif.targetSection || 'all',
+            targetSchoolId: (notif as any).targetSchoolId || undefined
+          })
+        })
+      )
       .then(async (r) => {
         const resJson = await r.json().catch(() => ({}));
         console.log('[FCM SERVER DISPATCH LOG]', {

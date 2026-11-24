@@ -509,10 +509,13 @@ async function main() {
         false
       );
 
-      // AI lock: only APInex, Ministral, Groq; zero @google/genai
+      // AI lock: only Ministral & Groq; zero APinex or @google/genai
       const aiClientSource = fs.readFileSync(path.resolve(process.cwd(), 'server/aiClient.ts'), 'utf8');
       assert.equal(aiClientSource.includes('@google/genai'), false);
-      assert.equal(aiClientSource.includes("'apinex'") && aiClientSource.includes("'ministral'") && aiClientSource.includes("'groq'"), true);
+      assert.equal(aiClientSource.toLowerCase().includes('apinex'), false);
+      assert.equal(aiClientSource.includes('gpt-6-luna'), false);
+      assert.equal(aiClientSource.includes('glm-5.3'), false);
+      assert.equal(aiClientSource.includes("'ministral'") && aiClientSource.includes("'groq'"), true);
     });
 
     // =========================================================================

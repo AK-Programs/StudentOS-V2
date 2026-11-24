@@ -1181,7 +1181,7 @@ export class SyllabusTimetableService {
 
   // ==========================================================================
   // AI-GENERATED PERSONAL STUDY TIMETABLES (STUDENTS ONLY)
-  // Uses APInex primary with NVIDIA fallback via `/api/ai/chat`
+  // Uses Ministral & Groq via `/api/ai/chat`
   // ==========================================================================
 
   /**

@@ -453,14 +453,27 @@ CREATE TABLE IF NOT EXISTS public.notifications (
 
 CREATE TABLE IF NOT EXISTS public.push_subscriptions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT NOT NULL,
     endpoint TEXT UNIQUE NOT NULL,
-    user_id TEXT,
     device_id TEXT,
-    keys JSONB,
-    p256dh TEXT,
-    auth TEXT,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    role TEXT,
+    grade TEXT,
+    section TEXT,
+    school_id TEXT,
+    keys JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+ALTER TABLE public.push_subscriptions ADD COLUMN IF NOT EXISTS role TEXT;
+ALTER TABLE public.push_subscriptions ADD COLUMN IF NOT EXISTS grade TEXT;
+ALTER TABLE public.push_subscriptions ADD COLUMN IF NOT EXISTS section TEXT;
+ALTER TABLE public.push_subscriptions ADD COLUMN IF NOT EXISTS school_id TEXT;
+ALTER TABLE public.push_subscriptions ADD COLUMN IF NOT EXISTS keys JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE public.push_subscriptions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+ALTER TABLE public.push_subscriptions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
 
 CREATE TABLE IF NOT EXISTS public.meetings (
     id VARCHAR(64) PRIMARY KEY,
@@ -660,13 +673,49 @@ DECLARE
     tbl text;
 BEGIN
     FOR tbl IN 
-        SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+        SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> 'push_subscriptions'
     LOOP
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', tbl);
         EXECUTE format('DROP POLICY IF EXISTS "allow_all_ops_%I" ON public.%I;', tbl, tbl);
         EXECUTE format('CREATE POLICY "allow_all_ops_%I" ON public.%I FOR ALL USING (true) WITH CHECK (true);', tbl, tbl);
     END LOOP;
 END $$;
+
+-- Restrictive RLS for public.push_subscriptions (never open to anon; authenticated users access only their own rows; server uses service_role)
+ALTER TABLE public.push_subscriptions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "allow_all_ops_push_subscriptions" ON public.push_subscriptions;
+DROP POLICY IF EXISTS "push rw" ON public.push_subscriptions;
+REVOKE ALL ON public.push_subscriptions FROM anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.push_subscriptions TO authenticated;
+
+DROP POLICY IF EXISTS "push_subscriptions_select_own" ON public.push_subscriptions;
+CREATE POLICY "push_subscriptions_select_own"
+    ON public.push_subscriptions
+    FOR SELECT
+    TO authenticated
+    USING (auth.uid() IS NOT NULL AND auth.uid()::text = user_id);
+
+DROP POLICY IF EXISTS "push_subscriptions_insert_own" ON public.push_subscriptions;
+CREATE POLICY "push_subscriptions_insert_own"
+    ON public.push_subscriptions
+    FOR INSERT
+    TO authenticated
+    WITH CHECK (auth.uid() IS NOT NULL AND auth.uid()::text = user_id);
+
+DROP POLICY IF EXISTS "push_subscriptions_update_own" ON public.push_subscriptions;
+CREATE POLICY "push_subscriptions_update_own"
+    ON public.push_subscriptions
+    FOR UPDATE
+    TO authenticated
+    USING (auth.uid() IS NOT NULL AND auth.uid()::text = user_id)
+    WITH CHECK (auth.uid() IS NOT NULL AND auth.uid()::text = user_id);
+
+DROP POLICY IF EXISTS "push_subscriptions_delete_own" ON public.push_subscriptions;
+CREATE POLICY "push_subscriptions_delete_own"
+    ON public.push_subscriptions
+    FOR DELETE
+    TO authenticated
+    USING (auth.uid() IS NOT NULL AND auth.uid()::text = user_id);
 
 -- Storage RLS
 DROP POLICY IF EXISTS "allow_all_studentos_storage" ON storage.objects;

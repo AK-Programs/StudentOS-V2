@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Veylentra Client AI Handler
- * Routes requests securely through server-side approved AI providers (APInex, Ministral, Groq).
+ * Routes requests securely through server-side approved AI providers (Ministral, Groq).
  * No mock or hardcoded fake AI fallbacks.
  */
 

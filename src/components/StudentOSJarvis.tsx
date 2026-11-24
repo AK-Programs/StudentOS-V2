@@ -823,7 +823,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     showNotification(`✓ Successfully saved "${generatedNotesContent.title}" packet to your Lecture Notes Vault!`);
   };
 
-  // Query Orion AI via approved Express server providers (APInex, Ministral, Groq)
+  // Query Orion AI via approved Express server providers (Ministral, Groq)
   const queryJarvisAIStream = async (command: string): Promise<{ responseText: string; action: string; targetValue?: string; details?: any }> => {
     try {
       const cmdLow = command.toLowerCase().trim();

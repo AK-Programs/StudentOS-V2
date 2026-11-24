@@ -19,6 +19,7 @@ import {
   clampContextMenuPosition,
   didPointerMoveExceedThreshold,
   shouldIgnoreHoldStartTarget,
+  shouldBlockPostHoldInteraction,
 } from '../src/lib/useContextHoldMenu';
 import { LectureNotesSidebar } from '../src/components/lectureNotes/LectureNotesSidebar';
 
@@ -177,7 +178,7 @@ async function runTests() {
     passed++;
   }
 
-  // Test 5: Shared context menu viewport clamping and scroll/target helpers
+  // Test 5: Shared context menu viewport clamping, scroll/target helpers, and post-hold finger-lift guard
   {
     const bottomRight = clampContextMenuPosition(990, 740, 220, 260, 1024, 768, 8);
     assert.equal(bottomRight.left, 796);
@@ -194,11 +195,16 @@ async function runTests() {
     const fakeCardTarget = { closest: () => null };
     assert.equal(shouldIgnoreHoldStartTarget(fakeButtonTarget as any), true);
     assert.equal(shouldIgnoreHoldStartTarget(fakeCardTarget as any), false);
-    console.log('PASS: Test 5 - Shared context-menu clamping, scroll threshold, and inner-control ignore guards work');
+
+    // Post-hold finger-lift synthetic-click guard:
+    assert.equal(shouldBlockPostHoldInteraction(true, 0, 1000), true);
+    assert.equal(shouldBlockPostHoldInteraction(false, 1500, 1200), true);
+    assert.equal(shouldBlockPostHoldInteraction(false, 1500, 1501), false);
+    console.log('PASS: Test 5 - Shared context-menu clamping, scroll threshold, and finger-lift synthetic-click guards work');
     passed++;
   }
 
-  // Test 6: LectureNotesSidebar renders .veylentra-context-target on note cards and shows pin badge
+  // Test 6: LectureNotesSidebar renders .veylentra-context-target and decouples Starred from Pinned
   {
     const html = renderToStaticMarkup(
       React.createElement(LectureNotesSidebar, {
@@ -210,7 +216,7 @@ async function runTests() {
             createdAt: 'Nov 23, 2026',
             subject: 'Physics',
             isPinned: true,
-            isStarred: true,
+            isStarred: false,
           },
         ],
         notes: [
@@ -221,7 +227,7 @@ async function runTests() {
             createdAt: 'Nov 23, 2026',
             subject: 'Physics',
             isPinned: true,
-            isStarred: true,
+            isStarred: false,
           },
         ],
         selectedNoteId: 'n1',
@@ -242,11 +248,15 @@ async function runTests() {
     );
     assert.ok(html.includes('veylentra-context-target'));
     assert.ok(html.includes('Pinned Physics Derivation'));
-    console.log('PASS: Test 6 - LectureNotesSidebar renders scoped context-target class and pinned note indicators');
+    // A pinned note with isStarred: false must NOT render Starred filter count >= 1 or star badge text
+    const sidebarSource = fs.readFileSync(path.join(process.cwd(), 'src/components/lectureNotes/LectureNotesSidebar.tsx'), 'utf8');
+    assert.ok(sidebarSource.includes('const isStarred = Boolean(note.isStarred);'));
+    assert.ok(!sidebarSource.includes('Boolean(note.isStarred || isPinned)'));
+    console.log('PASS: Test 6 - LectureNotesSidebar renders scoped context-target class and decouples Starred from Pinned');
     passed++;
   }
 
-  // Test 7: Global text selection & notification navigation regressions stay preserved
+  // Test 7: Global text selection, contextual menu wiring, restrictive SQL RLS, and notification click nav preserved
   {
     const indexCss = fs.readFileSync(path.join(process.cwd(), 'src/index.css'), 'utf8');
     assert.ok(indexCss.includes('.veylentra-context-target'));
@@ -259,8 +269,21 @@ async function runTests() {
     const appTsx = fs.readFileSync(path.join(process.cwd(), 'src/App.tsx'), 'utf8');
     assert.ok(appTsx.includes('byteThreadContext.getItemBindProps'));
     assert.ok(appTsx.includes('byteThreadContext.shouldSuppressClick'));
+    assert.ok(appTsx.includes('byteThreadContext.isInteractionGuarded'));
+    assert.ok(appTsx.includes('vaultNotesRef'));
     assert.ok(!appTsx.includes('holdTimerRef.current = setTimeout'));
-    console.log('PASS: Test 7 - Scoped CSS, Byte hold-menu wiring, and SW click navigation checks verified');
+
+    const notesWs = fs.readFileSync(path.join(process.cwd(), 'src/components/lectureNotes/LectureNotesWorkspace.tsx'), 'utf8');
+    assert.ok(notesWs.includes('noteHoldGuardRef'));
+
+    for (const sqlRelPath of ['supabase-complete-schema.sql', 'supabase/setup.sql']) {
+      const sql = fs.readFileSync(path.join(process.cwd(), sqlRelPath), 'utf8');
+      assert.ok(sql.includes('CREATE TABLE IF NOT EXISTS public.push_subscriptions') || sql.includes('create table if not exists public.push_subscriptions'));
+      assert.ok(sql.includes('auth.uid() IS NOT NULL AND auth.uid()::text = user_id'));
+      assert.ok(!sql.includes('CREATE POLICY "push rw"'));
+    }
+
+    console.log('PASS: Test 7 - Scoped CSS, Byte/Notes hold-menu guards, SW navigation, and restrictive RLS SQL verified');
     passed++;
   }
 

@@ -3,19 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * StudentOS Multi-Provider AI Routing Engine
- * - Short chat, taskType "short", or modelOverride containing groq, llama, qwen, or gpt-oss:
+ * - Short chat, fast Buddy chat, taskType "short"/"fast", or modelOverride containing groq, llama, qwen, or gpt-oss:
  *   -> Groq (https://api.groq.com/openai/v1/chat/completions with GROQ_API_KEY)
  *   -> Rotates models: llama-3.1-8b-instant, openai/gpt-oss-120b, qwen/qwen3.8-27b
- * - General chat, complex tasks, revision guides, lecture notes, or modelOverride containing ministral or mistral:
+ * - General chat, complex tasks, revision guides, lecture notes, structured tool/JSON, or modelOverride containing ministral or mistral:
  *   -> Ministral (https://api.mistral.ai/v1/chat/completions with MINISTRAL_API_KEY, model: ministral-8b-2410)
- * - Fast chat and normal Buddy chat:
- *   -> APInex (https://api.apinex.bond/v1/chat/completions with APINEX_API_KEY, model: free/glm-5.3-flash, tools: free/glm-5.3-flash)
- * - Approved AI Providers strictly: APInex, Ministral, Groq.
+ * - Approved AI Providers strictly: Ministral and Groq.
  */
 
 import dotenv from 'dotenv';
 dotenv.config();
 
+export type AIProviderName = 'groq' | 'ministral';
 export type TaskComplexityTier = 'short' | 'fast' | 'general' | 'complex' | 'tool';
 
 export interface ModelRoutingContext {
@@ -31,7 +30,7 @@ export interface ModelRoutingContext {
 
 export interface AIPerformanceTelemetry {
   requestId: string;
-  providerUsed: 'apinex' | 'groq' | 'ministral';
+  providerUsed: AIProviderName;
   modelUsed: string;
   complexityTier: TaskComplexityTier;
   requestStart: number;
@@ -61,11 +60,7 @@ export interface AICompletionOptions {
   images?: { name?: string; mimeType: string; data: string }[];
 }
 
-// Approved AI Provider API Key Getters (Strictly APInex, Ministral, Groq)
-
-export function getApinexApiKey(): string {
-  return (process.env.APINEX_API_KEY || process.env.VITE_APINEX_API_KEY || '').trim().replace(/^["']|["']$/g, '');
-}
+// Approved AI Provider API Key Getters (Strictly Ministral and Groq)
 
 export function getMinistralApiKey(): string {
   return (process.env.MINISTRAL_API_KEY || process.env.MISTRAL_API_KEY || process.env.VITE_MINISTRAL_API_KEY || '')
@@ -132,8 +127,6 @@ export function isLongOrComplexPrompt(
     override.includes('gpt-oss') ||
     override.includes('ministral') ||
     override.includes('mistral') ||
-    override.includes('apinex') ||
-    override.includes('glm-5.3-flash') ||
     taskType === 'short' ||
     taskType === 'general' ||
     taskType === 'fast' ||
@@ -174,7 +167,7 @@ export function isLongOrComplexPrompt(
 export function classifyTaskComplexity(
   prompt: string,
   ctx?: ModelRoutingContext
-): { provider: 'apinex' | 'groq' | 'ministral'; model: string; tier: TaskComplexityTier } {
+): { provider: AIProviderName; model: string; tier: TaskComplexityTier } {
   const cleanPrompt = (prompt || '').trim();
   const lower = cleanPrompt.toLowerCase();
   const taskType = (ctx?.taskType || '').toLowerCase();
@@ -182,7 +175,7 @@ export function classifyTaskComplexity(
   const override = (ctx?.modelOverride || '').trim().toLowerCase();
   const endpoint = (ctx?.endpointName || '').toLowerCase();
 
-  // 1. Explicit model overrides
+  // 1. Explicit model overrides (strictly Groq or Ministral)
   if (
     override.includes('groq') ||
     override.includes('llama') ||
@@ -193,13 +186,6 @@ export function classifyTaskComplexity(
   }
   if (override.includes('ministral') || override.includes('mistral')) {
     return { provider: 'ministral', model: 'ministral-8b-2410', tier: 'general' };
-  }
-  if (override.includes('apinex') || override.includes('gpt-6-luna') || override.includes('glm-5.3-flash')) {
-    return {
-      provider: 'apinex',
-      model: 'free/glm-5.3-flash',
-      tier: override.includes('glm-5.3-flash') ? 'tool' : 'fast'
-    };
   }
 
   // 2. Explicit taskType overrides
@@ -215,13 +201,13 @@ export function classifyTaskComplexity(
     return { provider: 'ministral', model: 'ministral-8b-2410', tier: 'general' };
   }
   if (taskType === 'fast') {
-    return { provider: 'apinex', model: 'free/glm-5.3-flash', tier: 'fast' };
+    return { provider: 'groq', model: resolveGroqModel(ctx?.modelOverride), tier: 'fast' };
   }
   if (taskType === 'tool' || taskType === 'orion_command') {
-    return { provider: 'apinex', model: 'free/glm-5.3-flash', tier: 'tool' };
+    return { provider: 'ministral', model: 'ministral-8b-2410', tier: 'tool' };
   }
 
-  // 3. Long context, revision guides, essays, multi-chapter explanations, analysis -> Ministral (or Groq/APInex)
+  // 3. Long context, revision guides, essays, multi-chapter explanations, analysis -> Ministral
   if (isLongOrComplexPrompt(cleanPrompt, ctx)) {
     return {
       provider: 'ministral',
@@ -230,7 +216,7 @@ export function classifyTaskComplexity(
     };
   }
 
-  // 4. Tool / JSON / Diagram / Flashcard / 3D task
+  // 4. Tool / JSON / Diagram / Flashcard / 3D task -> Ministral structured model
   if (
     endpoint.includes('json') ||
     endpoint.includes('diagram') ||
@@ -240,7 +226,7 @@ export function classifyTaskComplexity(
     lower.includes('raw json format') ||
     lower.includes('structured output')
   ) {
-    return { provider: 'apinex', model: 'free/glm-5.3-flash', tier: 'tool' };
+    return { provider: 'ministral', model: 'ministral-8b-2410', tier: 'tool' };
   }
 
   // 5. Mode-based routing if mode explicitly specifies short or general
@@ -251,10 +237,10 @@ export function classifyTaskComplexity(
     return { provider: 'ministral', model: 'ministral-8b-2410', tier: 'general' };
   }
 
-  // 6. Fast chat and normal Buddy chat stay on APInex free/glm-5.3-flash
+  // 6. Fast chat and normal Buddy chat default to Groq (with Ministral fallback at execution time)
   return {
-    provider: 'apinex',
-    model: 'free/glm-5.3-flash',
+    provider: 'groq',
+    model: getNextGroqModel(),
     tier: 'fast'
   };
 }
@@ -383,7 +369,7 @@ function buildMessagesArray(
   return messages;
 }
 
-function getProviderEndpointAndKey(provider: 'apinex' | 'groq' | 'ministral'): {
+function getProviderEndpointAndKey(provider: AIProviderName): {
   apiUrl: string;
   apiKey: string;
 } {
@@ -393,15 +379,9 @@ function getProviderEndpointAndKey(provider: 'apinex' | 'groq' | 'ministral'): {
       apiKey: getMinistralApiKey()
     };
   }
-  if (provider === 'groq') {
-    return {
-      apiUrl: 'https://api.groq.com/openai/v1/chat/completions',
-      apiKey: getGroqApiKey()
-    };
-  }
   return {
-    apiUrl: 'https://api.apinex.bond/v1/chat/completions',
-    apiKey: getApinexApiKey()
+    apiUrl: 'https://api.groq.com/openai/v1/chat/completions',
+    apiKey: getGroqApiKey()
   };
 }
 
@@ -451,13 +431,9 @@ export async function generateAICompletionWithTelemetry(
     contextLength
   });
 
-  const hasImages = Array.isArray(images) && images.length > 0;
-  const provider: 'apinex' | 'groq' | 'ministral' = hasImages && routing.provider === 'groq'
-    ? (getMinistralApiKey() ? 'ministral' : 'apinex')
-    : routing.provider;
-  const model = hasImages && provider === 'ministral'
-    ? 'ministral-8b-2410'
-    : routing.model;
+  const hasImages = (Array.isArray(images) && images.length > 0) || /Image Data: data:image\//i.test(prompt || '');
+  const provider: AIProviderName = hasImages ? 'ministral' : routing.provider;
+  const model = provider === 'ministral' ? 'ministral-8b-2410' : routing.model;
   let retries = 0;
 
   const isAcademicTask = taskType === 'complex' || routing.tier === 'complex';
@@ -470,11 +446,13 @@ export async function generateAICompletionWithTelemetry(
 
   console.log(`[AI_ROUTER] tier=${routing.tier} provider=${provider} model=${model} requestId=${requestId} budget=${effectiveMaxTokens} academic=${isAcademicTask}`);
 
-  async function callApprovedProvider(p: 'apinex' | 'groq' | 'ministral', m: string, currentMessages: any[], budget: number) {
+  async function callApprovedProvider(p: AIProviderName, m: string, currentMessages: any[], budget: number) {
     const { apiUrl, apiKey } = getProviderEndpointAndKey(p);
     if (!apiKey) {
       const err: any = new Error(`${p.toUpperCase()} API key is not configured.`);
       err.status = 500;
+      err.providerUsed = p;
+      err.modelUsed = m;
       throw err;
     }
 
@@ -501,6 +479,8 @@ export async function generateAICompletionWithTelemetry(
       const errBody = await resp.text().catch(() => '');
       const err: any = new Error(`${p} HTTP ${resp.status}: ${errBody || resp.statusText}`);
       err.status = resp.status;
+      err.providerUsed = p;
+      err.modelUsed = m;
       throw err;
     }
 
@@ -510,17 +490,20 @@ export async function generateAICompletionWithTelemetry(
     return { text, finishReason, provider: p, model: m };
   }
 
-  async function performCompletion(primaryProvider: 'apinex' | 'groq' | 'ministral', primaryModel: string, currentMessages: any[], budget: number) {
-    const candidates: Array<{ p: 'apinex' | 'groq' | 'ministral'; m: string }> = [
+  async function performCompletion(primaryProvider: AIProviderName, primaryModel: string, currentMessages: any[], budget: number) {
+    const candidates: Array<{ p: AIProviderName; m: string }> = [
       { p: primaryProvider, m: primaryModel }
     ];
-    if (getMinistralApiKey() && primaryProvider !== 'ministral') {
-      candidates.push({ p: 'ministral', m: 'ministral-8b-2410' });
-    }
-    if (getApinexApiKey() && primaryProvider !== 'apinex') {
-      candidates.push({ p: 'apinex', m: 'free/glm-5.3-flash' });
-    }
-    if (!hasImages && getGroqApiKey() && primaryProvider !== 'groq') {
+    if (primaryProvider === 'groq') {
+      for (const altModel of groqModels) {
+        if (altModel !== primaryModel) {
+          candidates.push({ p: 'groq', m: altModel });
+        }
+      }
+      if (getMinistralApiKey()) {
+        candidates.push({ p: 'ministral', m: 'ministral-8b-2410' });
+      }
+    } else if (!hasImages && getGroqApiKey()) {
       candidates.push({ p: 'groq', m: getNextGroqModel() });
     }
 
@@ -534,15 +517,15 @@ export async function generateAICompletionWithTelemetry(
         if (res.text && res.text.trim()) return res;
       } catch (err: any) {
         lastErr = err;
-        console.warn(`[AI_ROUTER] Provider ${candidate.p} fallback trigger:`, err?.message || err);
+        console.warn(`[AI_ROUTER] Provider ${candidate.p} (${candidate.m}) fallback trigger:`, err?.message || err);
       }
     }
 
-    throw lastErr || new Error('No configured approved AI providers (APInex, Ministral, Groq) succeeded.');
+    throw lastErr || new Error('No configured approved AI providers (Ministral, Groq) succeeded.');
   }
 
   let finalFullText = '';
-  let activeProvider = provider;
+  let activeProvider: AIProviderName = provider;
   let activeModel = model;
   let lastFinishReason = 'stop';
   let continuationCount = 0;
@@ -551,7 +534,7 @@ export async function generateAICompletionWithTelemetry(
     const result = await performCompletion(activeProvider, activeModel, messages, effectiveMaxTokens);
     finalFullText = result.text;
     lastFinishReason = result.finishReason;
-    activeProvider = result.provider as any;
+    activeProvider = result.provider;
     activeModel = result.model;
 
     // Continuation Logic for Truncated Notes (Max 8 continuations for massive academic documents)
@@ -567,11 +550,8 @@ export async function generateAICompletionWithTelemetry(
         { role: 'user', content: 'The previous response was truncated due to output limits. Please continue EXACTLY from where you left off, resuming the sentence or table immediately. Do NOT repeat the introduction, previous sections, or add meta-commentary. Focus on completing the remaining sections of the full document until finished.' }
       ];
 
-      // Increase temperature slightly for continuation to prevent repetition if stuck, 
-      // but keep it stable for academic accuracy.
       const contResult = await performCompletion(activeProvider, activeModel, continuationMessages, effectiveMaxTokens);
       if (contResult.text) {
-        // Check if there's overlapping text (common in some models)
         const newSegment = contResult.text.trim();
         finalFullText += (finalFullText.endsWith('\n') ? '' : '\n') + newSegment;
         lastFinishReason = contResult.finishReason;
@@ -590,7 +570,7 @@ export async function generateAICompletionWithTelemetry(
 
     const telemetry: AIPerformanceTelemetry = {
       requestId,
-      providerUsed: activeProvider as any,
+      providerUsed: activeProvider,
       modelUsed: activeModel,
       complexityTier: routing.tier,
       requestStart,
@@ -658,11 +638,9 @@ export async function streamAICompletion(
     contextLength
   });
 
-  const hasImages = Array.isArray(images) && images.length > 0;
-  const activeProvider: 'apinex' | 'groq' | 'ministral' = hasImages && routing.provider === 'groq'
-    ? (getMinistralApiKey() ? 'ministral' : 'apinex')
-    : routing.provider;
-  let activeModel = hasImages && activeProvider === 'ministral' ? 'ministral-8b-2410' : routing.model;
+  const hasImages = (Array.isArray(images) && images.length > 0) || /Image Data: data:image\//i.test(prompt || '');
+  const activeProvider: AIProviderName = hasImages ? 'ministral' : routing.provider;
+  let activeModel = activeProvider === 'ministral' ? 'ministral-8b-2410' : routing.model;
   let retries = 0;
 
   const messages = buildMessagesArray(systemInstruction, prompt, history, images);
@@ -677,19 +655,14 @@ export async function streamAICompletion(
   );
 
   async function tryStreamOnce(
-    p: 'apinex' | 'groq' | 'ministral',
+    p: AIProviderName,
     m: string,
     customMaxTokens?: number
   ): Promise<{ fullText: string; firstTokenLatencyMs: number | null; finishReason?: string }> {
     const { apiUrl: targetUrl, apiKey } = getProviderEndpointAndKey(p);
 
     if (!apiKey) {
-      const keyName =
-        p === 'groq'
-          ? 'GROQ_API_KEY'
-          : p === 'ministral'
-          ? 'MINISTRAL_API_KEY'
-          : 'APINEX_API_KEY';
+      const keyName = p === 'groq' ? 'GROQ_API_KEY' : 'MINISTRAL_API_KEY';
       const err: any = new Error(`${keyName} environment variable is not configured on the server.`);
       err.status = 500;
       err.providerUsed = p;
@@ -789,7 +762,7 @@ export async function streamAICompletion(
   }
 
   let streamResult: { fullText: string; firstTokenLatencyMs: number | null; finishReason?: string } | null = null;
-  let finalProvider: 'apinex' | 'groq' | 'ministral' = activeProvider;
+  let finalProvider: AIProviderName = activeProvider;
 
   if (activeProvider === 'ministral' || routing.tier === 'complex') {
     finalProvider = 'ministral';
@@ -797,23 +770,18 @@ export async function streamAICompletion(
     try {
       streamResult = await tryStreamOnce('ministral', activeModel);
     } catch (mErr: any) {
-      console.warn('[AI_STREAM_ROUTER] Ministral stream notice:', mErr?.message || mErr, '- attempting fallback to Groq/APInex');
-      // Controlled fallback to Groq or APInex
+      console.warn('[AI_STREAM_ROUTER] Ministral stream notice:', mErr?.message || mErr, '- attempting fallback to Groq');
       const groqKey = getGroqApiKey();
-      if (groqKey) {
-        try {
-          finalProvider = 'groq';
-          activeModel = getNextGroqModel();
-          streamResult = await tryStreamOnce('groq', activeModel);
-        } catch (_) {}
-      }
-      if (!streamResult || !streamResult.fullText.trim()) {
-        finalProvider = 'apinex';
-        activeModel = 'free/glm-5.3-flash';
-        streamResult = await tryStreamOnce('apinex', activeModel);
+      if (!hasImages && groqKey) {
+        finalProvider = 'groq';
+        activeModel = getNextGroqModel();
+        retries++;
+        streamResult = await tryStreamOnce('groq', activeModel);
+      } else {
+        throw mErr;
       }
     }
-  } else if (activeProvider === 'groq') {
+  } else {
     const candidateModels = [activeModel, ...groqModels.filter((m) => m !== activeModel)];
     let lastErr: any = null;
     for (let i = 0; i < candidateModels.length; i++) {
@@ -830,12 +798,13 @@ export async function streamAICompletion(
       }
     }
     if (!streamResult || !streamResult.fullText.trim()) {
-      // Controlled fallback to APInex
-      try {
-        finalProvider = 'apinex';
-        activeModel = 'free/glm-5.3-flash';
-        streamResult = await tryStreamOnce('apinex', activeModel);
-      } catch {
+      const ministralKey = getMinistralApiKey();
+      if (ministralKey) {
+        finalProvider = 'ministral';
+        activeModel = 'ministral-8b-2410';
+        retries++;
+        streamResult = await tryStreamOnce('ministral', activeModel);
+      } else {
         if (lastErr) throw lastErr;
         const err: any = new Error(`Groq HTTP 200 returned empty stream content for ${activeModel}.`);
         err.status = 502;
@@ -844,15 +813,14 @@ export async function streamAICompletion(
         throw err;
       }
     }
-  } else {
-    streamResult = await tryStreamOnce(activeProvider, activeModel);
-    if (!streamResult.fullText.trim()) {
-      const err: any = new Error(`${activeProvider} HTTP 200 returned empty stream content.`);
-      err.status = 502;
-      err.providerUsed = activeProvider;
-      err.modelUsed = activeModel;
-      throw err;
-    }
+  }
+
+  if (!streamResult || !streamResult.fullText.trim()) {
+    const err: any = new Error(`${finalProvider} returned empty stream content.`);
+    err.status = 502;
+    err.providerUsed = finalProvider;
+    err.modelUsed = activeModel;
+    throw err;
   }
 
   const finishedReply = streamResult.fullText.trim();
@@ -873,3 +841,4 @@ export async function streamAICompletion(
   callbacks.onComplete?.(finishedReply, telemetry);
   return { text: finishedReply, telemetry };
 }
+

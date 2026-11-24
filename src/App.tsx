@@ -438,18 +438,18 @@ export default function App() {
   const [firebaseOnboardingUser, setFirebaseOnboardingUser] = useState<any>(null);
   const [authError, setAuthError] = useState<{ code: string; message: string; hostname: string } | null>(null);
 
-  // Request notification permission & sync FCM tokens to Firestore & backend on app start
+  // Request notification permission & sync FCM tokens to Firestore & backend after sign-in
   useEffect(() => {
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      const uid = currentUser?.uid || 'usr_anonymous';
+    if (typeof window !== 'undefined' && 'Notification' in window && currentUser?.uid) {
+      const uid = currentUser.uid;
       const meta = {
-        role: currentUser?.role || 'student',
-        grade: currentUser?.grade || '',
-        section: currentUser?.section || '',
-        house: currentUser?.house || '',
+        role: currentUser.role || 'student',
+        grade: currentUser.grade || '',
+        section: currentUser.section || '',
+        house: currentUser.house || '',
         schoolId: (currentUser as any)?.schoolId || 'default_school'
       };
-      void requestFCMPermission(uid, meta, { silentIfDefault: !currentUser?.uid });
+      void requestFCMPermission(uid, meta, { silentIfDefault: true });
     }
   }, [currentUser?.uid, currentUser?.role, currentUser?.grade, currentUser?.section, currentUser?.house]);
 
@@ -1206,6 +1206,10 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [schedules, setSchedules] = useState<ScheduleItem[]>([]);
   const [vaultNotes, setVaultNotes] = useState<VaultNote[]>([]);
+  const vaultNotesRef = useRef<VaultNote[]>(vaultNotes);
+  useEffect(() => {
+    vaultNotesRef.current = vaultNotes;
+  }, [vaultNotes]);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [noteEditMode, setNoteEditMode] = useState<boolean>(true);
   const [noteFont, setNoteFont] = useState<'sans' | 'serif' | 'mono'>('sans');
@@ -1658,7 +1662,8 @@ export default function App() {
       byteThreadContext.closeMenu();
       setByteDeleteConfirmId(null);
     },
-    byteThreadMenuRef
+    byteThreadMenuRef,
+    byteThreadContext.isInteractionGuarded
   );
 
   const handlePinThread = (threadId: string) => {
@@ -10415,10 +10420,14 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                     currentUserId={currentUser?.uid}
                     onSelectNote={id => setSelectedNoteId(id)}
                     onUpdateNote={async (id, updates) => {
-                      setVaultNotes(prev => prev.map(n => n.id === id ? { ...n, ...updates } : n));
-                      const target = vaultNotes.find(n => n.id === id);
-                      if (target) {
-                        const merged = { ...target, ...updates };
+                      const prevTarget = vaultNotesRef.current.find(n => n.id === id);
+                      const merged = prevTarget ? { ...prevTarget, ...updates } : null;
+                      setVaultNotes(prev => {
+                        const next = prev.map(n => n.id === id ? { ...n, ...updates } : n);
+                        vaultNotesRef.current = next;
+                        return next;
+                      });
+                      if (merged) {
                         try {
                           await saveVaultNoteToSupabase(merged, currentUser?.uid);
                           if (currentUser && (updates.content !== undefined || updates.title !== undefined)) {
@@ -14080,7 +14089,6 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                             title="Super Admin Model Override"
                           >
                             <option value="auto" className="bg-slate-900 text-white">🤖 Auto</option>
-                            <option value="apinex" className="bg-slate-900 text-white">⚡ APInex</option>
                             <option value="ministral" className="bg-slate-900 text-white">🌊 Ministral</option>
                             <option value="groq" className="bg-slate-900 text-white">🚀 Groq</option>
                           </select>
@@ -15619,6 +15627,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
             <div
               className="fixed inset-0 z-[209]"
               onClick={() => {
+                if (byteThreadContext.isInteractionGuarded()) return;
                 setByteDeleteConfirmId(null);
                 setAiThreadHoldMenu(null);
               }}
@@ -15641,7 +15650,10 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                 <button
                   type="button"
                   role="menuitem"
-                  onClick={() => handlePinThread(aiThreadHoldMenu.threadId)}
+                  onClick={() => {
+                    if (byteThreadContext.isInteractionGuarded()) return;
+                    handlePinThread(aiThreadHoldMenu.threadId);
+                  }}
                   className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all cursor-pointer"
                 >
                   <Pin className="w-3.5 h-3.5 text-amber-400" />
@@ -15650,7 +15662,10 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                 <button
                   type="button"
                   role="menuitem"
-                  onClick={() => handleRenameThread(aiThreadHoldMenu.threadId)}
+                  onClick={() => {
+                    if (byteThreadContext.isInteractionGuarded()) return;
+                    handleRenameThread(aiThreadHoldMenu.threadId);
+                  }}
                   className="flex items-center gap-3 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/5 rounded-xl transition-all cursor-pointer"
                 >
                   <Edit2 className="w-3.5 h-3.5 text-indigo-400" />
@@ -15661,6 +15676,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                   type="button"
                   role="menuitem"
                   onClick={() => {
+                    if (byteThreadContext.isInteractionGuarded()) return;
                     if (byteDeleteConfirmId === aiThreadHoldMenu.threadId) {
                       handleDeleteThread(aiThreadHoldMenu.threadId);
                       setByteDeleteConfirmId(null);

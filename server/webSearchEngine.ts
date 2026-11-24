@@ -3,10 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * StudentOS Controlled Server-Side Web Search & Research Engine
- * APInex-First Web Intelligence Architecture with Wikipedia & DuckDuckGo Fallbacks
+ * Wikipedia & DuckDuckGo Web Intelligence Architecture
  */
-
-import { getApinexApiKey } from './aiClient';
 
 export interface WebSearchSource {
   title: string;
@@ -306,51 +304,7 @@ export function extractPrivacySafeSearchQuery(prompt: string): string {
 }
 
 /**
- * Primary APInex Web Search
- */
-async function searchViaApinex(query: string, apiKey: string, signal: AbortSignal): Promise<WebSearchSource[]> {
-  try {
-    const resp = await fetch('https://api.apinex.bond/v1/tools/web/search', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({ query, num: 5, limit: 5 }),
-      signal
-    });
-
-    if (!resp.ok) return [];
-
-    const data = await resp.json();
-    const items = data.results || data.data || (Array.isArray(data) ? data : []);
-    const sources: WebSearchSource[] = [];
-
-    if (Array.isArray(items)) {
-      for (const item of items) {
-        if (!item || (!item.url && !item.link)) continue;
-        const urlStr = item.url || item.link;
-        if (isExcludedDomain(urlStr)) continue; // Drop shopping, social, and spam
-        const auth = classifyDomainAuthority(urlStr);
-        sources.push({
-          title: sanitizeWebSnippet(item.title || 'Web Search Result', 130),
-          url: urlStr,
-          domain: auth.domain,
-          snippet: sanitizeWebSnippet(item.snippet || item.content || item.description || '', 420),
-          sourceType: auth.sourceType,
-          publishedDate: item.published_date || item.date
-        });
-      }
-    }
-    return sources;
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Fallback 1: Wikipedia API
+ * Source 1: Wikipedia API
  */
 async function searchViaWikipedia(query: string, signal: AbortSignal): Promise<WebSearchSource[]> {
   try {
@@ -700,7 +654,7 @@ export async function searchRealEducationalVideos(
 }
 
 /**
- * Executes controlled server-side web search with multi-tier fallbacks (APInex -> Wikipedia -> DDG API -> DDG HTML).
+ * Executes controlled server-side web search with multi-tier fallbacks (Wikipedia -> DDG API -> DDG HTML).
  */
 export async function performControlledWebSearch(rawQuery: string): Promise<WebSearchResult> {
   const startTime = Date.now();
@@ -723,22 +677,15 @@ export async function performControlledWebSearch(rawQuery: string): Promise<WebS
   const timeout = setTimeout(() => abortController.abort(), 6000);
 
   try {
-    const apinexKey = getApinexApiKey();
     let sources: WebSearchSource[] = [];
 
-    // 1. Fetch APInex if key is available
-    if (apinexKey) {
-      const apinexSources = await searchViaApinex(queryUsed, apinexKey, abortController.signal);
-      sources.push(...apinexSources);
-    }
-
-    // 2. Always fetch Wikipedia in tandem for educational grounding
+    // 1. Fetch Wikipedia for educational grounding
     try {
       const wikiSources = await searchViaWikipedia(queryUsed, abortController.signal);
       sources.push(...wikiSources);
     } catch (_) {}
 
-    // 3. Fallbacks if primary sources yielded nothing
+    // 2. Fallbacks if Wikipedia yielded nothing
     if (sources.length === 0) {
       sources = await searchViaDuckDuckGoApi(queryUsed, abortController.signal);
     }

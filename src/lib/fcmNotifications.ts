@@ -38,6 +38,99 @@ function isValidUUID(str?: string | null): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 }
 
+export function isAnonymousPushUserId(uid?: string | null): boolean {
+  const norm = String(uid || '').trim().toLowerCase();
+  return !norm || norm === 'usr_anonymous' || norm === 'anonymous' || norm === 'guest' || norm === 'user_guest';
+}
+
+export async function buildPushApiAuthHeaders(
+  explicitUserId?: string | null,
+  metadata?: { role?: string; grade?: string; section?: string }
+): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  };
+  if (typeof window === 'undefined') {
+    return headers;
+  }
+
+  let cachedUser: any = {};
+  try {
+    cachedUser = JSON.parse(localStorage.getItem('s_os_user') || '{}') || {};
+  } catch (_) {
+    cachedUser = {};
+  }
+
+  let accessToken = '';
+  let sessionUser: any = null;
+  try {
+    const { data } = await supabase.auth.getSession();
+    accessToken = data?.session?.access_token || '';
+    sessionUser = data?.session?.user || null;
+  } catch (_) {}
+
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
+
+  const uid = String(
+    (!isAnonymousPushUserId(explicitUserId) ? explicitUserId : '') ||
+    sessionUser?.id ||
+    cachedUser?.uid ||
+    cachedUser?.id ||
+    cachedUser?.email ||
+    ''
+  ).trim();
+  const email = String(sessionUser?.email || cachedUser?.email || '').trim();
+  const name = String(cachedUser?.name || sessionUser?.user_metadata?.name || '').trim();
+  const role = String(metadata?.role || cachedUser?.role || sessionUser?.user_metadata?.role || '').trim();
+  const grade = String(metadata?.grade || cachedUser?.grade || '').trim();
+  const section = String(metadata?.section || cachedUser?.section || '').trim();
+
+  if (uid) headers['x-veylentra-uid'] = uid;
+  if (email) headers['x-veylentra-email'] = email;
+  if (name) headers['x-veylentra-name'] = name;
+  if (role) headers['x-veylentra-role'] = role;
+  if (grade) headers['x-veylentra-grade'] = grade;
+  if (section) headers['x-veylentra-section'] = section;
+
+  return headers;
+}
+
+async function waitForActiveServiceWorker(registration: ServiceWorkerRegistration): Promise<ServiceWorkerRegistration> {
+  if (registration.active) {
+    return registration;
+  }
+  const worker = registration.installing || registration.waiting;
+  if (worker) {
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        worker.removeEventListener('statechange', onStateChange);
+        resolve();
+      };
+      const onStateChange = () => {
+        if (worker.state === 'activated' || worker.state === 'redundant') {
+          done();
+        }
+      };
+      worker.addEventListener('statechange', onStateChange);
+      setTimeout(done, 5000);
+    });
+  }
+  try {
+    const ready = await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise<ServiceWorkerRegistration>((resolve) => setTimeout(() => resolve(registration), 3000))
+    ]);
+    return ready || registration;
+  } catch (_) {
+    return registration;
+  }
+}
+
 /**
  * Utility to convert base64 VAPID public key to Uint8Array for PushManager
  */
@@ -269,8 +362,10 @@ export async function requestFCMPermission(
     if (!swRegistration) {
       swRegistration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
     }
-    const readyRegistration = await navigator.serviceWorker.ready;
-    swRegistration = readyRegistration || swRegistration;
+    swRegistration = await waitForActiveServiceWorker(swRegistration);
+    if (!swRegistration?.pushManager) {
+      return { success: false, error: 'Service worker pushManager is unavailable on this browser.' };
+    }
 
     // 3. Fetch authoritative public VAPID key from backend or canonical default
     let vapidKey = DEFAULT_VAPID_KEY;
@@ -374,13 +469,21 @@ export async function requestFCMPermission(
       };
     }
 
-    // 5. Resolve user metadata if not explicitly passed
-    let effectiveUserId = userId || null;
+    // 5. Resolve authenticated user metadata cleanly (reject anonymous/guest users)
+    let sessionUser: any = null;
+    try {
+      const { data } = await supabase.auth.getSession();
+      sessionUser = data?.session?.user || null;
+    } catch (_) {}
+
+    let effectiveUserId = !isAnonymousPushUserId(userId) ? String(userId).trim() : '';
     let effectiveMeta = metadata || {};
     if (typeof window !== 'undefined') {
       try {
         const cachedUser = JSON.parse(localStorage.getItem('s_os_user') || '{}');
-        if (!effectiveUserId) effectiveUserId = cachedUser.uid || cachedUser.id || cachedUser.email || null;
+        if (!effectiveUserId) {
+          effectiveUserId = String(sessionUser?.id || cachedUser.uid || cachedUser.id || cachedUser.email || '').trim();
+        }
         effectiveMeta = {
           role: effectiveMeta.role || cachedUser.role || 'student',
           grade: effectiveMeta.grade || cachedUser.grade || '',
@@ -391,28 +494,35 @@ export async function requestFCMPermission(
       } catch (_) {}
     }
 
+    if (isAnonymousPushUserId(effectiveUserId)) {
+      return { success: false, error: 'Sign in required before registering push notifications.' };
+    }
+
+    if (!subscriptionJson?.endpoint || !subscriptionJson?.keys?.p256dh || !subscriptionJson?.keys?.auth) {
+      return {
+        success: false,
+        error: 'Web Push subscription did not include required endpoint and encryption keys (p256dh/auth).'
+      };
+    }
+
     // 6. Persist token to localStorage
     const deviceId = getFCMDeviceId();
     const deviceLabel = getDevicePlatformLabel();
     localStorage.setItem('s_os_fcm_token', fcmToken || primaryEndpoint);
     localStorage.setItem('s_os_push_enabled', 'true');
-    if (subscriptionJson) {
-      localStorage.setItem('s_os_push_sub', JSON.stringify(subscriptionJson));
-    }
-    if (effectiveUserId) {
-      localStorage.setItem('s_os_fcm_user_id', effectiveUserId);
-    }
+    localStorage.setItem('s_os_push_sub', JSON.stringify(subscriptionJson));
+    localStorage.setItem('s_os_fcm_user_id', effectiveUserId);
 
-    // 7. Persist directly to Supabase push_subscriptions table using exact verified schema
-    // Columns in public.push_subscriptions: id, user_id (text), endpoint (text unique), p256dh (text), auth (text), role (text), grade (text), section (text), school_id (text), keys (jsonb), created_at, updated_at
+    // 7. When an authenticated Supabase Auth session owns this user_id, persist directly via RLS-compliant client write too.
+    // Otherwise server /api/push/fcm-token performs the authoritative service-role persistence cleanly.
     let directSbError: string | null = null;
-    if (subscriptionJson?.endpoint && subscriptionJson?.keys?.p256dh && subscriptionJson?.keys?.auth) {
+    if (sessionUser?.id && sessionUser.id === effectiveUserId) {
       try {
         const now = new Date().toISOString();
         const richKeys = {
           p256dh: subscriptionJson.keys.p256dh,
           auth: subscriptionJson.keys.auth,
-          userId: effectiveUserId || null,
+          userId: effectiveUserId,
           deviceId,
           deviceLabel,
           role: effectiveMeta.role || 'student',
@@ -426,7 +536,7 @@ export async function requestFCMPermission(
         };
 
         const { error: sbErr } = await supabase.from('push_subscriptions').upsert({
-          user_id: effectiveUserId || 'usr_anonymous',
+          user_id: effectiveUserId,
           endpoint: subscriptionJson.endpoint,
           p256dh: subscriptionJson.keys.p256dh,
           auth: subscriptionJson.keys.auth,
@@ -442,7 +552,7 @@ export async function requestFCMPermission(
           directSbError = sbErr.message;
           console.error('[FCM] Supabase push_subscriptions upsert warning:', sbErr.message);
         } else {
-          console.log(`[FCM STAGE 3/4] FCM token & WebPush subscription stored in Supabase (userId: ${effectiveUserId || 'anon'}, active: yes)`);
+          console.log(`[FCM STAGE 3/4] FCM token & WebPush subscription stored in Supabase (userId: ${effectiveUserId}, active: yes)`);
         }
       } catch (sbEx: any) {
         directSbError = sbEx?.message || String(sbEx);
@@ -450,10 +560,11 @@ export async function requestFCMPermission(
       }
     }
 
-    // 8. Register token & subscription with backend server
+    // 8. Register token & subscription with backend server (authoritative Supabase write & memory sync)
+    const authHeaders = await buildPushApiAuthHeaders(effectiveUserId, effectiveMeta);
     const apiRes = await fetch('/api/push/fcm-token', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({
         token: primaryEndpoint,
         fcmToken: fcmToken || primaryEndpoint,
@@ -470,7 +581,7 @@ export async function requestFCMPermission(
     });
 
     const apiData = await apiRes.json().catch(() => ({}));
-    if (!apiRes.ok || apiData.status === 'error' || apiData.error) {
+    if (!apiRes.ok || apiData.status === 'error' || apiData.error || apiData.tokenStored === false) {
       const errMsg = apiData.details || apiData.error || directSbError || `Server registration failed (${apiRes.status})`;
       console.error('[FCM] Backend subscription persistence failed:', errMsg);
       return { success: false, error: errMsg };
@@ -528,24 +639,29 @@ export async function disableFCMPush(userId?: string): Promise<boolean> {
       } catch (_) {}
     }
 
-    // 3. Notify backend server
+    // 3. Notify backend server with caller auth headers
     if (endpoint) {
       try {
+        const authHeaders = await buildPushApiAuthHeaders(userId);
         await fetch('/api/push/fcm-token/delete', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: authHeaders,
           body: JSON.stringify({ token: endpoint, userId, deviceId })
         });
       } catch (_) {}
     }
 
-    // 4. Delete from Supabase push_subscriptions table
+    // 4. Delete from Supabase push_subscriptions table when user owns a Supabase session
     if (endpoint) {
       try {
-        await supabase
-          .from('push_subscriptions')
-          .delete()
-          .eq('endpoint', endpoint);
+        const { data } = await supabase.auth.getSession();
+        if (data?.session?.user?.id) {
+          await supabase
+            .from('push_subscriptions')
+            .delete()
+            .eq('endpoint', endpoint)
+            .eq('user_id', data.session.user.id);
+        }
       } catch (_) {}
     }
 
@@ -685,9 +801,10 @@ export async function sendTestFCMNotification(
 
     const deviceLabel = getDevicePlatformLabel();
     const notifId = `test_${Date.now()}`;
+    const authHeaders = await buildPushApiAuthHeaders(userId, { role: userRole || 'student' });
     const res = await fetch('/api/push/send', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({
         notificationId: notifId,
         title: '🔔 StudentOS System Push Verified',

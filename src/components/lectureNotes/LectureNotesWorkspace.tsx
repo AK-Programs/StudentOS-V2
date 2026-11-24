@@ -112,13 +112,19 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
   const [noteDeleteConfirmId, setNoteDeleteConfirmId] = useState<string | null>(null);
   const [renamingNoteModal, setRenamingNoteModal] = useState<{ noteId: string; title: string } | null>(null);
   const noteContextMenuRef = useRef<HTMLDivElement | null>(null);
+  const noteHoldGuardRef = useRef<() => boolean>(() => false);
 
   const closeNoteContextMenu = () => {
     setNoteContextMenu(null);
     setNoteDeleteConfirmId(null);
   };
 
-  useDismissContextMenu(Boolean(noteContextMenu), closeNoteContextMenu, noteContextMenuRef);
+  useDismissContextMenu(
+    Boolean(noteContextMenu),
+    closeNoteContextMenu,
+    noteContextMenuRef,
+    () => noteHoldGuardRef.current()
+  );
 
   // Synchronize initialFolders
   useEffect(() => {
@@ -526,7 +532,8 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                   setIsNotesPanelOpen(false);
                   setIsAICreateModalOpen(true);
                 }}
-                onOpenNoteContextMenu={(noteId, x, y) => {
+                onOpenNoteContextMenu={(noteId, x, y, isGuarded) => {
+                  noteHoldGuardRef.current = isGuarded || (() => false);
                   setNoteDeleteConfirmId(null);
                   setNoteContextMenu({ noteId, x, y });
                 }}
@@ -751,7 +758,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                 </div>
                 <div>
                   <h3 className="text-lg text-white">Create with AI</h3>
-                  <p className="text-[10px] font-normal text-slate-400 uppercase tracking-widest">Powered by APInex</p>
+                  <p className="text-[10px] font-normal text-slate-400 uppercase tracking-widest">Powered by Veylentra AI</p>
                 </div>
               </div>
               <button onClick={() => setIsAICreateModalOpen(false)} className="text-slate-400 hover:text-white p-2 hover:bg-slate-800 rounded-xl transition-colors">
@@ -1092,7 +1099,10 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
           <>
             <div
               className="fixed inset-0 z-[219]"
-              onClick={closeNoteContextMenu}
+              onClick={() => {
+                if (noteHoldGuardRef.current()) return;
+                closeNoteContextMenu();
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 closeNoteContextMenu();
@@ -1116,6 +1126,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                 type="button"
                 role="menuitem"
                 onClick={async () => {
+                  if (noteHoldGuardRef.current()) return;
                   await onUpdateNote(targetNote.id, { isPinned: !isPinned });
                   showNotification(isPinned ? 'Note unpinned.' : '📌 Note pinned to top.');
                   closeNoteContextMenu();
@@ -1130,6 +1141,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                 type="button"
                 role="menuitem"
                 onClick={async () => {
+                  if (noteHoldGuardRef.current()) return;
                   await onUpdateNote(targetNote.id, { isStarred: !isStarred });
                   showNotification(isStarred ? 'Removed from favorites.' : '⭐ Added to favorites.');
                   closeNoteContextMenu();
@@ -1144,6 +1156,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                 type="button"
                 role="menuitem"
                 onClick={() => {
+                  if (noteHoldGuardRef.current()) return;
                   setRenamingNoteModal({ noteId: targetNote.id, title: targetNote.title || '' });
                   closeNoteContextMenu();
                 }}
@@ -1157,6 +1170,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                 type="button"
                 role="menuitem"
                 onClick={async () => {
+                  if (noteHoldGuardRef.current()) return;
                   const collabCode = targetNote.collabCode || Math.floor(100000 + Math.random() * 900000).toString();
                   if (!targetNote.collabCode) {
                     await onUpdateNote(targetNote.id, { collabCode, isCollab: true });
@@ -1183,6 +1197,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                 type="button"
                 role="menuitem"
                 onClick={async () => {
+                  if (noteHoldGuardRef.current()) return;
                   await onUpdateNote(targetNote.id, { isArchived: !isArchived });
                   showNotification(isArchived ? 'Note restored from archive.' : 'Note moved to archive.');
                   closeNoteContextMenu();
@@ -1200,6 +1215,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                 type="button"
                 role="menuitem"
                 onClick={async () => {
+                  if (noteHoldGuardRef.current()) return;
                   await onUpdateNote(targetNote.id, { folder_id: null, folderId: null });
                   showNotification('📂 Moved note to root');
                   closeNoteContextMenu();
@@ -1219,6 +1235,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                   type="button"
                   role="menuitem"
                   onClick={async () => {
+                    if (noteHoldGuardRef.current()) return;
                     await onUpdateNote(targetNote.id, { folder_id: folder.id, folderId: folder.id });
                     showNotification(`📁 Moved note to "${folder.name}"`);
                     closeNoteContextMenu();
@@ -1239,6 +1256,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
                 type="button"
                 role="menuitem"
                 onClick={() => {
+                  if (noteHoldGuardRef.current()) return;
                   if (noteDeleteConfirmId === targetNote.id) {
                     onDeleteNote(targetNote.id);
                     closeNoteContextMenu();
