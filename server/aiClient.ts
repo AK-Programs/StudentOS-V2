@@ -8,14 +8,20 @@
  *   -> Rotates models: llama-3.1-8b-instant, openai/gpt-oss-120b, qwen/qwen3.8-27b
  * - General chat, complex tasks, revision guides, lecture notes, structured tool/JSON, or modelOverride containing ministral or mistral:
  *   -> Ministral (https://api.mistral.ai/v1/chat/completions with MINISTRAL_API_KEY, model: ministral-8b-2410)
- * - Approved AI Providers strictly: Ministral and Groq.
+ * - Z.ai explicit provider / modelOverride containing zai or glm-4.7:
+ *   -> Z.ai (https://api.z.ai/api/paas/v4/chat/completions with server-only ZAI_API_KEY, model: glm-4.7-flash)
+ * - Approved AI Providers strictly: Ministral, Groq, and Z.ai.
  */
 
 import dotenv from 'dotenv';
 dotenv.config();
 
-export type AIProviderName = 'groq' | 'ministral';
+export type AIProviderName = 'groq' | 'ministral' | 'zai';
 export type TaskComplexityTier = 'short' | 'fast' | 'general' | 'complex' | 'tool';
+
+export const ZAI_API_BASE_URL = 'https://api.z.ai/api/paas/v4';
+export const ZAI_CHAT_COMPLETIONS_URL = 'https://api.z.ai/api/paas/v4/chat/completions';
+export const ZAI_MODEL_ID = 'glm-4.7-flash';
 
 export interface ModelRoutingContext {
   endpointName?: string;
@@ -60,7 +66,7 @@ export interface AICompletionOptions {
   images?: { name?: string; mimeType: string; data: string }[];
 }
 
-// Approved AI Provider API Key Getters (Strictly Ministral and Groq)
+// Approved AI Provider API Key Getters (Strictly Ministral, Groq, and Z.ai)
 
 export function getMinistralApiKey(): string {
   return (process.env.MINISTRAL_API_KEY || process.env.MISTRAL_API_KEY || process.env.VITE_MINISTRAL_API_KEY || '')
@@ -70,6 +76,11 @@ export function getMinistralApiKey(): string {
 
 export function getGroqApiKey(): string {
   return (process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY || '').trim().replace(/^["']|["']$/g, '');
+}
+
+// Security rule: Z.ai key is strictly read from server-side ZAI_API_KEY (never VITE_ZAI_API_KEY).
+export function getZaiApiKey(): string {
+  return (process.env.ZAI_API_KEY || '').trim().replace(/^["']|["']$/g, '');
 }
 
 // Groq Model Rotation Manager (single key rotating: llama-3.1-8b-instant, openai/gpt-oss-120b, qwen/qwen3.8-27b)
@@ -127,10 +138,14 @@ export function isLongOrComplexPrompt(
     override.includes('gpt-oss') ||
     override.includes('ministral') ||
     override.includes('mistral') ||
+    override === 'zai' ||
+    override.startsWith('zai/') ||
+    override.includes('glm-4.7') ||
     taskType === 'short' ||
     taskType === 'general' ||
     taskType === 'fast' ||
-    taskType === 'tool'
+    taskType === 'tool' ||
+    taskType === 'zai'
   ) {
     return false;
   }
@@ -175,7 +190,7 @@ export function classifyTaskComplexity(
   const override = (ctx?.modelOverride || '').trim().toLowerCase();
   const endpoint = (ctx?.endpointName || '').toLowerCase();
 
-  // 1. Explicit model overrides (strictly Groq or Ministral)
+  // 1. Explicit model overrides (Groq, Ministral, or Z.ai — never legacy glm-5.3 or apinex)
   if (
     override.includes('groq') ||
     override.includes('llama') ||
@@ -186,6 +201,13 @@ export function classifyTaskComplexity(
   }
   if (override.includes('ministral') || override.includes('mistral')) {
     return { provider: 'ministral', model: 'ministral-8b-2410', tier: 'general' };
+  }
+  if (override === 'zai' || override.startsWith('zai/') || override.includes('glm-4.7') || taskType === 'zai') {
+    return {
+      provider: 'zai',
+      model: ZAI_MODEL_ID,
+      tier: taskType === 'complex' ? 'complex' : 'general'
+    };
   }
 
   // 2. Explicit taskType overrides
@@ -379,6 +401,12 @@ function getProviderEndpointAndKey(provider: AIProviderName): {
       apiKey: getMinistralApiKey()
     };
   }
+  if (provider === 'zai') {
+    return {
+      apiUrl: ZAI_CHAT_COMPLETIONS_URL,
+      apiKey: getZaiApiKey()
+    };
+  }
   return {
     apiUrl: 'https://api.groq.com/openai/v1/chat/completions',
     apiKey: getGroqApiKey()
@@ -446,10 +474,17 @@ export async function generateAICompletionWithTelemetry(
 
   console.log(`[AI_ROUTER] tier=${routing.tier} provider=${provider} model=${model} requestId=${requestId} budget=${effectiveMaxTokens} academic=${isAcademicTask}`);
 
-  async function callApprovedProvider(p: AIProviderName, m: string, currentMessages: any[], budget: number) {
+  async function callApprovedProvider(
+    p: AIProviderName,
+    m: string,
+    currentMessages: any[],
+    budget: number,
+    allowJsonFormat = jsonMode
+  ) {
     const { apiUrl, apiKey } = getProviderEndpointAndKey(p);
     if (!apiKey) {
-      const err: any = new Error(`${p.toUpperCase()} API key is not configured.`);
+      const envName = p === 'zai' ? 'ZAI_API_KEY' : p === 'ministral' ? 'MINISTRAL_API_KEY' : 'GROQ_API_KEY';
+      const err: any = new Error(`${envName} is not configured on the server.`);
       err.status = 500;
       err.providerUsed = p;
       err.modelUsed = m;
@@ -458,43 +493,72 @@ export async function generateAICompletionWithTelemetry(
 
     // Clamp single-request token budget cleanly for OpenAI-compatible endpoints
     const clampedBudget = p === 'ministral' ? Math.min(budget, 8192) : Math.min(budget, 4096);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 28000);
 
-    const resp = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({
-        model: m,
-        messages: currentMessages,
-        temperature,
-        max_tokens: clampedBudget,
-        ...(jsonMode ? { response_format: { type: 'json_object' } } : {})
-      })
-    });
+    try {
+      const resp = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          model: m,
+          messages: currentMessages,
+          temperature,
+          max_tokens: clampedBudget,
+          ...(allowJsonFormat ? { response_format: { type: 'json_object' } } : {})
+        }),
+        signal: controller.signal
+      });
 
-    if (!resp.ok) {
-      const errBody = await resp.text().catch(() => '');
-      const err: any = new Error(`${p} HTTP ${resp.status}: ${errBody || resp.statusText}`);
-      err.status = resp.status;
+      clearTimeout(timeout);
+
+      if (!resp.ok) {
+        const errBody = await resp.text().catch(() => '');
+        // Some models/endpoints reject response_format: json_object with HTTP 400; retry cleanly without it once
+        if (resp.status === 400 && allowJsonFormat && /response_format|json_object|unsupported/i.test(errBody)) {
+          return await callApprovedProvider(p, m, currentMessages, budget, false);
+        }
+        const err: any = new Error(`${p} HTTP ${resp.status}: ${errBody || resp.statusText}`);
+        err.status = resp.status;
+        err.providerUsed = p;
+        err.modelUsed = m;
+        throw err;
+      }
+
+      const data = await resp.json();
+      const text = extractTextFromChoice(data?.choices?.[0], data);
+      const finishReason = data?.choices?.[0]?.finish_reason || 'stop';
+      return { text, finishReason, provider: p, model: m };
+    } catch (fetchErr: any) {
+      clearTimeout(timeout);
+      if (fetchErr?.providerUsed) throw fetchErr;
+      const isTimeout = fetchErr?.name === 'AbortError' || String(fetchErr?.message || '').toLowerCase().includes('abort');
+      const err: any = new Error(
+        isTimeout ? `${p} request timed out after 28 seconds.` : (fetchErr?.message || `${p} request failed`)
+      );
+      err.status = isTimeout ? 504 : 502;
       err.providerUsed = p;
       err.modelUsed = m;
       throw err;
     }
-
-    const data = await resp.json();
-    const text = extractTextFromChoice(data?.choices?.[0], data);
-    const finishReason = data?.choices?.[0]?.finish_reason || 'stop';
-    return { text, finishReason, provider: p, model: m };
   }
 
   async function performCompletion(primaryProvider: AIProviderName, primaryModel: string, currentMessages: any[], budget: number) {
     const candidates: Array<{ p: AIProviderName; m: string }> = [
       { p: primaryProvider, m: primaryModel }
     ];
-    if (primaryProvider === 'groq') {
+    if (primaryProvider === 'zai') {
+      if (getMinistralApiKey()) {
+        candidates.push({ p: 'ministral', m: 'ministral-8b-2410' });
+      }
+      if (getGroqApiKey()) {
+        candidates.push({ p: 'groq', m: getNextGroqModel() });
+      }
+    } else if (primaryProvider === 'groq') {
       for (const altModel of groqModels) {
         if (altModel !== primaryModel) {
           candidates.push({ p: 'groq', m: altModel });
@@ -503,14 +567,32 @@ export async function generateAICompletionWithTelemetry(
       if (getMinistralApiKey()) {
         candidates.push({ p: 'ministral', m: 'ministral-8b-2410' });
       }
-    } else if (!hasImages && getGroqApiKey()) {
-      candidates.push({ p: 'groq', m: getNextGroqModel() });
+      if (getZaiApiKey()) {
+        candidates.push({ p: 'zai', m: ZAI_MODEL_ID });
+      }
+    } else if (!hasImages) {
+      if (getGroqApiKey()) {
+        candidates.push({ p: 'groq', m: getNextGroqModel() });
+      }
+      if (getZaiApiKey()) {
+        candidates.push({ p: 'zai', m: ZAI_MODEL_ID });
+      }
     }
 
     let lastErr: any = null;
     for (let i = 0; i < candidates.length; i++) {
       const candidate = candidates[i];
-      if (!getProviderEndpointAndKey(candidate.p).apiKey) continue;
+      if (!getProviderEndpointAndKey(candidate.p).apiKey) {
+        if (i === 0) {
+          const envName = candidate.p === 'zai' ? 'ZAI_API_KEY' : candidate.p === 'ministral' ? 'MINISTRAL_API_KEY' : 'GROQ_API_KEY';
+          lastErr = Object.assign(new Error(`${envName} is not configured on the server.`), {
+            status: 500,
+            providerUsed: candidate.p,
+            modelUsed: candidate.m,
+          });
+        }
+        continue;
+      }
       if (i > 0) retries++;
       try {
         const res = await callApprovedProvider(candidate.p, candidate.m, currentMessages, budget);
@@ -521,7 +603,7 @@ export async function generateAICompletionWithTelemetry(
       }
     }
 
-    throw lastErr || new Error('No configured approved AI providers (Ministral, Groq) succeeded.');
+    throw lastErr || new Error('No configured approved AI providers (Ministral, Groq, Z.ai) succeeded.');
   }
 
   let finalFullText = '';
@@ -662,7 +744,7 @@ export async function streamAICompletion(
     const { apiUrl: targetUrl, apiKey } = getProviderEndpointAndKey(p);
 
     if (!apiKey) {
-      const keyName = p === 'groq' ? 'GROQ_API_KEY' : 'MINISTRAL_API_KEY';
+      const keyName = p === 'zai' ? 'ZAI_API_KEY' : p === 'groq' ? 'GROQ_API_KEY' : 'MINISTRAL_API_KEY';
       const err: any = new Error(`${keyName} environment variable is not configured on the server.`);
       err.status = 500;
       err.providerUsed = p;
@@ -676,18 +758,40 @@ export async function streamAICompletion(
       'Authorization': `Bearer ${apiKey}`
     };
 
-    const response = await fetch(targetUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model: m,
-        messages,
-        temperature,
-        max_tokens: customMaxTokens || effectiveMaxTokens,
-        stream: true
-      }),
-      signal: abortSignal
-    });
+    const requestController = new AbortController();
+    const timeoutId = setTimeout(() => requestController.abort(), 30000);
+    const onExternalAbort = () => requestController.abort();
+    abortSignal?.addEventListener('abort', onExternalAbort, { once: true });
+
+    let response: Response;
+    try {
+      response = await fetch(targetUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: m,
+          messages,
+          temperature,
+          max_tokens: customMaxTokens || effectiveMaxTokens,
+          stream: true
+        }),
+        signal: requestController.signal
+      });
+    } catch (fetchErr: any) {
+      clearTimeout(timeoutId);
+      abortSignal?.removeEventListener('abort', onExternalAbort);
+      const err: any = new Error(
+        fetchErr?.name === 'AbortError'
+          ? `${p} stream request timed out after 30 seconds.`
+          : (fetchErr?.message || `${p} stream request failed`)
+      );
+      err.status = fetchErr?.name === 'AbortError' ? 504 : 502;
+      err.providerUsed = p;
+      err.modelUsed = m;
+      throw err;
+    }
+    clearTimeout(timeoutId);
+    abortSignal?.removeEventListener('abort', onExternalAbort);
 
     if (!response.ok || !response.body) {
       const errBody = await response.text().catch(() => '');
@@ -764,58 +868,60 @@ export async function streamAICompletion(
   let streamResult: { fullText: string; firstTokenLatencyMs: number | null; finishReason?: string } | null = null;
   let finalProvider: AIProviderName = activeProvider;
 
-  if (activeProvider === 'ministral' || routing.tier === 'complex') {
-    finalProvider = 'ministral';
-    activeModel = 'ministral-8b-2410';
-    try {
-      streamResult = await tryStreamOnce('ministral', activeModel);
-    } catch (mErr: any) {
-      console.warn('[AI_STREAM_ROUTER] Ministral stream notice:', mErr?.message || mErr, '- attempting fallback to Groq');
-      const groqKey = getGroqApiKey();
-      if (!hasImages && groqKey) {
-        finalProvider = 'groq';
-        activeModel = getNextGroqModel();
-        retries++;
-        streamResult = await tryStreamOnce('groq', activeModel);
-      } else {
-        throw mErr;
+  const streamPlan: Array<{ p: AIProviderName; m: string }> = [];
+  if (activeProvider === 'zai' && !hasImages) {
+    streamPlan.push({ p: 'zai', m: ZAI_MODEL_ID });
+    if (getMinistralApiKey()) streamPlan.push({ p: 'ministral', m: 'ministral-8b-2410' });
+    if (getGroqApiKey()) {
+      for (const gm of groqModels) streamPlan.push({ p: 'groq', m: gm });
+    }
+  } else if (activeProvider === 'ministral' || routing.tier === 'complex' || hasImages) {
+    streamPlan.push({ p: 'ministral', m: 'ministral-8b-2410' });
+    if (!hasImages) {
+      if (getGroqApiKey()) {
+        for (const gm of groqModels) streamPlan.push({ p: 'groq', m: gm });
       }
+      if (getZaiApiKey()) streamPlan.push({ p: 'zai', m: ZAI_MODEL_ID });
     }
   } else {
-    const candidateModels = [activeModel, ...groqModels.filter((m) => m !== activeModel)];
-    let lastErr: any = null;
-    for (let i = 0; i < candidateModels.length; i++) {
-      activeModel = candidateModels[i];
-      if (i > 0) retries++;
-      try {
-        streamResult = await tryStreamOnce('groq', activeModel);
-        if (streamResult.fullText.trim()) {
-          break;
-        }
-      } catch (err: any) {
-        lastErr = err;
-        if (err?.status === 401 || err?.status === 403) break;
-      }
+    for (const gm of [activeModel, ...groqModels.filter((m) => m !== activeModel)]) {
+      streamPlan.push({ p: 'groq', m: gm });
     }
-    if (!streamResult || !streamResult.fullText.trim()) {
-      const ministralKey = getMinistralApiKey();
-      if (ministralKey) {
-        finalProvider = 'ministral';
-        activeModel = 'ministral-8b-2410';
-        retries++;
-        streamResult = await tryStreamOnce('ministral', activeModel);
-      } else {
-        if (lastErr) throw lastErr;
-        const err: any = new Error(`Groq HTTP 200 returned empty stream content for ${activeModel}.`);
-        err.status = 502;
-        err.providerUsed = 'groq';
-        err.modelUsed = activeModel;
-        throw err;
+    if (getMinistralApiKey()) streamPlan.push({ p: 'ministral', m: 'ministral-8b-2410' });
+    if (getZaiApiKey()) streamPlan.push({ p: 'zai', m: ZAI_MODEL_ID });
+  }
+
+  let lastStreamErr: any = null;
+  for (let i = 0; i < streamPlan.length; i++) {
+    const candidate = streamPlan[i];
+    if (!getProviderEndpointAndKey(candidate.p).apiKey) {
+      if (i === 0) {
+        const keyName = candidate.p === 'zai' ? 'ZAI_API_KEY' : candidate.p === 'groq' ? 'GROQ_API_KEY' : 'MINISTRAL_API_KEY';
+        lastStreamErr = Object.assign(new Error(`${keyName} environment variable is not configured on the server.`), {
+          status: 500,
+          providerUsed: candidate.p,
+          modelUsed: candidate.m,
+        });
       }
+      continue;
+    }
+    if (i > 0) retries++;
+    finalProvider = candidate.p;
+    activeModel = candidate.m;
+    try {
+      const attempt = await tryStreamOnce(candidate.p, candidate.m);
+      if (attempt.fullText.trim()) {
+        streamResult = attempt;
+        break;
+      }
+    } catch (err: any) {
+      lastStreamErr = err;
+      console.warn(`[AI_STREAM_ROUTER] ${candidate.p} (${candidate.m}) fallback notice:`, err?.message || err);
     }
   }
 
   if (!streamResult || !streamResult.fullText.trim()) {
+    if (lastStreamErr) throw lastStreamErr;
     const err: any = new Error(`${finalProvider} returned empty stream content.`);
     err.status = 502;
     err.providerUsed = finalProvider;

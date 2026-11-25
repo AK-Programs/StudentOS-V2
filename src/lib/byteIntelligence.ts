@@ -327,8 +327,8 @@ export const ROLE_CAPABILITY_PROFILES: Record<ByteNormalizedRole, ByteRoleProfil
       },
       {
         title: 'AI Routing Architecture',
-        subtitle: 'Ministral & Groq orchestration summary',
-        prompt: 'Summarize how Byte and Orion route requests across Ministral and Groq while keeping Orion ephemeral.',
+        subtitle: 'Ministral, Groq & Z.ai (GLM-4.7 Flash) summary',
+        prompt: 'Summarize how Byte and Orion route requests across Ministral, Groq, and Z.ai GLM-4.7 Flash while keeping Orion ephemeral.',
         category: 'Diagnostics'
       },
       {
@@ -917,7 +917,7 @@ export async function buildRoleAwareByteContext(
 
         if (normalizedRole === 'super_admin') {
           sections.push(
-            `Super Admin Governance Context: Active AI Providers configured for Ministral & Groq. Ephemeral privacy enforced on Orion interactions.`
+            `Super Admin Governance Context: Active AI Providers configured for Ministral & Groq, plus Z.ai (GLM-4.7 Flash). Ephemeral privacy enforced on Orion interactions.`
           );
         }
       }

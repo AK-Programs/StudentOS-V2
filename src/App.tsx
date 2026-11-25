@@ -14352,6 +14352,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                     }}
                     activeTab={activeTab}
                     initialQuery={orionInitialQuery}
+                    modelOverride={aiModelOverride || undefined}
                     setActiveTab={handleTabSelect}
                     clearWhiteboard={clearCanvas}
                     drawShapeOnWhiteboard={drawShapeOnWhiteboard}

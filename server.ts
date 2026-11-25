@@ -7,7 +7,8 @@ import express from 'express';
 import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
-import { generateAICompletion, generateAICompletionWithTelemetry, streamAICompletion, classifyTaskComplexity, getGroqApiKey, getMinistralApiKey } from './server/aiClient';
+import { generateAICompletion, generateAICompletionWithTelemetry, streamAICompletion, classifyTaskComplexity, getGroqApiKey, getMinistralApiKey, getZaiApiKey, ZAI_MODEL_ID } from './server/aiClient';
+import { resolveVerifiedOrionActor, executeOrionServerRequest } from './server/orionService';
 import { generateVoiceTTS, transcribeVoiceSTT } from './server/voiceService';
 import { synthesizeEdgeSpeech, VERIFIED_EDGE_VOICES, cleanTextForSpeech } from './server/edgeTtsService';
 import { getVerified3DModelsCatalog, getAllThreeDRequests, createThreeDRequest, updateThreeDRequestStatus } from './server/threeDModelService';
@@ -2403,7 +2404,14 @@ function sanitizeHistory(history: any[] = []): { role: 'user' | 'assistant'; con
 
 // API Routes
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', time: new Date() });
+  res.json({
+    status: 'ok',
+    time: new Date(),
+    provider: 'multi-provider',
+    ministralModel: 'ministral-8b-2410',
+    zaiModel: ZAI_MODEL_ID,
+    zaiConfigured: Boolean(getZaiApiKey()),
+  });
 });
 
 // ========================================================================
@@ -2722,28 +2730,29 @@ app.post('/api/config/apk', async (req, res) => {
   });
 });
 
-// Disabled NVIDIA diagnostic route per approved AI provider lock (Ministral, Groq only)
+// Disabled NVIDIA diagnostic route per approved AI provider lock (Ministral, Groq, Z.ai)
 app.all(['/api/debug/nvidia', '/api/debug/nvidia/'], (_req, res) => {
   return res.status(410).json({
     success: false,
-    error: 'This diagnostic endpoint has been disabled. Veylentra AI routes strictly through Ministral and Groq.'
+    error: 'This diagnostic endpoint has been disabled. Veylentra AI routes strictly through Ministral, Groq, and Z.ai.'
   });
 });
 
-// Minimal Server Diagnostic Route for AI Routing (Ministral + Groq)
+// Minimal Server Diagnostic Route for AI Routing (Ministral + Groq + Z.ai)
 app.all('/api/ai/minimal-test', async (req, res) => {
   const groqKey = getGroqApiKey();
   const ministralKey = getMinistralApiKey();
-  const keyPresent = Boolean(groqKey || ministralKey);
+  const zaiKey = getZaiApiKey();
+  const keyPresent = Boolean(groqKey || ministralKey || zaiKey);
   const requestId = 'test_' + Math.random().toString(36).substring(2, 10);
 
-  console.log(`[AI DEBUG] Request ID: ${requestId} | Route: /api/ai/minimal-test | Providers configured: groq=${Boolean(groqKey)}, ministral=${Boolean(ministralKey)}`);
+  console.log(`[AI DEBUG] Request ID: ${requestId} | Route: /api/ai/minimal-test | Providers configured: groq=${Boolean(groqKey)}, ministral=${Boolean(ministralKey)}, zai=${Boolean(zaiKey)}`);
 
   if (!keyPresent) {
     return res.status(500).json({
       success: false,
       requestId,
-      error: 'Neither GROQ_API_KEY nor MINISTRAL_API_KEY is configured on the server.',
+      error: 'Neither GROQ_API_KEY, MINISTRAL_API_KEY, nor ZAI_API_KEY is configured on the server.',
       keyPresent: false
     });
   }
@@ -2752,7 +2761,8 @@ app.all('/api/ai/minimal-test', async (req, res) => {
     const { text, telemetry } = await generateAICompletionWithTelemetry({
       prompt: 'Reply with exactly: AI TEST OK',
       endpointName: 'MinimalAITest',
-      taskType: groqKey ? 'fast' : 'general',
+      taskType: groqKey ? 'fast' : (ministralKey ? 'general' : undefined),
+      modelOverride: !groqKey && !ministralKey && zaiKey ? 'zai' : undefined,
       maxTokens: 200,
       requestId
     });
@@ -2776,11 +2786,12 @@ app.all('/api/ai/minimal-test', async (req, res) => {
   }
 });
 
-// Server-side diagnostic test route for Ministral / Groq AI connection
+// Server-side diagnostic test route for Ministral / Groq / Z.ai AI connection
 app.get('/api/ai/diagnostic', async (req, res) => {
   const groqKey = getGroqApiKey();
   const ministralKey = getMinistralApiKey();
-  const keyPresent = Boolean(groqKey || ministralKey);
+  const zaiKey = getZaiApiKey();
+  const keyPresent = Boolean(groqKey || ministralKey || zaiKey);
   const requestId = 'diag_' + Math.random().toString(36).substring(2, 10);
 
   try {
@@ -2796,6 +2807,7 @@ app.get('/api/ai/diagnostic', async (req, res) => {
       keyPresent,
       groqConfigured: Boolean(groqKey),
       ministralConfigured: Boolean(ministralKey),
+      zaiConfigured: Boolean(zaiKey),
       providerUsed: telemetry.providerUsed,
       modelUsed: telemetry.modelUsed,
       response: text
@@ -2807,6 +2819,7 @@ app.get('/api/ai/diagnostic', async (req, res) => {
       keyPresent,
       groqConfigured: Boolean(groqKey),
       ministralConfigured: Boolean(ministralKey),
+      zaiConfigured: Boolean(zaiKey),
       error: err.message || 'Diagnostic request failed'
     });
   }
@@ -3161,11 +3174,12 @@ app.post(['/api/ai/chat', '/api/ai/chat/stream'], async (req, res) => {
 
   const groqKeyPresent = Boolean(getGroqApiKey());
   const ministralKeyPresent = Boolean(getMinistralApiKey());
+  const zaiKeyPresent = Boolean(getZaiApiKey());
 
   console.log(`[AI DEBUG] Request ID: ${requestId} | Stream: ${isStreamingRequest}`);
   console.log(`[AI DEBUG] Route: ${req.path}`);
   console.log(`[AI DEBUG] Authenticated user: ${Boolean(userId && userId !== 'user_guest' && userId !== 'guest')}`);
-  console.log(`[AI DEBUG] Providers configured: groq=${groqKeyPresent}, ministral=${ministralKeyPresent}`);
+  console.log(`[AI DEBUG] Providers configured: groq=${groqKeyPresent}, ministral=${ministralKeyPresent}, zai=${zaiKeyPresent}`);
 
   if (!prompt) {
     return res.status(400).json({ error: 'Prompt is required' });
@@ -3237,7 +3251,7 @@ app.post(['/api/ai/chat', '/api/ai/chat/stream'], async (req, res) => {
     coordinator: `USER ROLE (ACADEMIC COORDINATOR): Prioritize cross-section attendance compliance, syllabus pacing, academic circular drafting, department coordination, and actionable oversight insights.`,
     hod: `USER ROLE (HEAD OF DEPARTMENT / COORDINATOR): Prioritize department curriculum pacing, assessment calibration, teacher alignment, and section-wide attendance/submission compliance.`,
     admin: `USER ROLE (SCHOOL ADMINISTRATOR): Prioritize concise institutional operations briefings, attendance totals, scheduling alignment, official notices, and policy clarity.`,
-    super_admin: `USER ROLE (SUPER ADMINISTRATOR): Provide institutional operations oversight plus architecture, RBAC boundary, and AI routing diagnostics awareness (Ministral & Groq providers, ephemeral Orion execution) without inventing hidden runtime logs.`,
+    super_admin: `USER ROLE (SUPER ADMINISTRATOR): Provide institutional operations oversight plus architecture, RBAC boundary, and AI routing diagnostics awareness (Ministral & Groq + Z.ai GLM-4.7 Flash providers, ephemeral Orion execution) without inventing hidden runtime logs.`,
     parent: `USER ROLE (PARENT / GUARDIAN): Communicate warmly and clearly. Only discuss data belonging to OTP-linked children present in <studentos_authorized_context>. If no child is linked, clearly direct the parent to open Parental Portal to link their child via OTP email verification.`
   };
   if (persona !== 'orion') {
@@ -4814,12 +4828,57 @@ Format beautifully in Markdown.`;
   }
 });
 
+// Authoritative Server-Side Orion Agent Execution Route (Strictly Ephemeral — zero DB/disk chat storage)
+app.post('/api/orion/execute', async (req, res) => {
+  const cfg = getSupabaseServerConfig();
+  const actorResult = await resolveVerifiedOrionActor(req, cfg);
+  if ('error' in actorResult) {
+    return res.status(actorResult.status).json({
+      success: false,
+      status: 'unauthorized',
+      error: actorResult.error,
+      finalResponse: actorResult.error,
+    });
+  }
+
+  const {
+    command = '',
+    actionPlan,
+    confirmed = false,
+    activeTab = 'dashboard',
+    modelOverride,
+    history = [],
+  } = req.body || {};
+
+  try {
+    const result = await executeOrionServerRequest({
+      cfg,
+      actor: actorResult.actor,
+      command: String(command || ''),
+      actionPlan: Array.isArray(actionPlan) ? actionPlan : undefined,
+      confirmed: Boolean(confirmed),
+      activeTab: typeof activeTab === 'string' ? activeTab : 'dashboard',
+      modelOverride: typeof modelOverride === 'string' ? modelOverride : undefined,
+      history: Array.isArray(history) ? history : [],
+      dispatchPushFn: dispatchServerWebPush,
+    });
+    return res.status(result.httpStatus).json(result.body);
+  } catch (err: any) {
+    console.error('[ORION EXECUTE ERROR]', err?.message || err);
+    return res.status(502).json({
+      success: false,
+      status: 'failed',
+      error: err?.message || 'Orion execution failed on server.',
+      finalResponse: err?.message || 'Orion could not complete that request due to a server error.',
+    });
+  }
+});
+
 // Role-Scoped Orion Workspace Draft & Academic Assist Endpoint
-// Strictly uses approved providers (Ministral, Groq) and enforces faculty role bounds.
+// Strictly uses approved providers (Ministral, Groq, Z.ai) and enforces server-side RBAC.
 app.post('/api/ai/orion-assist', async (req, res) => {
   const {
     userId = 'anonymous',
-    userRole = 'student',
     intent = 'student_study',
     subject = 'Academic Studies',
     grade = 'Grade 10',
@@ -4827,9 +4886,17 @@ app.post('/api/ai/orion-assist', async (req, res) => {
     contextData = ''
   } = req.body || {};
 
-  // Server-side authoritative role check when Bearer token is provided
+  // Reject invalid Bearer JWTs immediately instead of falling back to body userRole
+  const authHeader = String(req.headers.authorization || req.headers['x-supabase-auth'] || '').trim();
   const verifiedUser = await getVerifiedUserFromRequest(req);
-  const resolvedRole = (verifiedUser?.role || String(userRole || 'student')).toLowerCase().trim();
+  if (authHeader && !verifiedUser) {
+    return res.status(401).json({
+      success: false,
+      error: 'Invalid or expired authentication token.'
+    });
+  }
+
+  const resolvedRole = (verifiedUser?.role || 'student').toLowerCase().trim();
   const facultyOnlyIntents = new Set([
     'draft_assignment',
     'draft_lesson_plan',
