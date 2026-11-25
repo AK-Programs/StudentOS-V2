@@ -50,7 +50,6 @@ import {
   detectMathInteractiveWidget,
   InteractiveMathWidget,
   saveStudyOutputToFlashcards,
-  MathRenderer,
   formatMathematicalText,
   extractTopicTeachingIntent
 } from './lib/studentosAiEngine';
@@ -192,6 +191,8 @@ import { ProfileBannerBackdrop, ProfileCosmeticAvatar } from './components/winte
 import { fetchPublicWinterCosmetics } from './lib/winterFestivalService';
 import { BadgeUnlockCelebrationModal } from './components/winter/BadgeUnlockCelebrationModal';
 import { prefersReducedMotion } from './lib/motionSystem';
+import { AcademicRichRenderer } from './components/ui/AcademicRichRenderer';
+import { ByteWorkspace } from './components/byte/ByteWorkspace';
 
 // Stub Integrations
 import {
@@ -208,144 +209,9 @@ const generateUniqueId = () => {
   return crypto.randomUUID();
 };
 
-const CodeBlock = ({ code, language }: { code: string; language: string; key?: any }) => {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(code.trim());
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <div className="my-3 rounded-xl overflow-hidden border border-white/10 bg-slate-950 font-mono text-xs shadow-md">
-      <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-white/5 text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-        <span>{language || 'code'}</span>
-        <button
-          onClick={handleCopy}
-          className={`px-2 py-1 rounded transition-all text-[9px] font-semibold active:scale-95 ${copied ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white'}`}
-        >
-          {copied ? '✓ Copied' : 'Copy'}
-        </button>
-      </div>
-      <pre className="p-4 overflow-x-auto text-slate-100 whitespace-pre scrollbar-thin scrollbar-thumb-white/10 select-text leading-relaxed">
-        <code>{code}</code>
-      </pre>
-    </div>
-  );
-};
-
-const parseInlineMarkdown = (line: string) => {
-  // Support **, `, and inline math $...$ or \(...\)
-  const parts = line.split(/(\*\*.*?\*\*|`.*?`|\$.*?\$|\\\(.*?\\\))/g);
-  return parts.map((part, idx) => {
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return <strong key={idx} className="font-extrabold text-white">{part.slice(2, -2)}</strong>;
-    }
-    if (part.startsWith('`') && part.endsWith('`')) {
-      return <code key={idx} className="mx-1 px-1.5 py-0.5 rounded bg-slate-950 border border-white/5 font-mono text-[11px] text-amber-300 font-semibold">{part.slice(1, -1)}</code>;
-    }
-    if ((part.startsWith('$') && part.endsWith('$')) || (part.startsWith('\\(') && part.endsWith('\\)'))) {
-      const formula = part.replace(/^\$|\$|^\\\(|\\\)$/g, '').trim();
-      return <MathRenderer key={idx} formula={formula} className="mx-0.5" />;
-    }
-    return part;
-  });
-};
-
-const renderMarkdown = (rawText: string) => {
+const renderMarkdown = (rawText: string, isStreaming = false) => {
   if (!rawText) return null;
-  
-  // Split by code blocks and display math blocks
-  const parts = rawText.split(/(```[\s\S]*?```|\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\])/g);
-
-  return parts.map((part, index) => {
-    if (part.startsWith('```')) {
-      const match = part.match(/```(\w*)\n([\s\S]*?)```/);
-      const lang = match ? match[1] : '';
-      const code = match ? match[2] : part.slice(3, -3);
-
-      return <CodeBlock key={index} code={code} language={lang} />;
-    }
-
-    if ((part.startsWith('$$') && part.endsWith('$$')) || (part.startsWith('\\[') && part.endsWith('\\]'))) {
-      const mathFormula = part.replace(/^\$\$|\$\$$|^\\\[|\\\]$/g, '').trim();
-      return (
-        <div
-          key={index}
-          className="my-3.5 p-4 rounded-2xl bg-indigo-950/30 border border-indigo-500/20 text-indigo-100 flex justify-center overflow-x-auto shadow-sm"
-        >
-          <MathRenderer formula={mathFormula} display={true} />
-        </div>
-      );
-    }
-
-    const lines = part.split('\n');
-    return (
-      <div key={index} className="space-y-1.5">
-        {lines.map((line, lIdx) => {
-          if (line.trim() === '---' || line.trim() === '***') {
-            return <hr key={lIdx} className="my-3 border-t border-white/10" />;
-          }
-
-          if (line.startsWith('### ')) {
-            return <h4 key={lIdx} className="text-sm font-extrabold text-indigo-300 mt-2 mb-1 tracking-tight">{parseInlineMarkdown(line.substring(4))}</h4>;
-          }
-          if (line.startsWith('## ')) {
-            return <h3 key={lIdx} className="text-base font-black text-indigo-400 mt-3 mb-1.5 tracking-tight">{parseInlineMarkdown(line.substring(3))}</h3>;
-          }
-          if (line.startsWith('# ')) {
-            return <h2 key={lIdx} className="text-lg font-black text-white mt-4 mb-2 tracking-wide">{parseInlineMarkdown(line.substring(2))}</h2>;
-          }
-
-          // Render Markdown table rows cleanly
-          if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
-            if (/^\|[\s\-:|]+\|$/.test(line.trim())) return null;
-            const cells = line.trim().slice(1, -1).split('|').map(c => c.trim());
-            return (
-              <div key={lIdx} className="grid grid-flow-col auto-cols-fr gap-2 py-1.5 px-2.5 rounded-lg bg-slate-950/60 border border-white/5 text-[11px] overflow-x-auto">
-                {cells.map((cell, cIdx) => (
-                  <span key={cIdx} className="text-slate-200 font-medium break-words">{parseInlineMarkdown(cell)}</span>
-                ))}
-              </div>
-            );
-          }
-
-          if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
-            const raw = line.trim().substring(2);
-            return (
-              <ul key={lIdx} className="list-disc pl-5 my-0.5 text-slate-300">
-                <li className="leading-relaxed">{parseInlineMarkdown(raw)}</li>
-              </ul>
-            );
-          }
-
-          if (/^\d+\.\s/.test(line.trim())) {
-            const dotIdx = line.indexOf('.');
-            const raw = line.substring(dotIdx + 1).trim();
-            const num = line.trim().substring(0, dotIdx);
-            return (
-              <ol key={lIdx} className="list-decimal pl-5 my-0.5 text-slate-300" start={parseInt(num) || 1}>
-                <li className="leading-relaxed">{parseInlineMarkdown(raw)}</li>
-              </ol>
-            );
-          }
-
-          if (line.trim().startsWith('>')) {
-            const raw = line.trim().substring(1).trim();
-            return (
-              <blockquote key={lIdx} className="border-l-4 border-indigo-500/50 bg-indigo-500/5 pl-4 py-1.5 my-1.5 rounded-r-lg italic text-slate-300">
-                {parseInlineMarkdown(raw)}
-              </blockquote>
-            );
-          }
-
-          if (!line.trim()) return <div key={lIdx} className="h-1.5" />;
-          return <p key={lIdx} className="leading-relaxed mb-1 text-slate-300 text-xs sm:text-sm break-words">{parseInlineMarkdown(line)}</p>;
-        })}
-      </div>
-    );
-  });
+  return <AcademicRichRenderer content={rawText} isStreaming={isStreaming} />;
 };
 
 export function getUserProfileTitle(profile: UserProfile | null, effectiveRole?: string): string {
@@ -6586,13 +6452,13 @@ Date: ${new Date().toLocaleDateString()}
     showNotification('Response copied to clipboard!');
   };
 
-  const handleSaveToNotes = (text: string) => {
+  const handleSaveToNotes = (text: string, customTitle?: string) => {
     const cleanSubject = currentUser?.specialtySubject || 'AI Study';
-    const defaultTitle = text.length > 30 ? text.substring(0, 30).trim() + "..." : text;
-    const title = prompt("Enter a title for this note:", `AI Mentor - ${defaultTitle}`);
-    if (title === null) return; // User cancelled prompt
-    
-    const finalTitle = title.trim() || `AI Study Note - ${new Date().toLocaleDateString()}`;
+    const firstLine = text.split('\n').find(l => l.trim().length > 0) || '';
+    const cleanedFirstLine = firstLine.replace(/^[#>*\-\s`]+/, '').trim();
+    const fallbackSnippet = cleanedFirstLine.length > 42 ? cleanedFirstLine.slice(0, 42).trim() + '...' : cleanedFirstLine;
+    const finalTitle = (customTitle && customTitle.trim()) || (fallbackSnippet ? `Byte Note — ${fallbackSnippet}` : `AI Study Note - ${new Date().toLocaleDateString()}`);
+
     const newNote: VaultNote = {
       id: generateUniqueId(),
       title: finalTitle,
@@ -6602,7 +6468,7 @@ Date: ${new Date().toLocaleDateString()}
     };
     
     setVaultNotes(prev => [newNote, ...prev]);
-    showNotification('Saved to your Personal Vault Notes!');
+    showNotification(`Saved "${finalTitle}" to your Personal Vault Notes!`);
   };
 
   const handleToggleSpeakMessage = (text: string, msgKey: string) => {
@@ -6770,11 +6636,12 @@ ${roleLabel}: ${userQuery}
 
     try {
       let answer = '';
-      // Fetch role-authorized StudentOS context ONLY when query asks about StudentOS data
-      const { contextString: ragContext, hasStudentOSData } = await buildAuthorizedStudentOSContext(
+      // Fetch role-authorized Veylentra context ONLY when query needs workspace/role data
+      const { contextString: ragContext, hasStudentOSData, intentCategory } = await buildAuthorizedStudentOSContext(
         userQuery,
         currentUser,
-        userRoleKey
+        userRoleKey,
+        { activeTab, localSnapshot: { vaultNotes } }
       );
       setAiGroundedInData(hasStudentOSData);
 
@@ -6839,6 +6706,8 @@ CRITICAL WEB GROUNDING DIRECTIVE:
           ragContext: ragContext || undefined,
           userId: userIdKey,
           userRole: userRoleKey,
+          activeTab,
+          intentType: intentCategory,
           modelOverride: aiModelOverride || undefined,
           webSearchMode: isWebSearchRequested ? aiWebSearchMode : 'off',
           images: imagePayload.length > 0 ? imagePayload : undefined
@@ -13930,708 +13799,56 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                   }}
                 />
               )}
-              {/* Tab 7: AI Teacher Chat Dialog */}
+              {/* Tab 7: Byte AI Role-Aware Workspace */}
               {activeTab === 'ai_teacher' && (
-                <div className="h-[calc(100dvh-130px)] flex flex-col smart-glass p-3 sm:p-4 rounded-3xl border border-white/10 shadow-xl relative w-full overflow-hidden animate-fadeIn">
-                  
-                  {/* Slide-out Study Threads Drawer */}
-                  <AnimatePresence>
-                    {showAiHistoryDrawer && (
-                      <>
-                        <motion.div
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          onClick={() => setShowAiHistoryDrawer(false)}
-                          className="fixed inset-0 bg-black/70 backdrop-blur-xs z-50 transition-opacity"
-                        />
-                        <motion.div
-                          initial={{ x: '-100%' }}
-                          animate={{ x: 0 }}
-                          exit={{ x: '-100%' }}
-                          transition={{ type: 'spring', damping: 25, stiffness: 280 }}
-                          className="fixed inset-y-0 left-0 w-80 max-w-[85vw] bg-slate-950/95 border-r border-white/10 z-50 p-5 flex flex-col shadow-2xl backdrop-blur-md"
-                        >
-                          <div className="flex items-center justify-between pb-4 border-b border-white/10">
-                            <div className="flex items-center gap-2">
-                              <History className="w-4 h-4 text-indigo-400" />
-                              <h3 className="font-extrabold text-sm text-white">Study Threads</h3>
-                            </div>
-                            <button
-                              onClick={() => setShowAiHistoryDrawer(false)}
-                              className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-
-                          <div className="pt-3 pb-2">
-                            <button
-                              onClick={() => {
-                                handleCreateNewThread();
-                                setShowAiHistoryDrawer(false);
-                              }}
-                              className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-all shadow-md active:scale-95"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                              <span>New Study Session</span>
-                            </button>
-                          </div>
-
-                          <div className="flex-1 overflow-y-auto space-y-1.5 py-2 pr-1">
-                            {aiThreads.length === 0 ? (
-                              <p className="text-center text-slate-500 text-xs py-8">No previous study threads</p>
-                            ) : (
-                              aiThreads.map(t => {
-                                const isHolding = byteThreadContext.holdingItemId === t.id;
-                                const isContextActive = aiThreadHoldMenu?.threadId === t.id;
-                                return (
-                                <div
-                                  key={t.id}
-                                  {...byteThreadContext.getItemBindProps(t.id)}
-                                  data-holding={isHolding ? 'true' : undefined}
-                                  data-context-active={isContextActive ? 'true' : undefined}
-                                  onClick={() => {
-                                    if (byteThreadContext.shouldSuppressClick(t.id)) return;
-                                    setActiveThreadId(t.id);
-                                    setSelectedPersona(t.personaId);
-                                    setAiMode(t.mode);
-                                    if (t.attachedFiles) {
-                                      setAttachedFiles(t.attachedFiles);
-                                    } else if (t.attachedFile) {
-                                      setAttachedFiles([t.attachedFile]);
-                                    } else {
-                                      setAttachedFiles([]);
-                                    }
-                                    setShowAiHistoryDrawer(false);
-                                  }}
-                                  className={`veylentra-context-target group flex items-center justify-between p-2.5 rounded-xl border text-left cursor-pointer transition-all relative ${
-                                    isHolding ? 'veylentra-context-holding' : ''
-                                  } ${isContextActive ? 'veylentra-context-active' : ''} ${
-                                    activeThreadId === t.id
-                                      ? 'border-indigo-500 bg-indigo-500/15 shadow-sm'
-                                      : 'border-white/5 bg-slate-900/40 hover:bg-slate-900 hover:border-white/10'
-                                  }`}
-                                >
-                                  {t.isPinned && <Pin className="w-2.5 h-2.5 text-amber-400 absolute -top-1 -right-1 rotate-45" />}
-                                  <div className="flex items-center gap-2.5 truncate max-w-[82%]">
-                                    <span className="text-sm shrink-0">
-                                      {AI_PERSONAS.find(p => p.id === t.personaId)?.avatarChar || '💬'}
-                                    </span>
-                                    <div className="truncate">
-                                      <span className="text-xs text-slate-200 truncate font-semibold block leading-tight">{t.title}</span>
-                                      <span className="text-[9px] text-slate-400 capitalize">{t.mode}</span>
-                                    </div>
-                                  </div>
-                                </div>
-                                );
-                              })
-                            )}
-                          </div>
-                        </motion.div>
-                      </>
-                    )}
-                  </AnimatePresence>
-
-                  {/* Header: Controls, Selectors & Actions */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-2.5 shrink-0">
-                    {/* Left Actions: History Drawer & New Thread */}
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <div className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-indigo-500/15 border border-indigo-500/20 text-white font-black text-xs">
-                        <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                        <span>Byte</span>
-                        <span className="text-[9px] uppercase font-mono px-1 rounded bg-white/10 text-indigo-300">
-                          {effectiveRole || 'student'}
-                        </span>
-                      </div>
-                      <button
-                        onClick={() => setShowAiHistoryDrawer(true)}
-                        className="px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-slate-850 border border-white/10 text-slate-300 hover:text-white flex items-center gap-1.5 text-xs font-semibold transition-all shadow-sm active:scale-95"
-                        title="Open Study History & Threads"
-                      >
-                        <History className="w-3.5 h-3.5 text-indigo-400" />
-                        <span className="hidden sm:inline">Threads</span>
-                        <span className="px-1.5 py-0.2 rounded-full bg-indigo-500/20 text-indigo-300 text-[10px] font-mono font-bold">
-                          {aiThreads.length}
-                        </span>
-                      </button>
-                      <button
-                        onClick={handleCreateNewThread}
-                        className="px-2.5 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white flex items-center gap-1 text-xs font-bold transition-all shadow-sm active:scale-95"
-                        title="Start New Thread"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span className="hidden sm:inline">New</span>
-                      </button>
-                      <button
-                        onClick={() => setIsJarvisActive(true)}
-                        className="px-2 py-1 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white flex items-center gap-1 text-xs font-black uppercase tracking-wider transition-all shadow-md active:scale-95 cursor-pointer"
-                        title="Open Orion AI Copilot"
-                      >
-                        <Sparkles className="w-3 h-3 text-cyan-300 animate-pulse" />
-                        <span className="hidden sm:inline">Orion</span>
-                      </button>
-                    </div>
-
-                    {/* Center Selectors: Tutor Persona & Tutorial Mode */}
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {/* Persona Selector */}
-                      <div className="flex items-center gap-1 bg-slate-900 border border-white/10 rounded-xl px-2 py-1 shadow-inner">
-                        <span className="text-xs shrink-0">
-                          {AI_PERSONAS.find(p => p.id === selectedPersona)?.avatarChar || '🤖'}
-                        </span>
-                        <select
-                          value={selectedPersona}
-                          onChange={(e) => handleSwitchPersona(e.target.value)}
-                          className="bg-transparent text-white text-xs font-bold focus:outline-none cursor-pointer pr-1 max-w-[120px] sm:max-w-[160px] truncate"
-                          title="Select AI Instructor"
-                        >
-                          {AI_PERSONAS.map(p => (
-                            <option key={p.id} value={p.id} className="bg-slate-900 text-white">
-                              {p.name} ({p.speciality})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Mode Selector */}
-                      <div className="flex items-center gap-1 bg-slate-900 border border-white/10 rounded-xl px-2 py-1 shadow-inner">
-                        <select
-                          value={aiMode}
-                          onChange={(e) => handleSwitchMode(e.target.value as any)}
-                          className="bg-transparent text-indigo-300 text-xs font-bold focus:outline-none cursor-pointer uppercase tracking-wider text-[10px] max-w-[100px] sm:max-w-none"
-                          title="Active Tutorial Mode"
-                        >
-                          <option value="explanatory" className="bg-slate-900 text-white">📚 Explainer Mode</option>
-                          <option value="socratic" className="bg-slate-900 text-white">🎓 Socratic Mode</option>
-                          <option value="coder" className="bg-slate-900 text-white">💻 Coding Coach</option>
-                          <option value="quiz_gen" className="bg-slate-900 text-white">📝 Quiz Exam</option>
-                        </select>
-                      </div>
-
-                      {/* Reasoning Mode Toggle */}
-                      <button
-                        type="button"
-                        onClick={() => setAiReasoningMode(!aiReasoningMode)}
-                        className={`px-2 py-1 rounded-xl border text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
-                          aiReasoningMode ? 'bg-purple-600/30 text-purple-300 border-purple-500/50 shadow-sm' : 'bg-slate-900 text-slate-400 border-white/10 hover:text-white'
-                        }`}
-                        title="Toggle Deep Reasoning Mode"
-                      >
-                        <Cpu className="w-3 h-3 text-purple-400" />
-                        <span className="hidden sm:inline">{aiReasoningMode ? 'Reasoning: ON' : 'Reasoning'}</span>
-                      </button>
-
-                      {/* Web Search Mode Selector */}
-                      <div className="flex items-center gap-1 bg-slate-900 border border-teal-500/25 rounded-xl px-2 py-1 shadow-inner">
-                        <Globe className={`w-3 h-3 shrink-0 ${aiWebSearchMode === 'off' ? 'text-slate-500' : 'text-teal-400'}`} />
-                        <select
-                          value={aiWebSearchMode}
-                          onChange={(e) => setAiWebSearchMode(e.target.value as 'auto' | 'force' | 'off')}
-                          className="bg-transparent text-teal-300 text-[10px] font-bold focus:outline-none cursor-pointer uppercase tracking-wider"
-                          title="Web Search Mode"
-                        >
-                          <option value="auto" className="bg-slate-900 text-white">🌐 Auto</option>
-                          <option value="force" className="bg-slate-900 text-white">🔍 Search</option>
-                          <option value="off" className="bg-slate-900 text-white">⚡ Fast</option>
-                        </select>
-                      </div>
-
-                      {/* Super Admin Model Provider Switcher */}
-                      {(currentUser?.role === 'super_admin' || effectiveRole === 'super_admin') && (
-                        <div className="flex items-center gap-1 bg-slate-900 border border-purple-500/35 rounded-xl px-2 py-1 shadow-inner">
-                          <Cpu className="w-3 h-3 text-purple-400 shrink-0" />
-                          <select
-                            value={aiModelOverride || 'auto'}
-                            onChange={(e) => setAiModelOverride(e.target.value === 'auto' ? '' : e.target.value)}
-                            className="bg-transparent text-purple-300 text-[10px] font-bold focus:outline-none cursor-pointer uppercase tracking-wider"
-                            title="Super Admin Model Override"
-                          >
-                            <option value="auto" className="bg-slate-900 text-white">🤖 Auto</option>
-                            <option value="ministral" className="bg-slate-900 text-white">🌊 Ministral</option>
-                            <option value="groq" className="bg-slate-900 text-white">🚀 Groq</option>
-                          </select>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Right: Integrated Quota Badge & Clear Chat */}
-                    <div className="flex items-center gap-1.5 ml-auto">
-                      <div className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-slate-900/90 border border-white/10 text-xs">
-                        <div className="flex items-center gap-0.5 font-mono text-[11px] font-bold">
-                          <span className={aiUsageState.remaining <= 0 ? 'text-rose-400' : 'text-emerald-400'}>
-                            {aiUsageState.remaining}
-                          </span>
-                          <span className="text-slate-400 font-sans text-[10px]">/{aiUsageState.limit}</span>
-                        </div>
-                        <div className="w-12 h-1.5 bg-slate-800 rounded-full overflow-hidden hidden md:block">
-                          <div 
-                            className={`h-full rounded-full transition-all duration-300 ${
-                              aiUsageState.remaining <= 0
-                                ? 'bg-rose-500'
-                                : (aiUsageState.used / Math.max(1, aiUsageState.limit)) > 0.8
-                                  ? 'bg-amber-500'
-                                  : 'bg-indigo-500'
-                            }`}
-                            style={{ width: `${Math.min(100, Math.round((aiUsageState.used / Math.max(1, aiUsageState.limit)) * 100))}%` }}
-                          />
-                        </div>
-                        <button
-                          onClick={() => setShowQuotaModal(true)}
-                          className="px-1.5 py-0.5 rounded-lg bg-amber-500/15 hover:bg-amber-500 text-amber-300 hover:text-white font-extrabold text-[9px] uppercase tracking-wider transition-all flex items-center gap-0.5"
-                          title="Upgrade or Boost Quota"
-                        >
-                          <Zap className="w-2.5 h-2.5" /> Boost
-                        </button>
-                      </div>
-
-                      <button
-                        onClick={handleClearThreadHistory}
-                        className="p-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white border border-white/5 transition-all"
-                        title="Clear dialogue entries for this thread"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Dialogue Stream Body */}
-                  <div id="ai-dialog-scroll" className="flex-1 min-h-0 overflow-y-auto pr-2 my-2.5 space-y-3.5 bg-slate-950/40 p-3 sm:p-4 rounded-2xl border border-white/5 shadow-inner">
-                      <div className="text-center p-2.5 border border-white/5 bg-white/5 rounded-2xl flex items-center justify-between gap-3 flex-wrap">
-                        <div className="text-left">
-                          <p className="text-[10px] text-indigo-400 font-extrabold uppercase tracking-widest flex items-center gap-1.5">
-                            <span>🤖</span> Byte AI Workspace — Unified Assistant & Teacher
-                          </p>
-                          <p className="text-[11px] text-slate-400 mt-0.5">Ask questions, debug equations, or ask Byte to teach any topic interactively.</p>
-                        </div>
-                        <button
-                          onClick={() => {
-                            const topicPrompt = prompt('Enter any concept or topic to launch an interactive Byte lesson:', 'Quantum Computing');
-                            if (topicPrompt && topicPrompt.trim()) {
-                              setSelectedTopicForTutor(topicPrompt.trim());
-                            }
-                          }}
-                          className="px-3 py-1.5 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 text-indigo-200 text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
-                          title="Launch interactive teaching session on any topic"
-                        >
-                          <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                          <span>Teach Me Anything</span>
-                        </button>
-                      </div>
-
-                      {(!activeThread || !activeThread.messages || activeThread.messages.length === 0) && (
-                        <div className="py-6 px-4 space-y-6 text-center animate-fadeIn">
-                          <div className="flex flex-col items-center justify-center space-y-2">
-                            <div className="p-3 bg-indigo-500/10 rounded-full border border-indigo-500/20 text-indigo-400">
-                              <Sparkles className="w-8 h-8 animate-pulse" />
-                            </div>
-                            <h3 className="text-base font-black text-white tracking-tight mt-2">
-                              Hi, {currentUser?.name || 'Scholar'}! I am Byte 👋
-                            </h3>
-                            <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
-                              Your unified AI assistant for conversational research, homework derivations, and interactive teaching. Ask me anything, or tap a topic to launch an interactive lesson:
-                            </p>
-                          </div>
-
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl mx-auto text-left">
-                            {[
-                              { icon: '🌌', label: 'Quantum Physics', text: 'Teach me Quantum Physics with analogies and an interactive quiz.' },
-                              { icon: '🧪', label: 'Chemistry', text: 'Teach me how to balance chemical equations with worked examples.' },
-                              { icon: '📈', label: 'Calculus', text: 'Explain the derivative product rule step by step.' },
-                              { icon: '💻', label: 'Computer Networks', text: 'Teach me Network Topologies and Protocols for exams.' }
-                            ].map((item, i) => (
-                              <button
-                                key={i}
-                                onClick={() => handleAskAIModel(item.text)}
-                                className="p-3.5 bg-slate-900 hover:bg-slate-850 border border-white/5 hover:border-indigo-500/40 rounded-2xl transition-all group flex flex-col justify-between h-28 text-left hover:scale-[1.02] active:scale-95 cursor-pointer shadow-sm"
-                              >
-                                <div className="flex items-center justify-between w-full">
-                                  <span className="text-lg">{item.icon}</span>
-                                  <span className="text-[8px] bg-indigo-500/10 text-indigo-300 px-2 py-0.5 rounded font-extrabold uppercase tracking-widest border border-indigo-500/20">{item.label}</span>
-                                </div>
-                                <p className="text-[11px] text-slate-400 font-medium leading-relaxed mt-2 group-hover:text-white transition-colors line-clamp-2">
-                                  "{item.text}"
-                                </p>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {activeThread && (activeThread.messages || []).map((m, idx) => {
-                        const msgKey = `${activeThread.id}-${idx}`;
-                        const isSpeaking = speakingMsgIdx === msgKey;
-                        const prevUserMsg = idx > 0 && activeThread.messages[idx - 1]?.role === 'user' ? activeThread.messages[idx - 1].content : '';
-                        const mathWidget = m.role === 'assistant' ? detectMathInteractiveWidget(prevUserMsg, m.content) : null;
-                        const isLatestAssistant = m.role === 'assistant' && idx === (activeThread.messages.length - 1);
-
-                        return (
-                          <div key={idx} className={`p-3.5 rounded-2xl text-xs max-w-[92%] sm:max-w-[85%] overflow-hidden ${m.role === 'user' ? 'bg-indigo-600/15 border border-indigo-500/20 text-white ml-auto' : 'bg-slate-900 border border-white/5 text-slate-200 mr-auto'}`}>
-                            <div className="flex items-center justify-between gap-2 flex-wrap mb-1.5">
-                              <span className="text-[8px] uppercase tracking-wider font-extrabold text-indigo-400">
-                                {m.role === 'user' ? `👤 ${currentUser?.role ? currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1) : 'Student'} Inquiry` : '🤖 Byte'}
-                              </span>
-                              {m.role === 'assistant' && (
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  {m.webSearchUsed && (
-                                    <span className="text-[8px] px-1.5 py-0.5 rounded bg-teal-500/15 border border-teal-500/30 text-teal-300 font-mono font-bold flex items-center gap-1">
-                                      🌐 Web Grounded {m.webSources?.length ? `(${m.webSources.length})` : ''}
-                                    </span>
-                                  )}
-                                  {isLatestAssistant && aiGroundedInData && (
-                                    <span className="text-[8px] px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-mono font-bold">
-                                      ✓ StudentOS Live Data
-                                    </span>
-                                  )}
-                                  {isLatestAssistant && aiActiveModelLabel && (
-                                    <span className="text-[8px] px-1.5 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 font-mono">
-                                      ⚡ {aiActiveModelLabel === 'combo/free' ? 'combo/free' : aiActiveModelLabel.split('/').pop()}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                            <div className="space-y-1 overflow-x-auto">
-                              {renderMarkdown(m.content)}
-                              {m.role === 'assistant' && isLatestAssistant && aiLoading && (
-                                <span className="inline-block w-2 h-3.5 ml-1 bg-indigo-400 animate-pulse rounded-sm align-middle" title="Generating..." />
-                              )}
-                            </div>
-
-                            {/* Interactive Math / Geometry Visualization when relevant */}
-                            {mathWidget && (
-                              <InteractiveMathWidget widgetType={mathWidget} />
-                            )}
-
-                            {/* Byte Dynamic Topic Interactive Lesson Card Trigger */}
-                            {(() => {
-                              const detectedTopic = extractTopicTeachingIntent(prevUserMsg) || (m.role === 'assistant' && extractTopicTeachingIntent(m.content));
-                              if (detectedTopic && m.role === 'assistant') {
-                                return (
-                                  <div className="mt-3 p-3 rounded-2xl bg-gradient-to-r from-indigo-950/70 via-purple-950/50 to-slate-900 border border-indigo-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
-                                    <div className="flex items-center gap-2.5">
-                                      <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shrink-0">
-                                        <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
-                                      </div>
-                                      <div>
-                                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-300 flex items-center gap-1">
-                                          <span>🤖</span> Byte Interactive Classroom
-                                        </span>
-                                        <p className="text-xs font-bold text-white mt-0.5">Master "{detectedTopic}" with animated Byte tutor & checkpoint quiz</p>
-                                      </div>
-                                    </div>
-                                    <button
-                                      onClick={() => setSelectedTopicForTutor(detectedTopic)}
-                                      className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-black text-xs flex items-center gap-1.5 shadow-md transition-all active:scale-95 shrink-0 cursor-pointer"
-                                    >
-                                      <span>🚀 Launch Interactive Lesson</span>
-                                    </button>
-                                  </div>
-                                );
-                              }
-                              return null;
-                            })()}
-
-                            {/* Verified Web Search Sources & Citations Panel */}
-                            {m.role === 'assistant' && m.webSources && m.webSources.length > 0 && (
-                              <div className="mt-3 pt-2.5 border-t border-teal-500/20 space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-[9px] font-mono uppercase tracking-wider text-teal-400 font-extrabold flex items-center gap-1">
-                                    <Globe className="w-3 h-3" /> Verified Web & Academic Sources ({m.webSources.length})
-                                  </span>
-                                </div>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                  {m.webSources.map((src, sIdx) => (
-                                    <a
-                                      key={sIdx}
-                                      href={src.url}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="group flex items-start gap-2 p-2 rounded-xl bg-slate-950/70 hover:bg-slate-950 border border-white/5 hover:border-teal-500/40 transition-all text-left"
-                                    >
-                                      <span className="px-1.5 py-0.5 rounded bg-teal-500/15 border border-teal-500/30 text-teal-300 font-mono text-[9px] font-bold shrink-0">
-                                        [{sIdx + 1}]
-                                      </span>
-                                      <div className="min-w-0 flex-1">
-                                        <div className="text-[10px] font-bold text-slate-200 group-hover:text-teal-300 truncate">
-                                          {src.title}
-                                        </div>
-                                        <div className="flex items-center gap-1.5 mt-0.5">
-                                          <span className="text-[8px] font-mono text-slate-400 truncate">{src.domain}</span>
-                                          {src.sourceType === 'academic' && (
-                                            <span className="text-[7px] uppercase px-1 py-0.2 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-bold">
-                                              Academic
-                                            </span>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </a>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                            
-                            {/* Attached Files visual inside bubbles */}
-                            {m.files && m.files.length > 0 && (
-                              <div className="mt-2.5 space-y-1.5 border-t border-white/10 pt-2 bg-black/10 -mx-3.5 px-3.5 py-2.5 rounded-b-2xl">
-                                <p className="text-[8px] text-indigo-400 uppercase font-black tracking-wider leading-none mb-1">Attached References:</p>
-                                <div className="flex flex-col gap-1.5">
-                                  {m.files.map((file: any, fIdx: number) => {
-                                    let icon = '📎';
-                                    let colorTheme = 'border-indigo-500/10 bg-indigo-950/10';
-                                    if (file.name.toLowerCase().endsWith('.pdf')) {
-                                      icon = '📕';
-                                      colorTheme = 'border-red-500/10 bg-red-950/10';
-                                    } else if (file.type.startsWith('image/')) {
-                                      icon = '🖼️';
-                                      colorTheme = 'border-emerald-500/10 bg-emerald-950/10';
-                                    } else if (file.name.toLowerCase().endsWith('.doc') || file.name.toLowerCase().endsWith('.docx')) {
-                                      icon = '📘';
-                                      colorTheme = 'border-blue-500/10 bg-blue-950/10';
-                                    } else if (file.name.toLowerCase().endsWith('.ppt') || file.name.toLowerCase().endsWith('.pptx')) {
-                                      icon = '📊';
-                                      colorTheme = 'border-amber-500/10 bg-amber-950/10';
-                                    } else if (file.name.toLowerCase().endsWith('.md') || file.name.toLowerCase().endsWith('.txt')) {
-                                      icon = '📝';
-                                      colorTheme = 'border-indigo-500/10 bg-indigo-950/10';
-                                    }
-
-                                    const extSize = (file.size / (1024 * 1024)).toFixed(2);
-                                    const showMb = Number(extSize) > 0.1 ? `${extSize} MB` : `${(file.size / 1024).toFixed(1)} KB`;
-
-                                    return (
-                                      <div key={fIdx} className={`flex items-center justify-between p-2 rounded-xl border ${colorTheme} text-[10px]`}>
-                                        <div className="flex items-center gap-2 truncate">
-                                          <span className="text-sm shrink-0">{icon}</span>
-                                          <div className="truncate text-left leading-tight">
-                                            <p className="font-extrabold text-white truncate max-w-[150px]">{file.name}</p>
-                                            <p className="text-[8px] text-slate-400 font-mono">{showMb}</p>
-                                          </div>
-                                        </div>
-                                        {file.type.startsWith('image/') && file.content && (
-                                          <div className="w-8 h-8 rounded overflow-hidden border border-white/5 shrink-0 bg-black/40">
-                                            <img src={file.content} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                          </div>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            )}
-
-                            {m.role !== 'user' && m.content && (
-                              <div className="mt-3 pt-2 border-t border-white/5 space-y-2">
-                                <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400">
-                                  <button
-                                    onClick={() => handleCopyToClipboard(m.content)}
-                                    className="flex items-center gap-1 hover:text-white hover:bg-white/10 bg-slate-950/40 border border-white/5 px-2.5 py-1 rounded-lg transition-colors font-medium active:scale-95"
-                                    title="Copy text content to clipboard"
-                                  >
-                                    <span>📋</span> Copy
-                                  </button>
-                                  <button
-                                    onClick={() => handleSaveToNotes(m.content)}
-                                    className="flex items-center gap-1 hover:text-white hover:bg-white/10 bg-slate-950/40 border border-white/5 px-2.5 py-1 rounded-lg transition-colors font-medium active:scale-95"
-                                    title="Save to Personal Vault Notes"
-                                  >
-                                    <span>💾</span> Save Note
-                                  </button>
-                                  <button
-                                    onClick={async () => {
-                                      const res = await saveStudyOutputToFlashcards(
-                                        activeThread.title || 'AI Study Deck',
-                                        currentUser?.specialtySubject || 'General Studies',
-                                        m.content,
-                                        currentUser?.uid || 'guest'
-                                      );
-                                      showNotification(`✓ Created Flashcard Deck (${res.count} cards) in Flashcards Engine!`);
-                                    }}
-                                    className="flex items-center gap-1 hover:text-white hover:bg-indigo-500/20 bg-slate-950/40 border border-white/5 px-2.5 py-1 rounded-lg transition-colors font-medium active:scale-95"
-                                    title="Convert this explanation into interactive Flashcards"
-                                  >
-                                    <span>🗂️</span> Save Flashcards
-                                  </button>
-                                  <button
-                                    onClick={() => handleToggleSpeakMessage(m.content, msgKey)}
-                                    className={`flex items-center gap-1 border px-2.5 py-1 rounded-lg transition-colors font-medium active:scale-95 ${isSpeaking ? 'text-rose-400 border-rose-500/30 bg-rose-500/10 font-bold' : 'hover:text-white hover:bg-white/10 bg-slate-950/40 border-white/5'}`}
-                                    title={isSpeaking ? "Suspend voice generator output" : "Synthesize study reading"}
-                                  >
-                                    <span>{isSpeaking ? '⏹️' : '🔊'}</span> {isSpeaking ? 'Stop' : 'Read Aloud'}
-                                  </button>
-                                  {prevUserMsg && !aiLoading && (
-                                    <button
-                                      onClick={() => handleAskAIModel(prevUserMsg)}
-                                      className="flex items-center gap-1 hover:text-white hover:bg-amber-500/20 bg-slate-950/40 border border-white/5 px-2.5 py-1 rounded-lg transition-colors font-medium active:scale-95"
-                                      title="Regenerate or retry this response"
-                                    >
-                                      <span>🔄</span> {m.content.includes('temporarily unavailable') ? 'Retry' : 'Regenerate'}
-                                    </button>
-                                  )}
-                                </div>
-
-                                {/* 1-Click Follow-Up Pedagogical Controls on Latest Message */}
-                                {isLatestAssistant && !aiLoading && (
-                                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                                    {[
-                                      { label: '✨ Explain Simply', prompt: 'Explain the previous concept more simply for a beginner with an intuitive analogy.' },
-                                      { label: '🪜 Step-by-Step', prompt: 'Break this down into numbered step-by-step derivations and explain why each step works.' },
-                                      { label: '💡 Give Examples', prompt: 'Give 2 worked real-world and exam-style examples of this topic.' },
-                                      { label: '📝 Quiz Me (5 Qs)', prompt: 'Generate a 5-question interactive practice quiz on this topic with answers and explanations at the end.' },
-                                      { label: '🗂️ Make Flashcards', prompt: 'Create 6 structured Q: / A: flashcards covering the most important definitions and formulas from this topic.' },
-                                      { label: '📌 Quick Summary', prompt: 'Give me a crisp bulleted revision cheat-sheet of the key takeaways and formulas.' }
-                                    ].map((actionChip, cIdx) => (
-                                      <button
-                                        key={cIdx}
-                                        onClick={() => handleAskAIModel(actionChip.prompt)}
-                                        className="px-2 py-1 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 text-[10px] font-semibold text-indigo-300 transition-all cursor-pointer active:scale-95"
-                                      >
-                                        {actionChip.label}
-                                      </button>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-
-                      {aiLoading && (
-                        <div className="p-3.5 bg-indigo-950/40 text-indigo-300 border border-indigo-500/30 rounded-2xl text-xs max-w-[85%] mr-auto flex items-center justify-between gap-3 shadow-md animate-fadeIn">
-                          <div className="flex items-center gap-3">
-                            <div className="relative flex items-center justify-center shrink-0">
-                              <div className="w-3.5 h-3.5 rounded-full bg-indigo-400 animate-ping absolute opacity-75" />
-                              <div className="w-3 h-3 rounded-full bg-indigo-500 relative flex items-center justify-center text-[8px] text-white font-bold">🤖</div>
-                            </div>
-                            <div>
-                              <span className="font-extrabold text-white text-[11px] block">Byte is thinking & generating...</span>
-                              <span className="text-[10px] text-indigo-300/80 font-mono">
-                                {aiStatusMessage || (aiReasoningMode ? 'Evaluating multi-step reasoning chain...' : 'Analyzing query & synthesizing clear explanation...')}
-                              </span>
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => aiAbortControllerRef.current?.abort()}
-                            className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-rose-300 font-bold text-[10px] shrink-0 cursor-pointer transition-all active:scale-95"
-                          >
-                            ⏹ Stop
-                          </button>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Chat Interactive Composer with Integrated File Upload */}
-                    <div className="shrink-0 space-y-2 pt-1">
-                      
-                      {/* Attached Files Chips Strip */}
-                      {attachedFiles && attachedFiles.length > 0 && (
-                        <div className="flex flex-wrap gap-2 p-2 bg-slate-900/60 rounded-xl border border-white/5 max-h-[100px] overflow-y-auto">
-                          {attachedFiles.map((file, idx) => {
-                            let icon = '📎';
-                            if (file.name.toLowerCase().endsWith('.pdf')) icon = '📕';
-                            else if (file.type.startsWith('image/')) icon = '🖼️';
-                            else if (file.name.toLowerCase().endsWith('.doc') || file.name.toLowerCase().endsWith('.docx')) icon = '📘';
-                            else if (file.name.toLowerCase().endsWith('.ppt') || file.name.toLowerCase().endsWith('.pptx')) icon = '📊';
-                            else if (file.name.toLowerCase().endsWith('.md') || file.name.toLowerCase().endsWith('.txt')) icon = '📝';
-                            
-                            const kbSize = (file.size / 1024).toFixed(1);
-
-                            return (
-                              <div key={idx} className="flex items-center gap-1.5 bg-indigo-950/40 text-[10px] text-indigo-300 px-2.5 py-1 rounded-xl border border-indigo-500/20 shadow-sm transition-all hover:border-indigo-500/40">
-                                <span>{icon}</span>
-                                <span className="truncate max-w-[130px] font-semibold">{file.name}</span>
-                                <span className="text-[8px] text-slate-500 font-mono">({kbSize} KB)</span>
-                                <button 
-                                  type="button"
-                                  onClick={() => handleRemoveAttachedFile(file.name)} 
-                                  className="text-slate-400 hover:text-red-400 font-extrabold cursor-pointer ml-1 p-0.5 rounded hover:bg-white/5 active:scale-90 leading-none"
-                                  title="Remove attachment"
-                                >
-                                  <X className="w-3 h-3 inline" />
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-
-                      {/* Hidden File Input Triggered by Composer Paperclip */}
-                      <input 
-                        type="file" 
-                        ref={aiFileInputRef}
-                        id="ai-file-uploader"
-                        onChange={handleFileUploadAction}
-                        multiple
-                        accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md,.png,.jpg,.jpeg,.webp"
-                        className="hidden"
-                      />
-
-                      {/* Limit exhaustion alert banner */}
-                      {aiUsageState.remaining <= 0 && (
-                        <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-200 flex items-center justify-between gap-3 animate-fadeIn">
-                          <div className="flex items-center gap-2">
-                            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
-                            <span className="font-medium text-[11px]">
-                              Daily AI query quota exhausted (0/{aiUsageState.limit} remaining). Next slot unlocks in ~{aiUsageState.nextAvailableInMinutes || 60}m.
-                            </span>
-                          </div>
-                          <button
-                            onClick={() => setShowQuotaModal(true)}
-                            className="px-2.5 py-1 rounded-lg bg-red-500 hover:bg-red-400 text-white font-bold text-[10px] uppercase tracking-wider transition-all shrink-0 flex items-center gap-1 shadow-sm active:scale-95"
-                          >
-                            <Zap className="w-3 h-3" /> Upgrade
-                          </button>
-                        </div>
-                      )}
-
-                      {/* Composer input bar */}
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            (window as any).__studentos_file_picker_active__ = true;
-                            aiFileInputRef.current?.click();
-                          }}
-                          className="p-3 rounded-xl bg-slate-900 hover:bg-slate-850 border border-white/10 text-slate-400 hover:text-indigo-400 transition-all shrink-0 active:scale-95"
-                          title="Attach study files (PDF, DOC, DOCX, PPT, PPTX, Images, Notes)"
-                        >
-                          <Paperclip className="w-4 h-4" />
-                        </button>
-                        <input 
-                          type="text"
-                          value={aiInput}
-                          onChange={e => setAiInput(e.target.value)}
-                          onKeyDown={e => e.key === 'Enter' && handleAskAIModel()}
-                          placeholder={
-                            aiUsageState.remaining <= 0 
-                              ? "Daily quota exhausted. Click 'Upgrade Quota' above to redeem code or boost limit." 
-                              : attachedFiles && attachedFiles.length > 0 
-                                ? `Ask Mentor about ${attachedFiles.map(f => f.name).join(', ')}...` 
-                                : "Ask about formulas, essay analysis, code bugs, exam revision..."
-                          }
-                          disabled={aiLoading || aiUsageState.remaining <= 0}
-                          className={`flex-1 px-4 py-3 rounded-xl bg-slate-900 border text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 text-white font-medium ${aiUsageState.remaining <= 0 ? 'border-red-500/30 opacity-70 cursor-not-allowed' : 'border-white/10'}`}
-                        />
-                        <button 
-                          onClick={aiUsageState.remaining <= 0 ? () => setShowQuotaModal(true) : () => handleAskAIModel()}
-                          disabled={aiLoading}
-                          className={`px-4 sm:px-5 py-3 rounded-xl font-bold text-xs uppercase tracking-wide transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 shrink-0 ${
-                            aiUsageState.remaining <= 0 
-                              ? 'bg-amber-600 hover:bg-amber-500 text-white' 
-                              : 'bg-indigo-600 hover:bg-indigo-500 text-white'
-                          }`}
-                        >
-                          {aiUsageState.remaining <= 0 ? (
-                            <><Zap className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Boost</span></>
-                          ) : (
-                            <><Send className="w-3.5 h-3.5" /> <span className="hidden sm:inline">AskAI</span></>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                </div>
+                <ByteWorkspace
+                  currentUser={currentUser}
+                  effectiveRole={effectiveRole}
+                  activeTab={activeTab}
+                  aiThreads={aiThreads}
+                  activeThread={activeThread}
+                  activeThreadId={activeThreadId}
+                  setActiveThreadId={setActiveThreadId}
+                  showAiHistoryDrawer={showAiHistoryDrawer}
+                  setShowAiHistoryDrawer={setShowAiHistoryDrawer}
+                  selectedPersona={selectedPersona}
+                  aiMode={aiMode}
+                  aiReasoningMode={aiReasoningMode}
+                  setAiReasoningMode={setAiReasoningMode}
+                  aiWebSearchMode={aiWebSearchMode}
+                  setAiWebSearchMode={setAiWebSearchMode}
+                  aiModelOverride={aiModelOverride}
+                  setAiModelOverride={setAiModelOverride}
+                  aiUsageState={aiUsageState}
+                  setShowQuotaModal={setShowQuotaModal}
+                  aiLoading={aiLoading}
+                  aiStatusMessage={aiStatusMessage}
+                  aiGroundedInData={aiGroundedInData}
+                  aiActiveModelLabel={aiActiveModelLabel}
+                  aiInput={aiInput}
+                  setAiInput={setAiInput}
+                  attachedFiles={attachedFiles}
+                  setAttachedFiles={setAttachedFiles}
+                  aiFileInputRef={aiFileInputRef}
+                  aiAbortControllerRef={aiAbortControllerRef}
+                  speakingMsgIdx={speakingMsgIdx}
+                  byteThreadContext={byteThreadContext}
+                  aiThreadHoldMenu={aiThreadHoldMenu}
+                  setIsJarvisActive={setIsJarvisActive}
+                  setSelectedTopicForTutor={setSelectedTopicForTutor}
+                  onNavigateTab={handleTabSelect}
+                  handleCreateNewThread={handleCreateNewThread}
+                  handleSwitchPersona={handleSwitchPersona}
+                  handleSwitchMode={handleSwitchMode}
+                  handleClearThreadHistory={handleClearThreadHistory}
+                  handleAskAIModel={handleAskAIModel}
+                  handleCopyToClipboard={handleCopyToClipboard}
+                  handleSaveToNotes={handleSaveToNotes}
+                  handleToggleSpeakMessage={handleToggleSpeakMessage}
+                  handleFileUploadAction={handleFileUploadAction}
+                  handleRemoveAttachedFile={handleRemoveAttachedFile}
+                  showNotification={showNotification}
+                />
               )}
 
               {/* Tab 8: Peer global chat matrix */}

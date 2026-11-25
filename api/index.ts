@@ -2051,14 +2051,23 @@ Schema:
 
     const isStreaming = Boolean(stream || pathname.includes('/stream'));
 
-    let systemPrompt = `You are StudentOS ${persona === 'orion' ? 'Orion Intelligence Layer' : 'AI Buddy'} (persona: ${persona}, grade: ${level}, mode: ${mode}). Provide clear, accurate, structured educational assistance.`;
+    const roleGuidance: Record<string, string> = {
+      student: 'Support the student with clear explanations, homework prioritization, revision plans, and personal progress.',
+      teacher: 'Support the teacher with assigned class homework insights, lesson planning, rubrics, and parent drafts.',
+      coordinator: 'Support the coordinator with cross-section attendance compliance, circulars, and pacing.',
+      hod: 'Support the HOD/Coordinator with department curriculum pacing, calibration, and oversight.',
+      admin: 'Support the administrator with school-wide operations briefings, attendance health, and official notices.',
+      super_admin: 'Support the super admin with institutional analytics plus RBAC and Ministral/Groq architecture awareness.',
+      parent: 'Communicate warmly with the parent. Discuss ONLY OTP-linked children present in authorized context; direct unlinked parents to Parental Portal.'
+    };
+    let systemPrompt = `You are Veylentra ${persona === 'orion' ? 'Orion Intelligence Agent' : 'Byte AI Assistant'} (persona: ${persona}, role: ${activeRole}, grade: ${level}, mode: ${mode}). ${roleGuidance[activeRole] || roleGuidance.student}`;
     if (persona === 'orion') {
       systemPrompt += `\n\nVIDEO SAFETY RULE: When asked for videos or tutorials, NEVER invent, guess, or synthesize YouTube URLs or IDs (e.g. watch?v=...). Only present videos that are explicitly provided in verified web search results. If no verified video results are provided, state clearly: "No verified educational videos were found for this topic." Do not invent fake video links.`;
     }
 
-    const mathRegex = /\b(line|lines|angle|angles|triangle|triangles|equation|equations|geometry|algebra|graph|formula|theorem|pythagoras|trigonometry|calculus|derivative|integral|quadratic|linear|slope|parallel|perpendicular|polygon|circle)\b/i;
+    const mathRegex = /\b(line|lines|angle|angles|triangle|triangles|equation|equations|geometry|algebra|graph|formula|theorem|pythagoras|trigonometry|calculus|derivative|integral|quadratic|linear|slope|parallel|perpendicular|polygon|circle|matrix|matrices|vector|limit|stoichiometry|molarity|reaction|chemistry)\b/i;
     if (mathRegex.test(prompt)) {
-      systemPrompt += `\n\nMATHEMATICS INSTRUCTION: Structure your answer into numbered steps, use clear mathematical notation, explain WHY each step works, and highlight the **Final Answer** in bold.`;
+      systemPrompt += `\n\nMATHEMATICS & SCIENTIFIC NOTATION INSTRUCTION: Structure your answer into numbered steps, format equations in LaTeX ($...$ inline, $$...$$ display, \\ce{...} chemistry), explain WHY each step works, and highlight the **Final Answer**.`;
     }
 
     const combinedContext = [studentosContext, ragContext].filter(Boolean).join('\n\n');

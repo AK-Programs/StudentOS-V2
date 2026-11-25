@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Mic, MicOff, Send, Volume2, Sparkles, Sliders, Users, 
-  BarChart3, Award, Settings, Terminal, Play, RotateCcw, 
+  BarChart3, Award, Settings, Play, RotateCcw, 
   Layers, Plus, Trash2, CheckCircle, RefreshCw, X, Square, BookOpen, FileText, HelpCircle, Layout, Search, Globe, PenTool, ExternalLink, Video
 } from 'lucide-react';
 import { GlassyVideoCarousel, EducationalVideoItem } from './ui/GlassyVideoCarousel';
@@ -15,18 +15,23 @@ import { createOrUpdateMeeting, deleteMeeting, fetchAllMeetings } from '../lib/s
 import { saveAppNotification, getAppNotifications } from '../lib/notifications';
 import { executeOrionCommunicationDispatch } from '../lib/orionCommunication';
 import { 
-  executeOrionActionPipeline, 
   OrionAction, 
   OrionUserContext, 
   OrionActionType,
   StructuredOrionPayload
 } from '../lib/orionActionExecutor';
 import {
+  OrionAgentProgressSnapshot,
+  runOrionAgentTask
+} from '../lib/orionAgentEngine';
+import { OrionActivityTimeline } from './orion/OrionActivityTimeline';
+import { AcademicRichRenderer } from './ui/AcademicRichRenderer';
+import {
   buildAuthorizedStudentOSContext,
   detectMathInteractiveWidget,
   InteractiveMathWidget
 } from '../lib/studentosAiEngine';
-import { StudentReport, HouseAnalytics, SectionAnalytics, TeacherCommand, JarvisHistoryItem } from '../types';
+import { StudentReport, HouseAnalytics, SectionAnalytics } from '../types';
 
 interface StudentOSJarvisProps {
   onClose: () => void;
@@ -45,111 +50,15 @@ interface StudentOSJarvisProps {
   initialQuery?: string;
 }
 
-const parseInlineMarkdown = (text: string) => {
-  if (!text) return '';
-  // Match markdown links [label](url), bare URLs https?://..., bold, italics, inline code
-  const parts = text.split(/(\*\*.*?\*\*|\*.*?\*|`.*?`|\[.*?\]\(.*?\)|\bhttps?:\/\/[^\s<)]+)/g);
-  return parts.map((part, index) => {
-    if (!part) return null;
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return <strong key={index} className="font-extrabold text-white">{part.slice(2, -2)}</strong>;
-    }
-    if (part.startsWith('*') && part.endsWith('*')) {
-      return <em key={index} className="italic text-slate-300">{part.slice(1, -1)}</em>;
-    }
-    if (part.startsWith('`') && part.endsWith('`')) {
-      return <code key={index} className="px-1.5 py-0.5 bg-black/40 text-indigo-300 rounded font-mono text-[10px]">{part.slice(1, -1)}</code>;
-    }
-    if (part.startsWith('[') && part.includes('](')) {
-      const match = part.match(/\[(.*?)\]\((.*?)\)/);
-      if (match) {
-        return (
-          <a
-            key={index}
-            href={match[2]}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-indigo-400 hover:text-indigo-300 underline font-bold inline-flex items-center gap-1 group/link"
-            title={`Open ${match[1]} in new tab`}
-          >
-            <span>{match[1]}</span>
-            <ExternalLink className="w-3 h-3 inline-block shrink-0 opacity-70 group-hover/link:opacity-100" />
-          </a>
-        );
-      }
-    }
-    if (part.startsWith('http://') || part.startsWith('https://')) {
-      const cleanUrl = part.replace(/[.,;!?]+$/, '');
-      return (
-        <a
-          key={index}
-          href={cleanUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-teal-400 hover:text-teal-300 underline font-semibold break-all inline-flex items-center gap-1 group/link"
-          title={`Open ${cleanUrl} in new tab`}
-        >
-          <span>{cleanUrl.length > 45 ? cleanUrl.slice(0, 42) + '...' : cleanUrl}</span>
-          <ExternalLink className="w-3 h-3 inline-block shrink-0 opacity-70 group-hover/link:opacity-100" />
-        </a>
-      );
-    }
-    return part;
-  });
-};
-
-const renderOrionMarkdown = (text: string) => {
-  if (!text) return null;
-  const lines = text.split('\n');
-  
-  return (
-    <div className="space-y-3 select-text text-slate-200 p-2">
-      {lines.map((line, idx) => {
-        const trimmed = line.trim();
-        if (trimmed === '---' || trimmed === '***') {
-          return <hr key={idx} className="my-6 border-t border-white/10" />;
-        }
-        if (trimmed.startsWith('### ')) {
-          return <h4 key={idx} className="text-sm font-extrabold text-teal-300 mt-6 mb-2 tracking-wider uppercase font-mono">{parseInlineMarkdown(trimmed.substring(4))}</h4>;
-        }
-        if (trimmed.startsWith('## ')) {
-          return <h3 key={idx} className="text-lg font-black text-indigo-300 mt-8 mb-3 tracking-tight">{parseInlineMarkdown(trimmed.substring(3))}</h3>;
-        }
-        if (trimmed.startsWith('# ')) {
-          return <h2 key={idx} className="text-2xl font-black text-white mt-10 mb-4 border-b border-white/5 pb-2 tracking-tight">{parseInlineMarkdown(trimmed.substring(2))}</h2>;
-        }
-        if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-          return (
-            <div key={idx} className="flex items-start gap-3 pl-4 my-2">
-              <span className="text-indigo-400 mt-1.5 text-xs font-bold">•</span>
-              <p className="text-slate-200 flex-1 leading-relaxed text-sm">{parseInlineMarkdown(trimmed.substring(2))}</p>
-            </div>
-          );
-        }
-        if (/^\d+\s*\.\s/.test(trimmed)) {
-          const content = trimmed.replace(/^\d+\s*\.\s/, '');
-          return (
-            <div key={idx} className="flex items-start gap-3 pl-4 my-2">
-              <span className="text-teal-400 font-mono text-xs font-bold mt-1">{trimmed.match(/^\d+/)![0]}.</span>
-              <p className="text-slate-200 flex-1 leading-relaxed text-sm">{parseInlineMarkdown(content)}</p>
-            </div>
-          );
-        }
-        if (trimmed.startsWith('> ')) {
-          return (
-            <blockquote key={idx} className="border-l-2 border-indigo-500 pl-4 py-1 my-3 text-slate-300 italic text-sm bg-indigo-500/5 rounded-r-lg">
-              {parseInlineMarkdown(trimmed.substring(2))}
-            </blockquote>
-          );
-        }
-        if (trimmed === '') {
-          return <div key={idx} className="h-3" />;
-        }
-        // General paragraph
-        return <p key={idx} className="leading-relaxed text-sm text-slate-300 font-sans my-2">{parseInlineMarkdown(line)}</p>;
-      })}
-    </div>
-  );
+const getRoleGreeting = (role: string): string => {
+  const norm = (role || 'student').toLowerCase().trim();
+  if (norm === 'parent' || norm === 'guardian') {
+    return 'Orion is ready in Ephemeral Mode. Ask about your verified linked ward, notices, or curriculum topics.';
+  }
+  if (norm === 'student') {
+    return 'Orion is ready in Ephemeral Mode. Check pending assignments, generate a study plan, or explore curriculum topics.';
+  }
+  return 'Orion is ready in Ephemeral Mode. Ask for class insights, attendance briefings, reports, or task automation.';
 };
 
 export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
@@ -168,8 +77,8 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
   effectiveRole,
   initialQuery
 }) => {
-  // Navigation & Analytics Selection inside Jarvis
-  const [activeJarvisSection, setActiveJarvisSection] = useState<'home' | 'reports' | 'houses' | 'sections' | 'history' | 'search'>('home');
+  // Navigation & Analytics Selection inside Orion
+  const [activeJarvisSection, setActiveJarvisSection] = useState<'home' | 'reports' | 'houses' | 'sections' | 'search'>('home');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchResults, setSearchResults] = useState<string>('');
   const [searchSources, setSearchSources] = useState<{ title: string; uri: string; published_source?: string }[]>([]);
@@ -192,15 +101,16 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     }, 1200);
   };
 
-  // Voice & Input State
+  // Voice & Input State (strictly in-memory ephemeral state)
   const [isListening, setIsListening] = useState<boolean>(false);
   const [commandText, setCommandText] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const [jarvisFeedback, setJarvisFeedback] = useState<string>('Greetings, Professor. Veylentra Orion is ready. Speak or type a command to control the smart classroom.');
+  const [jarvisFeedback, setJarvisFeedback] = useState<string>(() => getRoleGreeting(effectiveRole || currentUser?.role || 'student'));
   const [showDiagnostics, setShowDiagnostics] = useState<boolean>(false);
   const [diagnosticError, setDiagnosticError] = useState<{name: string, message: string} | null>(null);
+  const [orionProgress, setOrionProgress] = useState<OrionAgentProgressSnapshot | null>(null);
 
-  // Orion 2.0 Operating Assistant State & Context Memory
+  // Orion 2.0 Operating Assistant State & Ephemeral Context Memory (cleared on exit/reset)
   const [pendingConfirmation, setPendingConfirmation] = useState<{
     action: string;
     targetId?: string;
@@ -214,6 +124,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
   const [orionMathWidget, setOrionMathWidget] = useState< ReturnType<typeof detectMathInteractiveWidget> >(null);
   const [orionModelUsed, setOrionModelUsed] = useState<string>('');
 
+  const ephemeralTurnsRef = useRef<{ role: 'user' | 'assistant'; content: string }[]>([]);
   const lastEntityRef = useRef<{
     type: string;
     title: string;
@@ -221,18 +132,41 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     data?: any;
   } | null>(null);
 
-  
-  // Data list states fetched from Firestore
+  const [linkedChildren, setLinkedChildren] = useState<any[]>([]);
+  // Aggregate registry lists for operational dashboards
   const [reports, setReports] = useState<StudentReport[]>([]);
   const [houses, setHouses] = useState<HouseAnalytics[]>([]);
   const [sections, setSections] = useState<SectionAnalytics[]>([]);
-  const [historyItems, setHistoryItems] = useState<JarvisHistoryItem[]>([]);
-  const [commandAudit, setCommandAudit] = useState<TeacherCommand[]>([]);
 
   // Detailed modal or focus state
   const [selectedStudent, setSelectedStudent] = useState<StudentReport | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [searchStudentTerm, setSearchStudentTerm] = useState<string>('');
+
+  const clearEphemeralSession = () => {
+    ephemeralTurnsRef.current = [];
+    lastEntityRef.current = null;
+    setCommandText('');
+    setSearchQuery('');
+    setSearchResults('');
+    setSearchSources([]);
+    setSearchVideos([]);
+    setGeneratedNotesContent(null);
+    setLocalMaterials([]);
+    setStructuredOutput(null);
+    setPendingConfirmation(null);
+    setOrionMathWidget(null);
+    setOrionProgress(null);
+    setOrionModelUsed('');
+    setJarvisFeedback(getRoleGreeting(effectiveRole || currentUser?.role || 'student'));
+  };
+
+  useEffect(() => {
+    return () => {
+      ephemeralTurnsRef.current = [];
+      lastEntityRef.current = null;
+    };
+  }, []);
 
   // Speech Recognition Object Ref
   const recognitionRef = useRef<any>(null);
@@ -318,204 +252,75 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     return () => clearTimeout(timer);
   }, [initialQuery]);
 
-  // Load and sync Orion state on mount/user change from Supabase
-  useEffect(() => {
-    if (!currentUser?.uid) return;
-    
-    const loadStateFromSupabase = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('orion_chats')
-          .select('*')
-          .eq('user_id', currentUser.uid)
-          .eq('prompt', '__orion_state__')
-          .limit(1);
-          
-        if (data && data.length > 0) {
-          const stateData = JSON.parse(data[0].response);
-          if (stateData.searchQuery !== undefined) setSearchQuery(stateData.searchQuery);
-          if (stateData.searchResults !== undefined) setSearchResults(stateData.searchResults);
-          if (stateData.searchSources !== undefined) setSearchSources(stateData.searchSources);
-          if (stateData.generatedNotesContent !== undefined) setGeneratedNotesContent(stateData.generatedNotesContent);
-          if (stateData.activeJarvisSection !== undefined) setActiveJarvisSection(stateData.activeJarvisSection);
-          if (stateData.jarvisFeedback !== undefined) setJarvisFeedback(stateData.jarvisFeedback);
-          console.log('[Supabase State Sync] Orion state loaded from Supabase successfully.');
-        }
-      } catch (err) {
-        console.error('[Supabase State Sync] Error loading Orion state:', err);
-      }
-    };
-    
-    loadStateFromSupabase();
-  }, [currentUser]);
-
-  // Save Orion state on change to Supabase (debounced)
-  useEffect(() => {
-    if (!currentUser?.uid) return;
-    
-    const delayDebounceFn = setTimeout(async () => {
-      try {
-        const stateData = {
-          searchQuery,
-          searchResults,
-          searchSources,
-          generatedNotesContent,
-          activeJarvisSection,
-          jarvisFeedback
-        };
-        
-        const { data: existing } = await supabase
-          .from('orion_chats')
-          .select('id')
-          .eq('user_id', currentUser.uid)
-          .eq('prompt', '__orion_state__')
-          .limit(1);
-          
-        if (existing && existing.length > 0) {
-          await supabase
-            .from('orion_chats')
-            .update({
-              response: JSON.stringify(stateData),
-              timestamp: new Date().toISOString()
-            })
-            .eq('id', existing[0].id);
-        } else {
-          await supabase
-            .from('orion_chats')
-            .insert([{
-              id: crypto.randomUUID(),
-              user_id: currentUser.uid,
-              prompt: '__orion_state__',
-              response: JSON.stringify(stateData),
-              timestamp: new Date().toISOString()
-            }]);
-        }
-      } catch (err) {
-        console.error('[Supabase State Sync] Error saving Orion state:', err);
-      }
-    }, 2000); // 2 seconds debounce
-
-    return () => clearTimeout(delayDebounceFn);
-  }, [currentUser, searchQuery, searchResults, searchSources, generatedNotesContent, activeJarvisSection, jarvisFeedback]);
-
-  // Load Orion chat history
-  useEffect(() => {
-    if (!currentUser?.uid) return;
-    const fetchChatHistory = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('orion_chats')
-          .select('*')
-          .eq('user_id', currentUser.uid)
-          .order('timestamp', { ascending: true });
-          
-        if (data && data.length > 0) {
-          const items: JarvisHistoryItem[] = data
-            .filter((chat: any) => chat.prompt !== '__orion_state__')
-            .map((chat: any) => ({
-              id: chat.id,
-              prompt: chat.prompt,
-              response: chat.response,
-              timestamp: chat.timestamp || new Date().toISOString(),
-              actionExecuted: 'general_chat'
-            }));
-          setHistoryItems(items);
-        }
-      } catch (err) {
-        console.error("Failed to load Orion history", err);
-      }
-    };
-    fetchChatHistory();
-  }, [currentUser]);
-
-  // Load diagnostic statistics and commands from Supabase
+  // Fetch linked children read-only for Parent accounts + role-authorized directory metrics
   useEffect(() => {
     if (!currentUser) return;
+    const normRole = (effectiveRole || currentUser?.role || 'student').toLowerCase().trim();
 
-    // Loaded directly from Supabase
+    if ((normRole === 'parent' || normRole === 'guardian') && currentUser?.uid) {
+      fetch(`/api/parent/linked-children?parentUid=${encodeURIComponent(currentUser.uid)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((payload) => {
+          if (Array.isArray(payload?.children)) {
+            setLinkedChildren(payload.children);
+          }
+        })
+        .catch(() => {});
+    }
 
-    // Load registered users and aggregate them for real-time analytics reports
-    fetchAllSupabaseUsers().then(users => {
-      const studentUsers = users.filter(u => u.role === 'student');
-      
-      // 1. Map to StudentReport
-      const reportsList: StudentReport[] = studentUsers.map(s => ({
-        id: s.uid,
-        name: s.name,
-        classGrade: s.grade || 'Grade 10',
-        section: (s.section || 'Ruby') as any,
-        house: (s.house || 'Ruby') as any,
-        streakDays: s.streakDays ?? 0,
-        materialsUploaded: s.quizzesTaken ?? 0,
-        notesCreated: s.studyHours ?? 0,
-        quizzesCompleted: s.quizzesTaken ?? 0,
-        assignmentsCompleted: 4,
-        communityContributions: 12,
-        recentActivity: [
-          'Completed Physics MCQ assignment',
-          'Shared study guide for organic chemistry',
-          'Drew diagram on smartboard'
-        ]
-      }));
-      setReports(reportsList);
+    if (['teacher', 'faculty', 'head_teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes(normRole)) {
+      fetchAllSupabaseUsers().then(users => {
+        const studentUsers = users.filter(u => u.role === 'student');
 
-      // 2. Map to HouseAnalytics
-      const houseList = ['Ruby', 'Emerald', 'Sapphire', 'Topaz'];
-      const mappedHouses: HouseAnalytics[] = houseList.map(h => {
-        const matchingStudents = studentUsers.filter(s => s.house === h);
-        const pts = matchingStudents.length * 150 + 100;
-        return {
-          id: h as any,
-          points: pts,
-          materialsShared: matchingStudents.length * 2,
-          quizzesWon: matchingStudents.length * 3,
-          participation: 85
-        };
-      });
-      setHouses(mappedHouses);
+        const reportsList: StudentReport[] = studentUsers.map(s => ({
+          id: s.uid,
+          name: s.name,
+          classGrade: s.grade || 'Grade 10',
+          section: (s.section || 'Ruby') as any,
+          house: (s.house || 'Ruby') as any,
+          streakDays: s.streakDays ?? 0,
+          materialsUploaded: s.quizzesTaken ?? 0,
+          notesCreated: s.studyHours ?? 0,
+          quizzesCompleted: s.quizzesTaken ?? 0,
+          assignmentsCompleted: 4,
+          communityContributions: 12,
+          recentActivity: [
+            'Completed Physics MCQ assignment',
+            'Shared study guide for organic chemistry',
+            'Drew diagram on smartboard'
+          ]
+        }));
+        setReports(reportsList);
 
-      // 3. Map to SectionAnalytics
-      const sectionList = ['Ruby', 'Astra', 'Solara', 'Vega'];
-      const mappedSections: SectionAnalytics[] = sectionList.map(sec => {
-        const matchingStudents = studentUsers.filter(s => s.section === sec);
-        return {
-          id: sec as any,
-          totalStudents: matchingStudents.length || 2,
-          studyActivity: 74,
-          quizScores: 82,
-          materialContributions: matchingStudents.length * 3
-        };
-      });
-      setSections(mappedSections);
-    }).catch(err => {
-      console.error('Error in Jarvis Supabase loading:', err);
-    });
+        const houseList = ['Ruby', 'Emerald', 'Sapphire', 'Topaz'];
+        const mappedHouses: HouseAnalytics[] = houseList.map(h => {
+          const matchingStudents = studentUsers.filter(s => s.house === h);
+          const pts = matchingStudents.length * 150 + 100;
+          return {
+            id: h as any,
+            points: pts,
+            materialsShared: matchingStudents.length * 2,
+            quizzesWon: matchingStudents.length * 3,
+            participation: 85
+          };
+        });
+        setHouses(mappedHouses);
 
-    // Fetch commands from Supabase
-    (async () => {
-      try {
-        const { data, error } = await supabase
-          .from('teacher_commands')
-          .select('*')
-          .eq('teacher_id', currentUser.uid)
-          .order('created_at', { ascending: false })
-          .limit(20);
-
-        if (data && !error) {
-          const mapped: TeacherCommand[] = data.map((item: any) => ({
-            id: item.id,
-            commandText: item.command || item.command_text,
-            recognizedAt: item.created_at || item.recognized_at,
-            parsedAction: item.parsed_action,
-            status: item.status
-          }));
-          setCommandAudit(mapped);
-        }
-      } catch (err) {
-        console.warn('Teacher commands fetch notice:', err);
-      }
-    })();
-  }, [currentUser]);
+        const sectionList = ['Ruby', 'Astra', 'Solara', 'Vega'];
+        const mappedSections: SectionAnalytics[] = sectionList.map(sec => {
+          const matchingStudents = studentUsers.filter(s => s.section === sec);
+          return {
+            id: sec as any,
+            totalStudents: matchingStudents.length || 2,
+            studyActivity: 74,
+            quizScores: 82,
+            materialContributions: matchingStudents.length * 3
+          };
+        });
+        setSections(mappedSections);
+      }).catch(() => {});
+    }
+  }, [currentUser, effectiveRole]);
 
 
 
@@ -865,18 +670,23 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
 
       let aiText = '';
       
-      // Build authorized, role-aware StudentOS context
       const { contextString: ragContext } = await buildAuthorizedStudentOSContext(
         command,
         currentUser,
-        effectiveRole || currentUser?.role || 'student'
+        effectiveRole || currentUser?.role || 'student',
+        {
+          activeTab,
+          linkedStudents: linkedChildren.length > 0 ? linkedChildren : undefined
+        }
       );
 
-      const systemPrompt = `You are Veylentra Orion, the intelligent School Operating Assistant & Copilot.
+      const systemPrompt = `You are Veylentra Orion, the intelligent School Operating Assistant & Copilot running in an Ephemeral Session.
 Current User Role: ${effectiveRole || currentUser?.role || 'student'} (${currentUser?.name || 'User'})
+Current Workspace Tab: ${activeTab || 'dashboard'}
 The user typed or spoke this command: "${command}".
 
 Analyze the input and classify into ONE of these operational or intelligence actions:
+- "get_child_overview" (Parent checking verified linked child's attendance, homework, or ward progress)
 - "get_homework" (check homework, pending homework, missing homework, what homework do I have, homework status)
 - "get_submissions" (who has not submitted homework, submission rate, homework submissions)
 - "get_attendance" (attendance summary, who is absent, attendance rate, my attendance)
@@ -897,17 +707,18 @@ Analyze the input and classify into ONE of these operational or intelligence act
 - "create_homework" (create homework, create assignment, publish assignment)
 - "create_notice" (upload notice, create notice)
 - "delete_item" (delete competition, delete event, cancel meeting, delete homework)
+- "navigate_tab" (explicit request like open, go to, switch to, launch a specific workspace page)
 - "web_search" (search online, look up information)
 - "general_chat" (general question, academic explanation, math problem, or conversation)
 
 Rules:
 1. Distinguish between known Veylentra data (provided in context) and general AI assistance.
-2. Never fabricate Veylentra records.
+2. Never fabricate Veylentra records. For Parents, only report linked ward data explicitly provided.
 3. Return raw JSON format with NO markdown wrapping:
 {
-  "responseText": "Clear, helpful markdown response. If general_chat, provide the complete educational or operational answer.",
+  "responseText": "Clear, helpful markdown response using LaTeX ($...$, $$...$$, \\\\ce{...}) for math/chemistry when applicable.",
   "action": "action_name",
-  "targetValue": "Main entity title, topic, class, or search query",
+  "targetValue": "Main entity title, topic, class, tab, or search query",
   "details": {
     "title": "extracted title or topic",
     "date": "extracted date or YYYY-MM-DD",
@@ -932,8 +743,9 @@ Rules:
             taskType: 'orion_command',
             webSearchMode: 'auto',
             stream: true,
-            history: historyItems.map(item => ({ role: 'user', content: item.prompt })).flatMap(u => [u, { role: 'assistant', content: '...' }]).slice(-6),
+            history: ephemeralTurnsRef.current.slice(-6),
             ragContext: ragContext,
+            activeTab,
             userId: currentUser?.uid || 'guest',
             userRole: effectiveRole || currentUser?.role || 'student'
           })
@@ -1054,8 +866,8 @@ Rules:
             details: parsed.details || {}
           };
         }
-      } catch (e) {
-        console.warn('Structured JSON parsing notice:', e, 'Raw:', aiText?.slice(0, 100));
+      } catch {
+        console.warn('Structured JSON parsing notice');
       }
 
       return {
@@ -1073,6 +885,11 @@ Rules:
 
   // Command Parser & Executor (Orion 2.0 Operating Assistant)
   const mapActionNameToType = (aiAction: string, textLow: string): OrionActionType => {
+    const normRole = (effectiveRole || currentUser?.role || 'student').toLowerCase().trim();
+    if (aiAction === 'navigate_tab') return 'navigate_tab';
+    if (aiAction === 'get_child_overview' || ((normRole === 'parent' || normRole === 'guardian') && (textLow.includes('child') || textLow.includes('ward') || textLow.includes('son') || textLow.includes('daughter')))) {
+      return 'get_child_overview';
+    }
     if (aiAction === 'web_search' || textLow.includes('search about') || textLow.includes('search the web') || textLow.startsWith('look up')) return 'web_search';
     // Intelligence & Data Queries
     if (aiAction === 'get_submissions' || (textLow.includes('submit') && textLow.includes('homework')) || textLow.includes('who has not submitted')) return 'get_submissions';
@@ -1132,6 +949,42 @@ Rules:
     return actions;
   };
 
+  const isExplicitTabNavigationCommand = (textLow: string): boolean => {
+    const hasNavVerb =
+      textLow.startsWith('open ') ||
+      textLow.startsWith('go to ') ||
+      textLow.startsWith('launch ') ||
+      textLow.startsWith('switch to ') ||
+      textLow.startsWith('take me to ');
+    const hasDataOrWriteVerb =
+      textLow.includes('create ') ||
+      textLow.includes('check ') ||
+      textLow.includes('show ') ||
+      textLow.includes('summary') ||
+      textLow.includes('report') ||
+      textLow.includes('status') ||
+      textLow.includes('pending') ||
+      textLow.includes('who ') ||
+      textLow.includes('how many') ||
+      textLow.includes('analyze') ||
+      textLow.includes('mark ') ||
+      textLow.includes('assign ') ||
+      textLow.includes('generate ');
+    return hasNavVerb && !hasDataOrWriteVerb;
+  };
+
+  const buildOrionUserContext = (): OrionUserContext => ({
+    userId: currentUser?.uid,
+    userName: currentUser?.name || 'User',
+    userEmail: currentUser?.email,
+    userRole: effectiveRole || currentUser?.role || 'student',
+    userClass: currentUser?.className || currentUser?.grade,
+    grade: currentUser?.grade,
+    section: currentUser?.section,
+    linkedStudentIds: linkedChildren.map((c: any) => c?.uid || c?.id).filter(Boolean),
+    linkedStudents: linkedChildren
+  });
+
   const executeVoiceCommand = async (textToParse: string) => {
     if (!textToParse.trim()) return;
     setIsProcessing(true);
@@ -1143,30 +996,31 @@ Rules:
       const confirmNegatives = ['no', 'cancel', 'dont', "don't", 'abort', 'stop', 'keep it'];
 
       if (confirmAffirmatives.some(k => textLow.includes(k))) {
-        const userCtx: OrionUserContext = {
-          userId: currentUser?.uid,
-          userName: currentUser?.name || 'User',
-          userEmail: currentUser?.email,
-          userRole: effectiveRole || 'student',
-          userClass: currentUser?.className || currentUser?.grade
-        };
-
+        const userCtx = buildOrionUserContext();
         const actionToExec: OrionAction = pendingConfirmation.actionObject || {
           action: pendingConfirmation.action as any,
           title: pendingConfirmation.targetValue,
           targetValue: pendingConfirmation.targetValue
         };
 
-        const execRes = await executeOrionActionPipeline([actionToExec], userCtx, textToParse, true);
+        const execRes = await runOrionAgentTask({
+          rawCommand: textToParse,
+          actions: [actionToExec],
+          userContext: userCtx,
+          isConfirmed: true,
+          onProgress: setOrionProgress
+        });
+
         setPendingConfirmation(null);
         if (execRes.structuredData) setStructuredOutput(execRes.structuredData);
         setJarvisFeedback(execRes.combinedSummary);
-        speakFeedback(execRes.combinedSummary);
-        showNotification(`SYSTEM: Confirmed execution of ${pendingConfirmation.targetValue || pendingConfirmation.action}`);
+        speakFeedback(execRes.combinedSummary.slice(0, 260));
+        showNotification(`ORION: Confirmed ${pendingConfirmation.action}`);
         setIsProcessing(false);
         return;
       } else if (confirmNegatives.some(k => textLow.includes(k))) {
         setPendingConfirmation(null);
+        setOrionProgress(null);
         const cancelText = 'Operation canceled. No changes were made to Veylentra.';
         setJarvisFeedback(cancelText);
         speakFeedback(cancelText);
@@ -1175,8 +1029,8 @@ Rules:
       }
     }
 
-    // 0. Immediate Navigation Intercept with 3D Orb Transition
-    if (textLow.startsWith('open ') || textLow.startsWith('go to ') || textLow.startsWith('launch ') || textLow.startsWith('switch to ') || textLow.includes('material hub') || textLow.includes('materials hub')) {
+    // 0. Explicit Tab Navigation Intercept ONLY (never hijacks homework/attendance queries)
+    if (isExplicitTabNavigationCommand(textLow)) {
       if (textLow.includes('material') || textLow.includes('hub')) {
         triggerNavTransition('Material Hub', 'materials');
         setIsProcessing(false);
@@ -1198,12 +1052,17 @@ Rules:
         return;
       }
       if (textLow.includes('study')) {
-        triggerNavTransition('Study', 'study_hub');
+        triggerNavTransition('Study Hub', 'study_hub');
         setIsProcessing(false);
         return;
       }
       if (textLow.includes('notice') || textLow.includes('announcement')) {
         triggerNavTransition('Notices', 'notice_viewer');
+        setIsProcessing(false);
+        return;
+      }
+      if (textLow.includes('parent')) {
+        triggerNavTransition('Parental Portal', 'parent_portal');
         setIsProcessing(false);
         return;
       }
@@ -1214,7 +1073,7 @@ Rules:
       }
     }
 
-    // 0.5. Immediate Educational Video Intent Intercept (Routes strictly to /api/ai/search, never invents links)
+    // 0.5. Immediate Educational Video Intent Intercept (Routes strictly to /api/ai/search)
     const isExplicitVideoQuery = (
       textLow.includes('video') ||
       textLow.includes('videos') ||
@@ -1241,7 +1100,7 @@ Rules:
       return;
     }
 
-    // 2. Resolve Context Pronouns ("it", "that") using lastEntityRef
+    // 2. Resolve Ephemeral In-Session Pronouns ("it", "that")
     if ((textLow.includes(' it ') || textLow.endsWith(' it') || textLow.includes(' that ')) && lastEntityRef.current) {
       textToParse = textToParse.replace(/\b(it|that)\b/gi, lastEntityRef.current.title);
       textLow = textToParse.toLowerCase().trim();
@@ -1255,7 +1114,7 @@ Rules:
         if (onSuperAdminUnlocked) onSuperAdminUnlocked();
         showNotification('SYSTEM: Super Admin Mode Activated.');
       } else {
-        setJarvisFeedback('Access Denied: You lack the required Super Admin Firestore role.');
+        setJarvisFeedback('Access Denied: You lack the required Super Admin role.');
         speakFeedback('Access Denied.');
         showNotification('SYSTEM: Auth Failed.');
       }
@@ -1285,84 +1144,75 @@ Rules:
       details
     };
 
-    // Check for multi-step instructions
     const actionList = parseMultiStepActions(textToParse, primaryAction);
-
-    const userCtx: OrionUserContext = {
-      userId: currentUser?.uid,
-      userName: currentUser?.name || 'User',
-      userEmail: currentUser?.email,
-      userRole: effectiveRole || 'student',
-      userClass: currentUser?.className || currentUser?.grade
-    };
+    const userCtx = buildOrionUserContext();
 
     // Detect if the user is asking a math/geometry question inside Orion
     const detectedWidget = detectMathInteractiveWidget(textToParse, aiVerdict.responseText || '');
     setOrionMathWidget(detectedWidget);
 
-    // If general_chat, use the rich AI response directly rather than generic placeholder
+    if (targetVal && targetVal !== textToParse) {
+      lastEntityRef.current = { type: mappedAction, title: targetVal };
+    }
+
+    // Direct conversational/academic answer without DB mutation
     if (mappedAction === 'general_chat' && aiVerdict.responseText) {
       setStructuredOutput(null);
+      setOrionProgress({
+        phase: 'completed',
+        headline: 'Response synthesized.',
+        verified: true,
+        startedAt: Date.now(),
+        finishedAt: Date.now(),
+        stages: [
+          { phase: 'analyzing', label: 'Analyzing intent', status: 'completed' },
+          { phase: 'executing', label: 'Synthesizing answer', status: 'completed' }
+        ],
+        steps: [
+          { id: 'step-1', label: 'Synthesize response', action: 'general_chat', status: 'completed' }
+        ]
+      });
       setJarvisFeedback(aiVerdict.responseText);
+      ephemeralTurnsRef.current = [
+        ...ephemeralTurnsRef.current,
+        { role: 'user' as const, content: textToParse },
+        { role: 'assistant' as const, content: aiVerdict.responseText }
+      ].slice(-6);
       speakFeedback(aiVerdict.responseText.slice(0, 260));
       setIsProcessing(false);
       return;
     }
 
-    // Execute through Centralized Action Executor Pipeline
-    const pipelineRes = await executeOrionActionPipeline(actionList, userCtx, textToParse, false);
+    // Execute through Orion Agent Engine (Plan -> Permission/Prereq -> Execute -> Verify)
+    const agentRes = await runOrionAgentTask({
+      rawCommand: textToParse,
+      actions: actionList,
+      userContext: userCtx,
+      isConfirmed: false,
+      onProgress: setOrionProgress
+    });
 
-    if (pipelineRes.structuredData) {
-      setStructuredOutput(pipelineRes.structuredData);
+    if (agentRes.structuredData) {
+      setStructuredOutput(agentRes.structuredData);
     } else {
       setStructuredOutput(null);
     }
 
-    if (pipelineRes.pendingConfirmation) {
+    if (agentRes.pendingConfirmation) {
       setPendingConfirmation({
-        action: pipelineRes.pendingConfirmation.action,
-        targetValue: pipelineRes.pendingConfirmation.targetTitle,
-        promptText: pipelineRes.pendingConfirmation.promptText,
-        previewDetails: pipelineRes.pendingConfirmation.previewDetails,
-        actionObject: pipelineRes.pendingConfirmation.actionObject || primaryAction
+        action: agentRes.pendingConfirmation.action,
+        targetValue: agentRes.pendingConfirmation.targetTitle,
+        promptText: agentRes.pendingConfirmation.promptText,
+        previewDetails: agentRes.pendingConfirmation.previewDetails,
+        actionObject: agentRes.pendingConfirmation.actionObject || primaryAction
       });
     }
 
-    let resolvedFeedback = pipelineRes.combinedSummary;
-    let actionTriggered = mappedAction;
+    const resolvedFeedback = agentRes.combinedSummary;
+    const actionTriggered = mappedAction;
 
-    // View / Tab Navigation Helpers with 3D Orb Transition
-    if (textLow.includes('material hub') || textLow.includes('materials')) {
-      triggerNavTransition('Material Hub', 'materials');
-      return;
-    } else if (textLow.includes('attendance') || mappedAction === 'show_attendance' || mappedAction === 'start_attendance') {
-      triggerNavTransition('Attendance Manager', 'attendance_manager');
-      return;
-    } else if (textLow.includes('homework')) {
-      triggerNavTransition('Class Homework', 'homework');
-      return;
-    } else if (textLow.includes('whiteboard')) {
-      triggerNavTransition('Class Whiteboard', 'whiteboard');
-      return;
-    } else if (textLow.includes('study') || textLow.includes('study hub')) {
-      triggerNavTransition('Study Hub', 'study_hub');
-      return;
-    } else if (textLow.includes('notice') || textLow.includes('announcement') || mappedAction === 'show_announcements') {
-      triggerNavTransition('Notices', 'notice_viewer');
-      return;
-    } else if (textLow.includes('dashboard') || textLow.includes('home')) {
-      triggerNavTransition('Dashboard', 'dashboard');
-      return;
-    } else if (mappedAction === 'show_pending_assignments' || textLow.includes('pending assignment')) {
-      triggerNavTransition('Assignment Center', 'assignments');
-      return;
-    } else if (mappedAction === 'show_timetable' || textLow.includes('timetable')) {
-      triggerNavTransition('Timetable', 'timetable_viewer');
-    } else if (textLow.includes('veylentra life') || textLow.includes('studentos life') || textLow.includes('open life')) {
-      triggerNavTransition('Veylentra Life', 'life' as any);
-    } else if (textLow.includes('veylentra meet') || textLow.includes('studentos meet') || textLow.includes('open meet')) {
-      triggerNavTransition('Veylentra Meet', 'meet' as any);
-    } else if (mappedAction === 'navigate_tab' && targetVal) {
+    // Navigation ONLY when explicit navigate_tab action is requested
+    if (mappedAction === 'navigate_tab' && targetVal) {
       const tabVal = targetVal.toLowerCase();
       if (tabVal.includes('life')) triggerNavTransition('Veylentra Life', 'life' as any);
       else if (tabVal.includes('meet')) triggerNavTransition('Veylentra Meet', 'meet' as any);
@@ -1373,11 +1223,12 @@ Rules:
       else if (tabVal.includes('assignment')) triggerNavTransition('Assignment Center', 'assignments');
       else if (tabVal.includes('timetable') || tabVal.includes('schedule')) triggerNavTransition('Timetable', 'timetable_viewer');
       else if (tabVal.includes('notice') || tabVal.includes('announcement')) triggerNavTransition('Notices', 'notice_viewer');
+      else if (tabVal.includes('parent')) triggerNavTransition('Parental Portal', 'parent_portal');
       else if (tabVal.includes('dashboard')) triggerNavTransition('Dashboard', 'dashboard');
     } else if (mappedAction === 'search_internet' || mappedAction === 'web_search') {
       setSearchQuery(targetVal);
       setSearchResults(resolvedFeedback);
-      const resultSources = pipelineRes.results?.find(r => r.data?.sources)?.data?.sources;
+      const resultSources = agentRes.results?.find(r => r.data?.sources)?.data?.sources;
       if (Array.isArray(resultSources) && resultSources.length > 0) {
         setSearchSources(
           resultSources.map((s: any) => ({
@@ -1387,7 +1238,7 @@ Rules:
           }))
         );
       }
-      const resultVideos = pipelineRes.results?.find(r => r.data?.videos)?.data?.videos;
+      const resultVideos = agentRes.results?.find(r => r.data?.videos)?.data?.videos;
       if (Array.isArray(resultVideos) && resultVideos.length > 0) {
         setSearchVideos(resultVideos);
       }
@@ -1400,42 +1251,14 @@ Rules:
     }
 
     setJarvisFeedback(resolvedFeedback);
-    speakFeedback(resolvedFeedback);
+    ephemeralTurnsRef.current = [
+      ...ephemeralTurnsRef.current,
+      { role: 'user' as const, content: textToParse },
+      { role: 'assistant' as const, content: resolvedFeedback.slice(0, 600) }
+    ].slice(-6);
+
+    speakFeedback(resolvedFeedback.slice(0, 260));
     showNotification(`ORION: ${actionTriggered} processed.`);
-
-    // Log command audit
-    const newAuditItem: TeacherCommand = {
-      id: `audit-${Date.now()}`,
-      commandText: textToParse,
-      recognizedAt: new Date().toISOString(),
-      parsedAction: actionTriggered,
-      status: 'success'
-    };
-
-    setCommandAudit(prev => [newAuditItem, ...prev].slice(0, 20));
-
-    try {
-      if (currentUser?.uid) {
-        await supabase.from('orion_chats').insert([{
-          id: crypto.randomUUID(),
-          user_id: currentUser.uid,
-          prompt: textToParse,
-          response: resolvedFeedback,
-          timestamp: new Date().toISOString()
-        }]);
-      }
-    } catch (e) {
-      console.error('Failed logging audit:', e);
-    }
-
-    // Close panel seamlessly on UI navigation triggers
-    const navActions = ['navigate_tab', 'search_materials', 'explain_concept', 'generate_quiz', 'close_orion'];
-    if (navActions.includes(actionTriggered) && onClose) {
-      setTimeout(() => {
-        onClose();
-      }, 1500);
-    }
-
     setIsProcessing(false);
   };
 
@@ -1483,14 +1306,28 @@ Rules:
           </div>
           <div>
             <h2 className="text-base font-bold text-white">Orion</h2>
-            <p className="text-xs text-slate-400">Ask Orion or search</p>
+            <p className="text-xs text-slate-400">Ephemeral session · Clears on exit</p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              clearEphemeralSession();
+              showNotification('Orion ephemeral session cleared.');
+            }}
+            className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-medium text-slate-300 border border-white/10 flex items-center gap-1.5 transition-colors"
+            title="Clear current ephemeral session"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Clear Session</span>
+          </button>
+
           {/* More Menu Dropdown */}
           <div className="relative">
             <button
+              type="button"
               onClick={() => setShowMoreMenu(prev => !prev)}
               className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-medium text-slate-300 border border-white/10 flex items-center gap-1.5 transition-colors"
             >
@@ -1499,30 +1336,28 @@ Rules:
             {showMoreMenu && (
               <div className="absolute right-0 mt-2 w-48 rounded-xl bg-slate-900 border border-white/15 shadow-2xl z-50 py-1.5 divide-y divide-white/5">
                 <div className="px-3 py-1 text-[10px] uppercase font-mono text-slate-400 font-bold">Menu</div>
-                <button
-                  onClick={() => { setActiveJarvisSection('reports'); setShowMoreMenu(false); }}
-                  className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-white/10 flex items-center gap-2"
-                >
-                  <Users className="w-3.5 h-3.5 text-indigo-400" /> Student Reports
-                </button>
-                <button
-                  onClick={() => { setActiveJarvisSection('houses'); setShowMoreMenu(false); }}
-                  className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-white/10 flex items-center gap-2"
-                >
-                  <Award className="w-3.5 h-3.5 text-amber-400" /> Houses
-                </button>
-                <button
-                  onClick={() => { setActiveJarvisSection('sections'); setShowMoreMenu(false); }}
-                  className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-white/10 flex items-center gap-2"
-                >
-                  <BarChart3 className="w-3.5 h-3.5 text-emerald-400" /> Sections
-                </button>
-                <button
-                  onClick={() => { setActiveJarvisSection('history'); setShowMoreMenu(false); }}
-                  className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-white/10 flex items-center gap-2"
-                >
-                  <Terminal className="w-3.5 h-3.5 text-teal-400" /> Voice Log
-                </button>
+                {['teacher', 'faculty', 'head_teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes((effectiveRole || currentUser?.role || 'student').toLowerCase().trim()) && (
+                  <>
+                    <button
+                      onClick={() => { setActiveJarvisSection('reports'); setShowMoreMenu(false); }}
+                      className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-white/10 flex items-center gap-2"
+                    >
+                      <Users className="w-3.5 h-3.5 text-indigo-400" /> Student Reports
+                    </button>
+                    <button
+                      onClick={() => { setActiveJarvisSection('houses'); setShowMoreMenu(false); }}
+                      className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-white/10 flex items-center gap-2"
+                    >
+                      <Award className="w-3.5 h-3.5 text-amber-400" /> Houses
+                    </button>
+                    <button
+                      onClick={() => { setActiveJarvisSection('sections'); setShowMoreMenu(false); }}
+                      className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-white/10 flex items-center gap-2"
+                    >
+                      <BarChart3 className="w-3.5 h-3.5 text-emerald-400" /> Sections
+                    </button>
+                  </>
+                )}
                 <button
                   onClick={() => { setShowDiagnostics(prev => !prev); setShowMoreMenu(false); }}
                   className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-white/10 flex items-center gap-2"
@@ -1535,9 +1370,13 @@ Rules:
 
           {onClose && (
             <button 
-              onClick={onClose}
+              type="button"
+              onClick={() => {
+                clearEphemeralSession();
+                onClose();
+              }}
               className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-              title="Close Orion"
+              title="Close Orion & wipe session"
             >
               <X className="w-5 h-5" />
             </button>
@@ -1558,7 +1397,7 @@ Rules:
               ← Back to Orion
             </button>
             <span className="text-xs font-bold uppercase font-mono text-indigo-300">
-              {activeJarvisSection === 'reports' ? 'Student Reports' : activeJarvisSection === 'houses' ? 'Houses' : activeJarvisSection === 'sections' ? 'Sections' : activeJarvisSection === 'history' ? 'Voice Log' : 'Discovery Hub'}
+              {activeJarvisSection === 'reports' ? 'Student Reports' : activeJarvisSection === 'houses' ? 'Houses' : activeJarvisSection === 'sections' ? 'Sections' : 'Discovery Hub'}
             </span>
           </div>
         )}
@@ -1733,11 +1572,11 @@ Rules:
               </div>
             </form>
 
-            {/* Under it: 4 Big Actions Only */}
+            {/* Role-Aware Quick Actions */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               <button
                 type="button"
-                onClick={() => handleRunInternetSearch(commandText || "science and mathematics curriculum")}
+                onClick={() => handleRunInternetSearch(commandText || 'science and mathematics curriculum')}
                 className="p-3 rounded-xl bg-slate-900/60 hover:bg-slate-900 border border-white/10 hover:border-indigo-500/40 text-left transition-all group flex flex-col justify-between"
               >
                 <Search className="w-4 h-4 text-indigo-400 mb-2 group-hover:scale-110 transition-transform" />
@@ -1749,13 +1588,13 @@ Rules:
 
               <button
                 type="button"
-                onClick={() => handleRunInternetSearch("find a video about " + (commandText || "Newton laws"))}
+                onClick={() => handleRunInternetSearch('find a video about ' + (commandText || 'Newton laws'))}
                 className="p-3 rounded-xl bg-slate-900/60 hover:bg-slate-900 border border-white/10 hover:border-teal-500/40 text-left transition-all group flex flex-col justify-between"
               >
                 <Video className="w-4 h-4 text-teal-400 mb-2 group-hover:scale-110 transition-transform" />
                 <div>
                   <span className="text-xs font-bold text-white block">Find video</span>
-                  <span className="text-[10px] text-slate-400 block truncate">Watch verified clips</span>
+                  <span className="text-[10px] text-slate-400 block truncate">Verified clips</span>
                 </div>
               </button>
 
@@ -1767,22 +1606,60 @@ Rules:
                 <Layout className="w-4 h-4 text-amber-400 mb-2 group-hover:scale-110 transition-transform" />
                 <div>
                   <span className="text-xs font-bold text-white block">Open a page</span>
-                  <span className="text-[10px] text-slate-400 block truncate">Jump to tools</span>
+                  <span className="text-[10px] text-slate-400 block truncate">Jump to module</span>
                 </div>
               </button>
 
-              <button
-                type="button"
-                onClick={() => handleQuickTouchAction("Generate daily school briefing report")}
-                className="p-3 rounded-xl bg-slate-900/60 hover:bg-slate-900 border border-white/10 hover:border-emerald-500/40 text-left transition-all group flex flex-col justify-between"
-              >
-                <BarChart3 className="w-4 h-4 text-emerald-400 mb-2 group-hover:scale-110 transition-transform" />
-                <div>
-                  <span className="text-xs font-bold text-white block">School report</span>
-                  <span className="text-[10px] text-slate-400 block truncate">Briefings & metrics</span>
-                </div>
-              </button>
+              {(() => {
+                const norm = (effectiveRole || currentUser?.role || 'student').toLowerCase().trim();
+                if (norm === 'parent' || norm === 'guardian') {
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => handleQuickTouchAction('Show my linked child overview')}
+                      className="p-3 rounded-xl bg-slate-900/60 hover:bg-slate-900 border border-white/10 hover:border-emerald-500/40 text-left transition-all group flex flex-col justify-between"
+                    >
+                      <Users className="w-4 h-4 text-emerald-400 mb-2 group-hover:scale-110 transition-transform" />
+                      <div>
+                        <span className="text-xs font-bold text-white block">Child Overview</span>
+                        <span className="text-[10px] text-slate-400 block truncate">Ward progress</span>
+                      </div>
+                    </button>
+                  );
+                }
+                if (norm === 'student') {
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => handleQuickTouchAction('Create a 5-day revision study plan')}
+                      className="p-3 rounded-xl bg-slate-900/60 hover:bg-slate-900 border border-white/10 hover:border-emerald-500/40 text-left transition-all group flex flex-col justify-between"
+                    >
+                      <BookOpen className="w-4 h-4 text-emerald-400 mb-2 group-hover:scale-110 transition-transform" />
+                      <div>
+                        <span className="text-xs font-bold text-white block">Study Plan</span>
+                        <span className="text-[10px] text-slate-400 block truncate">Build 5-day sprint</span>
+                      </div>
+                    </button>
+                  );
+                }
+                return (
+                  <button
+                    type="button"
+                    onClick={() => handleQuickTouchAction('Generate daily school briefing report')}
+                    className="p-3 rounded-xl bg-slate-900/60 hover:bg-slate-900 border border-white/10 hover:border-emerald-500/40 text-left transition-all group flex flex-col justify-between"
+                  >
+                    <BarChart3 className="w-4 h-4 text-emerald-400 mb-2 group-hover:scale-110 transition-transform" />
+                    <div>
+                      <span className="text-xs font-bold text-white block">School report</span>
+                      <span className="text-[10px] text-slate-400 block truncate">Briefings & metrics</span>
+                    </div>
+                  </button>
+                );
+              })()}
             </div>
+
+            {/* Live Orion Execution & Verification Timeline */}
+            {orionProgress && <OrionActivityTimeline snapshot={orionProgress} />}
 
             {/* Bottom: Videos Carousel & Answers */}
             <div className="space-y-4 pt-2">
@@ -1793,7 +1670,7 @@ Rules:
                       <Video className="w-4 h-4 text-teal-400" />
                       Curated Educational Videos ({searchVideos.length})
                     </span>
-                    <span className="text-[10px] text-slate-400 font-mono">100% Verified Playable Links</span>
+                    <span className="text-[10px] text-slate-400 font-mono">Verified Playable Links</span>
                   </div>
                   <GlassyVideoCarousel videos={searchVideos} queryTopic={searchQuery} />
                 </div>
@@ -1806,15 +1683,28 @@ Rules:
                     <span className="text-xs font-bold text-indigo-300 uppercase tracking-wider font-mono">
                       ✨ Orion Synthesis & Guidance
                     </span>
-                    {searchQuery && (
-                      <span className="text-[10px] bg-indigo-500/10 text-indigo-300 px-2 py-0.5 rounded font-mono">
-                        Topic: {searchQuery}
-                      </span>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {orionModelUsed && (
+                        <span className="text-[10px] text-slate-400 font-mono">{orionModelUsed}</span>
+                      )}
+                      {searchQuery && (
+                        <span className="text-[10px] bg-indigo-500/10 text-indigo-300 px-2 py-0.5 rounded font-mono">
+                          Topic: {searchQuery}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="text-sm text-slate-100 leading-relaxed font-sans max-h-[600px] overflow-y-auto custom-scrollbar pr-2 select-text">
-                    {renderOrionMarkdown(searchResults || jarvisFeedback)}
+                    <AcademicRichRenderer
+                      content={searchResults || jarvisFeedback}
+                      isStreaming={isProcessing || searching}
+                    />
                   </div>
+                  {orionMathWidget && (
+                    <div className="pt-2 border-t border-white/10">
+                      <InteractiveMathWidget widgetType={orionMathWidget} />
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2291,11 +2181,11 @@ Rules:
                 
                 <div className="flex-1 overflow-y-auto max-h-[350px] pr-1 scrollbar-thin text-xs text-slate-300 leading-relaxed font-sans">
                   {searchResults ? (
-                    renderOrionMarkdown(searchResults)
+                    <AcademicRichRenderer content={searchResults} isStreaming={searching} />
                   ) : (
                     <div className="h-full flex flex-col items-center justify-center text-center py-12 text-slate-500 space-y-2">
                       <Sparkles className="w-8 h-8 text-slate-600 animate-pulse" />
-                      <p className="text-xs max-w-xs font-medium">Orion search engine is idle. Ask Orion or enter a query above to start Phase II real-time academic synthesis.</p>
+                      <p className="text-xs max-w-xs font-medium">Orion discovery engine is idle. Enter a topic above to research verified sources.</p>
                     </div>
                   )}
                 </div>
@@ -2401,54 +2291,6 @@ Rules:
                 </div>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* F. VOICE LOGS & COMMAND HISTORY */}
-        {activeJarvisSection === 'history' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            
-            {/* Command audit list */}
-            <div className="bg-slate-950/60 p-4 rounded-2xl border border-white/10 space-y-3">
-              <span className="text-[10px] text-indigo-400 font-extrabold uppercase font-mono tracking-wider block">📃 Recents Voice Recognitions</span>
-              <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                {commandAudit.length > 0 ? (
-                  commandAudit.map((aud) => (
-                    <div key={aud.id} className="p-2.5 rounded-xl bg-slate-900 border border-white/5 flex items-center justify-between text-xs font-mono">
-                      <div>
-                        <div className="text-slate-300">"{aud.commandText}"</div>
-                        <div className="text-[8px] text-slate-500">{new Date(aud.recognizedAt).toLocaleTimeString()}</div>
-                      </div>
-                      <span className={`text-[8px] uppercase tracking-wider py-0.5 px-2 rounded-full font-bold ${
-                        aud.status === 'success' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-500'
-                      }`}>
-                        {aud.status}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-slate-500 text-xs text-center py-6 font-mono">No command audit logs matched.</div>
-                )}
-              </div>
-            </div>
-
-            {/* Response dialogue history */}
-            <div className="bg-slate-950/60 p-4 rounded-2xl border border-white/10 space-y-3">
-              <span className="text-[10px] text-indigo-400 font-extrabold uppercase font-mono tracking-wider block">💬 Conversational Dialogues (Chat logs)</span>
-              <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                {historyItems.length > 0 ? (
-                  historyItems.map((item) => (
-                    <div key={item.id} className="p-2.5 rounded-xl bg-slate-900/50 border border-white/5 space-y-1.5 text-xs">
-                      <div className="font-mono text-slate-450 italic">🗣️ "{item.prompt}"</div>
-                      <div className="font-sans text-indigo-350 bg-slate-950/40 p-2 rounded-lg leading-relaxed text-[11px] border border-white/5">{item.response}</div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-slate-500 text-xs text-center py-6 font-mono">No active Jarvis voice history logs found.</div>
-                )}
-              </div>
-            </div>
-
           </div>
         )}
 

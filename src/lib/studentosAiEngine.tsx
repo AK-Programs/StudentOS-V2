@@ -2,6 +2,11 @@ import React, { useState } from 'react';
 import { supabase } from './supabase';
 import { persistDeckToSupabase, persistCardsBatchToSupabase } from './flashcardStorage';
 import { Flashcard, FlashcardDeck } from '../types';
+import {
+  buildRoleAwareByteContext,
+  doesPromptNeedRoleContext,
+  BuildByteContextOptions
+} from './byteIntelligence';
 
 export interface WebSearchSourceInfo {
   title: string;
@@ -64,253 +69,46 @@ function sanitizeUntrustedRecordText(input: string, maxLen = 350): string {
     .slice(0, maxLen);
 }
 
-/**
- * Determines whether a student/teacher prompt requires fetching live StudentOS database context.
- * For simple greetings or pure concept explanations ("Explain lines and angles"), this returns false
- * so we achieve near-zero pre-request latency.
- */
-export function doesPromptNeedStudentOSContext(prompt: string): boolean {
-  const lower = (prompt || '').toLowerCase();
-  const contextKeywords = [
-    /\b(my|our|school|class|section|grade)\b/i,
-    /\b(homework|assignment|assignments|due|deadline|deadlines|pending|overdue|submit|submission)\b/i,
-    /\b(note|notes|lecture|vault|material|materials|resource|resources|syllabus|chapter)\b/i,
-    /\b(test|exam|quiz|schedule|timetable|planner|study plan|calendar|event|events|tomorrow|today|this week)\b/i,
-    /\b(attendance|present|absent|late|leave)\b/i,
-    /\b(flashcard|flashcards|deck|study center)\b/i,
-    /\b(house|ruby|emerald|sapphire|topaz|points|xp|streak|level|badge|badges|leaderboard|competition|club|clubs|poll)\b/i,
-    /\b(notice|notices|announcement|announcements|notification|notifications|meet|meeting)\b/i
-  ];
-  return contextKeywords.some((regex) => regex.test(lower));
+export function doesPromptNeedStudentOSContext(prompt: string, role?: string): boolean {
+  return doesPromptNeedRoleContext(prompt, role);
 }
 
 /**
- * Retrieves authorized StudentOS context strictly scoped to the authenticated user's identity,
- * role, grade, section, and school_id. Uses parallel queries and isolated per-user caching.
+ * Retrieves authorized StudentOS / Veylentra context strictly scoped to the authenticated user's identity,
+ * role, grade, section, and verified parent links. Uses parallel queries and isolated per-user caching.
  */
 export async function buildAuthorizedStudentOSContext(
   prompt: string,
   currentUser: any,
   effectiveRole: string,
-  localSnapshot?: StudentOSLocalContextSnapshot
-): Promise<{ contextString: string; retrievalMs: number; hasStudentOSData: boolean }> {
-  const start = Date.now();
-  if (!currentUser) {
-    return { contextString: '', retrievalMs: 0, hasStudentOSData: false };
-  }
+  localSnapshotOrOptions?: StudentOSLocalContextSnapshot | BuildByteContextOptions
+): Promise<{
+  contextString: string;
+  retrievalMs: number;
+  hasStudentOSData: boolean;
+  normalizedRole?: string;
+  scopeSummary?: string;
+  intentCategory?: string;
+  unlinkedParent?: boolean;
+}> {
+  const opts: BuildByteContextOptions =
+    localSnapshotOrOptions &&
+    ('activeTab' in localSnapshotOrOptions ||
+      'linkedStudents' in localSnapshotOrOptions ||
+      'localSnapshot' in localSnapshotOrOptions ||
+      'supabaseClient' in localSnapshotOrOptions)
+      ? (localSnapshotOrOptions as BuildByteContextOptions)
+      : { localSnapshot: localSnapshotOrOptions as StudentOSLocalContextSnapshot | undefined };
 
-  const userId = String(currentUser.uid || currentUser.id || currentUser.email || 'guest');
-  const userRole = String(effectiveRole || currentUser.role || 'student').toLowerCase();
-  const userGrade = String(currentUser.grade || 'Grade 10');
-  const userSection = String(currentUser.section || 'Solara');
-  const userHouse = String(currentUser.house || 'Ruby');
-  const schoolId = String(currentUser.school_id || currentUser.schoolId || 'default_school');
-
-  // Lightweight identity header always included
-  const profileHeader = [
-    `Authenticated User: ${sanitizeUntrustedRecordText(currentUser.name || 'Student', 80)}`,
-    `Role: ${userRole}`,
-    `Grade & Section: ${userGrade} - ${userSection}`,
-    `House: ${userHouse}`,
-    `School ID: ${schoolId}`,
-    `Current Date: ${new Date().toISOString().split('T')[0]}`
-  ].join(' | ');
-
-  // Fast path: if the prompt is a pure academic concept question ("Explain lines and angles"),
-  // do not block on network database queries!
-  if (!doesPromptNeedStudentOSContext(prompt)) {
-    return {
-      contextString: `User Profile: ${profileHeader}`,
-      retrievalMs: Date.now() - start,
-      hasStudentOSData: false
-    };
-  }
-
-  // Check isolated per-user cache
-  const cacheKey = `${userId}:${userRole}:${userGrade}:${userSection}`;
-  const cached = userContextCache.get(cacheKey);
-  if (cached && cached.userId === userId && Date.now() - cached.timestamp < CONTEXT_CACHE_TTL_MS) {
-    return {
-      contextString: cached.contextString,
-      retrievalMs: Date.now() - start,
-      hasStudentOSData: true
-    };
-  }
-
-  const sections: string[] = [`User Profile: ${profileHeader}`];
-
-  // Include immediate local state if already loaded in memory
-  if (localSnapshot?.vaultNotes && localSnapshot.vaultNotes.length > 0) {
-    const noteLines = localSnapshot.vaultNotes.slice(0, 6).map(
-      (n: any) => `- [${sanitizeUntrustedRecordText(n.subject || 'General', 40)}] "${sanitizeUntrustedRecordText(n.title, 80)}": ${sanitizeUntrustedRecordText(n.content, 240)}`
-    );
-    sections.push(`Student's Personal Lecture Notes (${localSnapshot.vaultNotes.length} total):\n${noteLines.join('\n')}`);
-  }
-
-  if (localSnapshot?.schedule && localSnapshot.schedule.length > 0) {
-    const schedLines = localSnapshot.schedule.slice(0, 6).map(
-      (s: any) => `- ${sanitizeUntrustedRecordText(s.day || s.date || 'Scheduled', 40)} (${sanitizeUntrustedRecordText(s.time || '', 40)}): ${sanitizeUntrustedRecordText(s.subject || s.title || 'Study Session', 80)}`
-    );
-    sections.push(`Student's Study Planner Schedule:\n${schedLines.join('\n')}`);
-  }
-
-  // Parallel Supabase queries strictly scoped to user permissions (with 2.2s timeout guard)
-  if (supabase && userId !== 'guest') {
-    try {
-      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2200));
-
-      const queriesPromise = Promise.allSettled([
-        // 1. Homework for student's grade (or all if teacher/admin)
-        userRole === 'student'
-          ? supabase
-              .from('homework')
-              .select('id, title, subject, content, class_grade, class_section, due_date, completed_list')
-              .eq('class_grade', userGrade)
-              .order('created_at', { ascending: false })
-              .limit(8)
-          : supabase
-              .from('homework')
-              .select('id, title, subject, content, class_grade, class_section, due_date, completed_list')
-              .order('created_at', { ascending: false })
-              .limit(10),
-
-        // 2. Personal Lecture Notes from Supabase (strictly user's own notes)
-        supabase
-          .from('notes')
-          .select('title, subject, content, updated_at')
-          .eq('user_id', userId)
-          .order('updated_at', { ascending: false })
-          .limit(6),
-
-        // 3. Learning Materials (public or matching student's class)
-        supabase
-          .from('materials')
-          .select('title, subject, category, description, class_grade, due_date')
-          .eq('is_public', true)
-          .order('created_at', { ascending: false })
-          .limit(6),
-
-        // 4. Student's own Attendance records (strictly scoped to user_id for students)
-        supabase
-          .from('attendance')
-          .select('date, status, subject, remarks')
-          .eq('user_id', userId)
-          .order('date', { ascending: false })
-          .limit(15),
-
-        // 5. Upcoming Academic Calendar Events
-        supabase
-          .from('calendar_events')
-          .select('title, start_date, category, description')
-          .order('start_date', { ascending: true })
-          .limit(6),
-
-        // 6. Student Gamification & House Standings
-        supabase
-          .from('student_gamification')
-          .select('xp, level, level_title, current_streak, longest_streak')
-          .eq('user_id', userId)
-          .maybeSingle(),
-
-        // 7. House Championship Points
-        supabase
-          .from('life_houses')
-          .select('id, name, points, rank')
-          .order('points', { ascending: false })
-          .limit(4)
-      ]);
-
-      const settled = await Promise.race([queriesPromise, timeoutPromise]);
-
-      if (settled && Array.isArray(settled)) {
-        const [hwRes, notesRes, matRes, attRes, calRes, gamRes, houseRes] = settled;
-
-        // Homework
-        if (hwRes.status === 'fulfilled' && hwRes.value?.data && hwRes.value.data.length > 0) {
-          const hwLines = hwRes.value.data.map((h: any) => {
-            const completedArr = Array.isArray(h.completed_list) ? h.completed_list : [];
-            const isDone = completedArr.includes(userId);
-            return `- [${isDone ? 'COMPLETED' : 'PENDING'}] ${sanitizeUntrustedRecordText(h.subject, 40)}: "${sanitizeUntrustedRecordText(h.title, 80)}" (${h.class_grade} ${h.class_section || ''}) | Due: ${h.due_date || 'Unspecified'} | Details: ${sanitizeUntrustedRecordText(h.content, 140)}`;
-          });
-          sections.push(`Authorized Homework & Assignments:\n${hwLines.join('\n')}`);
-        } else {
-          sections.push(`Authorized Homework & Assignments: No homework records currently listed in Supabase for ${userGrade}.`);
-        }
-
-        // Supabase Notes (if not already populated from local)
-        if (
-          (!localSnapshot?.vaultNotes || localSnapshot.vaultNotes.length === 0) &&
-          notesRes.status === 'fulfilled' &&
-          notesRes.value?.data &&
-          notesRes.value.data.length > 0
-        ) {
-          const nLines = notesRes.value.data.map(
-            (n: any) => `- [${sanitizeUntrustedRecordText(n.subject, 40)}] "${sanitizeUntrustedRecordText(n.title, 80)}": ${sanitizeUntrustedRecordText(n.content, 240)}`
-          );
-          sections.push(`Student's Lecture Notes:\n${nLines.join('\n')}`);
-        }
-
-        // Learning Materials
-        if (matRes.status === 'fulfilled' && matRes.value?.data && matRes.value.data.length > 0) {
-          const mLines = matRes.value.data.map(
-            (m: any) => `- [${sanitizeUntrustedRecordText(m.category || m.subject, 40)}] "${sanitizeUntrustedRecordText(m.title, 80)}": ${sanitizeUntrustedRecordText(m.description, 140)}`
-          );
-          sections.push(`Recent School Materials & Notices:\n${mLines.join('\n')}`);
-        }
-
-        // Attendance Summary (strictly current user's own attendance)
-        if (attRes.status === 'fulfilled' && attRes.value?.data && attRes.value.data.length > 0) {
-          const records = attRes.value.data;
-          const presentCount = records.filter((r: any) => r.status === 'present').length;
-          const absentCount = records.filter((r: any) => r.status === 'absent').length;
-          const lateCount = records.filter((r: any) => r.status === 'late').length;
-          const pct = Math.round(((presentCount + lateCount * 0.5) / records.length) * 100);
-          sections.push(
-            `Personal Attendance Summary (Last ${records.length} recorded days): ${pct}% attendance (${presentCount} Present, ${absentCount} Absent, ${lateCount} Late). Latest: ${records[0].date} (${records[0].status}).`
-          );
-        }
-
-        // Calendar Events
-        if (calRes.status === 'fulfilled' && calRes.value?.data && calRes.value.data.length > 0) {
-          const cLines = calRes.value.data.map(
-            (c: any) => `- ${c.start_date} [${sanitizeUntrustedRecordText(c.category, 30)}]: "${sanitizeUntrustedRecordText(c.title, 80)}"`
-          );
-          sections.push(`Upcoming School Calendar Events:\n${cLines.join('\n')}`);
-        }
-
-        // Gamification
-        if (gamRes.status === 'fulfilled' && gamRes.value?.data) {
-          const g = gamRes.value.data;
-          sections.push(
-            `Gamification Progress: Level ${g.level} (${g.level_title}) | ${g.xp} XP | Active Streak: ${g.current_streak} days (Best: ${g.longest_streak} days).`
-          );
-        }
-
-        // Houses
-        if (houseRes.status === 'fulfilled' && houseRes.value?.data && houseRes.value.data.length > 0) {
-          const hSummary = houseRes.value.data
-            .map((h: any, idx: number) => `#${idx + 1} ${h.id} (${h.points} pts)`)
-            .join(', ');
-          sections.push(`House Championship Standings: ${hSummary}`);
-        }
-      }
-    } catch (err) {
-      console.warn('[StudentOS AI Context] Partial context retrieval notice:', err);
-    }
-  }
-
-  const finalContext = sections.join('\n\n');
-  userContextCache.set(cacheKey, {
-    userId,
-    role: userRole,
-    timestamp: Date.now(),
-    contextString: finalContext
-  });
-
+  const res = await buildRoleAwareByteContext(prompt, currentUser, effectiveRole, opts);
   return {
-    contextString: finalContext,
-    retrievalMs: Date.now() - start,
-    hasStudentOSData: true
+    contextString: res.contextString,
+    retrievalMs: res.retrievalMs,
+    hasStudentOSData: res.hasVeylentraData,
+    normalizedRole: res.normalizedRole,
+    scopeSummary: res.scopeSummary,
+    intentCategory: res.intentCategory,
+    unlinkedParent: res.unlinkedParent
   };
 }
 
@@ -330,6 +128,8 @@ export async function streamStudentOSAI(
     ragContext?: string;
     userId?: string;
     userRole?: string;
+    activeTab?: string;
+    intentType?: string;
     modelOverride?: string;
     taskType?: string;
     dataRetrievalLatencyMs?: number;
@@ -1165,6 +965,8 @@ export async function streamAIChatClient(
     ragContext?: string;
     userId?: string;
     userRole?: string;
+    activeTab?: string;
+    intentType?: string;
     modelOverride?: string;
     webSearchMode?: 'auto' | 'always' | 'force' | 'off';
     images?: { name?: string; mimeType: string; data: string }[];

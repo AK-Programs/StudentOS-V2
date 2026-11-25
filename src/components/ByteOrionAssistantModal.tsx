@@ -44,6 +44,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { saveVaultNoteToSupabase } from '../lib/supabaseNotes';
 import { recordEngagementActivity } from '../lib/engagementService';
+import { AcademicRichRenderer } from './ui/AcademicRichRenderer';
 
 interface ByteOrionAssistantModalProps {
   isOpen: boolean;
@@ -109,6 +110,10 @@ export const ByteOrionAssistantModal: React.FC<ByteOrionAssistantModalProps> = (
     return () => {
       stopVoiceInput();
       byteVoiceService.stop();
+      setOrionInput('');
+      setOrionResponse(null);
+      setOrionError(null);
+      setOrionProviderMeta(null);
     };
   }, []);
 
@@ -785,9 +790,9 @@ export const ByteOrionAssistantModal: React.FC<ByteOrionAssistantModalProps> = (
                     </button>
                   </div>
 
-                  <p className="text-xs text-slate-200 whitespace-pre-line leading-relaxed max-h-60 overflow-y-auto">
-                    {orionResponse}
-                  </p>
+                  <div className="max-h-64 overflow-y-auto pr-1">
+                    <AcademicRichRenderer content={orionResponse} compact={true} />
+                  </div>
 
                   <div className="pt-2.5 border-t border-slate-800 flex items-center justify-between gap-2">
                     <span className="text-[10px] text-slate-400 flex items-center gap-1">

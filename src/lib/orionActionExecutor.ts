@@ -42,6 +42,7 @@ export type OrionActionType =
   | 'get_classes'
   | 'get_calendar'
   | 'get_notifications'
+  | 'get_child_overview'
   | 'generate_report'
   | 'export_report'
   | 'daily_operations_summary'
@@ -144,12 +145,14 @@ export interface OrionUserContext {
   userId?: string;
   userName?: string;
   userEmail?: string;
-  userRole?: string; // 'super_admin' | 'admin' | 'coordinator' | 'teacher' | 'student'
+  userRole?: string; // 'super_admin' | 'admin' | 'coordinator' | 'hod' | 'teacher' | 'student' | 'parent'
   role?: string;
   schoolId?: string;
   grade?: string;
   section?: string;
   userClass?: string;
+  linkedStudentIds?: string[];
+  linkedStudents?: any[];
 }
 
 export interface OrionExecutionResult {
@@ -185,9 +188,9 @@ export function validateActionPermission(
   action: OrionActionType,
   role: string = 'student'
 ): { allowed: boolean; reason?: string } {
-  const normRole = (role || 'student').toLowerCase();
+  const normRole = (role || 'student').toLowerCase().trim();
   const isAdmin = normRole === 'super_admin' || normRole === 'admin';
-  const isCoordinator = normRole === 'coordinator' || isAdmin;
+  const isCoordinator = normRole === 'coordinator' || normRole === 'hod' || isAdmin;
   const isStaff =
     normRole === 'teacher' ||
     normRole === 'faculty' ||
@@ -195,7 +198,24 @@ export function validateActionPermission(
     isCoordinator ||
     isAdmin;
 
-  // Student permissions whitelist (Orion is strictly staff/admin for school operations)
+  const parentAllowedActions: OrionActionType[] = [
+    'get_child_overview',
+    'show_pending_assignments',
+    'show_timetable',
+    'show_announcements',
+    'navigate_tab',
+    'general_chat',
+    'add_study_planner',
+    'create_study_plan',
+    'create_note',
+    'add_task',
+    'complete_task',
+    'delete_task',
+    'web_search',
+    'search_internet'
+  ];
+
+  // Student permissions whitelist (Orion staff/admin operations are restricted)
   const studentAllowedActions: OrionActionType[] = [
     'register_competition',
     'show_pending_assignments',
@@ -222,6 +242,16 @@ export function validateActionPermission(
     'notify_all'
   ];
 
+  if (normRole === 'parent' || normRole === 'guardian') {
+    if (parentAllowedActions.includes(action)) {
+      return { allowed: true };
+    }
+    return {
+      allowed: false,
+      reason: `🔒 Authorization Denied: Parent accounts can inspect their verified linked child overview, timetable, and notices, or search study topics. Action "${action}" requires school Staff or Administrator credentials.`
+    };
+  }
+
   if (!isStaff) {
     if (studentAllowedActions.includes(action)) {
       return { allowed: true };
@@ -232,10 +262,10 @@ export function validateActionPermission(
     };
   }
 
-  if (coordinatorOrAdminOnlyActions.includes(action) && !isCoordinator && !isStaff) {
+  if (coordinatorOrAdminOnlyActions.includes(action) && !isCoordinator) {
     return {
       allowed: false,
-      reason: `🔒 Authorization Denied: School-wide broadcast action (${action}) requires Coordinator or Administrator privileges.`
+      reason: `🔒 Authorization Denied: School-wide broadcast action (${action}) requires Coordinator, HOD, or Administrator privileges.`
     };
   }
 
@@ -507,7 +537,7 @@ export async function executeCreateBroadcast(
   const content = actionObj.content || actionObj.message || title;
   const sender = user.userName || 'Principal';
 
-  console.log(`[ORION] Executing create_broadcast: "${title}"`);
+  console.log('[ORION] Executing create_broadcast');
 
   try {
     const dispatchRes = await executeOrionCommunicationDispatch(
@@ -576,7 +606,7 @@ export async function executeCreateNotification(
   const message = actionObj.message || actionObj.content || actionObj.targetValue || 'Notification alert';
   const targetAudience = actionObj.audience || actionObj.targetClass || 'all';
 
-  console.log(`[ORION] Executing create_notification/notify_users for ${targetAudience}`);
+  console.log('[ORION] Executing create_notification');
 
   try {
     const notif: AppNotification = {
@@ -631,7 +661,7 @@ export async function executeCreateEvent(
   const category = actionObj.category || 'Cultural';
   const description = actionObj.content || actionObj.message || `Scheduled via Orion Operating Assistant for ${user.userName || 'School'}.`;
 
-  console.log(`[ORION] Executing create_event: "${eventTitle}" on ${eventDate}`);
+  console.log('[ORION] Executing create_event');
 
   try {
     const eventId = `ev-${Date.now()}`;
@@ -692,7 +722,7 @@ export async function executeCreateCompetition(
   const eligibility = actionObj.eligibility || actionObj.targetClass || 'All Grades';
   const description = actionObj.content || actionObj.message || `Organized by StudentOS OS for ${eligibility}.`;
 
-  console.log(`[ORION] Executing create_competition: "${compTitle}"`);
+  console.log('[ORION] Executing create_competition');
 
   try {
     const compId = `comp-${Date.now()}`;
@@ -758,7 +788,7 @@ export async function executeCreateMeeting(
   const { startTime, endTime } = parseMeetingDateTime(actionObj.date, actionObj.time, `${rawTitle} ${actionObj.message || ''}`);
   const { grade, section } = parseGradeAndSection(actionObj.targetClass || actionObj.audience);
 
-  console.log(`[ORION] Executing create_meeting: "${meetTitle}" at ${startTime}`);
+  console.log('[ORION] Executing create_meeting');
 
   try {
     const meetingObj: Meeting = {
@@ -833,7 +863,7 @@ export async function executeCreateHomework(
   const { grade, section } = parseGradeAndSection(actionObj.targetClass || actionObj.audience || actionObj.content);
   const content = actionObj.content || actionObj.message || `Assigned homework task for ${grade} (${section}).`;
 
-  console.log(`[ORION] Executing create_homework: "${hwTitle}" for ${grade} ${section} due ${dueDate}`);
+  console.log('[ORION] Executing create_homework');
 
   try {
     const hwObj: Homework = {
@@ -906,7 +936,7 @@ export async function executeDeleteItem(
     };
   }
 
-  console.log(`[ORION] Executing confirmed deletion of '${targetTitle}' across Supabase tables`);
+  console.log('[ORION] Executing confirmed deletion across authorized tables');
 
   try {
     let deletedCount = 0;
@@ -931,7 +961,7 @@ export async function executeDeleteItem(
     const { error: notiErr } = await supabase.from('materials').delete().ilike('title', `%${targetTitle}%`);
     if (!notiErr) deletedCount++;
 
-    console.log(`[ORION] Supabase DELETE successful for '${targetTitle}'`);
+    console.log('[ORION] Supabase DELETE completed');
 
     triggerRealtimeUIUpdate('life_competitions', 'DELETE', { title: targetTitle });
     triggerRealtimeUIUpdate('meetings', 'DELETE', { title: targetTitle });
@@ -965,7 +995,7 @@ export async function executeRegisterCompetition(
 ): Promise<OrionExecutionResult> {
   const compName = actionObj.title || actionObj.targetValue || 'Competition';
 
-  console.log(`[ORION] Executing register_competition for '${compName}'`);
+  console.log('[ORION] Executing register_competition');
 
   try {
     const { data: comps } = await supabase
@@ -1860,6 +1890,104 @@ export async function executeGenerateAcademicReport(
   }
 }
 
+/**
+ * 21. Linked Child Overview Tool for Parents (strict OTP-link isolation)
+ */
+export async function executeGetChildOverview(
+  actionObj: OrionAction,
+  user: OrionUserContext
+): Promise<OrionExecutionResult> {
+  const linkedStudents = Array.isArray(user.linkedStudents) ? user.linkedStudents : [];
+  const linkedIdsSet = new Set<string>(
+    [
+      ...(Array.isArray(user.linkedStudentIds) ? user.linkedStudentIds : []),
+      ...linkedStudents.map((s: any) => s?.uid || s?.id).filter(Boolean),
+    ].map(String)
+  );
+  const linkedIds = Array.from(linkedIdsSet);
+
+  if (linkedIds.length === 0) {
+    return {
+      success: false,
+      action: 'get_child_overview',
+      message: 'No linked child records available on this session.',
+      summaryText:
+        '🔒 **Parent Account Isolation:** No verified linked ward was found for this session. Please complete OTP linking in the **Parental Portal** before requesting child attendance or homework records.',
+      error: 'NO_LINKED_CHILDREN'
+    };
+  }
+
+  try {
+    const [attRes, hwRes] = await Promise.all([
+      supabase.from('attendance').select('user_id, status, date').in('user_id', linkedIds).limit(200),
+      supabase.from('homework').select('id, title, subject, due_date, class_grade, completed_list').order('created_at', { ascending: false }).limit(25)
+    ]);
+
+    if (attRes.error) throw new Error(attRes.error.message);
+    if (hwRes.error) throw new Error(hwRes.error.message);
+
+    const attRows = attRes.data || [];
+    const hwRows = hwRes.data || [];
+    const linkedGrades = new Set(linkedStudents.map((s: any) => (s?.grade || s?.className || '').toLowerCase()).filter(Boolean));
+    const scopedHw = linkedGrades.size > 0
+      ? hwRows.filter((h: any) => !h.class_grade || linkedGrades.has(String(h.class_grade).toLowerCase()))
+      : hwRows;
+
+    const presentCount = attRows.filter((a: any) => a.status === 'present').length;
+    const attPct = attRows.length > 0 ? Math.round((presentCount / attRows.length) * 100) : null;
+
+    const tableRows: OrionStructuredTableRow[] = linkedIds.map((cid) => {
+      const profile = linkedStudents.find((s: any) => (s?.uid || s?.id) === cid);
+      const childAtt = attRows.filter((a: any) => a.user_id === cid);
+      const childPresent = childAtt.filter((a: any) => a.status === 'present').length;
+      const pctStr = childAtt.length > 0 ? `${Math.round((childPresent / childAtt.length) * 100)}%` : 'No logs';
+      const pendingHw = scopedHw.filter((h: any) => !Array.isArray(h.completed_list) || !h.completed_list.includes(cid)).length;
+      return {
+        id: cid,
+        primary: profile?.name || `Linked Ward (${cid.slice(0, 6)})`,
+        secondary: `${profile?.grade || 'Enrolled'}${profile?.section ? ` · ${profile.section}` : ''}`,
+        badge: `${pctStr} Attendance`,
+        badgeTone: childAtt.length > 0 && Math.round((childPresent / childAtt.length) * 100) < 75 ? 'amber' : 'emerald',
+        meta: `${pendingHw} Pending Homework`
+      };
+    });
+
+    const card: OrionStructuredCard = {
+      title: 'Verified Linked Ward Overview',
+      subtitle: `Strictly scoped to ${linkedIds.length} verified linked child account${linkedIds.length > 1 ? 's' : ''}`,
+      dateRange: `As of ${new Date().toISOString().split('T')[0]}`,
+      metrics: [
+        { label: 'Linked Children', value: linkedIds.length, tone: 'indigo' },
+        { label: 'Attendance Rate', value: attPct !== null ? `${attPct}%` : 'No logs', tone: attPct !== null && attPct < 75 ? 'amber' : 'emerald' },
+        { label: 'Scoped Assignments', value: scopedHw.length, tone: 'default' }
+      ],
+      rows: tableRows,
+      suggestedActions: [
+        { label: 'Open Parental Portal', command: 'Open parent portal', variant: 'primary' }
+      ]
+    };
+
+    return {
+      success: true,
+      action: 'get_child_overview',
+      message: 'Retrieved strictly scoped overview for verified linked ward(s).',
+      summaryText:
+        `### 👨‍👩‍👧 Verified Linked Ward Overview\n\n` +
+        tableRows.map((r) => `- **${r.primary}** (${r.secondary}): **${r.badge}** · ${r.meta}`).join('\n'),
+      structuredCard: card,
+      data: { linkedCount: linkedIds.length, attendanceCount: attRows.length }
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      action: 'get_child_overview',
+      message: 'Could not retrieve linked child records from database.',
+      summaryText: `⚠️ Linked ward lookup failed: ${err.message}`,
+      error: err.message
+    };
+  }
+}
+
 /* ========================================================================
    CENTRALIZED ORION ACTION DISPATCH PIPELINE
    ======================================================================== */
@@ -1888,7 +2016,7 @@ export async function executeOrionActionPipeline(
     actionObject?: OrionAction;
   };
 }> {
-  console.log(`[ORION] User command received: "${rawCommand}"`);
+  console.log('[ORION] Pipeline started');
 
   const results: OrionExecutionResult[] = [];
   const structuredCards: OrionStructuredCard[] = [];
@@ -1905,12 +2033,12 @@ export async function executeOrionActionPipeline(
     | undefined = undefined;
 
   for (const act of actions) {
-    console.log(`[ORION] Intent detected: ${act.action}`);
+    console.log(`[ORION] Step action: ${act.action}`);
 
     // Step 1: Validate User Permission on Backend/Executor Boundary
     const perm = validateActionPermission(act.action, userContext.userRole);
     if (!perm.allowed) {
-      console.log(`[ORION] Action validation failed: ${perm.reason}`);
+      console.log(`[ORION] Action validation denied: ${act.action}`);
       results.push({
         success: false,
         action: act.action,
@@ -1921,7 +2049,7 @@ export async function executeOrionActionPipeline(
       continue;
     }
 
-    console.log(`[ORION] Action validated for role: ${userContext.userRole || 'student'}`);
+    console.log(`[ORION] Action validated (${act.action})`);
 
     // Step 2: Consequential & Destructive Action Confirmation Check
     if (isConsequentialAction(act.action) && !isConfirmed) {
@@ -2036,6 +2164,10 @@ export async function executeOrionActionPipeline(
       case 'get_calendar':
       case 'get_notifications':
         res = await executeDailyOperationsSummary(act, userContext);
+        break;
+
+      case 'get_child_overview':
+        res = await executeGetChildOverview(act, userContext);
         break;
 
       case 'generate_report':
@@ -2161,9 +2293,9 @@ export async function executeOrionActionPipeline(
     }
 
     if (res.success) {
-      console.log(`[ORION] Action completed successfully for ${act.action}`);
+      console.log(`[ORION] Action completed: ${act.action}`);
     } else {
-      console.warn(`[ORION] Action failed: ${res.summaryText}`);
+      console.warn(`[ORION] Action failed: ${act.action} (${res.error || 'unconfirmed/denied'})`);
     }
 
     results.push(res);
