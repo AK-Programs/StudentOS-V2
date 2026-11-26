@@ -4884,27 +4884,39 @@ Format beautifully in Markdown.`;
 
 // Authoritative Server-Side Orion Agent Execution Route (Strictly Ephemeral — zero DB/disk chat storage)
 app.post('/api/orion/execute', async (req, res) => {
-  const cfg = getSupabaseServerConfig();
-  const actorResult = await resolveVerifiedOrionActor(req, cfg);
-  if ('error' in actorResult) {
-    return res.status(actorResult.status).json({
-      success: false,
-      status: 'unauthorized',
-      error: actorResult.error,
-      finalResponse: actorResult.error,
-    });
-  }
-
-  const {
-    command = '',
-    actionPlan,
-    confirmed = false,
-    activeTab = 'dashboard',
-    modelOverride,
-    history = [],
-  } = req.body || {};
-
   try {
+    const cfg = getSupabaseServerConfig();
+    const actorResult = await resolveVerifiedOrionActor(req, cfg);
+    if ('error' in actorResult) {
+      const statusCode = actorResult.status === 500 ? 502 : actorResult.status;
+      return res.status(statusCode).json({
+        success: false,
+        status: statusCode === 401 ? 'unauthorized' : 'failed',
+        error: actorResult.error,
+        finalResponse: actorResult.error,
+      });
+    }
+
+    if (!actorResult.actor?.authenticated) {
+      const reason = 'Authentication required: Please sign in to use Orion.';
+      return res.status(401).json({
+        success: false,
+        status: 'unauthorized',
+        error: reason,
+        finalResponse: reason,
+      });
+    }
+
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const {
+      command = '',
+      actionPlan,
+      confirmed = false,
+      activeTab = 'dashboard',
+      modelOverride,
+      history = [],
+    } = body;
+
     const result = await executeOrionServerRequest({
       cfg,
       actor: actorResult.actor,
@@ -4916,14 +4928,16 @@ app.post('/api/orion/execute', async (req, res) => {
       history: Array.isArray(history) ? history : [],
       dispatchPushFn: dispatchServerWebPush,
     });
-    return res.status(result.httpStatus).json(result.body);
+    const safeStatus = result.httpStatus === 500 ? 502 : result.httpStatus;
+    return res.status(safeStatus).json(result.body);
   } catch (err: any) {
     console.error('[ORION EXECUTE ERROR]', err?.message || err);
+    const reason = err?.message || 'Orion execution failed on server.';
     return res.status(502).json({
       success: false,
       status: 'failed',
-      error: err?.message || 'Orion execution failed on server.',
-      finalResponse: err?.message || 'Orion could not complete that request due to a server error.',
+      error: reason,
+      finalResponse: reason,
     });
   }
 });
@@ -6709,6 +6723,28 @@ registerEngagementSystemRoutes(app, {
   getVerifiedUserFromRequest: resolveFeatureAndWinterActor,
   broadcastToAllWs,
   getGamificationStore: () => memoryGamificationStore,
+});
+
+// Express JSON error middleware to prevent raw HTML 500s on malformed JSON or unhandled API errors
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) return next(err);
+  if (err instanceof SyntaxError && 'body' in err) {
+    return res.status(400).json({
+      success: false,
+      status: 'error',
+      error: 'Invalid JSON request payload.',
+      finalResponse: 'Invalid JSON request payload.',
+    });
+  }
+  const rawStatus = Number(err?.status || err?.statusCode || 502);
+  const safeStatus = rawStatus === 500 || !Number.isFinite(rawStatus) ? 502 : rawStatus;
+  const reason = String(err?.message || 'Upstream server error.').trim();
+  return res.status(safeStatus).json({
+    success: false,
+    status: safeStatus === 401 ? 'unauthorized' : 'failed',
+    error: reason,
+    finalResponse: reason,
+  });
 });
 
 async function startServer() {

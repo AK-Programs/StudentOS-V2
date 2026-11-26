@@ -18,14 +18,17 @@ async function startServer(): Promise<{ baseUrl: string; close: () => Promise<vo
   };
 }
 
-async function invokeServerlessOrionAssist(options: {
-  headers?: Record<string, string>;
-  body?: any;
-}): Promise<{ status: number; data: any }> {
+async function invokeServerlessEndpoint(
+  url: string,
+  options: {
+    headers?: Record<string, string>;
+    body?: any;
+  }
+): Promise<{ status: number; data: any }> {
   let statusCode = 200;
   let payload: any = null;
   const mockReq: any = {
-    url: '/api/ai/orion-assist',
+    url,
     method: 'POST',
     headers: options.headers || {},
     body: options.body ?? {},
@@ -56,6 +59,20 @@ async function invokeServerlessOrionAssist(options: {
   return { status: statusCode, data: payload };
 }
 
+async function invokeServerlessOrionAssist(options: {
+  headers?: Record<string, string>;
+  body?: any;
+}): Promise<{ status: number; data: any }> {
+  return invokeServerlessEndpoint('/api/ai/orion-assist', options);
+}
+
+async function invokeServerlessOrionExecute(options: {
+  headers?: Record<string, string>;
+  body?: any;
+}): Promise<{ status: number; data: any }> {
+  return invokeServerlessEndpoint('/api/orion/execute', options);
+}
+
 async function runTests() {
   console.log('--- RUNNING BYTE SCROLL & ORION 500 REMEDIATION SUITE ---');
 
@@ -65,16 +82,19 @@ async function runTests() {
   {
     const byteSrc = fs.readFileSync(path.join(rootDir, 'src/components/byte/ByteWorkspace.tsx'), 'utf8');
     const appSrc = fs.readFileSync(path.join(rootDir, 'src/App.tsx'), 'utf8');
+    const cssSrc = fs.readFileSync(path.join(rootDir, 'src/index.css'), 'utf8');
     const topBarSrc = fs.readFileSync(path.join(rootDir, 'src/components/DashboardTopBar.tsx'), 'utf8');
 
     assert.ok(!byteSrc.includes('h-[calc(100dvh-130px)]'), 'ByteWorkspace must no longer hardcode h-[calc(100dvh-130px)]');
     assert.ok(byteSrc.includes('h-full flex-1 min-h-0 flex rounded-3xl'), 'ByteWorkspace root must fill container cleanly');
-    assert.ok(byteSrc.includes('flex-1 min-w-0 min-h-0 flex flex-col'), 'ByteWorkspace studio column must propagate min-h-0');
-    assert.ok(byteSrc.includes('id="ai-dialog-scroll"') && byteSrc.includes('overscroll-contain'), '#ai-dialog-scroll must isolate scroll');
+    assert.ok(byteSrc.includes('flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden'), 'ByteWorkspace studio column must propagate min-h-0 and overflow-hidden');
+    assert.ok(byteSrc.includes('id="ai-dialog-scroll"') && byteSrc.includes('overscroll-contain') && byteSrc.includes('touch-pan-y'), '#ai-dialog-scroll must isolate scroll on desktop and touch devices');
     assert.ok(byteSrc.includes('shrink-0 border-t border-white/10'), 'ByteWorkspace bottom composer must stay docked');
 
     assert.ok(appSrc.includes("const isByteViewportLocked = activeTab === 'ai_teacher'"), 'App.tsx must lock viewport when Byte is active');
-    assert.ok(appSrc.includes("h-dvh overflow-hidden flex flex-col"), 'App.tsx outer wrapper must prevent document scroll when Byte is active');
+    assert.ok(appSrc.includes("fixed inset-0 h-dvh max-h-dvh w-full overflow-hidden flex flex-col"), 'App.tsx outer wrapper must lock viewport and prevent outer document scroll when Byte is active');
+    assert.ok(appSrc.includes("byte-viewport-locked") && appSrc.includes("window.scrollTo(0, 0)"), 'App.tsx must toggle byte-viewport-locked and reset scroll position');
+    assert.ok(cssSrc.includes('html.byte-viewport-locked') && cssSrc.includes('overflow: hidden !important'), 'index.css must lock html/body/#root overflow when byte-viewport-locked is active');
     assert.ok(appSrc.includes("min-h-0 overflow-hidden flex flex-col"), 'App.tsx main/motion wrappers must keep Byte inside viewport');
     assert.ok(appSrc.includes("pb-[calc(4.75rem+env(safe-area-inset-bottom))] md:pb-6"), 'App.tsx must keep mobile bottom nav clear of Byte composer');
     assert.ok(topBarSrc.includes('sticky top-0 z-40 shrink-0'), 'DashboardTopBar must include shrink-0');
@@ -140,6 +160,9 @@ async function runTests() {
     // Supabase Auth check
     if (url.includes('/auth/v1/user')) {
       const auth = String((init?.headers as any)?.Authorization || '');
+      if (auth === 'Bearer throw-auth-error') {
+        throw new Error('Simulated Supabase auth network outage');
+      }
       if (auth === 'Bearer valid-stu-jwt') {
         return new Response(
           JSON.stringify({ id: 'stu-orion-jwt-1', email: 'student@veylentra.edu', user_metadata: { role: 'student' } }),
@@ -336,6 +359,114 @@ async function runTests() {
     }
 
     console.log('✓ 3. Express & Serverless /api/ai/orion-assist 401/429/502/200 checks passed');
+
+    // 4. Express & Serverless /api/orion/execute 401 / 502 / 200 / Malformed JSON Checks
+    // 4a. Express: Unsigned user & thrown auth lookup -> 401 / never 500
+    {
+      const eNoAuth = await fetch(`${srv.baseUrl}/api/orion/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'Explain photosynthesis' }),
+      });
+      assert.equal(eNoAuth.status, 401, 'Express /api/orion/execute must return 401 when not signed in');
+
+      const eGuest = await fetch(`${srv.baseUrl}/api/orion/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-veylentra-uid': 'guest' },
+        body: JSON.stringify({ command: 'Explain photosynthesis' }),
+      });
+      assert.equal(eGuest.status, 401, 'Express /api/orion/execute must return 401 for guest');
+
+      const eThrowAuth = await fetch(`${srv.baseUrl}/api/orion/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer throw-auth-error' },
+        body: JSON.stringify({ command: 'Explain photosynthesis' }),
+      });
+      assert.notEqual(eThrowAuth.status, 500, 'Express /api/orion/execute must never return raw 500 if auth lookup throws');
+      assert.ok([401, 502].includes(eThrowAuth.status), `Expected 401 or 502 on auth throw, got ${eThrowAuth.status}`);
+
+      const eBadJson = await fetch(`${srv.baseUrl}/api/orion/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer valid-stu-jwt' },
+        body: '{invalid-json',
+      });
+      assert.equal(eBadJson.status, 400, 'Express /api/orion/execute must return 400 JSON on malformed JSON');
+    }
+
+    // 4b. Serverless: Unsigned user & thrown auth lookup -> 401 / never 500
+    {
+      const sNoAuth = await invokeServerlessOrionExecute({
+        headers: { 'content-type': 'application/json' },
+        body: { command: 'Explain photosynthesis' },
+      });
+      assert.equal(sNoAuth.status, 401, 'Serverless /api/orion/execute must return 401 when not signed in');
+
+      const sAnon = await invokeServerlessOrionExecute({
+        headers: { 'x-veylentra-uid': 'anonymous' },
+        body: { command: 'Explain photosynthesis' },
+      });
+      assert.equal(sAnon.status, 401, 'Serverless /api/orion/execute must return 401 for anonymous user');
+
+      const sThrowAuth = await invokeServerlessOrionExecute({
+        headers: { authorization: 'Bearer throw-auth-error' },
+        body: { command: 'Explain photosynthesis' },
+      });
+      assert.notEqual(sThrowAuth.status, 500, 'Serverless /api/orion/execute must never return raw 500 if auth throws');
+      assert.ok([401, 502].includes(sThrowAuth.status));
+    }
+
+    // 4c. Express & Serverless: Ministral / Groq / Z.ai failure -> 502 with real reason (NEVER 500 or 200)
+    {
+      aiShouldFail = true;
+      aiFailureMessage = 'Upstream Ministral/Groq/Z.ai error (mock-503)';
+
+      const e502 = await fetch(`${srv.baseUrl}/api/orion/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer valid-stu-jwt' },
+        body: JSON.stringify({ command: 'Explain quantum tunneling simply' }),
+      });
+      const e502Json: any = await e502.json();
+      assert.equal(e502.status, 502, `Express /api/orion/execute expected 502 on AI provider failure, got ${e502.status}`);
+      assert.notEqual(e502.status, 500);
+      assert.equal(e502Json.success, false);
+      assert.ok(String(e502Json.error || '').includes('503'), `Express 502 error must expose real upstream reason: ${e502Json.error}`);
+
+      const s502 = await invokeServerlessOrionExecute({
+        headers: { authorization: 'Bearer valid-stu-jwt' },
+        body: { command: 'Explain quantum tunneling simply' },
+      });
+      assert.equal(s502.status, 502, `Serverless /api/orion/execute expected 502 on AI provider failure, got ${s502.status}`);
+      assert.notEqual(s502.status, 500);
+      assert.equal(s502.data?.success, false);
+      assert.ok(String(s502.data?.error || '').includes('503'), `Serverless 502 error must expose real upstream reason: ${s502.data?.error}`);
+
+      aiShouldFail = false;
+    }
+
+    // 4d. Express & Serverless: Valid signed-in request (JWT & demo-student-uid) -> 200 with approved providers
+    {
+      calledAiUrls.length = 0;
+      const e200 = await fetch(`${srv.baseUrl}/api/orion/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-veylentra-uid': 'demo-student-uid' },
+        body: JSON.stringify({ command: 'Explain Newton laws briefly' }),
+      });
+      const e200Json: any = await e200.json();
+      assert.equal(e200.status, 200, `Expected 200 for demo-student-uid, got ${e200.status}`);
+      assert.equal(e200Json.success, true);
+      assert.ok(['ministral', 'groq', 'zai'].includes(e200Json.providerUsed));
+
+      const s200 = await invokeServerlessOrionExecute({
+        headers: { authorization: 'Bearer valid-stu-jwt' },
+        body: { command: 'Explain Newton laws briefly' },
+      });
+      assert.equal(s200.status, 200, `Serverless expected 200 for valid JWT, got ${s200.status}`);
+      assert.equal(s200.data?.success, true);
+      assert.ok(['ministral', 'groq', 'zai'].includes(s200.data?.providerUsed));
+      assert.ok(calledAiUrls.every((u) => !u.includes('gpt-6-luna') && !u.includes('apinex')));
+    }
+
+    console.log('✓ 4. Express & Serverless /api/orion/execute 401/502/200/malformed-JSON checks passed');
   } finally {
     await srv.close();
     globalThis.fetch = prevFetch;

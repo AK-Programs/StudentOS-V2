@@ -7102,8 +7102,22 @@ CRITICAL WEB GROUNDING DIRECTIVE:
 
   const isByteViewportLocked = activeTab === 'ai_teacher' && Boolean(currentUser) && !isLocked;
 
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const rootEl = document.documentElement;
+    rootEl.classList.toggle('byte-viewport-locked', isByteViewportLocked);
+    document.body?.classList.toggle('byte-viewport-locked', isByteViewportLocked);
+    if (isByteViewportLocked && typeof window !== 'undefined') {
+      window.scrollTo(0, 0);
+    }
+    return () => {
+      rootEl.classList.remove('byte-viewport-locked');
+      document.body?.classList.remove('byte-viewport-locked');
+    };
+  }, [isByteViewportLocked]);
+
   return (
-    <div className={`${isByteViewportLocked ? 'h-dvh overflow-hidden flex flex-col' : 'min-h-screen'} transition-colors duration-300 font-sans ${lightMode ? 'bg-slate-50 text-slate-800' : 'bg-slate-950 text-slate-100'}`}>
+    <div className={`${isByteViewportLocked ? 'fixed inset-0 h-dvh max-h-dvh w-full overflow-hidden flex flex-col' : 'min-h-screen'} transition-colors duration-300 font-sans ${lightMode ? 'bg-slate-50 text-slate-800' : 'bg-slate-950 text-slate-100'}`}>
       
       {/* 🔒 Screen Lock Screen Overlay */}
       {isLocked && (
@@ -8451,7 +8465,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
       )}
 
       {currentUser && !isLocked && (
-        <div className={`flex relative ${isByteViewportLocked ? 'flex-1 h-full min-h-0 overflow-hidden' : 'min-h-screen'}`}>
+        <div className={`flex relative ${isByteViewportLocked ? 'flex-1 min-h-0 overflow-hidden' : 'min-h-screen'}`}>
           <WinterThemeLayer currentUser={currentUser} />
           
           {/* Sidebar Overlay (Closes sidebar on outside click for Mobile/Tablet) */}

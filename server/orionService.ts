@@ -287,130 +287,155 @@ export async function resolveVerifiedOrionActor(
   req: express.Request,
   cfg: SupabaseCfg
 ): Promise<{ ok: true; actor: VerifiedOrionActor } | { ok: false; status: number; error: string }> {
-  const authHeader = String(req.headers.authorization || req.headers['x-supabase-auth'] || '').trim();
-  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+  try {
+    const headers = req?.headers && typeof req.headers === 'object' ? req.headers : {};
+    const authHeader = String(headers.authorization || headers['x-supabase-auth'] || '').trim();
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
 
-  if (token) {
-    try {
-      const userRes = await fetch(`${cfg.url}/auth/v1/user`, {
-        headers: {
-          apikey: cfg.key,
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      if (!userRes.ok) {
-        return { ok: false, status: 401, error: 'Invalid or expired authentication token.' };
-      }
-      const user: any = await userRes.json();
-      if (!user?.id) {
-        return { ok: false, status: 401, error: 'Invalid authentication session.' };
-      }
-
-      const email = String(user.email || '').toLowerCase().trim();
-      let role = String(user.user_metadata?.role || 'student').toLowerCase().trim();
-      let name = String(user.user_metadata?.name || user.user_metadata?.full_name || email.split('@')[0] || 'Campus Member');
-      let grade = String(user.user_metadata?.grade || '');
-      let section = String(user.user_metadata?.section || '');
-      let schoolId = String(user.user_metadata?.school_id || '');
-
-      if (email && WHITELISTED_SUPER_ADMIN_EMAILS.includes(email)) {
-        role = 'super_admin';
-      } else {
-        try {
-          const profRes = await fetch(
-            `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(user.id)},uid.eq.${encodeURIComponent(user.id)},email.eq.${encodeURIComponent(email)})&select=id,name,role,grade,section,school_id`,
-            { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
-          );
-          if (profRes.ok) {
-            const rows: any = await profRes.json();
-            if (Array.isArray(rows) && rows[0]) {
-              if (rows[0].role) role = String(rows[0].role).toLowerCase().trim();
-              if (rows[0].name) name = String(rows[0].name);
-              if (rows[0].grade) grade = String(rows[0].grade);
-              if (rows[0].section) section = String(rows[0].section);
-              if (rows[0].school_id) schoolId = String(rows[0].school_id);
-            }
-          }
-        } catch (_) {}
-      }
-
-      return {
-        ok: true,
-        actor: {
-          userId: user.id,
-          email,
-          name,
-          role,
-          grade,
-          section,
-          schoolId,
-          authenticated: true,
-        },
-      };
-    } catch {
-      return { ok: false, status: 401, error: 'Unable to validate authentication token.' };
-    }
-  }
-
-  // Fallback ONLY for DB-verified PIN/demo identities via user_profiles (never trusting role headers)
-  const uidHeader = String(req.headers['x-veylentra-uid'] || '').trim();
-  const emailHeader = String(req.headers['x-veylentra-email'] || '').toLowerCase().trim();
-  const actorId = uidHeader || emailHeader;
-
-  if (actorId && actorId !== 'guest' && actorId !== 'anonymous' && actorId !== 'user_guest') {
-    if (
-      WHITELISTED_SUPER_ADMIN_EMAILS.includes(emailHeader) ||
-      WHITELISTED_SUPER_ADMIN_EMAILS.includes(actorId.toLowerCase()) ||
-      actorId === 'superadmin-master-uid'
-    ) {
-      return {
-        ok: true,
-        actor: {
-          userId: actorId,
-          email: emailHeader || undefined,
-          name: 'Super Administrator',
-          role: 'super_admin',
-          authenticated: true,
-        },
-      };
-    }
-
-    try {
-      const profRes = await fetch(
-        `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(actorId)},uid.eq.${encodeURIComponent(actorId)},email.eq.${encodeURIComponent(emailHeader || actorId)})&select=id,name,role,grade,section,school_id`,
-        { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
-      );
-      if (profRes.ok) {
-        const rows: any = await profRes.json();
-        if (Array.isArray(rows) && rows[0]) {
-          return {
-            ok: true,
-            actor: {
-              userId: String(rows[0].id || actorId),
-              email: emailHeader || undefined,
-              name: String(rows[0].name || 'Campus Member'),
-              role: String(rows[0].role || 'student').toLowerCase().trim(),
-              grade: rows[0].grade ? String(rows[0].grade) : undefined,
-              section: rows[0].section ? String(rows[0].section) : undefined,
-              schoolId: rows[0].school_id ? String(rows[0].school_id) : undefined,
-              authenticated: true,
-            },
-          };
+    if (token) {
+      try {
+        const userRes = await fetch(`${cfg.url}/auth/v1/user`, {
+          headers: {
+            apikey: cfg.key,
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        if (!userRes.ok) {
+          return { ok: false, status: 401, error: 'Invalid or expired authentication token.' };
         }
-      }
-    } catch (_) {}
-  }
+        const user: any = await userRes.json();
+        if (!user?.id) {
+          return { ok: false, status: 401, error: 'Invalid authentication session.' };
+        }
 
-  return {
-    ok: true,
-    actor: {
-      userId: actorId || 'guest',
-      email: emailHeader || undefined,
-      name: 'Guest User',
-      role: 'student',
-      authenticated: false,
-    },
-  };
+        const email = String(user.email || '').toLowerCase().trim();
+        let role = String(user.user_metadata?.role || 'student').toLowerCase().trim();
+        let name = String(user.user_metadata?.name || user.user_metadata?.full_name || email.split('@')[0] || 'Campus Member');
+        let grade = String(user.user_metadata?.grade || '');
+        let section = String(user.user_metadata?.section || '');
+        let schoolId = String(user.user_metadata?.school_id || '');
+
+        if (email && WHITELISTED_SUPER_ADMIN_EMAILS.includes(email)) {
+          role = 'super_admin';
+        } else {
+          try {
+            const profRes = await fetch(
+              `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(user.id)},uid.eq.${encodeURIComponent(user.id)},email.eq.${encodeURIComponent(email)})&select=id,name,role,grade,section,school_id`,
+              { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+            );
+            if (profRes.ok) {
+              const rows: any = await profRes.json();
+              if (Array.isArray(rows) && rows[0]) {
+                if (rows[0].role) role = String(rows[0].role).toLowerCase().trim();
+                if (rows[0].name) name = String(rows[0].name);
+                if (rows[0].grade) grade = String(rows[0].grade);
+                if (rows[0].section) section = String(rows[0].section);
+                if (rows[0].school_id) schoolId = String(rows[0].school_id);
+              }
+            }
+          } catch (_) {}
+        }
+
+        return {
+          ok: true,
+          actor: {
+            userId: user.id,
+            email,
+            name,
+            role,
+            grade,
+            section,
+            schoolId,
+            authenticated: true,
+          },
+        };
+      } catch {
+        return { ok: false, status: 401, error: 'Unable to validate authentication token.' };
+      }
+    }
+
+    // Fallback ONLY for DB-verified PIN/demo identities via user_profiles (never trusting role headers)
+    const uidHeader = String(headers['x-veylentra-uid'] || '').trim();
+    const emailHeader = String(headers['x-veylentra-email'] || '').toLowerCase().trim();
+    const actorId = uidHeader || emailHeader;
+
+    if (actorId && actorId !== 'guest' && actorId !== 'anonymous' && actorId !== 'user_guest') {
+      if (
+        WHITELISTED_SUPER_ADMIN_EMAILS.includes(emailHeader) ||
+        WHITELISTED_SUPER_ADMIN_EMAILS.includes(actorId.toLowerCase()) ||
+        actorId === 'superadmin-master-uid'
+      ) {
+        return {
+          ok: true,
+          actor: {
+            userId: actorId,
+            email: emailHeader || undefined,
+            name: 'Super Administrator',
+            role: 'super_admin',
+            authenticated: true,
+          },
+        };
+      }
+
+      try {
+        const profRes = await fetch(
+          `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(actorId)},uid.eq.${encodeURIComponent(actorId)},email.eq.${encodeURIComponent(emailHeader || actorId)})&select=id,name,role,grade,section,school_id`,
+          { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+        );
+        if (profRes.ok) {
+          const rows: any = await profRes.json();
+          if (Array.isArray(rows) && rows[0]) {
+            return {
+              ok: true,
+              actor: {
+                userId: String(rows[0].id || actorId),
+                email: emailHeader || undefined,
+                name: String(rows[0].name || 'Campus Member'),
+                role: String(rows[0].role || 'student').toLowerCase().trim(),
+                grade: rows[0].grade ? String(rows[0].grade) : undefined,
+                section: rows[0].section ? String(rows[0].section) : undefined,
+                schoolId: rows[0].school_id ? String(rows[0].school_id) : undefined,
+                authenticated: true,
+              },
+            };
+          }
+        }
+      } catch (_) {}
+
+      // Built-in signed-in demo student account fallback (non-privileged student role only)
+      if (actorId === 'demo-student-uid') {
+        return {
+          ok: true,
+          actor: {
+            userId: 'demo-student-uid',
+            email: emailHeader || undefined,
+            name: 'Aarav Sharma',
+            role: 'student',
+            grade: 'Grade 10',
+            section: 'Solara',
+            authenticated: true,
+          },
+        };
+      }
+    }
+
+    return {
+      ok: true,
+      actor: {
+        userId: actorId || 'guest',
+        email: emailHeader || undefined,
+        name: 'Guest User',
+        role: 'student',
+        authenticated: false,
+      },
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      status: 502,
+      error: err?.message || 'Authentication lookup failed unexpectedly.',
+    };
+  }
 }
 
 export function normalizeMappedAction(rawAction: string, commandLower: string): OrionServerActionType {
@@ -714,8 +739,23 @@ export async function executeOrionServerRequest(params: {
   history?: { role: 'user' | 'assistant'; content: string }[];
   dispatchPushFn?: (payload: any) => Promise<any>;
 }): Promise<{ httpStatus: number; body: Record<string, any> }> {
+  try {
   const { cfg, actor, command, actionPlan, confirmed = false, activeTab = 'dashboard', modelOverride, history = [], dispatchPushFn } = params;
   const startedAt = Date.now();
+
+  if (!actor?.authenticated) {
+    const reason = 'Authentication required: Please sign in to execute Orion actions.';
+    return {
+      httpStatus: 401,
+      body: {
+        success: false,
+        status: 'unauthorized',
+        error: reason,
+        finalResponse: reason,
+      },
+    };
+  }
+
   const cmdTrimmed = String(command || '').trim();
   const cmdLower = cmdTrimmed.toLowerCase();
 
@@ -735,6 +775,7 @@ export async function executeOrionServerRequest(params: {
   let aiResponseText = '';
   let modelUsed = '';
   let providerUsed = '';
+  let plannerAiError = '';
 
   const hasAnyProviderKey = Boolean(getGroqApiKey() || getMinistralApiKey() || getZaiApiKey());
 
@@ -807,8 +848,8 @@ Respond strictly in valid JSON with this exact schema:
           plannedSteps = [{ action: quickAction, targetValue: cmdTrimmed }];
         }
       } catch (planErr: any) {
-        // Never fail into generic placeholder silently; fall back to deterministic classifier
-        console.warn('[ORION_SERVICE] Planner LLM notice:', planErr?.message || planErr);
+        plannerAiError = String(planErr?.message || planErr || '').trim();
+        console.warn('[ORION_SERVICE] Planner LLM notice:', plannerAiError);
       }
     }
 
@@ -1032,22 +1073,77 @@ Respond strictly in valid JSON with this exact schema:
       if (act.action === 'general_chat') {
         let reply = aiResponseText;
         if (!reply && hasAnyProviderKey) {
-          const chatRes = await generateAICompletionWithTelemetry({
-            systemInstruction: `You are Veylentra Orion, a crisp, helpful academic & school intelligence assistant for role "${actor.role}". Answer clearly using Markdown and LaTeX ($...$, $$...$$) where relevant. Never invent private database records.`,
-            prompt: cmdTrimmed,
-            history: history.slice(-6),
-            taskType: 'general',
-            modelOverride,
-            userRole: actor.role,
-            endpointName: 'OrionGeneralChat',
-            maxTokens: 1600,
-          });
-          reply = chatRes.text;
-          modelUsed = chatRes.telemetry.modelUsed;
-          providerUsed = chatRes.telemetry.providerUsed;
+          try {
+            const chatRes = await generateAICompletionWithTelemetry({
+              systemInstruction: `You are Veylentra Orion, a crisp, helpful academic & school intelligence assistant for role "${actor.role}". Answer clearly using Markdown and LaTeX ($...$, $$...$$) where relevant. Never invent private database records.`,
+              prompt: cmdTrimmed,
+              history: history.slice(-6),
+              taskType: 'general',
+              modelOverride,
+              userRole: actor.role,
+              endpointName: 'OrionGeneralChat',
+              maxTokens: 1600,
+            });
+            reply = chatRes.text;
+            modelUsed = chatRes.telemetry.modelUsed;
+            providerUsed = chatRes.telemetry.providerUsed;
+          } catch (aiErr: any) {
+            const reason = String(aiErr?.message || plannerAiError || 'AI provider (Ministral, Groq, Z.ai) failed to respond.').trim();
+            stages.push({
+              phase: 'executing',
+              label: 'Executing action',
+              status: 'failed',
+              durationMs: Math.max(1, Date.now() - execStart),
+              detail: reason,
+            });
+            return {
+              httpStatus: 502,
+              body: {
+                success: false,
+                status: 'failed',
+                error: reason,
+                finalResponse: reason,
+                providerUsed,
+                modelUsed,
+                plan: plannedSteps,
+                results: [
+                  ...stepResults,
+                  { ...stepLog, status: 'failed', verificationNote: reason },
+                ],
+                snapshot: {
+                  phase: 'failed',
+                  headline: 'AI provider unavailable.',
+                  stages,
+                  steps: [
+                    ...stepResults,
+                    { ...stepLog, status: 'failed', verificationNote: reason },
+                  ],
+                  startedAt,
+                  finishedAt: Date.now(),
+                  verified: false,
+                },
+              },
+            };
+          }
         }
         if (!reply) {
-          reply = 'No AI provider key is currently configured on the server to answer open-ended prompts. You can still run workspace queries (homework, attendance, calendar, notices) or web search.';
+          const reason = plannerAiError || 'No AI provider API key (Ministral, Groq, or Z.ai) is currently configured on the server.';
+          return {
+            httpStatus: 502,
+            body: {
+              success: false,
+              status: 'failed',
+              error: reason,
+              finalResponse: reason,
+              providerUsed,
+              modelUsed,
+              plan: plannedSteps,
+              results: [
+                ...stepResults,
+                { ...stepLog, status: 'failed', verificationNote: reason },
+              ],
+            },
+          };
         }
         stepLog.status = 'completed';
         summaryParts.push(reply);
@@ -1739,4 +1835,16 @@ Respond strictly in valid JSON with this exact schema:
       },
     },
   };
+  } catch (err: any) {
+    const reason = String(err?.message || err || 'Orion execution failed on server.').trim();
+    return {
+      httpStatus: 502,
+      body: {
+        success: false,
+        status: 'failed',
+        error: reason,
+        finalResponse: reason,
+      },
+    };
+  }
 }

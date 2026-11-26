@@ -2870,7 +2870,8 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
 
   // 5.5 Authoritative Server-Side Orion Execution Engine (/api/orion/execute)
   if (pathname === '/api/orion/execute' || pathname === '/api/orion/execute/') {
-    const body = await parseJsonBody(req);
+    try {
+    const body = (await parseJsonBody(req)) || {};
     const { command = '', actionPlan, confirmed = false, activeTab = 'dashboard', modelOverride, history = [] } = body;
     const cfg = getServerlessSupabaseConfig();
     const superAdminEmails = [
@@ -2880,18 +2881,19 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
       'superadmin@veylentra.edu',
     ];
 
-    const authHeader = String(req.headers?.authorization || req.headers?.['x-supabase-auth'] || '').trim();
+    const headersObj = req?.headers && typeof req.headers === 'object' ? req.headers : {};
+    const authHeader = String(headersObj.authorization || headersObj['x-supabase-auth'] || '').trim();
     const token = authHeader.replace(/^Bearer\s+/i, '').trim();
     let actor = { userId: 'guest', email: '', name: 'Guest User', role: 'student', grade: '', section: '', authenticated: false };
 
     if (token) {
       const uRes = await fetch(`${cfg.url}/auth/v1/user`, { headers: { apikey: cfg.key, Authorization: `Bearer ${token}` } }).catch(() => null);
       if (!uRes || !uRes.ok) {
-        return sendJson(res, 401, { success: false, status: 'unauthorized', error: 'Invalid or expired authentication token.', requestId });
+        return sendJson(res, 401, { success: false, status: 'unauthorized', error: 'Invalid or expired authentication token.', finalResponse: 'Invalid or expired authentication token.', requestId });
       }
       const user: any = await uRes.json().catch(() => null);
       if (!user?.id) {
-        return sendJson(res, 401, { success: false, status: 'unauthorized', error: 'Invalid authentication session.', requestId });
+        return sendJson(res, 401, { success: false, status: 'unauthorized', error: 'Invalid authentication session.', finalResponse: 'Invalid authentication session.', requestId });
       }
       const email = String(user.email || '').toLowerCase().trim();
       let role = superAdminEmails.includes(email) ? 'super_admin' : String(user.user_metadata?.role || 'student').toLowerCase().trim();
@@ -2911,8 +2913,8 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
       }
       actor = { userId: user.id, email, name, role, grade: String(user.user_metadata?.grade || ''), section: String(user.user_metadata?.section || ''), authenticated: true };
     } else {
-      const uidH = String(req.headers?.['x-veylentra-uid'] || '').trim();
-      const emailH = String(req.headers?.['x-veylentra-email'] || '').toLowerCase().trim();
+      const uidH = String(headersObj['x-veylentra-uid'] || '').trim();
+      const emailH = String(headersObj['x-veylentra-email'] || '').toLowerCase().trim();
       const actorId = uidH || emailH;
       if (actorId && actorId !== 'guest' && actorId !== 'anonymous' && actorId !== 'user_guest') {
         if (superAdminEmails.includes(emailH) || superAdminEmails.includes(actorId.toLowerCase()) || actorId === 'superadmin-master-uid') {
@@ -2936,8 +2938,24 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
               };
             }
           }
+          if (!actor.authenticated && actorId === 'demo-student-uid') {
+            actor = {
+              userId: 'demo-student-uid',
+              email: emailH,
+              name: 'Aarav Sharma',
+              role: 'student',
+              grade: 'Grade 10',
+              section: 'Solara',
+              authenticated: true
+            };
+          }
         }
       }
+    }
+
+    if (!actor.authenticated) {
+      const reason = 'Authentication required: Please sign in to use Orion.';
+      return sendJson(res, 401, { success: false, status: 'unauthorized', error: reason, finalResponse: reason, requestId });
     }
 
     const cmdTrimmed = String(command || '').trim();
@@ -2969,6 +2987,7 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
     const startedAt = Date.now();
     let plannedSteps: any[] = Array.isArray(actionPlan) && actionPlan.length > 0 ? actionPlan : [];
     let plannerReply = '';
+    let plannerAiError = '';
     let usedProvider = '';
     let usedModel = '';
 
@@ -2991,7 +3010,9 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
             plannedSteps = [{ action: parsed.action || quick, title: d.title || parsed.targetValue, message: d.content, content: d.content, subject: d.subject, targetClass: d.targetClass, audience: d.targetAudience, date: d.date, targetValue: parsed.targetValue || d.title }];
             if (typeof parsed.responseText === 'string') plannerReply = parsed.responseText.trim();
           }
-        } catch (_) {}
+        } catch (planErr: any) {
+          plannerAiError = String(planErr?.message || planErr || '').trim();
+        }
       }
       if (plannedSteps.length === 0) {
         plannedSteps = [{ action: quick, targetValue: cmdTrimmed }];
@@ -3105,11 +3126,39 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
       try {
         if (st.action === 'general_chat') {
           let reply = plannerReply;
+          const hasKeys = Boolean(getGroqApiKey() || getMinistralApiKey() || getZaiApiKey());
+          if (!reply && hasKeys) {
+            try {
+              const cRes = await callRoutedCompletion(cmdTrimmed, `You are Veylentra Orion, a helpful academic agent for role "${actor.role}". Never invent school records.`, Array.isArray(history) ? history.slice(-6) : [], { taskType: 'general', modelOverride, requestId, maxTokens: 1500 });
+              reply = cRes.text;
+              usedProvider = cRes.providerUsed;
+              usedModel = cRes.modelUsed;
+            } catch (aiErr: any) {
+              const reason = String(aiErr?.message || plannerAiError || 'AI provider (Ministral, Groq, Z.ai) failed to respond.').trim();
+              return sendJson(res, 502, {
+                success: false,
+                status: 'failed',
+                error: reason,
+                finalResponse: reason,
+                providerUsed: usedProvider,
+                modelUsed: usedModel,
+                plan: plannedSteps,
+                requestId
+              });
+            }
+          }
           if (!reply) {
-            const cRes = await callRoutedCompletion(cmdTrimmed, `You are Veylentra Orion, a helpful academic agent for role "${actor.role}". Never invent school records.`, Array.isArray(history) ? history.slice(-6) : [], { taskType: 'general', modelOverride, requestId, maxTokens: 1500 });
-            reply = cRes.text;
-            usedProvider = cRes.providerUsed;
-            usedModel = cRes.modelUsed;
+            const reason = plannerAiError || 'No AI provider API key (Ministral, Groq, or Z.ai) is currently configured on the server.';
+            return sendJson(res, 502, {
+              success: false,
+              status: 'failed',
+              error: reason,
+              finalResponse: reason,
+              providerUsed: usedProvider,
+              modelUsed: usedModel,
+              plan: plannedSteps,
+              requestId
+            });
           }
           summaryParts.push(reply);
         } else if (st.action === 'web_search') {
@@ -3358,6 +3407,16 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
       snapshot: { phase: allOk ? 'completed' : 'failed', headline: allOk ? 'Completed and verified.' : 'Execution finished with issues.', stages, steps: stepResults, startedAt, finishedAt: Date.now(), verified: allOk },
       requestId
     });
+    } catch (err: any) {
+      const reason = String(err?.message || err || 'Orion execution failed on server.').trim();
+      return sendJson(res, 502, {
+        success: false,
+        status: 'failed',
+        error: reason,
+        finalResponse: reason,
+        requestId
+      });
+    }
   }
 
   // 5.6 Role-Scoped Orion Workspace Assist (/api/ai/orion-assist)

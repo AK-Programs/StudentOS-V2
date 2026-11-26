@@ -404,6 +404,17 @@ html, body, #root {
   -webkit-text-size-adjust: 100%;
 }
 
+html.byte-viewport-locked,
+html.byte-viewport-locked body,
+html.byte-viewport-locked #root {
+  height: 100%;
+  height: 100dvh !important;
+  max-height: 100dvh !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  overscroll-behavior: none !important;
+}
+
 /* Touch action optimization to prevent double-tap zoom delay */
 button, a, [role="button"], input, select, textarea {
   touch-action: manipulation;
