@@ -16,6 +16,12 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import {
+  buildAdaptiveDepthSystemDirectives,
+  classifyByteResponseDepth,
+  resolveProviderOutputTokenBudget,
+} from './aiResponseDepth';
+
 export type AIProviderName = 'groq' | 'ministral' | 'zai';
 export type TaskComplexityTier = 'short' | 'fast' | 'general' | 'complex' | 'tool';
 
@@ -45,6 +51,9 @@ export interface AIPerformanceTelemetry {
   retries: number;
   fallbackTriggered: boolean;
   streamed: boolean;
+  finishReason?: string;
+  truncated?: boolean;
+  depthMode?: string;
 }
 
 export interface AICompletionOptions {
@@ -63,6 +72,7 @@ export interface AICompletionOptions {
   persona?: string;
   contextLength?: number;
   reasoningMode?: boolean;
+  intentType?: string;
   images?: { name?: string; mimeType: string; data: string }[];
 }
 
@@ -417,7 +427,7 @@ export async function generateAICompletionWithTelemetry(
   param1: string | AICompletionOptions,
   param2?: string,
   param3: any[] = []
-): Promise<{ text: string; telemetry: AIPerformanceTelemetry }> {
+): Promise<{ text: string; telemetry: AIPerformanceTelemetry; finishReason?: string; truncated?: boolean }> {
   let options: AICompletionOptions;
 
   if (typeof param1 === 'string') {
@@ -465,14 +475,25 @@ export async function generateAICompletionWithTelemetry(
   let retries = 0;
 
   const isAcademicTask = taskType === 'complex' || routing.tier === 'complex';
-  const messages = buildMessagesArray(systemInstruction, prompt, history, images);
-  const effectiveMaxTokens = maxTokens
-    ? Math.max(maxTokens, 300)
-    : routing.tier === 'short' || routing.tier === 'fast'
-    ? 1500
-    : 32768; // High budget for Lecture Notes and complex reasoning
+  const depthInfo = classifyByteResponseDepth({
+    prompt,
+    intentType: options.intentType,
+    mode,
+    reasoningMode: options.reasoningMode,
+  });
+  const effectiveSystemInstruction = jsonMode
+    ? systemInstruction
+    : `${systemInstruction}\n\n${buildAdaptiveDepthSystemDirectives(depthInfo)}`;
+  const messages = buildMessagesArray(effectiveSystemInstruction, prompt, history, images);
+  const primaryBudget = resolveProviderOutputTokenBudget({
+    provider,
+    depth: depthInfo.depth,
+    requestedMaxTokens: maxTokens,
+    reasoningMode: options.reasoningMode,
+  });
+  const effectiveMaxTokens = primaryBudget.maxTokens;
 
-  console.log(`[AI_ROUTER] tier=${routing.tier} provider=${provider} model=${model} requestId=${requestId} budget=${effectiveMaxTokens} academic=${isAcademicTask}`);
+  console.log(`[AI_ROUTER] tier=${routing.tier} depth=${depthInfo.depth} provider=${provider} model=${model} requestId=${requestId} budget=${effectiveMaxTokens} academic=${isAcademicTask}`);
 
   async function callApprovedProvider(
     p: AIProviderName,
@@ -491,12 +512,29 @@ export async function generateAICompletionWithTelemetry(
       throw err;
     }
 
-    // Clamp single-request token budget cleanly for OpenAI-compatible endpoints
-    const clampedBudget = p === 'ministral' ? Math.min(budget, 8192) : Math.min(budget, 4096);
+    const budgetPlan = resolveProviderOutputTokenBudget({
+      provider: p,
+      depth: depthInfo.depth,
+      requestedMaxTokens: maxTokens || budget,
+      reasoningMode: options.reasoningMode,
+    });
+    const clampedBudget = budgetPlan.maxTokens;
+    const timeoutMs = depthInfo.isLongForm ? 45000 : 28000;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 28000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
+      const requestBody: Record<string, any> = {
+        model: m,
+        messages: currentMessages,
+        temperature,
+        max_tokens: clampedBudget,
+        ...(allowJsonFormat ? { response_format: { type: 'json_object' } } : {})
+      };
+      if (p === 'zai' && budgetPlan.disableThinking && !jsonMode) {
+        requestBody.thinking = { type: 'disabled' };
+      }
+
       const resp = await fetch(apiUrl, {
         method: 'POST',
         headers: {
@@ -504,13 +542,7 @@ export async function generateAICompletionWithTelemetry(
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         },
-        body: JSON.stringify({
-          model: m,
-          messages: currentMessages,
-          temperature,
-          max_tokens: clampedBudget,
-          ...(allowJsonFormat ? { response_format: { type: 'json_object' } } : {})
-        }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal
       });
 
@@ -650,6 +682,8 @@ export async function generateAICompletionWithTelemetry(
       throw err;
     }
 
+    const normalizedFinish = String(lastFinishReason || 'stop').toLowerCase();
+    const truncated = normalizedFinish === 'length';
     const telemetry: AIPerformanceTelemetry = {
       requestId,
       providerUsed: activeProvider,
@@ -660,14 +694,17 @@ export async function generateAICompletionWithTelemetry(
       totalGenerationTimeMs: Date.now() - requestStart,
       retries,
       fallbackTriggered: activeProvider !== provider,
-      streamed: false
+      streamed: false,
+      finishReason: normalizedFinish,
+      truncated,
+      depthMode: depthInfo.depth,
     };
 
     if (continuationCount > 0) {
       console.log(`[AI_COMPLETE] Successfully assembled ${continuationCount + 1} segments. Final length: ${finalFullText.length} chars.`);
     }
 
-    return { text: finalFullText.trim(), telemetry };
+    return { text: finalFullText.trim(), telemetry, finishReason: normalizedFinish, truncated };
   } catch (outerErr: any) {
     console.error(`[AI_ERROR] RequestId=${requestId}:`, outerErr.message);
     throw outerErr;
@@ -691,7 +728,7 @@ export async function streamAICompletion(
     onComplete?: (fullText: string, telemetry: AIPerformanceTelemetry) => void;
   },
   abortSignal?: AbortSignal
-): Promise<{ text: string; telemetry: AIPerformanceTelemetry }> {
+): Promise<{ text: string; telemetry: AIPerformanceTelemetry; finishReason?: string; truncated?: boolean }> {
   const {
     systemInstruction = 'You are a supportive, high-clarity academic tutor for StudentOS.',
     prompt,
@@ -706,6 +743,8 @@ export async function streamAICompletion(
     mode,
     persona,
     contextLength,
+    reasoningMode,
+    intentType,
     images
   } = options;
 
@@ -725,15 +764,23 @@ export async function streamAICompletion(
   let activeModel = activeProvider === 'ministral' ? 'ministral-8b-2410' : routing.model;
   let retries = 0;
 
-  const messages = buildMessagesArray(systemInstruction, prompt, history, images);
-  const effectiveMaxTokens = maxTokens
-    ? Math.max(maxTokens, 300)
-    : routing.tier === 'short' || routing.tier === 'fast'
-    ? 1200
-    : 4096;
+  const depthInfo = classifyByteResponseDepth({
+    prompt,
+    intentType,
+    mode,
+    reasoningMode,
+  });
+  const effectiveSystemInstruction = `${systemInstruction}\n\n${buildAdaptiveDepthSystemDirectives(depthInfo)}`;
+  const messages = buildMessagesArray(effectiveSystemInstruction, prompt, history, images);
+  const initialBudget = resolveProviderOutputTokenBudget({
+    provider: activeProvider,
+    depth: depthInfo.depth,
+    requestedMaxTokens: maxTokens,
+    reasoningMode,
+  });
 
   console.log(
-    `[AI_STREAM_ROUTER] tier=${routing.tier} provider=${activeProvider} model=${activeModel} requestId=${requestId}`
+    `[AI_STREAM_ROUTER] tier=${routing.tier} depth=${depthInfo.depth} provider=${activeProvider} model=${activeModel} budget=${initialBudget.maxTokens} requestId=${requestId}`
   );
 
   async function tryStreamOnce(
@@ -752,6 +799,13 @@ export async function streamAICompletion(
       throw err;
     }
 
+    const budgetPlan = resolveProviderOutputTokenBudget({
+      provider: p,
+      depth: depthInfo.depth,
+      requestedMaxTokens: customMaxTokens || maxTokens,
+      reasoningMode,
+    });
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Accept': 'text/event-stream, application/json',
@@ -759,22 +813,28 @@ export async function streamAICompletion(
     };
 
     const requestController = new AbortController();
-    const timeoutId = setTimeout(() => requestController.abort(), 30000);
+    const timeoutMs = depthInfo.isLongForm ? 50000 : 30000;
+    const timeoutId = setTimeout(() => requestController.abort(), timeoutMs);
     const onExternalAbort = () => requestController.abort();
     abortSignal?.addEventListener('abort', onExternalAbort, { once: true });
+
+    const requestBody: Record<string, any> = {
+      model: m,
+      messages,
+      temperature,
+      max_tokens: budgetPlan.maxTokens,
+      stream: true
+    };
+    if (p === 'zai' && budgetPlan.disableThinking) {
+      requestBody.thinking = { type: 'disabled' };
+    }
 
     let response: Response;
     try {
       response = await fetch(targetUrl, {
         method: 'POST',
         headers,
-        body: JSON.stringify({
-          model: m,
-          messages,
-          temperature,
-          max_tokens: customMaxTokens || effectiveMaxTokens,
-          stream: true
-        }),
+        body: JSON.stringify(requestBody),
         signal: requestController.signal
       });
     } catch (fetchErr: any) {
@@ -930,6 +990,8 @@ export async function streamAICompletion(
   }
 
   const finishedReply = streamResult.fullText.trim();
+  const normalizedFinish = String(streamResult.finishReason || 'stop').toLowerCase();
+  const truncated = normalizedFinish === 'length';
 
   const telemetry: AIPerformanceTelemetry = {
     requestId,
@@ -941,10 +1003,13 @@ export async function streamAICompletion(
     totalGenerationTimeMs: Date.now() - requestStart,
     retries,
     fallbackTriggered: finalProvider !== activeProvider,
-    streamed: true
+    streamed: true,
+    finishReason: normalizedFinish,
+    truncated,
+    depthMode: depthInfo.depth,
   };
 
   callbacks.onComplete?.(finishedReply, telemetry);
-  return { text: finishedReply, telemetry };
+  return { text: finishedReply, telemetry, finishReason: normalizedFinish, truncated };
 }
 

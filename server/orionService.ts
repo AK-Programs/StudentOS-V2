@@ -565,11 +565,19 @@ export function validateActionParametersServer(
     const hasTopic =
       (cleanTitle && !genericWords.test(cleanTitle) && !genericPhrase.test(cleanTitle)) ||
       (stripped.length >= 3 && !genericWords.test(stripped) && !genericPhrase.test(cmdClean));
-    if (!hasTopic) {
+
+    const { grade, hasExplicitGrade } = parseClassAndSection(act.targetClass || cmdClean);
+
+    if (!hasTopic || !hasExplicitGrade) {
+      const missing: string[] = [];
+      if (!hasTopic) missing.push('assignment topic/title');
+      if (!hasExplicitGrade) missing.push('target class / cohort');
       return {
         valid: false,
-        missingFields: ['assignment topic/title', 'target class'],
-        clarificationQuestion: 'Please specify the homework title or topic and target class (e.g., "Assign Algebra Worksheet to Grade 10 due Friday").',
+        missingFields: missing,
+        clarificationQuestion: !hasTopic
+          ? 'Please specify the homework title or topic and target class (e.g., "Assign Algebra Worksheet to Class 10 Astra due Friday").'
+          : 'Which class or cohort should this homework be assigned to (e.g., "Class 10 Astra" or "Grade 9 Solara")?',
       };
     }
   }
@@ -599,13 +607,47 @@ export function validateActionParametersServer(
   return { valid: true, missingFields: [] };
 }
 
-function parseClassAndSection(input?: string): { grade: string; section: string } {
+export function parseClassAndSection(input?: string): {
+  grade: string;
+  section: string;
+  hasExplicitGrade: boolean;
+  hasExplicitSection: boolean;
+} {
   const str = (input || '').trim();
-  const numMatch = str.match(/\b(\d{1,2})\b/);
-  const secMatch = str.match(/\b(solara|astra|elara|vega|ruby|emerald|sapphire|topaz)\b/i);
+  if (!str) {
+    return { grade: '', section: 'All Sections', hasExplicitGrade: false, hasExplicitSection: false };
+  }
+
+  // Match class/grade tokens: "Class 10 Astra", "Grade 10", "10th Astra", "Standard 10", "10 Astra"
+  const gradeMatch =
+    str.match(/\b(?:class|grade|standard|std)?\s*(\d{1,2})(?:st|nd|rd|th)?\b/i) ||
+    str.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:grade|class|standard|astra|solara|elara|vega|ruby|emerald|sapphire|topaz)\b/i);
+
+  const explicitGrade = gradeMatch && gradeMatch[1] ? `Grade ${gradeMatch[1]}` : '';
+
+  // Match sections: Astra, Solara, Elara, Vega, Ruby, Emerald, Sapphire, Topaz, or Section A/B/C/D
+  const secMatch = str.match(/\b(astra|solara|elara|vega|ruby|emerald|sapphire|topaz)\b/i);
+  const secLetterMatch = str.match(/\bsection\s+([a-z0-9]+)\b/i);
+
+  let section = 'All Sections';
+  let hasExplicitSection = false;
+
+  if (secMatch) {
+    section = secMatch[1].charAt(0).toUpperCase() + secMatch[1].slice(1).toLowerCase();
+    hasExplicitSection = true;
+  } else if (secLetterMatch) {
+    section = secLetterMatch[1].toUpperCase();
+    hasExplicitSection = true;
+  } else if (/\ball\s*(?:sections?|cohorts?)\b/i.test(str)) {
+    section = 'All Sections';
+    hasExplicitSection = true;
+  }
+
   return {
-    grade: numMatch ? `Grade ${numMatch[1]}` : 'Grade 10',
-    section: secMatch ? secMatch[1].charAt(0).toUpperCase() + secMatch[1].slice(1).toLowerCase() : 'All Sections',
+    grade: explicitGrade,
+    section,
+    hasExplicitGrade: Boolean(explicitGrade),
+    hasExplicitSection,
   };
 }
 
@@ -1313,39 +1355,141 @@ Respond strictly in valid JSON with this exact schema:
         const title = (act.title || act.targetValue || 'Assignment').trim().slice(0, 140);
         const { grade, section } = parseClassAndSection(act.targetClass || cmdTrimmed);
         const hwId = `hw_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-        const ins = await fetchJsonSafe(`${cfg.url}/rest/v1/homework`, {
+        const effectiveDueDate = act.date || new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0];
+        const effectiveContent = act.content || act.message || cmdTrimmed;
+        const effectiveSubject = act.subject || 'General Studies';
+        const effectiveGivenBy = actor.name || 'Faculty';
+
+        const fullHwPayload: Record<string, any> = {
+          id: hwId,
+          title,
+          content: effectiveContent,
+          subject: effectiveSubject,
+          class_grade: grade,
+          class_section: section,
+          due_date: effectiveDueDate,
+          given_by: effectiveGivenBy,
+          teacher_id: actor.userId,
+          status: 'published',
+          completed_list: [],
+          created_at: new Date().toISOString(),
+        };
+
+        let ins = await fetchJsonSafe(`${cfg.url}/rest/v1/homework`, {
           method: 'POST',
           headers: {
             apikey: cfg.key,
             Authorization: `Bearer ${cfg.key}`,
             'Content-Type': 'application/json',
+            Prefer: 'return=representation',
           },
-          body: JSON.stringify({
+          body: JSON.stringify(fullHwPayload),
+        });
+
+        // Fallback for minimal column schema if optional columns (e.g. teacher_id, status) are rejected
+        if (!ins.ok && (ins.status === 400 || (ins.errorText && /column|schema cache|PGRST204/i.test(ins.errorText)))) {
+          const minimalHwPayload = {
             id: hwId,
             title,
-            description: act.content || act.message || cmdTrimmed,
-            subject: act.subject || 'General Studies',
+            content: effectiveContent,
+            subject: effectiveSubject,
             class_grade: grade,
             class_section: section,
-            due_date: act.date || new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0],
-            assigned_by: actor.name,
+            due_date: effectiveDueDate,
+            given_by: effectiveGivenBy,
             completed_list: [],
-            created_at: new Date().toISOString(),
-          }),
-        });
+            created_at: fullHwPayload.created_at,
+          };
+          ins = await fetchJsonSafe(`${cfg.url}/rest/v1/homework`, {
+            method: 'POST',
+            headers: {
+              apikey: cfg.key,
+              Authorization: `Bearer ${cfg.key}`,
+              'Content-Type': 'application/json',
+              Prefer: 'return=representation',
+            },
+            body: JSON.stringify(minimalHwPayload),
+          });
+        }
+
         if (!ins.ok) throw new Error(`Failed to create homework: ${ins.errorText}`);
-        const ver = await verifyRowPersisted(cfg, 'homework', hwId);
-        if (!ver.verified) {
+
+        // Read-back verification: verify persisted row AND verify class_grade & class_section
+        const checkHw = await fetchJsonSafe(
+          `${cfg.url}/rest/v1/homework?id=eq.${encodeURIComponent(hwId)}&select=id,title,class_grade,class_section`,
+          { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+        );
+        const persistedRows: any[] = Array.isArray(checkHw.data) ? checkHw.data : [];
+        const persistedHw = persistedRows.find((r) => String(r?.id) === String(hwId));
+
+        if (!checkHw.ok || !persistedHw) {
           allVerified = false;
           stepLog.status = 'failed';
-          stepLog.verificationNote = ver.note;
-          summaryParts.push(ver.note);
+          stepLog.verificationNote = `Read-back verification failed: homework ${hwId} not found in database.`;
+          summaryParts.push(stepLog.verificationNote);
         } else {
           stepLog.status = 'verified';
           stepLog.recordId = hwId;
-          stepLog.verificationNote = ver.note;
+          stepLog.verificationNote = `Verified persisted homework ${hwId} for ${persistedHw.class_grade || grade} (${persistedHw.class_section || section}).`;
           refreshTables.add('homework');
-          summaryParts.push(`Assigned and verified homework **"${title}"** for **${grade} (${section})** (ID: \`${hwId}\`).`);
+
+          // Notification insert into public.notifications
+          const notifId = `notif_hw_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          const notifTitle = `📝 New Assignment: ${title}`;
+          const notifMsg = `${effectiveSubject} · Due ${effectiveDueDate} (${effectiveGivenBy})`;
+          let notifSaved = false;
+          try {
+            const notifIns = await fetchJsonSafe(`${cfg.url}/rest/v1/notifications`, {
+              method: 'POST',
+              headers: {
+                apikey: cfg.key,
+                Authorization: `Bearer ${cfg.key}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                id: notifId,
+                title: notifTitle,
+                message: notifMsg,
+                type: 'homework',
+                target_role: 'student',
+                target_class: grade,
+                target_section: section === 'All Sections' ? 'all' : section,
+                link_tab: 'homework',
+                is_read: false,
+                created_at: new Date().toISOString(),
+              }),
+            });
+            notifSaved = notifIns.ok;
+            if (notifSaved) refreshTables.add('notifications');
+          } catch (_) {}
+
+          // Push delivery invocation with honest delivery reporting
+          let deliveredDevices = 0;
+          if (dispatchPushFn) {
+            try {
+              const pushRes = await dispatchPushFn({
+                notificationId: notifId,
+                title: notifTitle,
+                body: notifMsg,
+                targetRole: 'student',
+                targetClass: grade,
+                targetSection: section,
+                targetTab: 'homework',
+                schoolId: actor.schoolId,
+              });
+              if (pushRes && typeof pushRes.deliveredCount === 'number') {
+                deliveredDevices = pushRes.deliveredCount;
+              }
+            } catch (_) {}
+          }
+
+          let summaryMsg = `Assigned and verified homework **"${title}"** for **${grade} (${section})** (ID: \`${hwId}\`).`;
+          if (notifSaved) {
+            summaryMsg += deliveredDevices > 0
+              ? ` Notification posted and delivered to ${deliveredDevices} device(s).`
+              : ' Classroom notification posted.';
+          }
+          summaryParts.push(summaryMsg);
         }
       } else if (act.action === 'create_competition') {
         const title = (act.title || act.targetValue || 'Campus Competition').trim();

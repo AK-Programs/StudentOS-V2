@@ -19,6 +19,55 @@
 export type AIProviderName = 'groq' | 'ministral' | 'zai';
 export type TaskComplexityTier = 'short' | 'fast' | 'general' | 'complex' | 'tool';
 
+import { filterHistoryByOwner, verifyAndBindConversationOwnership } from '../server/aiConversationOwnership';
+import {
+  classifyByteResponseDepth,
+  resolveProviderOutputTokenBudget,
+  buildAdaptiveDepthSystemDirectives,
+} from '../server/aiResponseDepth';
+
+export function parseClassAndSection(input?: string): {
+  grade: string;
+  section: string;
+  hasExplicitGrade: boolean;
+  hasExplicitSection: boolean;
+} {
+  const str = (input || '').trim();
+  if (!str) {
+    return { grade: '', section: 'All Sections', hasExplicitGrade: false, hasExplicitSection: false };
+  }
+
+  const gradeMatch =
+    str.match(/\b(?:class|grade|standard|std)?\s*(\d{1,2})(?:st|nd|rd|th)?\b/i) ||
+    str.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:grade|class|standard|astra|solara|elara|vega|ruby|emerald|sapphire|topaz)\b/i);
+
+  const explicitGrade = gradeMatch && gradeMatch[1] ? `Grade ${gradeMatch[1]}` : '';
+
+  const secMatch = str.match(/\b(astra|solara|elara|vega|ruby|emerald|sapphire|topaz)\b/i);
+  const secLetterMatch = str.match(/\bsection\s+([a-z0-9]+)\b/i);
+
+  let section = 'All Sections';
+  let hasExplicitSection = false;
+
+  if (secMatch) {
+    section = secMatch[1].charAt(0).toUpperCase() + secMatch[1].slice(1).toLowerCase();
+    hasExplicitSection = true;
+  } else if (secLetterMatch) {
+    section = secLetterMatch[1].toUpperCase();
+    hasExplicitSection = true;
+  } else if (/\ball\s*(?:sections?|cohorts?)\b/i.test(str)) {
+    section = 'All Sections';
+    hasExplicitSection = true;
+  }
+
+  return {
+    grade: explicitGrade,
+    section,
+    hasExplicitGrade: Boolean(explicitGrade),
+    hasExplicitSection,
+  };
+}
+
 const GROQ_CHAT_COMPLETIONS_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MINISTRAL_CHAT_COMPLETIONS_URL = 'https://api.mistral.ai/v1/chat/completions';
 export const ZAI_API_BASE_URL = 'https://api.z.ai/api/paas/v4';
@@ -445,6 +494,9 @@ async function callGroqCompletion(
     jsonMode?: boolean;
     maxTokens?: number;
     requestId?: string;
+    intentType?: string;
+    mode?: string;
+    reasoningMode?: boolean;
   }
 ): Promise<{
   text: string;
@@ -453,6 +505,9 @@ async function callGroqCompletion(
   tier: 'short';
   totalMs: number;
   retries: number;
+  finishReason?: string;
+  truncated?: boolean;
+  depthMode?: string;
 }> {
   const apiKey = getGroqApiKey();
   const primaryModel = options.initialModel || getNextGroqModel();
@@ -466,10 +521,21 @@ async function callGroqCompletion(
   }
 
   const start = Date.now();
-  const messages = buildChatMessages(systemPrompt, history, prompt);
-  const effectiveMaxTokens = options.maxTokens
-    ? Math.min(Math.max(options.maxTokens, 300), 8192)
-    : 1200;
+  const depthInfo = classifyByteResponseDepth({
+    prompt,
+    intentType: options?.intentType,
+    mode: options?.mode,
+    reasoningMode: options?.reasoningMode,
+  });
+  const effectiveMaxTokens = resolveProviderOutputTokenBudget({
+    provider: 'groq',
+    depth: depthInfo.depth,
+    requestedMaxTokens: options?.maxTokens,
+    reasoningMode: options?.reasoningMode,
+  });
+  const adaptiveDirectives = buildAdaptiveDepthSystemDirectives(depthInfo);
+  const combinedSystem = [systemPrompt, adaptiveDirectives].filter(Boolean).join('\n\n');
+  const messages = buildChatMessages(combinedSystem, history, prompt);
 
   // Candidate Groq models starting with primaryModel, followed by the remaining rotation models
   const candidateModels = [
@@ -524,10 +590,15 @@ async function callGroqCompletion(
       const data = await resp.json();
       const choice = data?.choices?.[0];
       const text = extractTextFromChoiceMessage(choice, data);
+      const finishReason = choice?.finish_reason || data?.finish_reason || 'stop';
+      const truncated = finishReason === 'length';
 
       if (text) {
         return {
           text: text.trim(),
+          finishReason,
+          truncated,
+          depthMode: depthInfo.depth,
           providerUsed: 'groq',
           modelUsed: candidateModel,
           tier: 'short',
@@ -566,6 +637,9 @@ async function callMinistralCompletion(
     maxTokens?: number;
     requestId?: string;
     timeoutMs?: number;
+    intentType?: string;
+    mode?: string;
+    reasoningMode?: boolean;
   }
 ): Promise<{
   text: string;
@@ -573,6 +647,9 @@ async function callMinistralCompletion(
   modelUsed: 'ministral-8b-2410';
   tier: 'general';
   totalMs: number;
+  finishReason?: string;
+  truncated?: boolean;
+  depthMode?: string;
 }> {
   const apiKey = getMinistralApiKey();
   const effectiveModel = 'ministral-8b-2410' as const;
@@ -586,10 +663,21 @@ async function callMinistralCompletion(
   }
 
   const start = Date.now();
-  const messages = buildChatMessages(systemPrompt, history, prompt);
-  const effectiveMaxTokens = options?.maxTokens
-    ? Math.min(Math.max(options.maxTokens, 300), 8192)
-    : 2048;
+  const depthInfo = classifyByteResponseDepth({
+    prompt,
+    intentType: options?.intentType,
+    mode: options?.mode,
+    reasoningMode: options?.reasoningMode,
+  });
+  const effectiveMaxTokens = resolveProviderOutputTokenBudget({
+    provider: 'ministral',
+    depth: depthInfo.depth,
+    requestedMaxTokens: options?.maxTokens,
+    reasoningMode: options?.reasoningMode,
+  });
+  const adaptiveDirectives = buildAdaptiveDepthSystemDirectives(depthInfo);
+  const combinedSystem = [systemPrompt, adaptiveDirectives].filter(Boolean).join('\n\n');
+  const messages = buildChatMessages(combinedSystem, history, prompt);
   const timeoutMs = options?.timeoutMs || 25000;
 
   const controller = new AbortController();
@@ -629,9 +717,10 @@ async function callMinistralCompletion(
     const data = await resp.json();
     const choice = data?.choices?.[0];
     const text = extractTextFromChoiceMessage(choice, data);
+    const finishReason = choice?.finish_reason || data?.finish_reason || 'stop';
+    const truncated = finishReason === 'length';
 
     if (!text) {
-      const finishReason = choice?.finish_reason || data?.finish_reason || 'unknown';
       const err: any = new Error(
         `Ministral HTTP 200 returned empty content (finish_reason=${finishReason})`
       );
@@ -643,6 +732,9 @@ async function callMinistralCompletion(
 
     return {
       text: text.trim(),
+      finishReason,
+      truncated,
+      depthMode: depthInfo.depth,
       providerUsed: 'ministral',
       modelUsed: effectiveModel,
       tier: 'general',
@@ -674,6 +766,9 @@ async function callZaiCompletion(
     maxTokens?: number;
     requestId?: string;
     timeoutMs?: number;
+    intentType?: string;
+    mode?: string;
+    reasoningMode?: boolean;
   }
 ): Promise<{
   text: string;
@@ -681,6 +776,9 @@ async function callZaiCompletion(
   modelUsed: typeof ZAI_MODEL_ID;
   tier: 'general';
   totalMs: number;
+  finishReason?: string;
+  truncated?: boolean;
+  depthMode?: string;
 }> {
   const apiKey = getZaiApiKey();
   const effectiveModel = ZAI_MODEL_ID;
@@ -694,16 +792,39 @@ async function callZaiCompletion(
   }
 
   const start = Date.now();
-  const messages = buildChatMessages(systemPrompt, history, prompt);
-  const effectiveMaxTokens = options?.maxTokens
-    ? Math.min(Math.max(options.maxTokens, 300), 4096)
-    : 2048;
+  const depthInfo = classifyByteResponseDepth({
+    prompt,
+    intentType: options?.intentType,
+    mode: options?.mode,
+    reasoningMode: options?.reasoningMode,
+  });
+  const effectiveMaxTokens = resolveProviderOutputTokenBudget({
+    provider: 'zai',
+    depth: depthInfo.depth,
+    requestedMaxTokens: options?.maxTokens,
+    reasoningMode: options?.reasoningMode,
+  });
+  const adaptiveDirectives = buildAdaptiveDepthSystemDirectives(depthInfo);
+  const combinedSystem = [systemPrompt, adaptiveDirectives].filter(Boolean).join('\n\n');
+  const messages = buildChatMessages(combinedSystem, history, prompt);
   const timeoutMs = options?.timeoutMs || 28000;
 
-  async function doFetch(allowJsonFormat: boolean): Promise<{ text: string }> {
+  async function doFetch(allowJsonFormat: boolean): Promise<{ text: string; finishReason?: string; truncated?: boolean }> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      const zaiBody: Record<string, any> = {
+        model: effectiveModel,
+        messages,
+        temperature: 0.6,
+        max_tokens: effectiveMaxTokens,
+        ...(allowJsonFormat ? { response_format: { type: 'json_object' } } : {}),
+      };
+
+      if (!options?.reasoningMode && (depthInfo.depth === 'quick_answer' || depthInfo.depth === 'summary')) {
+        zaiBody.thinking = { type: 'disabled' };
+      }
+
       const resp = await fetch(ZAI_CHAT_COMPLETIONS_URL, {
         method: 'POST',
         headers: {
@@ -711,13 +832,7 @@ async function callZaiCompletion(
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         },
-        body: JSON.stringify({
-          model: effectiveModel,
-          messages,
-          temperature: 0.6,
-          max_tokens: effectiveMaxTokens,
-          ...(allowJsonFormat ? { response_format: { type: 'json_object' } } : {})
-        }),
+        body: JSON.stringify(zaiBody),
         signal: controller.signal
       });
       clearTimeout(timeout);
@@ -739,6 +854,9 @@ async function callZaiCompletion(
       const data = await resp.json();
       const choice = data?.choices?.[0];
       const text = extractTextFromChoiceMessage(choice, data);
+      const finishReason = choice?.finish_reason || data?.finish_reason || 'stop';
+      const truncated = finishReason === 'length';
+
       if (!text) {
         const err: any = new Error(`zai HTTP 200 returned empty content for ${effectiveModel}`);
         err.status = 502;
@@ -746,7 +864,7 @@ async function callZaiCompletion(
         err.modelUsed = effectiveModel;
         throw err;
       }
-      return { text: text.trim() };
+      return { text: text.trim(), finishReason, truncated };
     } catch (fetchErr: any) {
       clearTimeout(timeout);
       if (fetchErr?.providerUsed === 'zai') throw fetchErr;
@@ -766,6 +884,9 @@ async function callZaiCompletion(
   const out = await doFetch(Boolean(options?.jsonMode));
   return {
     text: out.text,
+    finishReason: out.finishReason,
+    truncated: out.truncated,
+    depthMode: depthInfo.depth,
     providerUsed: 'zai',
     modelUsed: effectiveModel,
     tier: 'general',
@@ -790,6 +911,8 @@ export async function callRoutedCompletion(
     endpointName?: string;
     mode?: string;
     contextLength?: number;
+    intentType?: string;
+    reasoningMode?: boolean;
     images?: { name?: string; mimeType: string; data: string }[];
   }
 ): Promise<{
@@ -799,6 +922,9 @@ export async function callRoutedCompletion(
   tier: TaskComplexityTier;
   totalMs: number;
   retries?: number;
+  finishReason?: string;
+  truncated?: boolean;
+  depthMode?: string;
 }> {
   const { provider, model: classifiedModel, tier } = classifyTaskComplexity(prompt, options);
   const hasImages = Boolean(options?.images && options.images.length > 0);
@@ -807,7 +933,10 @@ export async function callRoutedCompletion(
     return await callMinistralCompletion(prompt, systemPrompt, history, {
       jsonMode: options?.jsonMode,
       maxTokens: options?.maxTokens,
-      requestId: options?.requestId
+      requestId: options?.requestId,
+      mode: options?.mode,
+      intentType: options?.intentType,
+      reasoningMode: options?.reasoningMode
     });
   }
 
@@ -817,7 +946,10 @@ export async function callRoutedCompletion(
       return await callZaiCompletion(prompt, systemPrompt, history, {
         jsonMode: options?.jsonMode,
         maxTokens: options?.maxTokens,
-        requestId: options?.requestId
+        requestId: options?.requestId,
+        mode: options?.mode,
+        intentType: options?.intentType,
+        reasoningMode: options?.reasoningMode
       });
     } catch (zaiErr: any) {
       if (getMinistralApiKey()) {
@@ -825,7 +957,10 @@ export async function callRoutedCompletion(
           return await callMinistralCompletion(prompt, systemPrompt, history, {
             jsonMode: options?.jsonMode,
             maxTokens: options?.maxTokens,
-            requestId: options?.requestId
+            requestId: options?.requestId,
+            mode: options?.mode,
+            intentType: options?.intentType,
+            reasoningMode: options?.reasoningMode
           });
         } catch (_) {}
       }
@@ -835,7 +970,10 @@ export async function callRoutedCompletion(
           modelOverride: options?.modelOverride,
           jsonMode: options?.jsonMode,
           maxTokens: options?.maxTokens,
-          requestId: options?.requestId
+          requestId: options?.requestId,
+          mode: options?.mode,
+          intentType: options?.intentType,
+          reasoningMode: options?.reasoningMode
         });
       }
       throw zaiErr;
@@ -848,7 +986,10 @@ export async function callRoutedCompletion(
       return await callMinistralCompletion(prompt, systemPrompt, history, {
         jsonMode: options?.jsonMode,
         maxTokens: options?.maxTokens,
-        requestId: options?.requestId
+        requestId: options?.requestId,
+        mode: options?.mode,
+        intentType: options?.intentType,
+        reasoningMode: options?.reasoningMode
       });
     } catch (minErr: any) {
       if (getGroqApiKey()) {
@@ -858,7 +999,10 @@ export async function callRoutedCompletion(
             modelOverride: options?.modelOverride,
             jsonMode: options?.jsonMode,
             maxTokens: options?.maxTokens,
-            requestId: options?.requestId
+            requestId: options?.requestId,
+            mode: options?.mode,
+            intentType: options?.intentType,
+            reasoningMode: options?.reasoningMode
           });
         } catch (_) {}
       }
@@ -866,7 +1010,10 @@ export async function callRoutedCompletion(
         return await callZaiCompletion(prompt, systemPrompt, history, {
           jsonMode: options?.jsonMode,
           maxTokens: options?.maxTokens,
-          requestId: options?.requestId
+          requestId: options?.requestId,
+          mode: options?.mode,
+          intentType: options?.intentType,
+          reasoningMode: options?.reasoningMode
         });
       }
       throw minErr;
@@ -880,7 +1027,10 @@ export async function callRoutedCompletion(
       modelOverride: options?.modelOverride,
       jsonMode: options?.jsonMode,
       maxTokens: options?.maxTokens,
-      requestId: options?.requestId
+      requestId: options?.requestId,
+      mode: options?.mode,
+      intentType: options?.intentType,
+      reasoningMode: options?.reasoningMode
     });
   } catch (groqErr: any) {
     if (getMinistralApiKey()) {
@@ -888,7 +1038,10 @@ export async function callRoutedCompletion(
         return await callMinistralCompletion(prompt, systemPrompt, history, {
           jsonMode: options?.jsonMode,
           maxTokens: options?.maxTokens,
-          requestId: options?.requestId
+          requestId: options?.requestId,
+          mode: options?.mode,
+          intentType: options?.intentType,
+          reasoningMode: options?.reasoningMode
         });
       } catch (_) {}
     }
@@ -896,7 +1049,10 @@ export async function callRoutedCompletion(
       return await callZaiCompletion(prompt, systemPrompt, history, {
         jsonMode: options?.jsonMode,
         maxTokens: options?.maxTokens,
-        requestId: options?.requestId
+        requestId: options?.requestId,
+        mode: options?.mode,
+        intentType: options?.intentType,
+        reasoningMode: options?.reasoningMode
       });
     }
     throw groqErr;
@@ -917,6 +1073,8 @@ async function streamRoutedCompletion(
     requestId?: string;
     maxTokens?: number;
     mode?: string;
+    intentType?: string;
+    reasoningMode?: boolean;
     contextLength?: number;
     images?: { name?: string; mimeType: string; data: string }[];
     onUsageCommit?: () => Promise<any>;
@@ -1046,10 +1204,16 @@ async function streamRoutedCompletion(
   }
 
   const start = Date.now();
-  const messages = buildChatMessages(systemPrompt, history, prompt, options.images);
-  const effectiveMaxTokens = options.maxTokens
-    ? Math.max(options.maxTokens, 300)
-    : (tier === 'fast' || tier === 'short' ? 1200 : 2048);
+  const depthInfo = classifyByteResponseDepth({
+    prompt,
+    mode: options.mode,
+    taskType: options.taskType,
+    intentType: options.intentType,
+    reasoningMode: options.reasoningMode,
+    history
+  });
+  const systemPromptWithDirectives = buildAdaptiveDepthSystemDirectives(systemPrompt, depthInfo);
+  const messages = buildChatMessages(systemPromptWithDirectives, history, prompt, options.images);
 
   let lastStatus = 500;
   let lastErrorText = `${provider} stream request failed`;
@@ -1058,12 +1222,27 @@ async function streamRoutedCompletion(
 
   for (const target of targets) {
     activeProvider = target.provider;
+    const effectiveMaxTokens = options.maxTokens
+      ? Math.max(options.maxTokens, 300)
+      : resolveProviderOutputTokenBudget(target.provider, depthInfo.targetOutputBudget);
+
     for (let i = 0; i < target.candidateModels.length; i++) {
       activeModel = target.candidateModels[i];
 
       const streamController = new AbortController();
       const streamTimeout = setTimeout(() => streamController.abort(), 30000);
       try {
+        const reqBody: any = {
+          model: activeModel,
+          messages,
+          temperature: 0.6,
+          max_tokens: effectiveMaxTokens,
+          stream: true
+        };
+        if (target.provider === 'zai' && (depthInfo.depth === 'quick_answer' || depthInfo.depth === 'summary') && !options.reasoningMode) {
+          reqBody.thinking = { type: 'disabled' };
+        }
+
         const resp = await fetch(target.targetUrl, {
           method: 'POST',
           headers: {
@@ -1071,13 +1250,7 @@ async function streamRoutedCompletion(
             'Content-Type': 'application/json',
             'Accept': 'text/event-stream, application/json'
           },
-          body: JSON.stringify({
-            model: activeModel,
-            messages,
-            temperature: 0.6,
-            max_tokens: effectiveMaxTokens,
-            stream: true
-          }),
+          body: JSON.stringify(reqBody),
           signal: streamController.signal
         });
         clearTimeout(streamTimeout);
@@ -1101,7 +1274,8 @@ async function streamRoutedCompletion(
             requestId,
             model: activeModel,
             provider: activeProvider,
-            tier
+            tier,
+            depthMode: depthInfo.depth
           })}\n\n`
         );
 
@@ -1122,10 +1296,16 @@ async function streamRoutedCompletion(
                 console.warn('[Vercel AI Quota] Commit warning:', uErr);
               }
             }
+            const finishReason = choice?.finish_reason || 'stop';
+            const truncated = finishReason === 'length';
             res.write(
               `data: ${JSON.stringify({
                 type: 'done',
                 text: finishedReply,
+                reply: finishedReply,
+                finishReason,
+                truncated,
+                depthMode: depthInfo.depth,
                 requestId,
                 providerUsed: activeProvider,
                 modelUsed: activeModel,
@@ -1134,6 +1314,9 @@ async function streamRoutedCompletion(
                   providerUsed: activeProvider,
                   modelUsed: activeModel,
                   complexityTier: tier,
+                  depthMode: depthInfo.depth,
+                  finishReason,
+                  truncated,
                   firstTokenLatencyMs: latency,
                   totalGenerationTimeMs: Date.now() - start,
                   streamed: true
@@ -1192,10 +1375,16 @@ async function streamRoutedCompletion(
               console.warn('[Vercel AI Quota] Stream commit warning:', uErr);
             }
           }
+          const finishReason = lastChoice?.finish_reason || 'stop';
+          const truncated = finishReason === 'length';
           res.write(
             `data: ${JSON.stringify({
               type: 'done',
               text: finishedReply,
+              reply: finishedReply,
+              finishReason,
+              truncated,
+              depthMode: depthInfo.depth,
               requestId,
               providerUsed: activeProvider,
               modelUsed: activeModel,
@@ -1204,6 +1393,9 @@ async function streamRoutedCompletion(
                 providerUsed: activeProvider,
                 modelUsed: activeModel,
                 complexityTier: tier,
+                depthMode: depthInfo.depth,
+                finishReason,
+                truncated,
                 firstTokenLatencyMs: firstTokenLatencyMs ?? (Date.now() - start),
                 totalGenerationTimeMs: Date.now() - start,
                 streamed: true
@@ -2235,14 +2427,83 @@ Schema:
       return sendJson(res, 400, { error: 'Prompt is required', requestId });
     }
 
+    const cfg = getServerlessSupabaseConfig();
+    const authHeader = String(req.headers?.authorization || req.headers?.['x-supabase-auth'] || '').trim();
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    let verifiedUser: { userId: string; role: string; email: string } | null = null;
+    if (token) {
+      const uRes = await fetch(`${cfg.url}/auth/v1/user`, { headers: { apikey: cfg.key, Authorization: `Bearer ${token}` } }).catch(() => null);
+      if (!uRes || !uRes.ok) {
+        return sendJson(res, 401, {
+          success: false,
+          status: 401,
+          error: 'Invalid or expired authentication token.',
+          requestId
+        });
+      }
+      const uJson: any = await uRes.json().catch(() => null);
+      if (!uJson?.id) {
+        return sendJson(res, 401, {
+          success: false,
+          status: 401,
+          error: 'Invalid authentication session.',
+          requestId
+        });
+      }
+      const email = String(uJson.email || '').toLowerCase().trim();
+      const superAdminEmails = [
+        'naitik.kashyap0015@gmail.com',
+        'naitik.kashyap5205@gmail.com',
+        'superadmin@studentos.edu',
+        'superadmin@veylentra.edu',
+      ];
+      const role = superAdminEmails.includes(email) ? 'super_admin' : String(uJson.user_metadata?.role || 'student').toLowerCase().trim();
+      verifiedUser = { userId: uJson.id, role, email };
+    }
+
     const headerUid = String(req.headers?.['x-veylentra-uid'] || '').trim();
     const headerRole = String(req.headers?.['x-veylentra-role'] || '').trim();
     const rawUserId = String(userId || '').trim();
-    const activeUserId =
-      rawUserId && rawUserId !== 'anonymous' && rawUserId !== 'guest' && rawUserId !== 'user_guest'
-        ? rawUserId
-        : headerUid || rawUserId || 'user_guest';
-    const activeRole = String(userRole || headerRole || 'student').toLowerCase().trim();
+    const isNonGuestUserId = rawUserId && rawUserId !== 'anonymous' && rawUserId !== 'guest' && rawUserId !== 'user_guest';
+
+    if (verifiedUser && isNonGuestUserId && verifiedUser.userId !== rawUserId) {
+      return sendJson(res, 403, {
+        success: false,
+        status: 403,
+        error: 'Forbidden: body userId does not match authenticated token identity.',
+        requestId
+      });
+    }
+
+    if (headerUid && isNonGuestUserId && headerUid !== rawUserId) {
+      return sendJson(res, 403, {
+        success: false,
+        status: 403,
+        error: 'Forbidden: body userId does not match x-veylentra-uid header.',
+        requestId
+      });
+    }
+
+    const activeUserId = verifiedUser?.userId || (isNonGuestUserId ? rawUserId : headerUid || 'user_guest');
+    const activeRole = verifiedUser?.role || String(userRole || headerRole || 'student').toLowerCase().trim();
+
+    // Enforce conversation ownership
+    const targetConversationId = String(body.conversationId || body.threadId || '').trim();
+    if (targetConversationId) {
+      const ownership = await verifyAndBindConversationOwnership({
+        cfg,
+        conversationId: targetConversationId,
+        actorUid: activeUserId
+      });
+      if (!ownership.allowed) {
+        return sendJson(res, 403, {
+          success: false,
+          status: 403,
+          error: ownership.reason || 'Forbidden: You do not own this conversation.',
+          requestId
+        });
+      }
+    }
 
     let usageBefore;
     try {
@@ -2302,8 +2563,9 @@ ${combinedContext}
 </studentos_authorized_context>`;
     }
 
-    const historyLengthChars = Array.isArray(history)
-      ? history.reduce((sum: number, item: any) => sum + (typeof item?.content === 'string' ? item.content.length : 0), 0)
+    const filteredHist = filterHistoryByOwner(history || [], activeUserId);
+    const historyLengthChars = Array.isArray(filteredHist)
+      ? filteredHist.reduce((sum: number, item: any) => sum + (typeof item?.content === 'string' ? item.content.length : 0), 0)
       : 0;
     const effectiveContextLength = Math.max(
       Number(bodyContextLength) || 0,
@@ -2320,13 +2582,15 @@ ${combinedContext}
       await streamRoutedCompletion(
         prompt,
         systemPrompt,
-        history,
+        filteredHist,
         {
           modelOverride,
           taskType,
           requestId,
           maxTokens,
           mode,
+          intentType: body.intentType,
+          reasoningMode: Boolean(body.reasoningMode),
           contextLength: effectiveContextLength,
           images,
           onUsageCommit: async () => {
@@ -2339,12 +2603,12 @@ ${combinedContext}
       return;
     }
 
-    // Non-streaming completion across Groq and Ministral
+    // Non-streaming completion across Groq, Ministral, and Z.ai
     try {
       const result = await callRoutedCompletion(
         prompt,
         systemPrompt,
-        history,
+        filteredHist,
         {
           jsonMode: isJsonRequested,
           modelOverride,
@@ -2353,6 +2617,8 @@ ${combinedContext}
           requestId,
           maxTokens,
           mode,
+          intentType: body.intentType,
+          reasoningMode: Boolean(body.reasoningMode),
           contextLength: effectiveContextLength,
           images
         }
@@ -2373,12 +2639,19 @@ ${combinedContext}
       return sendJson(res, 200, {
         success: true,
         text: result.text.trim(),
+        reply: result.text.trim(),
+        finishReason: result.finishReason,
+        truncated: result.truncated,
+        depthMode: result.depthMode,
         requestId,
         telemetry: {
           requestId,
           providerUsed: result.providerUsed,
           modelUsed: result.modelUsed,
           complexityTier: result.tier,
+          depthMode: result.depthMode,
+          finishReason: result.finishReason,
+          truncated: result.truncated,
           totalGenerationTimeMs: result.totalMs,
           retries: result.retries || 0,
           streamed: false
@@ -2755,12 +3028,44 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
     const genericWords = /^(delete|cancel|remove|create|send|publish|post|assign|schedule|notify|item|something|it|homework|assignment|broadcast|notice|notify|meeting|event|competition)$/i;
     const genericPhrase = /^(delete|cancel|remove|create|send|publish|post|make|assign|schedule|notify|add|host|book|launch)\s+(a\s+|an\s+|the\s+|new\s+|school\s+)?(competition|event|meeting|meet|homework|assignment|broadcast|notice|announcement|notification|reminder|alert|calendar event|item|users?|class|all)$/i;
     for (const st of plannedSteps) {
-      if (['delete_item', 'create_broadcast', 'create_notice', 'notify_users', 'create_homework', 'create_competition', 'create_event', 'create_meeting'].includes(st.action)) {
-        const stripped = cmdTrimmed.replace(/^(delete|cancel|remove|create|send|publish|post|assign|schedule|notify)\s+(a\s+|an\s+|the\s+)?(competition|event|meeting|homework|assignment|broadcast|notice|item)?\s*/i, '').trim();
-        const candidate = (st.title || st.content || st.message || '').trim();
-        if ((!candidate || genericWords.test(candidate) || genericPhrase.test(candidate)) && (stripped.length < 3 || genericWords.test(stripped) || genericPhrase.test(cmdTrimmed))) {
-          const clarificationQuestion = 'Please provide the exact title, target item, or audience details so Orion can prepare this action accurately.';
-          return sendJson(res, 200, { success: true, status: 'needs_clarification', clarificationQuestion, missingFields: ['title / target details'], plan: plannedSteps, finalResponse: clarificationQuestion, requestId });
+      if (['delete_item', 'create_broadcast', 'create_notice', 'notify_users', 'create_homework', 'create_assignment', 'create_competition', 'create_event', 'create_meeting'].includes(st.action)) {
+        if (st.action === 'create_homework' || st.action === 'create_assignment') {
+          const stripped = cmdTrimmed
+            .replace(/^(create|assign|add|publish)\s+(a\s+|an\s+|the\s+)?(new\s+)?(homework|assignment)\s*(for|to|on|about)?\s*/i, '')
+            .replace(/\b(for\s+)?(class|grade)\s+\d+[a-z]*\b/gi, '')
+            .trim();
+          const candidate = (st.title || st.content || st.message || '').trim();
+          const hasTopic =
+            (candidate && !genericWords.test(candidate) && !genericPhrase.test(candidate)) ||
+            (stripped.length >= 3 && !genericWords.test(stripped) && !genericPhrase.test(cmdTrimmed));
+          const { grade, section, hasExplicitGrade } = parseClassAndSection(st.targetClass || cmdTrimmed);
+          if (!hasTopic || !hasExplicitGrade) {
+            const missing: string[] = [];
+            if (!hasTopic) missing.push('assignment topic/title');
+            if (!hasExplicitGrade) missing.push('target class / cohort');
+            const clarificationQuestion = !hasTopic
+              ? 'Please specify the homework title or topic and target class (e.g., "Assign Algebra Worksheet to Class 10 Astra due Friday").'
+              : 'Which class or cohort should this homework be assigned to (e.g., "Class 10 Astra" or "Grade 9 Solara")?';
+            return sendJson(res, 200, {
+              success: true,
+              status: 'needs_clarification',
+              clarificationQuestion,
+              missingFields: missing,
+              plan: plannedSteps,
+              finalResponse: clarificationQuestion,
+              requestId
+            });
+          }
+          if (grade) {
+            st.targetClass = `${grade} ${section}`.trim();
+          }
+        } else {
+          const stripped = cmdTrimmed.replace(/^(delete|cancel|remove|create|send|publish|post|assign|schedule|notify)\s+(a\s+|an\s+|the\s+)?(competition|event|meeting|homework|assignment|broadcast|notice|item)?\s*/i, '').trim();
+          const candidate = (st.title || st.content || st.message || '').trim();
+          if ((!candidate || genericWords.test(candidate) || genericPhrase.test(candidate)) && (stripped.length < 3 || genericWords.test(stripped) || genericPhrase.test(cmdTrimmed))) {
+            const clarificationQuestion = 'Please provide the exact title, target item, or audience details so Orion can prepare this action accurately.';
+            return sendJson(res, 200, { success: true, status: 'needs_clarification', clarificationQuestion, missingFields: ['title / target details'], plan: plannedSteps, finalResponse: clarificationQuestion, requestId });
+          }
         }
       }
     }
@@ -2842,6 +3147,185 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
           stepLog.recordId = id;
           refreshTables.push('materials', 'notifications');
           summaryParts.push(`Published and verified official notice **"${title}"** (ID: \`${id}\`).`);
+        } else if (st.action === 'create_homework' || st.action === 'create_assignment') {
+          const title = (st.title || st.targetValue || 'Assignment').trim().slice(0, 140);
+          const { grade, section } = parseClassAndSection(st.targetClass || cmdTrimmed);
+          const hwId = `hw_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          const effectiveDueDate = st.date || new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0];
+          const effectiveContent = st.content || st.message || cmdTrimmed;
+          const effectiveSubject = st.subject || 'General Studies';
+          const effectiveGivenBy = actor.name || 'Faculty';
+
+          const fullHwPayload: Record<string, any> = {
+            id: hwId,
+            title,
+            content: effectiveContent,
+            subject: effectiveSubject,
+            class_grade: grade,
+            class_section: section,
+            due_date: effectiveDueDate,
+            given_by: effectiveGivenBy,
+            teacher_id: actor.userId,
+            status: 'published',
+            completed_list: [],
+            created_at: new Date().toISOString(),
+          };
+
+          let ins = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/homework`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(fullHwPayload)
+          });
+
+          if (!ins.ok && (ins.status === 400 || /column|schema cache|PGRST204/i.test(ins.statusText || ''))) {
+            const minimalHwPayload = {
+              id: hwId,
+              title,
+              content: effectiveContent,
+              subject: effectiveSubject,
+              class_grade: grade,
+              class_section: section,
+              due_date: effectiveDueDate,
+              given_by: effectiveGivenBy,
+              completed_list: [],
+              created_at: fullHwPayload.created_at,
+            };
+            ins = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/homework`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(minimalHwPayload)
+            });
+          }
+
+          if (!ins.ok) throw new Error(`Failed to create homework in database (${ins.status})`);
+
+          // Read-back verification query
+          const chk = await fetchServerlessSupabaseWithAnonRetry(
+            `${cfg.url}/rest/v1/homework?id=eq.${encodeURIComponent(hwId)}&select=id,title,class_grade,class_section`,
+            { headers }
+          );
+          const chkRows: any = chk.ok ? await chk.json() : [];
+          const persistedHw = Array.isArray(chkRows) ? chkRows.find((r: any) => String(r.id) === String(hwId)) : null;
+
+          if (!chk.ok || !persistedHw) {
+            throw new Error(`Read-back verification failed: homework ${hwId} not found in database.`);
+          }
+
+          stepLog.status = 'verified';
+          stepLog.recordId = hwId;
+          stepLog.verificationNote = `Verified persisted homework ${hwId} for ${persistedHw.class_grade || grade} (${persistedHw.class_section || section}).`;
+          refreshTables.push('homework');
+
+          // Insert notification
+          const notifId = `notif_hw_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          const notifTitle = `📝 New Assignment: ${title}`;
+          const notifMsg = `${effectiveSubject} · Due ${effectiveDueDate} (${effectiveGivenBy})`;
+          await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/notifications`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              id: notifId,
+              title: notifTitle,
+              message: notifMsg,
+              type: 'homework',
+              target_role: 'student',
+              target_class: grade,
+              target_section: section === 'All Sections' ? 'all' : section,
+              link_tab: 'homework',
+              is_read: false,
+              created_at: new Date().toISOString()
+            })
+          }).then(() => refreshTables.push('notifications')).catch(() => {});
+
+          summaryParts.push(`Assigned and verified homework **"${title}"** for **${grade} ${section}** (Due: ${effectiveDueDate}, ID: \`${hwId}\`).`);
+        } else if (st.action === 'notify_users' || st.action === 'notify_class' || st.action === 'notify_all' || st.action === 'create_notification') {
+          const title = (st.title || 'School Notification').trim().slice(0, 140);
+          const bodyText = (st.message || st.content || title).trim();
+          const notifId = `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          const { grade, section } = parseClassAndSection(st.targetClass || st.audience || cmdTrimmed);
+          const ins = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/notifications`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              id: notifId,
+              title,
+              message: bodyText,
+              target_role: st.audience || 'all',
+              target_class: st.targetClass || grade,
+              target_section: section,
+              created_by: actor.userId,
+              created_at: new Date().toISOString()
+            })
+          });
+          if (!ins.ok) throw new Error(`Notification insert failed (${ins.status})`);
+          const chk = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/notifications?id=eq.${encodeURIComponent(notifId)}&select=id`, { headers });
+          const chkRows: any = chk.ok ? await chk.json() : [];
+          if (!Array.isArray(chkRows) || !chkRows.some((r: any) => r.id === notifId)) throw new Error('Read-back verification failed for notification.');
+          stepLog.status = 'verified';
+          stepLog.recordId = notifId;
+          refreshTables.push('notifications');
+          summaryParts.push(`Dispatched and verified notification **"${title}"** for ${st.targetClass || st.audience || 'authorized recipients'}.`);
+        } else if (st.action === 'create_competition') {
+          const compId = `comp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          const title = (st.title || st.targetValue || 'Campus Competition').trim().slice(0, 140);
+          const ins = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/competitions`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              id: compId,
+              title,
+              description: st.content || st.message || title,
+              created_by: actor.userId,
+              created_at: new Date().toISOString()
+            })
+          });
+          if (!ins.ok) throw new Error(`Competition insert failed (${ins.status})`);
+          const chk = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/competitions?id=eq.${encodeURIComponent(compId)}&select=id`, { headers });
+          const chkRows: any = chk.ok ? await chk.json() : [];
+          if (!Array.isArray(chkRows) || !chkRows.some((r: any) => r.id === compId)) throw new Error('Read-back verification failed for competition.');
+          stepLog.status = 'verified';
+          stepLog.recordId = compId;
+          refreshTables.push('competitions');
+          summaryParts.push(`Created and verified competition **"${title}"** (ID: \`${compId}\`).`);
+        } else if (st.action === 'create_event' || st.action === 'create_meeting') {
+          const evId = `ev_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          const title = (st.title || st.targetValue || 'Campus Event').trim().slice(0, 140);
+          const ins = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/calendar_events`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              id: evId,
+              title,
+              description: st.content || st.message || title,
+              date: st.date || new Date().toISOString().split('T')[0],
+              created_by: actor.userId,
+              created_at: new Date().toISOString()
+            })
+          });
+          if (!ins.ok) throw new Error(`Event insert failed (${ins.status})`);
+          const chk = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/calendar_events?id=eq.${encodeURIComponent(evId)}&select=id`, { headers });
+          const chkRows: any = chk.ok ? await chk.json() : [];
+          if (!Array.isArray(chkRows) || !chkRows.some((r: any) => r.id === evId)) throw new Error('Read-back verification failed for event.');
+          stepLog.status = 'verified';
+          stepLog.recordId = evId;
+          refreshTables.push('calendar_events');
+          summaryParts.push(`Scheduled and verified event **"${title}"** (ID: \`${evId}\`).`);
+        } else if (st.action === 'delete_item') {
+          const targetId = st.targetId || st.targetValue || '';
+          if (!targetId) throw new Error('Target record ID is required for deletion.');
+          const targetTable = st.targetTable || (targetId.startsWith('hw_') ? 'homework' : targetId.startsWith('bc_') ? 'materials' : targetId.startsWith('notif_') ? 'notifications' : 'materials');
+          const del = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/${targetTable}?id=eq.${encodeURIComponent(targetId)}`, {
+            method: 'DELETE',
+            headers
+          });
+          if (!del.ok) throw new Error(`Delete failed on ${targetTable} (${del.status})`);
+          const chk = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/${targetTable}?id=eq.${encodeURIComponent(targetId)}&select=id`, { headers });
+          const chkRows: any = chk.ok ? await chk.json() : [];
+          if (Array.isArray(chkRows) && chkRows.length > 0) throw new Error('Delete verification failed: record still exists.');
+          stepLog.status = 'verified';
+          stepLog.recordId = targetId;
+          refreshTables.push(targetTable);
+          summaryParts.push(`Deleted and verified removal of record \`${targetId}\` from ${targetTable}.`);
         } else {
           stepLog.verificationNote = 'Prepared authorized workspace action';
           summaryParts.push(`Prepared **${st.action.replace(/_/g, ' ')}** (${actor.role}).`);

@@ -8,6 +8,7 @@ import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import { generateAICompletion, generateAICompletionWithTelemetry, streamAICompletion, classifyTaskComplexity, getGroqApiKey, getMinistralApiKey, getZaiApiKey, ZAI_MODEL_ID } from './server/aiClient';
+import { filterHistoryByOwner, verifyAndBindConversationOwnership } from './server/aiConversationOwnership';
 import { resolveVerifiedOrionActor, executeOrionServerRequest } from './server/orionService';
 import { generateVoiceTTS, transcribeVoiceSTT } from './server/voiceService';
 import { synthesizeEdgeSpeech, VERIFIED_EDGE_VOICES, cleanTextForSpeech } from './server/edgeTtsService';
@@ -156,23 +157,14 @@ export async function getVerifiedUserFromRequest(req: express.Request): Promise<
 
   try {
     const { url, key } = getSupabaseServerConfig();
-    const supabase = createClient(url, key || '', { auth: { persistSession: false } });
-    const { data: { user }, error } = await supabase.auth.getUser(token);
-    if (!user || error) {
-      // Fallback to x-veylentra headers if JWT validation fails but headers are present
-      if (uidHeader || emailHeader) {
-        let role = roleHeader;
-        const email = emailHeader || `${uidHeader}@studentos.local`;
-        if (WHITELISTED_SUPER_ADMIN_EMAILS.includes(email) || role === 'super_admin' || uidHeader.includes('super')) {
-          role = 'super_admin';
-        }
-        return {
-          id: uidHeader || emailHeader,
-          email,
-          role,
-          user_metadata: { name: nameHeader, role },
-        };
-      }
+    const uRes = await fetch(`${url}/auth/v1/user`, {
+      headers: { apikey: key || '', Authorization: `Bearer ${token}` }
+    }).catch(() => null);
+    if (!uRes || !uRes.ok) {
+      return null;
+    }
+    const user = await uRes.json().catch(() => null);
+    if (!user || !user.id) {
       return null;
     }
 
@@ -184,13 +176,15 @@ export async function getVerifiedUserFromRequest(req: express.Request): Promise<
       role = 'super_admin';
     } else {
       try {
-        const { data: profile } = await supabase
-          .from('user_profiles')
-          .select('role')
-          .or(`id.eq.${user.id},uid.eq.${user.id},email.eq.${user.email || ''}`)
-          .maybeSingle();
-        if (profile && profile.role) {
-          role = String(profile.role).toLowerCase();
+        const pRes = await fetch(
+          `${url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(user.id)},uid.eq.${encodeURIComponent(user.id)},email.eq.${encodeURIComponent(user.email || '')})&select=role`,
+          { headers: { apikey: key || '', Authorization: `Bearer ${key || ''}` } }
+        ).catch(() => null);
+        if (pRes && pRes.ok) {
+          const rows = await pRes.json().catch(() => []);
+          if (Array.isArray(rows) && rows[0]?.role) {
+            role = String(rows[0].role).toLowerCase();
+          }
         }
       } catch (_) {}
     }
@@ -202,19 +196,6 @@ export async function getVerifiedUserFromRequest(req: express.Request): Promise<
       user_metadata: user.user_metadata
     };
   } catch (err) {
-    if (uidHeader || emailHeader) {
-      let role = roleHeader;
-      const email = emailHeader || `${uidHeader}@studentos.local`;
-      if (WHITELISTED_SUPER_ADMIN_EMAILS.includes(email) || role === 'super_admin') {
-        role = 'super_admin';
-      }
-      return {
-        id: uidHeader || emailHeader,
-        email,
-        role,
-        user_metadata: { name: nameHeader, role },
-      };
-    }
     return null;
   }
 }
@@ -3185,10 +3166,68 @@ app.post(['/api/ai/chat', '/api/ai/chat/stream'], async (req, res) => {
     return res.status(400).json({ error: 'Prompt is required' });
   }
 
+  // Reject invalid/expired Bearer JWT immediately with 401
+  const authHeader = String(req.headers.authorization || req.headers['x-supabase-auth'] || '').trim();
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+  let verifiedUser: VerifiedUser | null = null;
+  if (token) {
+    verifiedUser = await getVerifiedUserFromRequest(req);
+    if (!verifiedUser) {
+      return res.status(401).json({
+        success: false,
+        status: 401,
+        error: 'Invalid or expired authentication token.',
+        requestId,
+      });
+    }
+  }
+
+  // Reject identity spoofing: body userId !== verified token id OR header x-veylentra-uid !== body userId
+  const headerUid = String(req.headers['x-veylentra-uid'] || '').trim();
+  const rawUserId = String(userId || '').trim();
+  const isNonGuestUserId = rawUserId && rawUserId !== 'guest' && rawUserId !== 'anonymous' && rawUserId !== 'user_guest';
+
+  if (verifiedUser && isNonGuestUserId && verifiedUser.id !== rawUserId) {
+    return res.status(403).json({
+      success: false,
+      status: 403,
+      error: 'Forbidden: body userId does not match authenticated token identity.',
+      requestId,
+    });
+  }
+
+  if (headerUid && isNonGuestUserId && headerUid !== rawUserId) {
+    return res.status(403).json({
+      success: false,
+      status: 403,
+      error: 'Forbidden: body userId does not match x-veylentra-uid header.',
+      requestId,
+    });
+  }
+
   // Enforce server-side rolling 24-hour limit including Supabase-backed Winter & Voucher bonus credits
   const resolvedQuotaActor = await resolveAiQuotaActor(req, userId, userRole);
-  const activeUserId = resolvedQuotaActor.userId || 'user_guest';
-  const activeRole = resolvedQuotaActor.role || 'student';
+  const activeUserId = verifiedUser?.id || (isNonGuestUserId ? rawUserId : resolvedQuotaActor.userId || 'user_guest');
+  const activeRole = verifiedUser?.role || resolvedQuotaActor.role || 'student';
+
+  // Enforce conversation ownership (in-memory registry + cold-start Supabase ai_buddy_chats check)
+  const targetConversationId = String(req.body?.conversationId || req.body?.threadId || '').trim();
+  if (targetConversationId) {
+    const cfg = getSupabaseServerConfig();
+    const ownership = await verifyAndBindConversationOwnership({
+      cfg,
+      conversationId: targetConversationId,
+      actorUid: activeUserId,
+    });
+    if (!ownership.allowed) {
+      return res.status(403).json({
+        success: false,
+        status: 403,
+        error: ownership.reason || 'Forbidden: You do not own this conversation.',
+        requestId,
+      });
+    }
+  }
 
   let usage;
   try {
@@ -3310,7 +3349,8 @@ ${combinedContext}
     systemInstruction += `\n\nDATA INTEGRITY RULE: Do NOT fabricate StudentOS school records (such as fake homework deadlines, fake attendance numbers, or fake student lists). Distinguish clearly between AI-generated study content and school database records.`;
   }
 
-  const sanitizedHist = sanitizeHistory(history || []);
+  const filteredHist = filterHistoryByOwner(history || [], activeUserId);
+  const sanitizedHist = sanitizeHistory(filteredHist);
   const isJsonRequested =
     prompt.includes('raw JSON format') ||
     prompt.includes('MUST be raw JSON format') ||
@@ -3407,6 +3447,7 @@ Do NOT fabricate current news, circulars, or live statistics. After stating that
           persona,
           contextLength: combinedContext.length,
           reasoningMode: Boolean(reasoningMode),
+          intentType: req.body?.intentType,
           images
         },
         {
@@ -3460,6 +3501,10 @@ Do NOT fabricate current news, circulars, or live statistics. After stating that
                 `data: ${JSON.stringify({
                   type: 'done',
                   text: fullText,
+                  reply: fullText,
+                  finishReason: telemetry.finishReason,
+                  truncated: telemetry.truncated,
+                  depthMode: telemetry.depthMode,
                   requestId,
                   providerUsed: telemetry.providerUsed,
                   modelUsed: telemetry.modelUsed,
@@ -3531,6 +3576,7 @@ ${searchRes.formattedContext}`;
         persona,
         contextLength: combinedContext.length,
         reasoningMode: Boolean(reasoningMode),
+        intentType: req.body?.intentType,
         images
       });
       
@@ -3553,6 +3599,10 @@ ${searchRes.formattedContext}`;
       return res.json({ 
         success: true,
         text,
+        reply: text,
+        finishReason: telemetry.finishReason,
+        truncated: telemetry.truncated,
+        depthMode: telemetry.depthMode,
         requestId,
         providerUsed: telemetry.providerUsed,
         modelUsed: telemetry.modelUsed,
@@ -3596,8 +3646,9 @@ app.post('/api/ai/tutor/lesson', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Topic is required' });
   }
 
+  const trimmedNotes = String(notesContext || '').trim();
   const cacheKey = `${subject.toLowerCase()}:::${chapterNumber}:::${topic.toLowerCase()}:::${grade.toLowerCase()}`;
-  if (tutorLessonCache.has(cacheKey)) {
+  if (!trimmedNotes && tutorLessonCache.has(cacheKey)) {
     const cached = tutorLessonCache.get(cacheKey)!;
     // 24 hour cache validity
     if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
@@ -3709,8 +3760,10 @@ Return strict raw JSON format matching this schema:
       throw new Error('AI generated incomplete lesson schema');
     }
 
-    // Cache the valid lesson
-    tutorLessonCache.set(cacheKey, { lesson: parsed, timestamp: Date.now() });
+    // Cache the valid lesson only if notesContext is empty so personal notes never enter shared cache
+    if (!trimmedNotes) {
+      tutorLessonCache.set(cacheKey, { lesson: parsed, timestamp: Date.now() });
+    }
 
     return res.status(200).json({
       success: true,

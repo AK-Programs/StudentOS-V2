@@ -997,6 +997,28 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                     />
                   )}
 
+                  {(m.truncated || m.finishReason === 'length') && !isActivelyStreamingMsg && !msgIsError && (
+                    <div className="mt-3 p-3 rounded-xl bg-amber-950/30 border border-amber-500/35 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div className="flex items-start gap-2 text-xs text-amber-200">
+                        <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                        <span>Response reached the model output length limit and may be incomplete.</span>
+                      </div>
+                      {!aiLoading && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleAskAIModel(
+                              'Continue the previous explanation seamlessly from exactly where it stopped without repeating prior sections.'
+                            )
+                          }
+                          className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-100 text-xs font-semibold shrink-0 cursor-pointer transition-colors"
+                        >
+                          Continue explanation
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   {mathWidget && <InteractiveMathWidget widgetType={mathWidget} />}
 
                   {detectedTopic && !isActivelyStreamingMsg && !msgIsError && (

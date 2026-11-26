@@ -4,6 +4,7 @@ import { persistDeckToSupabase, persistCardsBatchToSupabase } from './flashcardS
 import { Flashcard, FlashcardDeck } from '../types';
 import {
   buildRoleAwareByteContext,
+  clearByteContextCache,
   doesPromptNeedRoleContext,
   BuildByteContextOptions
 } from './byteIntelligence';
@@ -54,6 +55,11 @@ if (typeof window !== 'undefined') {
   window.addEventListener('studentos-db-update', () => {
     userContextCache.clear();
   });
+}
+
+export function clearStudentOSContextCache(): void {
+  userContextCache.clear();
+  clearByteContextCache();
 }
 
 /**
@@ -128,6 +134,9 @@ export async function streamStudentOSAI(
     ragContext?: string;
     userId?: string;
     userRole?: string;
+    conversationId?: string;
+    threadId?: string;
+    reasoningMode?: boolean;
     activeTab?: string;
     intentType?: string;
     modelOverride?: string;
@@ -157,6 +166,8 @@ export async function streamStudentOSAI(
       telemetry: AIStreamTelemetry;
       webSearchUsed?: boolean;
       webSources?: WebSearchSourceInfo[];
+      finishReason?: string;
+      truncated?: boolean;
     }) => void;
   },
   abortSignal?: AbortSignal
@@ -166,16 +177,30 @@ export async function streamStudentOSAI(
   telemetry: AIStreamTelemetry;
   webSearchUsed?: boolean;
   webSources?: WebSearchSourceInfo[];
+  finishReason?: string;
+  truncated?: boolean;
 }> {
   const requestStart = Date.now();
   const dataRetrievalLatencyMs = payload.dataRetrievalLatencyMs || 0;
 
+  const reqHeaders: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Accept': 'text/event-stream, application/json'
+  };
+  if (payload.userId) {
+    reqHeaders['x-veylentra-uid'] = payload.userId;
+  }
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    if (token) {
+      reqHeaders['Authorization'] = `Bearer ${token}`;
+    }
+  } catch (_) {}
+
   const res = await fetch('/api/ai/chat', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'text/event-stream, application/json'
-    },
+    headers: reqHeaders,
     body: JSON.stringify({
       ...payload,
       stream: true
@@ -222,6 +247,8 @@ export async function streamStudentOSAI(
     let usageData: any = undefined;
     let webSearchUsed = false;
     let webSources: WebSearchSourceInfo[] = [];
+    let finishReason: string | undefined = undefined;
+    let truncated = false;
 
     while (true) {
       if (abortSignal?.aborted) {
@@ -286,6 +313,9 @@ export async function streamStudentOSAI(
           if (Array.isArray(eventObj.webSources) && eventObj.webSources.length > 0) {
             webSources = eventObj.webSources;
           }
+          if (typeof eventObj.finishReason === 'string') finishReason = eventObj.finishReason;
+          if (typeof eventObj.truncated === 'boolean') truncated = eventObj.truncated;
+          else if (finishReason === 'length') truncated = true;
         } else if (eventObj.type === 'error') {
           throw new Error(eventObj.details || eventObj.error || 'AI streaming failed.');
         }
@@ -305,7 +335,15 @@ export async function streamStudentOSAI(
       webSources
     };
 
-    const finalResult = { text: accumulated.trim(), usage: usageData, telemetry, webSearchUsed, webSources };
+    const finalResult = {
+      text: accumulated.trim(),
+      usage: usageData,
+      telemetry,
+      webSearchUsed,
+      webSources,
+      finishReason,
+      truncated
+    };
     callbacks.onDone?.(finalResult);
     return finalResult;
   }
@@ -322,7 +360,7 @@ export async function streamStudentOSAI(
     throw new Error(parsedRes.error);
   }
 
-  const text = parsedRes.text || '';
+  const text = parsedRes.text || parsedRes.reply || '';
   const elapsed = Date.now() - requestStart;
   if (text) {
     callbacks.onToken(text, text, elapsed);
@@ -341,12 +379,17 @@ export async function streamStudentOSAI(
     webSources: parsedRes.webSources || []
   };
 
+  const finishReason = typeof parsedRes.finishReason === 'string' ? parsedRes.finishReason : undefined;
+  const truncated = typeof parsedRes.truncated === 'boolean' ? parsedRes.truncated : finishReason === 'length';
+
   const finalResult = {
     text,
     usage: parsedRes.usage,
     telemetry,
     webSearchUsed: Boolean(parsedRes.webSearchUsed),
-    webSources: parsedRes.webSources || []
+    webSources: parsedRes.webSources || [],
+    finishReason,
+    truncated
   };
   callbacks.onDone?.(finalResult);
   return finalResult;
@@ -965,6 +1008,9 @@ export async function streamAIChatClient(
     ragContext?: string;
     userId?: string;
     userRole?: string;
+    conversationId?: string;
+    threadId?: string;
+    reasoningMode?: boolean;
     activeTab?: string;
     intentType?: string;
     modelOverride?: string;
@@ -993,6 +1039,8 @@ export async function streamAIChatClient(
       usage?: any;
       webSearchUsed?: boolean;
       webSources?: WebSearchSourceInfo[];
+      finishReason?: string;
+      truncated?: boolean;
     }) => void;
   }
 ): Promise<{
@@ -1002,6 +1050,8 @@ export async function streamAIChatClient(
   telemetry: AIStreamTelemetry;
   webSearchUsed?: boolean;
   webSources?: WebSearchSourceInfo[];
+  finishReason?: string;
+  truncated?: boolean;
 }> {
   const result = await streamStudentOSAI(
     payload,
@@ -1015,7 +1065,9 @@ export async function streamAIChatClient(
           text: res.text,
           usage: res.usage,
           webSearchUsed: res.webSearchUsed,
-          webSources: res.webSources
+          webSources: res.webSources,
+          finishReason: res.finishReason,
+          truncated: res.truncated
         })
     },
     options.signal
@@ -1027,7 +1079,9 @@ export async function streamAIChatClient(
     usage: result.usage,
     telemetry: result.telemetry,
     webSearchUsed: result.webSearchUsed,
-    webSources: result.webSources
+    webSources: result.webSources,
+    finishReason: result.finishReason,
+    truncated: result.truncated
   };
 }
 
