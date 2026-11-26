@@ -3362,30 +3362,170 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
 
   // 5.6 Role-Scoped Orion Workspace Assist (/api/ai/orion-assist)
   if (pathname === '/api/ai/orion-assist' || pathname === '/api/ai/orion-assist/') {
-    const body = await parseJsonBody(req);
-    const { intent = 'student_study', subject = 'Academic Studies', grade = 'Grade 10', topic = '', contextData = '' } = body;
-    const cfg = getServerlessSupabaseConfig();
-    const authHeader = String(req.headers?.authorization || req.headers?.['x-supabase-auth'] || '').trim();
-    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
-    let resolvedRole = 'student';
-    if (token) {
-      const uRes = await fetch(`${cfg.url}/auth/v1/user`, { headers: { apikey: cfg.key, Authorization: `Bearer ${token}` } }).catch(() => null);
-      if (!uRes || !uRes.ok) return sendJson(res, 401, { success: false, error: 'Invalid or expired authentication token.', requestId });
-      const user: any = await uRes.json().catch(() => null);
-      if (!user?.id) return sendJson(res, 401, { success: false, error: 'Invalid authentication session.', requestId });
-      resolvedRole = String(user.user_metadata?.role || 'student').toLowerCase().trim();
-    }
-    const facultyIntents = new Set(['draft_assignment', 'draft_lesson_plan', 'draft_quiz', 'draft_announcement', 'draft_feedback', 'summarize_class_insights', 'draft_assessment_outline', 'summarize_submission_progress', 'summarize_cohort_coordination']);
-    const allowedFaculty = new Set(['teacher', 'coordinator', 'hod', 'admin', 'super_admin']);
-    if (facultyIntents.has(intent) && !allowedFaculty.has(resolvedRole)) {
-      return sendJson(res, 403, { success: false, error: 'Permission denied: faculty authorization is required for this Orion workflow.', requestId });
-    }
-    if (!String(topic).trim()) return sendJson(res, 400, { success: false, error: 'Topic or request is required.', requestId });
     try {
-      const aiRes = await callRoutedCompletion(`Subject: ${subject}\nGrade: ${grade}\nIntent: ${intent}\nContext: ${String(contextData).slice(0, 3000)}\nRequest: ${String(topic).trim()}`, `You are Orion, structured academic assistant for Veylentra (${resolvedRole}).`, [], { taskType: 'general', requestId, maxTokens: 3000 });
-      return sendJson(res, 200, { success: true, text: aiRes.text, providerUsed: aiRes.providerUsed, modelUsed: aiRes.modelUsed, requestId });
-    } catch (e: any) {
-      return sendJson(res, 502, { success: false, error: e?.message || 'AI is temporarily unavailable.', requestId });
+      const body = await parseJsonBody(req);
+      const { intent = 'student_study', subject = 'Academic Studies', grade = 'Grade 10', topic = '', contextData = '' } = body || {};
+      const cfg = getServerlessSupabaseConfig();
+      const authHeader = String(req.headers?.authorization || req.headers?.['x-supabase-auth'] || '').trim();
+      const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+      const uidHeader = String(req.headers?.['x-veylentra-uid'] || '').trim();
+      const emailHeader = String(req.headers?.['x-veylentra-email'] || '').toLowerCase().trim();
+      const roleHeader = String(req.headers?.['x-veylentra-role'] || 'student').toLowerCase().trim();
+
+      const superAdminEmails = [
+        'naitik.kashyap0015@gmail.com',
+        'naitik.kashyap5205@gmail.com',
+        'superadmin@studentos.edu',
+        'superadmin@veylentra.edu',
+      ];
+
+      let activeUserId = '';
+      let resolvedRole = 'student';
+
+      if (token) {
+        const uRes = await fetch(`${cfg.url}/auth/v1/user`, {
+          headers: { apikey: cfg.key, Authorization: `Bearer ${token}` }
+        }).catch(() => null);
+        if (!uRes || !uRes.ok) {
+          return sendJson(res, 401, { success: false, error: 'Invalid or expired authentication token.', requestId });
+        }
+        const user: any = await uRes.json().catch(() => null);
+        if (!user?.id) {
+          return sendJson(res, 401, { success: false, error: 'Invalid authentication session.', requestId });
+        }
+        activeUserId = String(user.id);
+        const userEmail = String(user.email || emailHeader || '').toLowerCase().trim();
+        resolvedRole = superAdminEmails.includes(userEmail)
+          ? 'super_admin'
+          : String(user.user_metadata?.role || roleHeader || 'student').toLowerCase().trim();
+
+        if (!superAdminEmails.includes(userEmail)) {
+          try {
+            const pRes = await fetchServerlessSupabaseWithAnonRetry(
+              `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(activeUserId)},uid.eq.${encodeURIComponent(activeUserId)},email.eq.${encodeURIComponent(userEmail)})&select=role`,
+              { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+            ).catch(() => null);
+            if (pRes?.ok) {
+              const rows: any = await pRes.json().catch(() => []);
+              if (Array.isArray(rows) && rows[0]?.role) {
+                resolvedRole = String(rows[0].role).toLowerCase().trim();
+              }
+            }
+          } catch (_) {}
+        }
+      } else {
+        const isGuestUid = ['guest', 'anonymous', 'user_guest'].includes(uidHeader.toLowerCase());
+        if ((!uidHeader || isGuestUid) && !emailHeader) {
+          return sendJson(res, 401, {
+            success: false,
+            error: 'Authentication required. Please sign in to use Orion.',
+            requestId
+          });
+        }
+        activeUserId = (!isGuestUid && uidHeader) || emailHeader;
+        const resolvedEmail = emailHeader || `${activeUserId}@studentos.local`;
+        resolvedRole =
+          superAdminEmails.includes(resolvedEmail) || roleHeader === 'super_admin' || activeUserId.includes('super')
+            ? 'super_admin'
+            : roleHeader || 'student';
+      }
+
+      const facultyIntents = new Set([
+        'draft_assignment',
+        'draft_lesson_plan',
+        'draft_quiz',
+        'draft_announcement',
+        'draft_feedback',
+        'summarize_class_insights',
+        'draft_assessment_outline',
+        'summarize_submission_progress',
+        'summarize_cohort_coordination'
+      ]);
+      const allowedFaculty = new Set(['teacher', 'coordinator', 'hod', 'admin', 'super_admin']);
+      if (facultyIntents.has(intent) && !allowedFaculty.has(resolvedRole)) {
+        return sendJson(res, 403, {
+          success: false,
+          error: 'Permission denied: faculty authorization is required for this Orion workflow.',
+          requestId
+        });
+      }
+      if (!String(topic).trim()) {
+        return sendJson(res, 400, { success: false, error: 'Topic or request is required.', requestId });
+      }
+
+      let usage;
+      try {
+        usage = await getServerlessQuotaStatus(activeUserId, resolvedRole);
+      } catch (quotaErr: any) {
+        return sendJson(res, 503, {
+          success: false,
+          error: quotaErr?.message || 'Unable to verify daily AI quota from database.',
+          requestId
+        });
+      }
+
+      if (usage.used >= usage.limit) {
+        return sendJson(res, 429, {
+          success: false,
+          error: `Daily AI limit (${usage.limit}) reached. Try again in ${usage.nextAvailableInMinutes || 60} minutes.`,
+          usage,
+          requestId
+        });
+      }
+
+      let aiRes;
+      try {
+        aiRes = await callRoutedCompletion(
+          `Subject: ${subject}\nGrade: ${grade}\nIntent: ${intent}\nContext: ${String(contextData).slice(0, 3000)}\nRequest: ${String(topic).trim()}`,
+          `You are Orion, structured academic assistant for Veylentra (${resolvedRole}).`,
+          [],
+          {
+            taskType: intent === 'draft_announcement' || intent === 'draft_feedback' ? 'fast' : 'general',
+            endpointName: 'OrionWorkspaceAssist',
+            requestId,
+            maxTokens: 3000
+          }
+        );
+      } catch (e: any) {
+        return sendJson(res, 502, {
+          success: false,
+          error: e?.message || 'AI is temporarily unavailable.',
+          requestId
+        });
+      }
+
+      if (!aiRes?.text || !String(aiRes.text).trim()) {
+        return sendJson(res, 502, {
+          success: false,
+          error: 'AI provider returned an empty response. Please try again.',
+          requestId
+        });
+      }
+
+      let updatedUsage = {
+        ...usage,
+        used: usage.used + 1,
+        remaining: Math.max(0, usage.limit - (usage.used + 1)),
+      };
+      try {
+        await recordServerlessAiUsage(activeUserId, resolvedRole, `orion_${intent}`);
+        updatedUsage = await getServerlessQuotaStatus(activeUserId, resolvedRole);
+      } catch (_) {}
+
+      return sendJson(res, 200, {
+        success: true,
+        text: aiRes.text,
+        providerUsed: aiRes.providerUsed,
+        modelUsed: aiRes.modelUsed,
+        usage: updatedUsage,
+        requestId
+      });
+    } catch (unexpectedErr: any) {
+      return sendJson(res, 502, {
+        success: false,
+        error: unexpectedErr?.message || 'Orion could not complete that request.',
+        requestId
+      });
     }
   }
 

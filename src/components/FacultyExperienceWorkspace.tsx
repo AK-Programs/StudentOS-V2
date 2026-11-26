@@ -674,12 +674,22 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+      };
+      if (userId && !['guest', 'anonymous', 'user_guest'].includes(String(userId).toLowerCase())) {
+        headers['x-veylentra-uid'] = String(userId);
+      }
+      if (currentUser?.email) {
+        headers['x-veylentra-email'] = String(currentUser.email);
+      }
+      if (effectiveRole) {
+        headers['x-veylentra-role'] = String(effectiveRole);
+      }
       const resp = await fetch('/api/ai/orion-assist', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
-        },
+        headers,
         body: JSON.stringify({
           userId,
           userRole: effectiveRole,
@@ -690,7 +700,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
           contextData: `Assignment max score: ${hw.maxScore || 100}. Proposed score: ${currentDraft.score || 'Pending'}. Student response: ${(sub.submissionText || '').slice(0, 1200)}`
         })
       });
-      const json = await resp.json();
+      const json = await resp.json().catch(() => ({}));
       if (!resp.ok || !json.success || !json.text) {
         throw new Error(json.error || `Orion returned status ${resp.status}`);
       }
@@ -816,12 +826,23 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
 
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+      };
+      if (userId && !['guest', 'anonymous', 'user_guest'].includes(String(userId).toLowerCase())) {
+        headers['x-veylentra-uid'] = String(userId);
+      }
+      if (currentUser?.email) {
+        headers['x-veylentra-email'] = String(currentUser.email);
+      }
+      if (effectiveRole) {
+        headers['x-veylentra-role'] = String(effectiveRole);
+      }
+
       const resp = await fetch('/api/ai/orion-assist', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
-        },
+        headers,
         body: JSON.stringify({
           userId,
           userRole: effectiveRole,
@@ -922,12 +943,23 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
 
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+      };
+      if (userId && !['guest', 'anonymous', 'user_guest'].includes(String(userId).toLowerCase())) {
+        headers['x-veylentra-uid'] = String(userId);
+      }
+      if (currentUser?.email) {
+        headers['x-veylentra-email'] = String(currentUser.email);
+      }
+      if (effectiveRole) {
+        headers['x-veylentra-role'] = String(effectiveRole);
+      }
+
       const resp = await fetch('/api/ai/orion-assist', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
-        },
+        headers,
         body: JSON.stringify({
           userId,
           userRole: effectiveRole,
@@ -939,7 +971,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
         })
       });
 
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({}));
       if (!resp.ok || !data.success || !data.text) {
         throw new Error(data.error || `Orion returned status ${resp.status}`);
       }

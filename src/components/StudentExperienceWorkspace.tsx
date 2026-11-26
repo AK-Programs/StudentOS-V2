@@ -665,12 +665,20 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+      };
+      if (userId && !['guest', 'anonymous', 'user_guest'].includes(String(userId).toLowerCase())) {
+        headers['x-veylentra-uid'] = String(userId);
+      }
+      if (currentUser?.email) {
+        headers['x-veylentra-email'] = String(currentUser.email);
+      }
+      headers['x-veylentra-role'] = String(currentUser?.role || 'student');
       const resp = await fetch('/api/ai/orion-assist', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
-        },
+        headers,
         body: JSON.stringify({
           userId,
           userRole: 'student',
@@ -681,9 +689,9 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
           contextData
         })
       });
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({}));
       if (!resp.ok || !data.success || !data.text) {
-        throw new Error(data.error || 'Orion is temporarily unavailable.');
+        throw new Error(data.error || `Orion returned status ${resp.status}`);
       }
       setOrionInlineAnswer({
         title: `${subject}: ${topic}`,

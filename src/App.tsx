@@ -7100,8 +7100,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
     }
   };
 
+  const isByteViewportLocked = activeTab === 'ai_teacher' && Boolean(currentUser) && !isLocked;
+
   return (
-    <div className={`min-h-screen transition-colors duration-300 font-sans ${lightMode ? 'bg-slate-50 text-slate-800' : 'bg-slate-950 text-slate-100'}`}>
+    <div className={`${isByteViewportLocked ? 'h-dvh overflow-hidden flex flex-col' : 'min-h-screen'} transition-colors duration-300 font-sans ${lightMode ? 'bg-slate-50 text-slate-800' : 'bg-slate-950 text-slate-100'}`}>
       
       {/* 🔒 Screen Lock Screen Overlay */}
       {isLocked && (
@@ -8449,7 +8451,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
       )}
 
       {currentUser && !isLocked && (
-        <div className="flex min-h-screen relative">
+        <div className={`flex relative ${isByteViewportLocked ? 'flex-1 h-full min-h-0 overflow-hidden' : 'min-h-screen'}`}>
           <WinterThemeLayer currentUser={currentUser} />
           
           {/* Sidebar Overlay (Closes sidebar on outside click for Mobile/Tablet) */}
@@ -9378,7 +9380,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
           </aside>
 
           {/* Main workspace frame */}
-          <div className={`flex-1 flex flex-col min-h-screen min-w-0 max-w-full transition-all duration-300 ${sidebarOpen ? 'md:ml-64' : 'md:ml-20'}`}>
+          <div className={`flex-1 flex flex-col min-w-0 max-w-full transition-all duration-300 ${isByteViewportLocked ? 'h-full min-h-0 overflow-hidden' : 'min-h-screen'} ${sidebarOpen ? 'md:ml-64' : 'md:ml-20'}`}>
             {/* BEAUTIFUL DEMO MODE BANNER */}
             {isDemoMode && (
               <div className="bg-gradient-to-r from-red-600 via-amber-600 to-indigo-600 text-white py-2 px-4 shadow-lg z-50 flex flex-col sm:flex-row items-center justify-between gap-3 border-b border-white/10 shrink-0">
@@ -9452,7 +9454,11 @@ CRITICAL WEB GROUNDING DIRECTIVE:
             />
 
             {/* Base View Layout Wrapper */}
-            <main className={`flex-1 p-2 sm:p-6 md:p-8 pb-24 sm:pb-12 max-w-7xl w-full mx-auto space-y-4 sm:space-y-8 min-w-0 ${fontSize === 'large' ? 'text-lg' : fontSize === 'huge' ? 'text-xl' : 'text-sm'}`}>
+            <main className={`flex-1 max-w-7xl w-full mx-auto min-w-0 ${
+              isByteViewportLocked
+                ? `min-h-0 overflow-hidden flex flex-col p-2 sm:p-4 md:p-6 ${presentationMode ? 'pb-2 md:pb-4' : 'pb-[calc(4.75rem+env(safe-area-inset-bottom))] md:pb-6'}`
+                : 'p-2 sm:p-6 md:p-8 pb-24 sm:pb-12 space-y-4 sm:space-y-8'
+            } ${fontSize === 'large' ? 'text-lg' : fontSize === 'huge' ? 'text-xl' : 'text-sm'}`}>
               <AnimatePresence mode="wait">
                 <motion.div
                   key={activeTab}
@@ -9460,7 +9466,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
                   transition={{ duration: 0.2 }}
-                  className="space-y-4 sm:space-y-8"
+                  className={isByteViewportLocked ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'space-y-4 sm:space-y-8'}
                 >
               {/* Tab: Panel Mode Launcher */}
               {activeTab === 'panel_mode' && effectiveRole !== 'student' && (

@@ -247,12 +247,23 @@ export const ByteOrionAssistantModal: React.FC<ByteOrionAssistantModalProps> = (
         String(effectiveRole || '').toLowerCase()
       );
 
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+      };
+      if (userId && !['guest', 'anonymous', 'user_guest'].includes(String(userId).toLowerCase())) {
+        headers['x-veylentra-uid'] = String(userId);
+      }
+      if (currentUser?.email) {
+        headers['x-veylentra-email'] = String(currentUser.email);
+      }
+      if (effectiveRole || currentUser?.role) {
+        headers['x-veylentra-role'] = String(effectiveRole || currentUser?.role);
+      }
+
       const resp = await fetch('/api/ai/orion-assist', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
-        },
+        headers,
         body: JSON.stringify({
           userId,
           userRole: effectiveRole || 'student',
@@ -264,7 +275,7 @@ export const ByteOrionAssistantModal: React.FC<ByteOrionAssistantModalProps> = (
         })
       });
 
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({}));
       if (!resp.ok || !data.success) {
         throw new Error(data.error || `Request failed (${resp.status})`);
       }

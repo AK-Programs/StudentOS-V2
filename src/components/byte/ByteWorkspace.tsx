@@ -319,7 +319,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
   };
 
   const renderSessionList = (closeMobileOnSelect: boolean) => (
-    <div className="flex-1 overflow-y-auto space-y-1.5 py-2 pr-1">
+    <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 py-2 pr-1">
       {aiThreads.length === 0 ? (
         <p className="text-center text-slate-500 text-xs py-8 px-2">No saved Byte sessions yet</p>
       ) : (
@@ -374,7 +374,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
   );
 
   return (
-    <div className="h-[calc(100dvh-130px)] flex rounded-3xl border border-white/10 bg-slate-950/90 shadow-xl relative w-full overflow-hidden">
+    <div className="h-full flex-1 min-h-0 flex rounded-3xl border border-white/10 bg-slate-950/90 shadow-xl relative w-full overflow-hidden">
       {/* Slide-out Mobile Session Drawer */}
       <AnimatePresence>
         {showAiHistoryDrawer && (
@@ -436,7 +436,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
 
       {/* Collapsible Desktop Left Session Rail */}
       {desktopRailOpen && (
-        <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-white/10 bg-slate-950/80 p-3.5">
+        <aside className="hidden lg:flex w-64 shrink-0 flex-col min-h-0 overflow-hidden border-r border-white/10 bg-slate-950/80 p-3.5">
           <div className="flex items-center justify-between pb-3 border-b border-white/10">
             <span className="text-xs font-semibold text-slate-200 flex items-center gap-2">
               <History className="w-3.5 h-3.5 text-indigo-400" />
@@ -466,7 +466,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
       )}
 
       {/* Main Studio Column */}
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col">
         {/* Clean 3-Zone Top Header */}
         <header className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-white/10 bg-slate-950/70 shrink-0">
           {/* Zone 1: Identity & Rail Toggle */}
@@ -795,7 +795,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
         <div
           id="ai-dialog-scroll"
           ref={scrollContainerRef}
-          className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-5"
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 sm:px-6 py-5"
         >
           <div className="max-w-3xl mx-auto w-full space-y-5">
             {/* Empty State: Role-Aware Welcome Canvas */}
