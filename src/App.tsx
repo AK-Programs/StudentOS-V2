@@ -3750,7 +3750,7 @@ What can I clarify today?` }
         resultText = resData.text;
       } catch (err: any) {
         console.error("Notes AI transform error:", err?.message || err);
-        showNotification('AI is temporarily unavailable. Please try again.');
+        showNotification(err?.message || 'AI is temporarily unavailable. Please try again.');
         return;
       }
 
@@ -5623,7 +5623,7 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
       } catch (err: any) {
         console.error("Material AI action error:", err?.message || err);
         setAiActionResultText("### ⚠️ AI Unavailable\n\nAI is temporarily unavailable. Please try again.");
-        showNotification('AI is temporarily unavailable. Please try again.');
+        showNotification(err?.message || 'AI is temporarily unavailable. Please try again.');
         return;
       }
       
@@ -5631,7 +5631,7 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
       showNotification(`✨ AI ${action.toUpperCase()} processed successfully!`);
     } catch (err: any) {
       console.error('AI execution failed:', err);
-      showNotification('AI is temporarily unavailable. Please try again.');
+      showNotification(err?.message || 'AI is temporarily unavailable. Please try again.');
       setAiActionResultText(`### ⚠️ AI Unavailable\n\nAI is temporarily unavailable. Please try again.`);
     } finally {
       setAiActionLoading(false);
@@ -13999,7 +13999,6 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
               )}
               {/* Tab 7: Byte AI Role-Aware Workspace */}
               {activeTab === 'ai_teacher' && (
-                <div className="fixed inset-0 z-40 flex h-dvh max-h-dvh w-full flex-col overflow-hidden bg-slate-950 lg:static lg:inset-auto lg:z-auto lg:h-full lg:max-h-full">
                 <ByteWorkspace
                   key={currentUser?.uid || currentUser?.email || 'byte-guest'}
                   currentUser={currentUser}
@@ -14049,7 +14048,6 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                   handleRemoveAttachedFile={handleRemoveAttachedFile}
                   showNotification={showNotification}
                 />
-              </div>
               )}
 
               {/* Tab 8: Peer global chat matrix */}
@@ -14488,7 +14486,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
 
             {/* Mobile Bottom Navigation Bar (Phones < 768px & Installed Mobile PWA) */}
             {!presentationMode && activeTab !== 'whiteboard' && (
-              <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-slate-950/95 backdrop-blur-md border-t border-slate-800/80 px-2 pt-1.5 pb-2 safe-area-pb flex items-center justify-around gap-1">
+              <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-slate-950/95 backdrop-blur-md border-t border-slate-800/80 px-2 pt-1.5 pb-2 safe-area-pb flex items-center justify-around gap-1">
                 {[
                   { id: 'dashboard', label: 'Home', icon: <VeylentraIcon name="dashboard" size="sm" /> },
                   { id: 'study_hub', label: 'Study', icon: <VeylentraIcon name="study_hub" size="sm" />, badge: dueCardsCount > 0 ? dueCardsCount : 0 },
