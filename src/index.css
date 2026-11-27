@@ -418,6 +418,19 @@ html.byte-viewport-locked #root {
   width: 100%;
 }
 
+[data-testid="byte-workspace"] {
+  overflow: hidden !important;
+}
+[data-testid="byte-primary-toolbar"] {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  height: 48px !important;
+  max-height: 48px !important;
+  min-height: 48px !important;
+  overflow: hidden !important;
+}
+
+
 /* Touch action optimization to prevent double-tap zoom delay */
 button, a, [role="button"], input, select, textarea {
   touch-action: manipulation;
