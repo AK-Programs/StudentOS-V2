@@ -14,6 +14,9 @@ import {
   handleAiHandwritingFormula,
   handleAiImageToNote,
   handleAiMagicDraw,
+  handleAiMaterialAction,
+  handleAiAssignmentTool,
+  handleAiFlashcards,
   handleAiNotes,
   handleAiRedeemVoucher,
   handleAiSearch,
@@ -3557,182 +3560,14 @@ app.post('/api/ai/notes', async (req, res) => {
   await handleAiNotes(req, res);
 });
 
-// Flashcards & Spaced Repetition AI Deck Generator
-app.post('/api/ai/flashcards', async (req, res) => {
-  const { topic, content, count = 6, difficulty = 'intermediate', subject = 'General' } = req.body;
+// Flashcards use the same authenticated canonical handler in Express and Vercel.
+app.post('/api/ai/flashcards', async (req, res) => handleAiFlashcards(req, res));
 
-  if (!topic && !content) {
-    return res.status(400).json({ error: 'Topic or content is required to generate flashcards.' });
-  }
-
-  const systemInstruction = `You are an elite academic curriculum designer and spaced-repetition cognitive scientist specializing in the SuperMemo SM-2 flashcard method.
-Your goal is to extract high-yield, conceptually precise Active Recall flashcards.
-Strict Rules for Flashcards:
-1. Each card MUST test a single coherent concept, definition, formula, causal relationship, or distinction (Principle of Minimum Information).
-2. The Front (Prompt) should be sharp, clear, and challenging (avoid vague open-ended prompts like "Discuss X").
-3. The Back (Answer) must be concise, accurate, and structured with bold highlights for key phrases.
-4. Provide a helpful Hint for retrieval practice.
-5. Provide 1 to 3 relevant Tags.
-6. Return strictly valid JSON with no markdown wrapping or backticks. Format:
-{
-  "deckTitle": "Generated Deck Title",
-  "subject": "Subject Name",
-  "cards": [
-    {
-      "front": "Question / Prompt",
-      "back": "Answer / Core takeaway",
-      "hint": "Brief subtle hint",
-      "tags": ["Tag1", "Tag2"]
-    }
-  ]
-}`;
-
-  const prompt = `Generate exactly ${count} high-yield flashcards suitable for ${difficulty} level students.
-Subject: ${subject}
-Target Topic: ${topic || 'Extracted from provided study content'}
-${content ? `Source Study Notes / Text to extract from:\n"""\n${content}\n"""` : ''}
-
-Output ONLY the raw JSON object conforming to the schema.`;
-
-  try {
-    const rawText = await generateAICompletion({
-      systemInstruction,
-      prompt,
-      temperature: 0.3,
-      jsonMode: true,
-      endpointName: 'AIFlashcards'
-    });
-
-    let cleaned = rawText.trim();
-    if (cleaned.startsWith('```json')) cleaned = cleaned.replace(/^```json/, '').replace(/```$/, '').trim();
-    else if (cleaned.startsWith('```')) cleaned = cleaned.replace(/^```/, '').replace(/```$/, '').trim();
-
-    const parsed = JSON.parse(cleaned);
-    if (parsed && Array.isArray(parsed.cards) && parsed.cards.length > 0) {
-      return res.json({ success: true, ...parsed });
-    }
-    throw new Error('Parsed output missing cards array');
-  } catch (err: any) {
-    console.error('[AI Flashcards] API completion error:', err?.message || err);
-    return res.status(502).json({
-      success: false,
-      error: 'AI is temporarily unavailable. Please try again.',
-      details: err?.message || String(err)
-    });
-  }
-});
-
-// Secure API endpoint for Material Hub AI actions
-app.post('/api/ai/material-action', async (req, res) => {
-  const { title, description, content, action, userQuestion } = req.body;
-
-  if (!title) {
-    return res.status(400).json({ error: 'Material Title is required' });
-  }
-
-  let systemInstruction = 'You are an elite academic consultant and expert teacher.';
-  let userPrompt = `Material Title: "${title}"\nDescription: "${description || 'None'}"\nRaw Content / Context: "${content || 'None'}"\n\n`;
-
-  if (action === 'summarize') {
-    systemInstruction = 'You are a professional educational summarizer. Generate a beautiful, concise HTML/Markdown-ready executive summary of this material. Highlight central objectives, key terms in bold, and bulleted takeaways.';
-    userPrompt += `Action: Generate an elegant study summary of this material.`;
-  } else if (action === 'quiz') {
-    systemInstruction = 'You are a test-design expert. Generate 3 high-yield Multiple Choice Questions based on this material. Formulate them cleanly with choices A, B, C, D and provide detailed answers/explanations at the end.';
-    userPrompt += `Action: Create a 3-question evaluation quiz complete with explanation scaffolds.`;
-  } else if (action === 'explain') {
-    systemInstruction = 'You are a brilliant intuitive teacher. Break down this topic to its absolute basics. Use memorable analogies, paint intuitive pictures, and design a step-by-step conceptual walkthrough.';
-    userPrompt += `Action: Explain this chapter clearly and deeply with examples.`;
-  } else if (action === 'revision') {
-    systemInstruction = 'You are a study efficiency expert. Create a modular, highly compact set of revision notes. Organize by key formulas, definitions, fast checklists, and high-frequency active recall memory triggers.';
-    userPrompt += `Action: Build a high-yield revision sheet.`;
-  } else if (action === 'questions') {
-    systemInstruction = 'You are an examiner. Generate 3 highly important theoretical or analytical questions likely to appear in midterm/final school syllabus tests. Include scoring metrics, difficulty tags, and structured model solutions.';
-    userPrompt += `Action: Identify critical exam questions.`;
-  } else if (action === 'ask') {
-    systemInstruction = 'You are a dedicated AI Subject Professor. Answer the student\'s specific question directly, using the provided material content as your immediate educational context.';
-    userPrompt += `Student Question: "${userQuestion || 'Explain this material'}"`;
-  }
-
-  try {
-    const text = await generateAICompletion(systemInstruction, userPrompt);
-    return res.json({ success: true, text });
-  } catch (apiErr: any) {
-    console.error('[AI Server] Material action error:', apiErr?.message || apiErr);
-    return res.status(502).json({
-      success: false,
-      error: 'AI is temporarily unavailable. Please try again.',
-      details: apiErr?.message || String(apiErr)
-    });
-  }
-});
-
-// Secure API endpoint for AI Question Generator
-app.post('/api/ai/question-generator', async (req, res) => {
-  const { subject = 'General Science', grade = 'Grade 10', difficulty = 'Medium', questionTypes = ['MCQ', 'Short', 'HOTS'] } = req.body || {};
-
-  const systemInstruction = `You are an expert exam question author for schools and competitive examinations.
-Generate high-quality assessment questions for:
-- Subject: ${subject}
-- Grade: ${grade}
-- Difficulty Level: ${difficulty}
-- Selected Types: ${Array.isArray(questionTypes) ? questionTypes.join(', ') : questionTypes}
-
-FORMAT REQUIREMENTS:
-Generate a comprehensive test paper with clear marking scheme and answer key:
-1. Section A: Multiple Choice Questions (MCQs) with options A, B, C, D and explanations.
-2. Section B: High Order Thinking Skills (HOTS) & Case Study Questions.
-3. Section C: Short Answer Questions (1-Mark & 2-Mark Questions).
-4. Section D: Long Answer Questions (5-Mark Questions).
-5. Section E: Assertion-Reason & True/False Questions.
-6. Complete Answer Key & Marking Rubric at the bottom.
-
-Write in crisp, exam-standard Markdown format.`;
-
-  const userPrompt = `Generate a complete ${subject} question paper for ${grade} (${difficulty} difficulty). Include MCQs, HOTS, 1-Mark, 2-Marks, 5-Marks, Case Study, Assertion Reason, and True/False questions with solutions.`;
-
-  try {
-    const text = await generateAICompletion(systemInstruction, userPrompt);
-    return res.json({ success: true, text });
-  } catch (err: any) {
-    console.error('[AI Server] Question generator error:', err?.message || err);
-    return res.status(502).json({
-      success: false,
-      error: 'AI is temporarily unavailable. Please try again.',
-      details: err?.message || String(err)
-    });
-  }
-});
-
-// Secure API endpoint for AI Homework Checker
-app.post('/api/ai/homework-checker', async (req, res) => {
-  const { title = 'Homework Submission', submissionText = '', rubric = 'Standard Grading' } = req.body || {};
-
-  const systemInstruction = `You are an AI Homework & Assignment Evaluator.
-Analyze the student's submission meticulously for:
-1. ✍️ Grammar & Spelling Accuracy
-2. 🧩 Logical Flow & Structure
-3. 👣 Missing Steps or Incomplete Reasoning
-4. 📐 Formatting & Technical Precision
-5. 🔍 Similarity & Plagiarism Risk Estimate (%)
-6. 🎯 Constructive Suggestions for Improvement
-7. 📊 Predicted Score & Grade (e.g., 92/100 - Grade A)
-
-Format the evaluation cleanly in Markdown with actionable feedback for the student and a grading summary for the teacher.`;
-
-  const userPrompt = `Assignment Title: "${title}"\nRubric: "${rubric}"\n\nStudent Submission:\n"""\n${submissionText || 'No text content provided.'}\n"""`;
-
-  try {
-    const text = await generateAICompletion(systemInstruction, userPrompt);
-    return res.json({ success: true, text });
-  } catch (err: any) {
-    console.error('[AI Server] Homework checker error:', err?.message || err);
-    return res.status(502).json({
-      success: false,
-      error: 'AI is temporarily unavailable. Please try again.',
-      details: err?.message || String(err)
-    });
-  }
-});
+// Canonical authenticated AI routes shared with Vercel Serverless.
+app.post('/api/ai/material-action', async (req, res) => handleAiMaterialAction(req, res));
+app.post('/api/ai/assignment-tools', async (req, res) => handleAiAssignmentTool(req, res));
+app.post('/api/ai/question-generator', async (req, res) => { req.body = { ...(req.body || {}), action: 'question_generator' }; return handleAiAssignmentTool(req, res); });
+app.post('/api/ai/homework-checker', async (req, res) => { req.body = { ...(req.body || {}), action: 'homework_checker' }; return handleAiAssignmentTool(req, res); });
 
 // Secure API endpoint for AI PDF Assistant
 app.post('/api/ai/pdf-assistant', async (req, res) => {
