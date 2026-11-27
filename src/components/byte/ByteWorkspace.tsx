@@ -376,7 +376,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
   return (
     <div
       data-testid="byte-workspace"
-      className="relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-slate-950 lg:flex-row"
+      className="h-full flex-1 min-h-0 flex flex-col lg:flex-row rounded-none sm:rounded-3xl border-0 sm:border border-white/10 bg-slate-950/90 shadow-xl relative w-full overflow-hidden"
     >
       {/* Slide-out Mobile Session Drawer */}
       <AnimatePresence>
@@ -473,7 +473,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
         {/* Clean 3-Zone Top Header - strictly flex-nowrap to prevent stacked toolbar boxes on phone viewports */}
         <header
           data-testid="byte-primary-toolbar"
-          className="sticky top-0 z-20 flex h-12 max-h-12 min-h-12 w-full shrink-0 items-center justify-between gap-1 overflow-hidden border-b border-white/10 bg-slate-950 px-2 flex-nowrap"
+          className="flex items-center justify-between gap-1.5 sm:gap-3 flex-nowrap px-2.5 sm:px-5 py-2 sm:py-2.5 border-b border-white/10 bg-slate-950/80 shrink-0 min-w-0 w-full overflow-hidden h-14"
         >
           {/* Zone 1: Identity & Rail Toggle */}
           <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-1 overflow-hidden">
@@ -1303,15 +1303,13 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                 }}
                 placeholder={
                   aiUsageState.remaining <= 0
-                    ? 'Daily quota exhausted — boost to unlock more queries.'
+                    ? 'Type your question here. You can compose while your daily send quota is reached.'
                     : attachedFiles && attachedFiles.length > 0
                       ? `Ask Byte about ${attachedFiles.map((f) => f.name).join(', ')}...`
                       : `Ask Byte (${roleProfile.displayLabel} Assistant) — Shift+Enter for new line...`
                 }
-                disabled={aiLoading || aiUsageState.remaining <= 0}
-                className={`flex-1 min-w-0 min-h-[40px] bg-transparent px-2.5 py-2.5 text-sm leading-relaxed resize-none max-h-36 focus:outline-none text-white placeholder-slate-500 ${
-                  aiUsageState.remaining <= 0 ? 'opacity-60 cursor-not-allowed' : ''
-                }`}
+                disabled={aiLoading}
+                className="flex-1 min-w-0 min-h-[40px] bg-transparent px-2.5 py-2.5 text-sm leading-relaxed resize-none max-h-36 focus:outline-none text-white placeholder-slate-500"
               />
 
               {aiLoading ? (
@@ -1326,25 +1324,18 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
               ) : (
                 <button
                   type="button"
-                  onClick={aiUsageState.remaining <= 0 ? () => setShowQuotaModal(true) : () => handleAskAIModel()}
-                  disabled={aiUsageState.remaining > 0 && !aiInput.trim()}
+                  onClick={() => handleAskAIModel()}
+                  disabled={!aiInput.trim()}
                   className={`min-h-[44px] px-4 sm:px-5 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 shrink-0 transition-colors cursor-pointer disabled:opacity-45 ${
                     aiUsageState.remaining <= 0
                       ? 'bg-amber-600 hover:bg-amber-500 text-white'
                       : 'bg-indigo-600 hover:bg-indigo-500 text-white'
                   }`}
                 >
-                  {aiUsageState.remaining <= 0 ? (
-                    <>
-                      <Zap className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Boost</span>
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Send</span>
-                    </>
-                  )}
+                  <>
+                    <Send className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Send</span>
+                  </>
                 </button>
               )}
             </div>
