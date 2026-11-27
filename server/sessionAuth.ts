@@ -53,7 +53,6 @@ export interface SignedSessionClaims {
 }
 
 const DEFAULT_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
-const EPHEMERAL_RUNTIME_SECRET = crypto.randomBytes(32).toString('hex');
 
 const VALID_SERVER_SESSION_PREFIX = 'vlt_sess.';
 
@@ -84,7 +83,12 @@ function getSessionSigningSecret(): string {
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
     '';
   const cleaned = String(envSecret).trim();
-  return cleaned.length >= 16 ? cleaned : EPHEMERAL_RUNTIME_SECRET;
+  if (cleaned.length >= 16) return cleaned;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('SESSION_SIGNING_SECRET is not configured. Set a stable server-side SESSION_SIGNING_SECRET (at least 16 characters) or SUPABASE_SERVICE_ROLE_KEY in the hosting environment.');
+  }
+  // Local development/tests may use a process-scoped fallback. Never rely on it in production.
+  return 'veylentra-local-development-session-secret';
 }
 
 function toBase64Url(input: Buffer | string): string {
