@@ -1,3 +1,4 @@
+import { getServerAuthHeaders, extractApiErrorMessage } from '../../lib/clientSession';
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   FileText, 
@@ -46,7 +47,6 @@ import { VisualMathEditorModal } from './VisualMathEditorModal';
 import { SketchCanvasModal } from './SketchCanvasModal';
 import { generateFormattedPdf } from '../../lib/pdfGenerator';
 import { useDismissContextMenu } from '../../lib/useContextHoldMenu';
-import { extractApiErrorMessage, getServerAuthHeaders } from '../../lib/clientSession';
 
 interface LectureNotesWorkspaceProps {
   notes: VaultNote[];
@@ -289,7 +289,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
           subject: 'Academic'
         })
       });
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(extractApiErrorMessage(data, `AI note creation failed (HTTP ${res.status}).`));
       }
@@ -303,7 +303,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
         setAiCreateQuery('');
         showNotification('✨ Note created with AI!');
       } else {
-        throw new Error(data.error || 'No content returned from AI');
+        throw new Error(extractApiErrorMessage(data, 'No content returned from AI.'));
       }
     } catch (err: any) {
       showNotification(`❌ AI error: ${err.message}`);
@@ -326,7 +326,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
           subject: activeNote.subject || 'Academic'
         })
       });
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(extractApiErrorMessage(data, `AI edit failed (HTTP ${res.status}).`));
       }
@@ -336,7 +336,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
         setAiEditInstruction('');
         showNotification('✨ Note updated with AI!');
       } else {
-        throw new Error(data.error || 'No updated text returned from AI');
+        throw new Error(extractApiErrorMessage(data, 'No updated text returned from AI.'));
       }
     } catch (err: any) {
       showNotification(`❌ AI error: ${err.message}`);
