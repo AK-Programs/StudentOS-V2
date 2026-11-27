@@ -1,3 +1,4 @@
+import { getServerAuthHeaders, extractApiErrorMessage } from '../../lib/clientSession';
 import React, { useState } from 'react';
 import { 
   X, 
@@ -14,7 +15,6 @@ import {
 } from 'lucide-react';
 import { persistDeckToSupabase, persistCardsBatchToSupabase } from '../../lib/flashcardStorage';
 import { Flashcard, FlashcardDeck } from '../../types';
-import { extractApiErrorMessage, getServerAuthHeaders } from '../../lib/clientSession';
 
 interface NoteToLearningToolsModalProps {
   isOpen: boolean;
@@ -67,17 +67,10 @@ export const NoteToLearningToolsModal: React.FC<NoteToLearningToolsModalProps> =
         });
 
         const data = await resp.json().catch(() => ({}));
-        if (!resp.ok || data.success === false) {
+        if (!resp.ok || !data.success || !Array.isArray(data.cards) || data.cards.length === 0) {
           throw new Error(extractApiErrorMessage(data, `Flashcard generation failed (HTTP ${resp.status}).`));
         }
-        if (!Array.isArray(data.cards) || data.cards.length === 0) {
-          throw new Error('The AI service did not return any flashcards. Your note has not been changed.');
-        }
-        const validCards = data.cards.filter((card: any) =>
-          card && typeof card.front === 'string' && typeof card.back === 'string' && card.front.trim() && card.back.trim()
-        );
-        if (validCards.length === 0) throw new Error('The AI response did not contain valid front/back flashcards.');
-        setGeneratedFlashcards(validCards);
+        setGeneratedFlashcards(data.cards);
       } else {
         // Quiz, Revision Sheet, or Lesson
         let action = 'quiz';
@@ -103,15 +96,15 @@ export const NoteToLearningToolsModal: React.FC<NoteToLearningToolsModalProps> =
         });
 
         const data = await resp.json().catch(() => ({}));
-        if (!resp.ok || data.success === false || !(data.text || data.content)) {
-          throw new Error(extractApiErrorMessage(data, `AI note generation failed (HTTP ${resp.status}).`));
+        if (!resp.ok || !data.success || !data.text) {
+          throw new Error(extractApiErrorMessage(data, `Learning tool generation failed (HTTP ${resp.status}).`));
         }
-        setGeneratedText(String(data.text || data.content));
+        setGeneratedText(data.text);
       }
       setHasGenerated(true);
     } catch (err: any) {
       console.error('[LearningTools] Error:', err);
-      onNotify?.(`⚠️ ${err.message || 'Generation failed. No fallback content was inserted.'}`);
+      onNotify?.(`⚠️ ${err.message || 'AI generation failed. No generated content was saved.'}`);
     } finally {
       setIsLoading(false);
     }
@@ -158,7 +151,7 @@ export const NoteToLearningToolsModal: React.FC<NoteToLearningToolsModalProps> =
       onClose();
     } catch (err: any) {
       console.error('Save flashcards error:', err);
-      onNotify?.(`❌ Flashcards could not be saved: ${err?.message || 'Please try again.'}`);
+      onNotify?.(`⚠️ Could not save flashcards: ${err?.message || 'Storage request failed.'}`);
     }
   };
 
