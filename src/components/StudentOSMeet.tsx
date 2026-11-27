@@ -56,6 +56,7 @@ import {
   FileCheck,
   Maximize
 } from 'lucide-react';
+import { extractApiErrorMessage, getServerAuthHeaders } from '../lib/clientSession';
 import { UserProfile, Meeting, MeetingParticipant, MeetingChatMessage, MeetingRecording, MeetingBreakoutRoom, MeetingAttendanceReport } from '../types';
 import { 
   fetchAllMeetings, 
@@ -1428,21 +1429,20 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
       const res = await fetch('/api/ai/notes', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getServerAuthHeaders(),
         body: JSON.stringify({
           rawText: rawContext,
           mode: 'summary',
           subject: activeMeeting.subject || 'General'
         })
       });
-      const data = await res.json();
-      if (data && data.text) {
-        setAiSessionSummary(data.text);
-      } else {
-        setAiSessionSummary('Unable to generate summary right now. Please try again.');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.success === false || !data?.text) {
+        throw new Error(extractApiErrorMessage(data, `AI summary failed (HTTP ${res.status}).`));
       }
-    } catch (err) {
-      setAiSessionSummary('Network error while generating session summary.');
+      setAiSessionSummary(data.text);
+    } catch (err: any) {
+      setAiSessionSummary(err?.message || 'Network error while generating session summary.');
     } finally {
       setIsGeneratingAiSummary(false);
     }
