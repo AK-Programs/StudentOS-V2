@@ -94,7 +94,7 @@ export function getZaiApiKey(): string {
 }
 
 // Groq Model Rotation Manager (single key rotating: llama-3.1-8b-instant, openai/gpt-oss-120b, qwen/qwen3.8-27b)
-export const groqModels = ['llama-3.1-8b-instant', 'openai/gpt-oss-120b', 'qwen/qwen3.8-27b'];
+export const groqModels = ['llama-3.1-8b-instant'];
 let groqModelIndex = 0;
 export function getNextGroqModel(): string {
   const model = groqModels[groqModelIndex % groqModels.length];
@@ -518,7 +518,8 @@ export async function generateAICompletionWithTelemetry(
       requestedMaxTokens: maxTokens || budget,
       reasoningMode: options.reasoningMode,
     });
-    const clampedBudget = budgetPlan.maxTokens;
+    const providerCap = p === 'groq' ? 4096 : p === 'ministral' ? 8192 : 8192;
+    const clampedBudget = Math.max(256, Math.min(providerCap, budgetPlan.maxTokens));
     const timeoutMs = depthInfo.isLongForm ? 45000 : 28000;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
