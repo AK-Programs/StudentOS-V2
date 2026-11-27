@@ -1,3 +1,4 @@
+import { getServerAuthHeaders, extractApiErrorMessage } from '../../lib/clientSession';
 import React, { useState, useRef } from 'react';
 import { 
   Camera, 
@@ -17,7 +18,6 @@ import {
   Columns
 } from 'lucide-react';
 import { VaultNote } from '../../types';
-import { extractApiErrorMessage, getServerAuthHeaders } from '../../lib/clientSession';
 
 interface ImageToNoteModalProps {
   isOpen: boolean;
@@ -111,12 +111,9 @@ export const ImageToNoteModal: React.FC<ImageToNoteModalProps> = ({
         })
       });
 
-      const data = await resp.json().catch(() => ({}));
+      const data = await resp.json();
       if (!resp.ok || !data.success) {
-        throw new Error(extractApiErrorMessage(data, `Image-to-note request failed (HTTP ${resp.status}).`));
-      }
-      if (typeof data.content !== 'string' || !data.content.trim()) {
-        throw new Error('The image-to-note service returned no extracted content.');
+        throw new Error(extractApiErrorMessage(data, `Image-to-note failed (HTTP ${resp.status}).`));
       }
 
       setProcessingStep('5. Organizing document & preparing editable preview...');
