@@ -1,3 +1,4 @@
+import { getServerAuthHeaders, extractApiErrorMessage } from '../lib/clientSession';
 import React, { useState, useEffect } from 'react';
 import { 
   Sparkles, 
@@ -14,7 +15,6 @@ import {
   HelpCircle,
   Wand2
 } from 'lucide-react';
-import { extractApiErrorMessage, getServerAuthHeaders } from '../lib/clientSession';
 
 interface LectureNotesAiModalProps {
   isOpen: boolean;
@@ -138,10 +138,10 @@ export const LectureNotesAiModal: React.FC<LectureNotesAiModalProps> = ({
         })
       });
 
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json();
 
       if (!res.ok || !data.success || !data.text) {
-        throw new Error(extractApiErrorMessage(data, `AI note request failed (HTTP ${res.status}).`));
+        throw new Error(extractApiErrorMessage(data, `Failed to generate note content with AI (HTTP ${res.status}).`));
       }
 
       let cleanResult = data.text.trim();
