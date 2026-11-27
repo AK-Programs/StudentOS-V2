@@ -142,7 +142,7 @@ export const FloatingQuickCreate: React.FC<FloatingQuickCreateProps> = ({
   return (
     <>
       {/* Floating Plus Button (Desktop & Mobile) */}
-      <div className="fixed bottom-[calc(10.5rem+env(safe-area-inset-bottom))] right-6 z-40 md:bottom-28 md:right-24">
+      <div className="fixed bottom-[calc(5.75rem+env(safe-area-inset-bottom))] right-4 sm:right-6 md:bottom-6 z-40">
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
@@ -164,7 +164,7 @@ export const FloatingQuickCreate: React.FC<FloatingQuickCreateProps> = ({
           onClick={() => setIsOpen(false)}
         >
           <div 
-            className="absolute bottom-28 right-24 w-80 bg-slate-900 border border-slate-700/80 rounded-3xl shadow-2xl p-4 space-y-4 animate-in slide-in-from-bottom-4 duration-200"
+            className="absolute bottom-24 right-6 w-80 bg-slate-900 border border-slate-700/80 rounded-3xl shadow-2xl p-4 space-y-4 animate-in slide-in-from-bottom-4 duration-200"
             onClick={e => e.stopPropagation()}
           >
             {/* 1. Create Category */}
