@@ -94,7 +94,7 @@ export function getZaiApiKey(): string {
 }
 
 // Groq Model Rotation Manager (single key rotating: llama-3.1-8b-instant, openai/gpt-oss-120b, qwen/qwen3.8-27b)
-export const groqModels = ['llama-3.1-8b-instant'];
+export const groqModels = ['llama-3.1-8b-instant', 'openai/gpt-oss-120b', 'qwen/qwen3.8-27b'];
 let groqModelIndex = 0;
 export function getNextGroqModel(): string {
   const model = groqModels[groqModelIndex % groqModels.length];
@@ -518,8 +518,7 @@ export async function generateAICompletionWithTelemetry(
       requestedMaxTokens: maxTokens || budget,
       reasoningMode: options.reasoningMode,
     });
-    const providerCap = p === 'groq' ? 4096 : p === 'ministral' ? 8192 : 8192;
-    const clampedBudget = Math.max(256, Math.min(providerCap, budgetPlan.maxTokens));
+    const clampedBudget = budgetPlan.maxTokens;
     const timeoutMs = depthInfo.isLongForm ? 45000 : 28000;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -747,7 +746,7 @@ export async function streamAICompletion(
   callbacks: {
     onMeta?: (meta: { requestId: string; provider: string; model: string; tier: TaskComplexityTier }) => void;
     onToken: (token: string, firstTokenLatencyMs: number) => void;
-    onComplete?: (fullText: string, telemetry: AIPerformanceTelemetry) => void;
+    onComplete?: (fullText: string, telemetry: AIPerformanceTelemetry) => void | Promise<void>;
   },
   abortSignal?: AbortSignal
 ): Promise<{ text: string; telemetry: AIPerformanceTelemetry; finishReason?: string; truncated?: boolean }> {
@@ -902,6 +901,7 @@ export async function streamAICompletion(
           state.firstTokenLatencyMs = Date.now() - requestStart;
         }
         state.segmentText += rawDelta;
+        hasEmittedAnyToken = true;
         callbacks.onToken(rawDelta, state.firstTokenLatencyMs);
         return;
       }
@@ -919,6 +919,7 @@ export async function streamAICompletion(
           state.firstTokenLatencyMs = Date.now() - requestStart;
         }
         state.segmentText += deduped;
+        hasEmittedAnyToken = true;
         callbacks.onToken(deduped, state.firstTokenLatencyMs);
       }
     };
@@ -932,6 +933,7 @@ export async function streamAICompletion(
       const finishReason = String(choice?.finish_reason || data?.finish_reason || '').toLowerCase();
       if (!text) return { fullText: '', firstTokenLatencyMs: null, finishReason };
       const firstTokenLatencyMs = Date.now() - requestStart;
+      hasEmittedAnyToken = true;
       callbacks.onToken(text, firstTokenLatencyMs);
       return { fullText: text, firstTokenLatencyMs, finishReason };
     }
@@ -947,6 +949,24 @@ export async function streamAICompletion(
     };
     let lastChoice: any = null;
 
+    const processProviderSseLine = (rawLine: string) => {
+      const line = rawLine.trim();
+      if (!line || !line.startsWith('data:')) return;
+      const payload = line.slice(5).trim();
+      if (payload === '[DONE]') return;
+
+      try {
+        const parsed = JSON.parse(payload);
+        const choice = parsed.choices?.[0];
+        if (choice) lastChoice = choice;
+        const token = extractStreamingToken(choice);
+        if (token.length > 0) emitFilteredDelta(token, streamState);
+      } catch {
+        // Ignore malformed/incomplete provider event lines; a final complete
+        // event is processed after the decoder is flushed below.
+      }
+    };
+
     while (true) {
       if (abortSignal?.aborted) {
         await reader.cancel().catch(() => {});
@@ -959,24 +979,13 @@ export async function streamAICompletion(
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
-
-      for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line || !line.startsWith('data:')) continue;
-        const payload = line.slice(5).trim();
-        if (payload === '[DONE]') continue;
-
-        try {
-          const parsed = JSON.parse(payload);
-          const choice = parsed.choices?.[0];
-          if (choice) lastChoice = choice;
-          const token = extractStreamingToken(choice);
-          if (token.length > 0) {
-            emitFilteredDelta(token, streamState);
-          }
-        } catch {}
-      }
+      for (const rawLine of lines) processProviderSseLine(rawLine);
     }
+
+    // Flush the decoder and process a final provider SSE event even when the
+    // upstream closes without a trailing newline.
+    buffer += decoder.decode();
+    if (buffer.trim()) processProviderSseLine(buffer);
 
     if (!streamState.prefixChecked && streamState.pendingLead.length > 0) {
       const deduped = alreadyEmittedText
@@ -1003,6 +1012,7 @@ export async function streamAICompletion(
 
   let streamResult: { fullText: string; firstTokenLatencyMs: number | null; finishReason?: string } | null = null;
   let finalProvider: AIProviderName = activeProvider;
+  let hasEmittedAnyToken = false;
 
   const streamPlan: Array<{ p: AIProviderName; m: string }> = [];
   if (activeProvider === 'zai' && !hasImages) {
@@ -1053,6 +1063,10 @@ export async function streamAICompletion(
     } catch (err: any) {
       lastStreamErr = err;
       console.warn(`[AI_STREAM_ROUTER] ${candidate.p} (${candidate.m}) fallback notice:`, err?.message || err);
+      // Provider fallback is safe only before the first visible token. Once a
+      // partial answer has reached the user, restarting the original prompt on
+      // another provider would append a second answer and repeat whole sections.
+      if (hasEmittedAnyToken) break;
     }
   }
 
@@ -1122,9 +1136,8 @@ export async function streamAICompletion(
     depthMode: depthInfo.depth,
   };
 
-  callbacks.onComplete?.(finishedReply, telemetry);
+  await callbacks.onComplete?.(finishedReply, telemetry);
   return { text: finishedReply, telemetry, finishReason: normalizedFinish, truncated };
 }
 
 
- 
