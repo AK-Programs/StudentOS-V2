@@ -72,12 +72,18 @@ export async function getActiveServerToken(): Promise<string> {
   try {
     const { data } = await supabase.auth.getSession();
     const supaToken = data?.session?.access_token;
-    if (supaToken) {
-      return supaToken;
-    }
+    if (supaToken) return supaToken;
   } catch {
-    // ignore Supabase lookup failure in offline/demo mode
+    // Supabase may be unavailable in the restricted demo/offline experience.
   }
+
+  // App startup establishes the restricted demo token asynchronously. Wait for
+  // that exact request before allowing concurrent AI/usage calls to race ahead
+  // with missing Authorization headers and generate repeated 401 toasts.
+  if (!inMemorySessionToken && inflightDemoPromise) {
+    await inflightDemoPromise;
+  }
+
   return inMemorySessionToken || '';
 }
 
