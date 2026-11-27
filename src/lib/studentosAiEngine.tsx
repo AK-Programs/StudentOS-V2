@@ -191,7 +191,7 @@ export async function streamStudentOSAI(
     headers: reqHeaders,
     body: JSON.stringify({
       ...payload,
-      stream: false
+      stream: true
     }),
     signal: abortSignal
   });
@@ -238,6 +238,74 @@ export async function streamStudentOSAI(
     let finishReason: string | undefined = undefined;
     let truncated = false;
 
+    const processSseLine = (rawLine: string) => {
+      const line = rawLine.trim();
+      if (!line || !line.startsWith('data:')) return;
+      const jsonStr = line.slice(5).trim();
+      if (!jsonStr || jsonStr === '[DONE]') return;
+
+      let eventObj: any;
+      try {
+        eventObj = JSON.parse(jsonStr);
+      } catch {
+        return;
+      }
+
+      if (eventObj.type === 'status') {
+        if (Array.isArray(eventObj.sources)) {
+          webSearchUsed = true;
+          webSources = eventObj.sources;
+        }
+        callbacks.onStatus?.({
+          phase: eventObj.phase || 'generating',
+          message: eventObj.message || 'Generating answer…',
+          query: eventObj.query,
+          sources: eventObj.sources
+        });
+      } else if (eventObj.type === 'meta') {
+        modelUsed = eventObj.model || modelUsed;
+        complexityTier = eventObj.tier || complexityTier;
+        requestId = eventObj.requestId || requestId;
+        if (eventObj.webSearchUsed) webSearchUsed = true;
+        if (Array.isArray(eventObj.webSources) && eventObj.webSources.length > 0) {
+          webSources = eventObj.webSources;
+        }
+        callbacks.onMeta?.({ model: modelUsed, tier: complexityTier, requestId, webSearchUsed, webSources });
+      } else if (eventObj.type === 'token' && eventObj.token) {
+        if (firstTokenMs === null) {
+          firstTokenMs = eventObj.firstTokenLatencyMs ?? (Date.now() - requestStart);
+        }
+        accumulated += eventObj.token;
+        callbacks.onToken(eventObj.token, accumulated, firstTokenMs);
+      } else if (eventObj.type === 'done') {
+        if (eventObj.text && !accumulated) {
+          accumulated = eventObj.text;
+        }
+        if (eventObj.usage) usageData = eventObj.usage;
+        if (eventObj.telemetry?.modelUsed) modelUsed = eventObj.telemetry.modelUsed;
+        if (eventObj.telemetry?.complexityTier) complexityTier = eventObj.telemetry.complexityTier;
+        if (eventObj.webSearchUsed) webSearchUsed = true;
+        if (Array.isArray(eventObj.webSources) && eventObj.webSources.length > 0) {
+          webSources = eventObj.webSources;
+        }
+        if (typeof eventObj.finishReason === 'string') finishReason = eventObj.finishReason;
+        if (typeof eventObj.truncated === 'boolean') truncated = eventObj.truncated;
+        else if (finishReason === 'length') truncated = true;
+      } else if (eventObj.type === 'error') {
+        const message =
+          (typeof eventObj.error === 'string' && eventObj.error) ||
+          eventObj.error?.message ||
+          eventObj.message ||
+          eventObj.details ||
+          'AI streaming failed.';
+        const streamError: any = new Error(message);
+        streamError.code = eventObj.code || eventObj.error?.code;
+        streamError.requestId = eventObj.requestId;
+        streamError.status = eventObj.status;
+        throw streamError;
+      }
+    };
+
     while (true) {
       if (abortSignal?.aborted) {
         await reader.cancel().catch(() => {});
@@ -247,68 +315,17 @@ export async function streamStudentOSAI(
       const { done, value } = await reader.read();
       if (done) break;
 
-      buffer += decoder.decode(value, { stream: false });
+      buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
-
-      for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line || !line.startsWith('data:')) continue;
-        const jsonStr = line.slice(5).trim();
-        if (!jsonStr || jsonStr === '[DONE]') continue;
-
-        let eventObj: any;
-        try {
-          eventObj = JSON.parse(jsonStr);
-        } catch {
-          continue;
-        }
-
-        if (eventObj.type === 'status') {
-          if (Array.isArray(eventObj.sources)) {
-            webSearchUsed = true;
-            webSources = eventObj.sources;
-          }
-          callbacks.onStatus?.({
-            phase: eventObj.phase || 'generating',
-            message: eventObj.message || 'Generating answer…',
-            query: eventObj.query,
-            sources: eventObj.sources
-          });
-        } else if (eventObj.type === 'meta') {
-          modelUsed = eventObj.model || modelUsed;
-          complexityTier = eventObj.tier || complexityTier;
-          requestId = eventObj.requestId || requestId;
-          if (eventObj.webSearchUsed) webSearchUsed = true;
-          if (Array.isArray(eventObj.webSources) && eventObj.webSources.length > 0) {
-            webSources = eventObj.webSources;
-          }
-          callbacks.onMeta?.({ model: modelUsed, tier: complexityTier, requestId, webSearchUsed, webSources });
-        } else if (eventObj.type === 'token' && eventObj.token) {
-          if (firstTokenMs === null) {
-            firstTokenMs = eventObj.firstTokenLatencyMs ?? (Date.now() - requestStart);
-          }
-          accumulated += eventObj.token;
-          callbacks.onToken(eventObj.token, accumulated, firstTokenMs);
-        } else if (eventObj.type === 'done') {
-          if (eventObj.text && !accumulated) {
-            accumulated = eventObj.text;
-          }
-          if (eventObj.usage) usageData = eventObj.usage;
-          if (eventObj.telemetry?.modelUsed) modelUsed = eventObj.telemetry.modelUsed;
-          if (eventObj.telemetry?.complexityTier) complexityTier = eventObj.telemetry.complexityTier;
-          if (eventObj.webSearchUsed) webSearchUsed = true;
-          if (Array.isArray(eventObj.webSources) && eventObj.webSources.length > 0) {
-            webSources = eventObj.webSources;
-          }
-          if (typeof eventObj.finishReason === 'string') finishReason = eventObj.finishReason;
-          if (typeof eventObj.truncated === 'boolean') truncated = eventObj.truncated;
-          else if (finishReason === 'length') truncated = true;
-        } else if (eventObj.type === 'error') {
-          throw new Error(eventObj.details || eventObj.error || 'AI streaming failed.');
-        }
-      }
+      for (const rawLine of lines) processSseLine(rawLine);
     }
+
+    // Flush any incomplete UTF-8 sequence and parse the final SSE line. Some
+    // proxies/providers close a stream without a trailing newline; dropping
+    // this buffer can discard the final `done` or `error` event.
+    buffer += decoder.decode();
+    if (buffer.trim()) processSseLine(buffer);
 
     const telemetry: AIStreamTelemetry = {
       requestId,
