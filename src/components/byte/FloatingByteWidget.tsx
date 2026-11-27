@@ -108,10 +108,11 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
   const pressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pressOriginRef = useRef<{ x: number; y: number } | null>(null);
   const isLongPressTriggeredRef = useRef<boolean>(false);
+  const pressCanceledRef = useRef<boolean>(false);
   const [isPressing, setIsPressing] = useState<boolean>(false);
   const [pressProgress, setPressProgress] = useState<number>(0);
 
-  const clearLongPressTimers = () => {
+  const clearLongPressTimers = (updateUi = true) => {
     if (longPressTimerRef.current) {
       clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
@@ -121,13 +122,15 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
       pressIntervalRef.current = null;
     }
     pressOriginRef.current = null;
-    setIsPressing(false);
-    setPressProgress(0);
+    if (updateUi) {
+      setIsPressing(false);
+      setPressProgress(0);
+    }
   };
 
   useEffect(() => {
     return () => {
-      clearLongPressTimers();
+      clearLongPressTimers(false);
       byteVoiceService.stop();
     };
   }, []);
@@ -136,6 +139,12 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     clearLongPressTimers();
     isLongPressTriggeredRef.current = false;
+    pressCanceledRef.current = false;
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Pointer capture is not available in every embedded browser.
+    }
     pressOriginRef.current = { x: e.clientX, y: e.clientY };
     setIsPressing(true);
     setPressProgress(0);
@@ -159,15 +168,40 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
     const dx = e.clientX - pressOriginRef.current.x;
     const dy = e.clientY - pressOriginRef.current.y;
     if (Math.hypot(dx, dy) > MOVE_CANCEL_THRESHOLD_PX) {
+      // A drag/scroll cancels BOTH the long-press and the tap action. Without
+      // this flag, pointer-up after moving still opens the Byte widget.
+      pressCanceledRef.current = true;
       clearLongPressTimers();
     }
   };
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (e: React.PointerEvent) => {
     const triggered = isLongPressTriggeredRef.current;
+    const canceled = pressCanceledRef.current;
     clearLongPressTimers();
-    if (!triggered) {
+    pressCanceledRef.current = false;
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      // Ignore unsupported pointer-capture implementations.
+    }
+    if (!triggered && !canceled) {
       handleToggleMinimize(false);
+    }
+  };
+
+  const handlePointerCancel = (e: React.PointerEvent) => {
+    pressCanceledRef.current = true;
+    isLongPressTriggeredRef.current = false;
+    clearLongPressTimers();
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      // Ignore unsupported pointer-capture implementations.
     }
   };
 
@@ -292,7 +326,7 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
       </AnimatePresence>
 
       <div
-        className="fixed bottom-20 right-3.5 sm:bottom-6 sm:right-6 md:bottom-8 md:right-8 z-40 flex flex-col items-end pointer-events-none select-none"
+        className="fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] right-3.5 sm:bottom-6 sm:right-6 md:bottom-8 md:right-8 z-40 flex flex-col items-end pointer-events-none select-none"
         aria-label="Byte Productivity Companion"
       >
         <AnimatePresence mode="wait">
@@ -492,7 +526,7 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
-                onPointerCancel={clearLongPressTimers}
+                onPointerCancel={handlePointerCancel}
                 onKeyDown={e => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
