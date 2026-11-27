@@ -90,17 +90,45 @@ export function createRequestId(): string {
 
 export function sendJson(res: NodeLikeRes, statusCode: number, payload: Record<string, any>): void {
   if (res.writableEnded) return;
+  const safeStatus = statusCode === 500 ? 502 : statusCode;
+  let body = payload;
+  try {
+    JSON.stringify(payload);
+  } catch {
+    body = {
+      success: false,
+      status: 'failed',
+      error: { code: 'JSON_SERIALIZE_ERROR', message: 'Server could not serialize the response.' },
+      message: 'Server could not serialize the response.',
+      finalResponse: 'Server could not serialize the response.',
+    };
+  }
   try {
     res.setHeader?.('Content-Type', 'application/json; charset=utf-8');
   } catch {
     // ignore
   }
-  if (typeof res.status === 'function' && typeof res.json === 'function') {
-    res.status(statusCode).json(payload);
-    return;
+  try {
+    if (typeof res.status === 'function' && typeof res.json === 'function') {
+      res.status(safeStatus).json(body);
+      return;
+    }
+    res.statusCode = safeStatus;
+    res.end?.(JSON.stringify(body));
+  } catch {
+    try {
+      res.statusCode = 502;
+      res.end?.(JSON.stringify({
+        success: false,
+        status: 'failed',
+        error: { code: 'RESPONSE_WRITE_ERROR', message: 'Server failed while writing the response.' },
+        message: 'Server failed while writing the response.',
+        finalResponse: 'Server failed while writing the response.',
+      }));
+    } catch {
+      // ignore
+    }
   }
-  res.statusCode = statusCode;
-  res.end?.(JSON.stringify(payload));
 }
 
 export async function readJsonBody(
