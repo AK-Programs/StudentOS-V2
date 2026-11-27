@@ -682,7 +682,7 @@ export async function handleAiChat(
       String(prompt).includes('operational actions');
 
     const pathname = String(req.path || req.url || '').split('?')[0];
-    const isStreamingRequest = Boolean(stream || pathname.includes('/stream'));
+    const isStreamingRequest = false;
     const searchIntent = detectWebSearchIntent(String(prompt), String(persona), webSearchMode as any);
     let webSearchUsed = false;
     let webSources: WebSearchSource[] = [];
@@ -1700,4 +1700,3 @@ export async function handleAdminAiLimits(
     );
   }
 }
- 
