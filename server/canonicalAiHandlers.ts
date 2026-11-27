@@ -76,6 +76,8 @@ export type NodeLikeRes = {
   write?: (chunk: string) => any;
   end?: (chunk?: string) => any;
   flushHeaders?: () => any;
+  on?: (event: string, listener: (...args: any[]) => void) => any;
+  off?: (event: string, listener: (...args: any[]) => void) => any;
 };
 
 export interface HandlerRuntimeExtras {
@@ -90,45 +92,17 @@ export function createRequestId(): string {
 
 export function sendJson(res: NodeLikeRes, statusCode: number, payload: Record<string, any>): void {
   if (res.writableEnded) return;
-  const safeStatus = statusCode === 500 ? 502 : statusCode;
-  let body = payload;
-  try {
-    JSON.stringify(payload);
-  } catch {
-    body = {
-      success: false,
-      status: 'failed',
-      error: { code: 'JSON_SERIALIZE_ERROR', message: 'Server could not serialize the response.' },
-      message: 'Server could not serialize the response.',
-      finalResponse: 'Server could not serialize the response.',
-    };
-  }
   try {
     res.setHeader?.('Content-Type', 'application/json; charset=utf-8');
   } catch {
     // ignore
   }
-  try {
-    if (typeof res.status === 'function' && typeof res.json === 'function') {
-      res.status(safeStatus).json(body);
-      return;
-    }
-    res.statusCode = safeStatus;
-    res.end?.(JSON.stringify(body));
-  } catch {
-    try {
-      res.statusCode = 502;
-      res.end?.(JSON.stringify({
-        success: false,
-        status: 'failed',
-        error: { code: 'RESPONSE_WRITE_ERROR', message: 'Server failed while writing the response.' },
-        message: 'Server failed while writing the response.',
-        finalResponse: 'Server failed while writing the response.',
-      }));
-    } catch {
-      // ignore
-    }
+  if (typeof res.status === 'function' && typeof res.json === 'function') {
+    res.status(statusCode).json(payload);
+    return;
   }
+  res.statusCode = statusCode;
+  res.end?.(JSON.stringify(payload));
 }
 
 export async function readJsonBody(
@@ -682,7 +656,7 @@ export async function handleAiChat(
       String(prompt).includes('operational actions');
 
     const pathname = String(req.path || req.url || '').split('?')[0];
-    const isStreamingRequest = false;
+    const isStreamingRequest = Boolean(stream || pathname.includes('/stream'));
     const searchIntent = detectWebSearchIntent(String(prompt), String(persona), webSearchMode as any);
     let webSearchUsed = false;
     let webSources: WebSearchSource[] = [];
@@ -697,7 +671,14 @@ export async function handleAiChat(
       res.flushHeaders?.();
 
       const abortController = new AbortController();
-      req.on?.('close', () => abortController.abort());
+      // The incoming request's `close` event can fire after its body has been
+      // fully received, even while the response is still streaming. Watch the
+      // response connection instead, and only abort when the client actually
+      // disconnects before the response has ended.
+      const onResponseClose = () => {
+        if (!res.writableEnded) abortController.abort();
+      };
+      res.on?.('close', onResponseClose);
 
       try {
         if (searchIntent.shouldSearch && searchIntent.cleanQuery) {
@@ -802,6 +783,8 @@ export async function handleAiChat(
           })}\n\n`
         );
         res.end?.();
+      } finally {
+        res.off?.('close', onResponseClose);
       }
       return;
     }
