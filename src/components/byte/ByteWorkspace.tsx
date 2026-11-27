@@ -376,7 +376,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
   return (
     <div
       data-testid="byte-workspace"
-      className="fixed inset-0 z-40 flex h-dvh max-h-dvh w-full flex-col overflow-hidden bg-slate-950 lg:static lg:inset-auto lg:z-auto lg:h-full lg:max-h-full lg:flex-row"
+      className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-slate-950 lg:flex-row"
     >
       {/* Slide-out Mobile Session Drawer */}
       <AnimatePresence>
