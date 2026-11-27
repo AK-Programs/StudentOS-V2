@@ -13999,6 +13999,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
               )}
               {/* Tab 7: Byte AI Role-Aware Workspace */}
               {activeTab === 'ai_teacher' && (
+                <div className="fixed inset-0 z-40 flex h-dvh max-h-dvh w-full flex-col overflow-hidden bg-slate-950 lg:static lg:inset-auto lg:z-auto lg:h-full lg:max-h-full">
                 <ByteWorkspace
                   key={currentUser?.uid || currentUser?.email || 'byte-guest'}
                   currentUser={currentUser}
@@ -14048,6 +14049,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                   handleRemoveAttachedFile={handleRemoveAttachedFile}
                   showNotification={showNotification}
                 />
+              </div>
               )}
 
               {/* Tab 8: Peer global chat matrix */}
