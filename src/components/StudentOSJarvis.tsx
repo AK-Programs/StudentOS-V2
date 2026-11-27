@@ -321,11 +321,27 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     return () => clearTimeout(timer);
   }, [initialQuery]);
 
+  const getAuthHeaders = async (): Promise<Record<string, string>> => {
+    let token = '';
+    try {
+      const { data } = await supabase.auth.getSession();
+      token = data?.session?.access_token || '';
+    } catch (_) {}
+    return {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      ...(currentUser?.uid ? { 'x-veylentra-uid': currentUser.uid } : {}),
+      ...(normalizedRole ? { 'x-veylentra-role': normalizedRole } : {}),
+    };
+  };
+
   // Fetch linked children (Parent) and cohort directory (Staff)
   useEffect(() => {
     if (!currentUser) return;
     if ((normalizedRole === 'parent' || normalizedRole === 'guardian') && currentUser?.uid) {
-      fetch(`/api/parent/linked-children?parentUid=${encodeURIComponent(currentUser.uid)}`)
+      void getAuthHeaders().then(headers =>
+        fetch(`/api/parent/linked-children?parentUid=${encodeURIComponent(currentUser.uid)}`, { headers })
+      )
         .then((res) => (res.ok ? res.json() : null))
         .then((payload) => {
           if (Array.isArray(payload?.children)) setLinkedChildren(payload.children);
@@ -439,9 +455,10 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
       }
     );
 
+    const headers = await getAuthHeaders();
     const response = await fetch('/api/ai/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         prompt: `User request inside Veylentra Orion (${normalizedRole}, tab=${activeTab}): "${command}". Answer accurately in clear Markdown (and LaTeX $...$ / $$...$$ for math/science) without inventing school records.`,
         persona: 'orion',
@@ -534,9 +551,10 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     setSearchResults(`Searching verified web and academic sources for "${cleanQ}"...`);
 
     try {
+      const headers = await getAuthHeaders();
       const response = await fetch('/api/ai/search', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ query: cleanQ }),
       });
 
@@ -617,9 +635,10 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
 
       setLocalMaterials(!error && matchedMaterials ? matchedMaterials : []);
 
+      const headers = await getAuthHeaders();
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           prompt: `List 4 high-yield academic learning resources and active experiments for "${query}" with concise descriptions.`,
           persona: 'study_buddy',
@@ -648,9 +667,10 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     setSearching(true);
     setSearchQuery(topic);
     try {
+      const headers = await getAuthHeaders();
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           prompt: `Create a structured 1-hour study plan block for "${topic}" with Timing, Activities, and Learning Objectives.`,
           persona: 'study_buddy',
@@ -700,9 +720,10 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     setIsNotesSaved(false);
 
     try {
+      const headers = await getAuthHeaders();
       const response = await fetch('/api/ai/notes', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           content: `Create ${typeLabels[type]} for "${topic}" formatted in Markdown with headings, tables, and LaTeX formulas where applicable.`,
           action: 'generate_notes',

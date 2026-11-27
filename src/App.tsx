@@ -7100,7 +7100,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
     }
   };
 
-  const isByteViewportLocked = activeTab === 'ai_teacher' && Boolean(currentUser) && !isLocked;
+  const isByteViewportLocked = activeTab === 'ai_teacher' && !isLocked;
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
