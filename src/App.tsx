@@ -3750,7 +3750,7 @@ What can I clarify today?` }
         resultText = resData.text;
       } catch (err: any) {
         console.error("Notes AI transform error:", err?.message || err);
-        showNotification(err?.message || 'AI is temporarily unavailable. Please try again.');
+        showNotification('AI is temporarily unavailable. Please try again.');
         return;
       }
 
@@ -5590,7 +5590,11 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
     setSelectedMaterialForAi(mat);
     setAiActionResultText('');
     
-    let contentContext = `Subject Category: ${mat.subject}. Description Detail: ${mat.description}. Type classification: ${mat.type}. Uploader role stats: ${mat.uploadedBy}. target grades: ${mat.visibleToGrades?.join('') || 'All Grades'}.`;
+    let contentContext = `Subject Category: ${mat.subject}. Description Detail: ${mat.description}. Type classification: ${mat.type}. Uploader role stats: ${mat.uploadedBy}. target grades: ${mat.visibleToGrades?.join(', ') || 'All Grades'}.`;
+    if (action === 'recommend') {
+      const catalogue = materials.slice(0, 80).map((item, index) => `${index + 1}. ${item.title} | Subject: ${item.subject || 'Unspecified'} | Type: ${item.type || 'Resource'} | Description: ${item.description || 'No description'}`).join('\n');
+      contentContext = `AVAILABLE MATERIAL HUB CATALOGUE (only recommend items listed here):\n${catalogue || `${mat.title} | ${mat.subject || 'Unspecified'} | ${mat.description || 'No description'}`}\n\nCurrent selected resource: ${mat.title}`;
+    }
     
     incrementViewsMaterial(mat);
     
@@ -5623,7 +5627,7 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
       } catch (err: any) {
         console.error("Material AI action error:", err?.message || err);
         setAiActionResultText("### ⚠️ AI Unavailable\n\nAI is temporarily unavailable. Please try again.");
-        showNotification(err?.message || 'AI is temporarily unavailable. Please try again.');
+        showNotification('AI is temporarily unavailable. Please try again.');
         return;
       }
       
@@ -5631,7 +5635,7 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
       showNotification(`✨ AI ${action.toUpperCase()} processed successfully!`);
     } catch (err: any) {
       console.error('AI execution failed:', err);
-      showNotification(err?.message || 'AI is temporarily unavailable. Please try again.');
+      showNotification('AI is temporarily unavailable. Please try again.');
       setAiActionResultText(`### ⚠️ AI Unavailable\n\nAI is temporarily unavailable. Please try again.`);
     } finally {
       setAiActionLoading(false);
@@ -6638,14 +6642,9 @@ Date: ${new Date().toLocaleDateString()}
         capturedOwnerUid: requestOwnerUid
       });
 
-    // 1. Quota Pre-Check
-    const currentUsage = getLocalUsageState(userIdKey, userRoleKey);
-    if (currentUsage.remaining <= 0) {
-      showNotification(`Daily AI Buddy limit reached (${currentUsage.limit}/${currentUsage.limit}). Upgrade quota or redeem a voucher.`);
-      setShowQuotaModal(true);
-      return;
-    }
-    
+    // The server performs the authoritative quota check. Never block composing/sending
+    // from a potentially stale browser-local usage cache; the API returns 429 when needed.
+
     const userQuery = rawQueryText.trim();
     const currentAttachedFiles = [...attachedFiles];
     const newUserMsg = { 
@@ -9491,8 +9490,8 @@ CRITICAL WEB GROUNDING DIRECTIVE:
             {/* Base View Layout Wrapper */}
             <main className={`flex-1 max-w-7xl w-full mx-auto min-w-0 ${
               isByteViewportLocked
-                ? `h-full min-h-0 overflow-hidden flex flex-col p-1 sm:p-4 md:p-6 ${presentationMode ? 'pb-2 md:pb-4' : 'pb-[calc(4.75rem+env(safe-area-inset-bottom))] md:pb-6'}`
-                : 'p-2 sm:p-6 md:p-8 pb-24 sm:pb-12 space-y-4 sm:space-y-8'
+                ? `h-full min-h-0 overflow-hidden flex flex-col p-1 sm:p-4 md:p-6 ${presentationMode ? 'pb-2 md:pb-4' : 'pb-[calc(5.75rem+env(safe-area-inset-bottom))] md:pb-6'}`
+                : 'p-2 sm:p-6 md:p-8 pb-[calc(5.75rem+env(safe-area-inset-bottom))] md:pb-8 space-y-4 sm:space-y-8'
             } ${fontSize === 'large' ? 'text-lg' : fontSize === 'huge' ? 'text-xl' : 'text-sm'}`}>
               <AnimatePresence mode="wait" initial={false}>
                 <motion.div
@@ -11690,9 +11689,9 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                     ))}
                   </div>
 
-                  {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '') && (
+                  {['teacher', 'faculty', 'head_teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes(String(effectiveRole || '').toLowerCase()) && (
                     <div className="pt-2">
-                      <AssignmentCenter />
+                      <AssignmentCenter currentUser={currentUser} effectiveRole={effectiveRole} showNotification={showNotification} />
                     </div>
                   )}
                 </motion.div>
@@ -12277,6 +12276,17 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                           className="text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 w-full sm:w-auto"
                         >
                           <Plus className="w-4 h-4" /> Share Resource
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const source = materials[0];
+                            if (source) void handleTriggerMaterialAi(source, 'recommend');
+                            else showNotification('Add or open learning resources before requesting recommendations.');
+                          }}
+                          className="text-xs font-bold bg-violet-600/20 hover:bg-violet-600/35 text-violet-200 border border-violet-400/25 px-4 py-2.5 rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-1.5 w-full sm:w-auto"
+                        >
+                          <Sparkles className="w-4 h-4" /> Resources Recommendations
                         </button>
                       </div>
                     </div>
@@ -13033,7 +13043,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                                       }}
                                       className="bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 font-bold px-3 py-1.5 rounded-xl text-left sm:text-center flex-1 hover:bg-indigo-600 hover:text-white transition-all"
                                     >
-                                      🤖 Ask AI...
+                                      🤖 Ask to Materials
                                     </button>
                                   </div>
                                 </div>
@@ -14486,7 +14496,7 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
 
             {/* Mobile Bottom Navigation Bar (Phones < 768px & Installed Mobile PWA) */}
             {!presentationMode && activeTab !== 'whiteboard' && (
-              <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-slate-950/95 backdrop-blur-md border-t border-slate-800/80 px-2 pt-1.5 pb-2 safe-area-pb flex items-center justify-around gap-1">
+              <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 min-h-[4.25rem] bg-slate-950/95 backdrop-blur-md border-t border-slate-800/80 px-2 pt-1.5 pb-[calc(0.5rem+env(safe-area-inset-bottom))] flex items-center justify-around gap-1">
                 {[
                   { id: 'dashboard', label: 'Home', icon: <VeylentraIcon name="dashboard" size="sm" /> },
                   { id: 'study_hub', label: 'Study', icon: <VeylentraIcon name="study_hub" size="sm" />, badge: dueCardsCount > 0 ? dueCardsCount : 0 },
@@ -15468,4 +15478,3 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
     </div>
   );
 }
- 
