@@ -9,6 +9,8 @@
 
 import {
   classifyTaskComplexity,
+  getGroqApiKey,
+  getMinistralApiKey,
   getNextGroqModel,
   getZaiApiKey,
   ZAI_API_BASE_URL,
@@ -147,6 +149,17 @@ export default async function handler(req: NodeLikeReq, res: NodeLikeRes) {
     }
     if (pathname === '/api/ai/usage-status' && method === 'GET') {
       return await handleAiUsageStatus(req, res, { requestId });
+    }
+    if (pathname === '/api/ai/health' && method === 'GET') {
+      return forceJson(res, 200, {
+        success: true,
+        providers: {
+          groq: Boolean(getGroqApiKey()),
+          ministral: Boolean(getMinistralApiKey()),
+          zai: Boolean(getZaiApiKey()),
+        },
+        requestId,
+      });
     }
     if (pathname === '/api/ai/redeem-voucher' && method === 'POST') {
       return await handleAiRedeemVoucher(req, res, { requestId });
