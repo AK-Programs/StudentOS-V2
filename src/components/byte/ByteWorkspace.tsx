@@ -376,7 +376,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
   return (
     <div
       data-testid="byte-workspace"
-      className="h-full flex-1 min-h-0 flex flex-col lg:flex-row rounded-none sm:rounded-3xl border-0 sm:border border-white/10 bg-slate-950/90 shadow-xl relative w-full overflow-hidden"
+      className="fixed inset-0 z-40 flex h-dvh max-h-dvh w-full flex-col overflow-hidden bg-slate-950 lg:static lg:inset-auto lg:z-auto lg:h-full lg:max-h-full lg:flex-row"
     >
       {/* Slide-out Mobile Session Drawer */}
       <AnimatePresence>
@@ -473,7 +473,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
         {/* Clean 3-Zone Top Header - strictly flex-nowrap to prevent stacked toolbar boxes on phone viewports */}
         <header
           data-testid="byte-primary-toolbar"
-          className="flex items-center justify-between gap-1.5 sm:gap-3 flex-nowrap px-2.5 sm:px-5 py-2 sm:py-2.5 border-b border-white/10 bg-slate-950/80 shrink-0 min-w-0 w-full overflow-hidden h-14"
+          className="flex h-12 max-h-12 min-h-12 w-full shrink-0 items-center justify-between gap-1 overflow-hidden border-b border-white/10 bg-slate-950 px-2 flex-nowrap"
         >
           {/* Zone 1: Identity & Rail Toggle */}
           <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-1 overflow-hidden">
