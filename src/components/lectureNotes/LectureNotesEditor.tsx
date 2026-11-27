@@ -29,6 +29,7 @@ import { EducationalBlockRenderer, isEducationalBlockEmpty } from './blocks/Educ
 import { VisualMathEditorModal } from './VisualMathEditorModal';
 import { SketchCanvasModal } from './SketchCanvasModal';
 import { VaultNote } from '../../types';
+import { extractApiErrorMessage, getServerAuthHeaders } from '../../lib/clientSession';
 
 // Robust caret coordinate measurement helper for textarea
 function getCaretCoordinates(element: HTMLTextAreaElement, position: number) {
@@ -122,6 +123,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const editorRef = useRef<HTMLDivElement>(null);
   const [isAIProcessing, setIsAIProcessing] = useState(false);
+  const [aiErrorMessage, setAiErrorMessage] = useState('');
   const [isAIEditModalOpen, setIsAIEditModalOpen] = useState(false);
   const [aiInstruction, setAiInstruction] = useState('Improve clarity, flow, and formatting');
   const [aiActionMode, setAiActionMode] = useState<'replace' | 'insert_below' | 'append'>('replace');
@@ -503,6 +505,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
     if (selectedBlockIds.length === 0 && !activeBlockId) return;
     
     setIsAIProcessing(true);
+    setAiErrorMessage('');
     const targetIds = selectedBlockIds.length > 0 ? selectedBlockIds : [activeBlockId!];
     const selectedBlocks = blocks.filter(b => targetIds.includes(b.id));
     const contentToEdit = blocksToMarkdown(selectedBlocks);
@@ -513,7 +516,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
     try {
       const res = await fetch('/api/ai/notes', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getServerAuthHeaders(),
         body: JSON.stringify({
           action: 'edit_note',
           content: contentToEdit,
@@ -522,10 +525,14 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
         })
       });
 
-      if (!res.ok) throw new Error('AI Edit failed');
-      const data = await res.json();
-      
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) {
+        throw new Error(extractApiErrorMessage(data, `AI edit failed (HTTP ${res.status}).`));
+      }
       const returnedText = data.text || data.content;
+      if (typeof returnedText !== 'string' || !returnedText.trim()) {
+        throw new Error('AI returned an empty edit. Your original note has been preserved.');
+      }
       if (data.success && returnedText) {
         const newBlocks = markdownToBlocks(returnedText);
         const startIdx = blocks.findIndex(b => b.id === targetIds[0]);
@@ -546,8 +553,9 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
         setIsAIEditModalOpen(false);
         setCanUndoAI(true);
       }
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      console.error('[LectureNotesEditor] AI edit failed:', err);
+      setAiErrorMessage(err?.message || 'AI edit failed. Your original note has been preserved.');
     } finally {
       setIsAIProcessing(false);
     }
@@ -1210,11 +1218,17 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
               </div>
             </div>
 
+            {aiErrorMessage && (
+              <div role="alert" className="rounded-xl border border-rose-500/40 bg-rose-950/30 px-3 py-2 text-xs text-rose-200">
+                {aiErrorMessage}
+              </div>
+            )}
+
             {/* Modal Actions */}
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
               <button
                 type="button"
-                onClick={() => setIsAIEditModalOpen(false)}
+                onClick={() => { setIsAIEditModalOpen(false); setAiErrorMessage(''); }}
                 className="px-3.5 py-1.5 text-xs font-medium text-slate-400 hover:text-white transition-colors cursor-pointer"
               >
                 Cancel
