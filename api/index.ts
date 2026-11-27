@@ -9,8 +9,6 @@
 
 import {
   classifyTaskComplexity,
-  getGroqApiKey,
-  getMinistralApiKey,
   getNextGroqModel,
   getZaiApiKey,
   ZAI_API_BASE_URL,
@@ -24,6 +22,9 @@ import {
   handleAiHandwritingFormula,
   handleAiImageToNote,
   handleAiMagicDraw,
+  handleAiMaterialAction,
+  handleAiAssignmentTool,
+  handleAiFlashcards,
   handleAiNotes,
   handleAiRedeemVoucher,
   handleAiSearch,
@@ -74,20 +75,6 @@ function normalizePathname(rawUrl: unknown): string {
   return clean || '/';
 }
 
-function forceJson(res: NodeLikeRes, statusCode: number, payload: Record<string, any>): void {
-  try {
-    sendJson(res, statusCode, payload);
-  } catch {
-    try {
-      res.statusCode = statusCode;
-      res.setHeader?.('Content-Type', 'application/json; charset=utf-8');
-      res.end?.(JSON.stringify(payload));
-    } catch {
-      // last resort
-    }
-  }
-}
-
 export default async function handler(req: NodeLikeReq, res: NodeLikeRes) {
   const requestId = createRequestId();
   applyCorsHeaders(res, req);
@@ -98,7 +85,8 @@ export default async function handler(req: NodeLikeReq, res: NodeLikeRes) {
     return;
   }
 
-  const pathname = normalizePathname(req.url || req.path || '/');
+  const routedPath = typeof req.query?.__veylentra_path === 'string' ? req.query.__veylentra_path : undefined;
+  const pathname = normalizePathname(routedPath || req.url || req.path || '/');
   const method = String(req.method || 'GET').toUpperCase();
 
   try {
@@ -118,19 +106,22 @@ export default async function handler(req: NodeLikeReq, res: NodeLikeRes) {
       return await handleOrionAssist(req, res, { requestId });
     }
     if (pathname === '/api/orion/execute' && method === 'POST') {
-      try {
-        return await handleOrionExecute(req, res, { requestId });
-      } catch (orionErr: any) {
-        const reason = normalizePublicErrorMessage(orionErr, 'Orion execution failed on server.');
-        return forceJson(res, 502, {
-          success: false,
-          status: 'failed',
-          error: { code: 'ORION_EXECUTE_ERROR', message: reason, requestId },
-          message: reason,
-          requestId,
-          finalResponse: reason,
-        });
-      }
+      return await handleOrionExecute(req, res, { requestId });
+    }
+    if (pathname === '/api/ai/material-action' && method === 'POST') {
+      return await handleAiMaterialAction(req, res, { requestId });
+    }
+    if (pathname === '/api/ai/assignment-tools' && method === 'POST') {
+      return await handleAiAssignmentTool(req, res, { requestId });
+    }
+    if (pathname === '/api/ai/flashcards' && method === 'POST') {
+      return await handleAiFlashcards(req, res, { requestId });
+    }
+    if (pathname === '/api/ai/question-generator' && method === 'POST') {
+      return await handleAiAssignmentTool({ method: req.method, url: req.url, path: req.path, headers: req.headers, body: { ...(req.body || {}), action: 'question_generator' } }, res, { requestId });
+    }
+    if (pathname === '/api/ai/homework-checker' && method === 'POST') {
+      return await handleAiAssignmentTool({ method: req.method, url: req.url, path: req.path, headers: req.headers, body: { ...(req.body || {}), action: 'homework_checker' } }, res, { requestId });
     }
     if (pathname === '/api/ai/notes' && method === 'POST') {
       return await handleAiNotes(req, res, { requestId });
@@ -149,17 +140,6 @@ export default async function handler(req: NodeLikeReq, res: NodeLikeRes) {
     }
     if (pathname === '/api/ai/usage-status' && method === 'GET') {
       return await handleAiUsageStatus(req, res, { requestId });
-    }
-    if (pathname === '/api/ai/health' && method === 'GET') {
-      return forceJson(res, 200, {
-        success: true,
-        providers: {
-          groq: Boolean(getGroqApiKey()),
-          ministral: Boolean(getMinistralApiKey()),
-          zai: Boolean(getZaiApiKey()),
-        },
-        requestId,
-      });
     }
     if (pathname === '/api/ai/redeem-voucher' && method === 'POST') {
       return await handleAiRedeemVoucher(req, res, { requestId });
@@ -203,7 +183,7 @@ export default async function handler(req: NodeLikeReq, res: NodeLikeRes) {
     );
   } catch (err: any) {
     const reason = normalizePublicErrorMessage(err, 'Serverless handler failed to process request.');
-    return forceJson(
+    return sendJson(
       res,
       502,
       buildErrorEnvelope({
@@ -215,4 +195,3 @@ export default async function handler(req: NodeLikeReq, res: NodeLikeRes) {
     );
   }
 }
- 
