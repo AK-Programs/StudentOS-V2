@@ -413,6 +413,9 @@ html.byte-viewport-locked #root {
   min-height: 0 !important;
   overflow: hidden !important;
   overscroll-behavior: none !important;
+  position: fixed;
+  inset: 0;
+  width: 100%;
 }
 
 /* Touch action optimization to prevent double-tap zoom delay */

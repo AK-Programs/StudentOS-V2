@@ -9491,7 +9491,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
             {/* Base View Layout Wrapper */}
             <main className={`flex-1 max-w-7xl w-full mx-auto min-w-0 ${
               isByteViewportLocked
-                ? `min-h-0 overflow-hidden flex flex-col p-2 sm:p-4 md:p-6 ${presentationMode ? 'pb-2 md:pb-4' : 'pb-[calc(4.75rem+env(safe-area-inset-bottom))] md:pb-6'}`
+                ? `h-full min-h-0 overflow-hidden flex flex-col p-1 sm:p-4 md:p-6 ${presentationMode ? 'pb-2 md:pb-4' : 'pb-[calc(4.25rem+env(safe-area-inset-bottom))] md:pb-6'}`
                 : 'p-2 sm:p-6 md:p-8 pb-24 sm:pb-12 space-y-4 sm:space-y-8'
             } ${fontSize === 'large' ? 'text-lg' : fontSize === 'huge' ? 'text-xl' : 'text-sm'}`}>
               <AnimatePresence mode="wait" initial={false}>
@@ -9501,7 +9501,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
                   transition={{ duration: 0.2 }}
-                  className={isByteViewportLocked ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'space-y-4 sm:space-y-8'}
+                  className={isByteViewportLocked ? 'h-full flex-1 min-h-0 flex flex-col overflow-hidden' : 'space-y-4 sm:space-y-8'}
                 >
               {/* Tab: Panel Mode Launcher */}
               {activeTab === 'panel_mode' && effectiveRole !== 'student' && (
