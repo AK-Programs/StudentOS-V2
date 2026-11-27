@@ -1,3 +1,4 @@
+import { getServerAuthHeaders, extractApiErrorMessage } from '../lib/clientSession';
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -56,7 +57,6 @@ import {
   FileCheck,
   Maximize
 } from 'lucide-react';
-import { extractApiErrorMessage, getServerAuthHeaders } from '../lib/clientSession';
 import { UserProfile, Meeting, MeetingParticipant, MeetingChatMessage, MeetingRecording, MeetingBreakoutRoom, MeetingAttendanceReport } from '../types';
 import { 
   fetchAllMeetings, 
@@ -1431,18 +1431,18 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
         method: 'POST',
         headers: await getServerAuthHeaders(),
         body: JSON.stringify({
-          rawText: rawContext,
-          mode: 'summary',
+          content: rawContext,
+          action: 'summarize',
           subject: activeMeeting.subject || 'General'
         })
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.success === false || !data?.text) {
-        throw new Error(extractApiErrorMessage(data, `AI summary failed (HTTP ${res.status}).`));
+      if (!res.ok || !data.success || !data.text) {
+        throw new Error(extractApiErrorMessage(data, `Meeting summary failed (HTTP ${res.status}).`));
       }
       setAiSessionSummary(data.text);
     } catch (err: any) {
-      setAiSessionSummary(err?.message || 'Network error while generating session summary.');
+      setAiSessionSummary(`Unable to generate the meeting summary: ${err?.message || 'Network error.'}`);
     } finally {
       setIsGeneratingAiSummary(false);
     }
