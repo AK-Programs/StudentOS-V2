@@ -901,7 +901,6 @@ export async function streamAICompletion(
           state.firstTokenLatencyMs = Date.now() - requestStart;
         }
         state.segmentText += rawDelta;
-        hasEmittedAnyToken = true;
         callbacks.onToken(rawDelta, state.firstTokenLatencyMs);
         return;
       }
@@ -919,7 +918,7 @@ export async function streamAICompletion(
           state.firstTokenLatencyMs = Date.now() - requestStart;
         }
         state.segmentText += deduped;
-        hasEmittedAnyToken = true;
+        visibleStreamChars += deduped.length;
         callbacks.onToken(deduped, state.firstTokenLatencyMs);
       }
     };
@@ -933,7 +932,7 @@ export async function streamAICompletion(
       const finishReason = String(choice?.finish_reason || data?.finish_reason || '').toLowerCase();
       if (!text) return { fullText: '', firstTokenLatencyMs: null, finishReason };
       const firstTokenLatencyMs = Date.now() - requestStart;
-      hasEmittedAnyToken = true;
+      visibleStreamChars += text.length;
       callbacks.onToken(text, firstTokenLatencyMs);
       return { fullText: text, firstTokenLatencyMs, finishReason };
     }
@@ -949,24 +948,6 @@ export async function streamAICompletion(
     };
     let lastChoice: any = null;
 
-    const processProviderSseLine = (rawLine: string) => {
-      const line = rawLine.trim();
-      if (!line || !line.startsWith('data:')) return;
-      const payload = line.slice(5).trim();
-      if (payload === '[DONE]') return;
-
-      try {
-        const parsed = JSON.parse(payload);
-        const choice = parsed.choices?.[0];
-        if (choice) lastChoice = choice;
-        const token = extractStreamingToken(choice);
-        if (token.length > 0) emitFilteredDelta(token, streamState);
-      } catch {
-        // Ignore malformed/incomplete provider event lines; a final complete
-        // event is processed after the decoder is flushed below.
-      }
-    };
-
     while (true) {
       if (abortSignal?.aborted) {
         await reader.cancel().catch(() => {});
@@ -979,13 +960,42 @@ export async function streamAICompletion(
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
-      for (const rawLine of lines) processProviderSseLine(rawLine);
+
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line || !line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (payload === '[DONE]') continue;
+
+        try {
+          const parsed = JSON.parse(payload);
+          const choice = parsed.choices?.[0];
+          if (choice) lastChoice = choice;
+          const token = extractStreamingToken(choice);
+          if (token.length > 0) {
+            emitFilteredDelta(token, streamState);
+          }
+        } catch {}
+      }
     }
 
-    // Flush the decoder and process a final provider SSE event even when the
-    // upstream closes without a trailing newline.
+    // A provider may finish with a final SSE event that has no trailing newline.
     buffer += decoder.decode();
-    if (buffer.trim()) processProviderSseLine(buffer);
+    for (const rawLine of buffer.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || !line.startsWith('data:')) continue;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      try {
+        const parsed = JSON.parse(payload);
+        const choice = parsed.choices?.[0];
+        if (choice) lastChoice = choice;
+        const token = extractStreamingToken(choice);
+        if (token) emitFilteredDelta(token, streamState);
+      } catch {
+        // Ignore malformed or non-JSON provider control frames.
+      }
+    }
 
     if (!streamState.prefixChecked && streamState.pendingLead.length > 0) {
       const deduped = alreadyEmittedText
@@ -994,10 +1004,9 @@ export async function streamAICompletion(
       streamState.prefixChecked = true;
       streamState.pendingLead = '';
       if (deduped.length > 0) {
-        if (streamState.firstTokenLatencyMs === null) {
-          streamState.firstTokenLatencyMs = Date.now() - requestStart;
-        }
+        if (streamState.firstTokenLatencyMs === null) { streamState.firstTokenLatencyMs = Date.now() - requestStart; }
         streamState.segmentText += deduped;
+        visibleStreamChars += deduped.length;
         callbacks.onToken(deduped, streamState.firstTokenLatencyMs);
       }
     }
@@ -1012,8 +1021,14 @@ export async function streamAICompletion(
 
   let streamResult: { fullText: string; firstTokenLatencyMs: number | null; finishReason?: string } | null = null;
   let finalProvider: AIProviderName = activeProvider;
-  let hasEmittedAnyToken = false;
 
+  if (!getGroqApiKey() && !getMinistralApiKey() && !getZaiApiKey()) {
+    const err: any = new Error('No AI provider is configured. Set MINISTRAL_API_KEY, GROQ_API_KEY, or ZAI_API_KEY in the server hosting environment.');
+    err.status = 503;
+    throw err;
+  }
+
+  let visibleStreamChars = 0;
   const streamPlan: Array<{ p: AIProviderName; m: string }> = [];
   if (activeProvider === 'zai' && !hasImages) {
     streamPlan.push({ p: 'zai', m: ZAI_MODEL_ID });
@@ -1063,10 +1078,7 @@ export async function streamAICompletion(
     } catch (err: any) {
       lastStreamErr = err;
       console.warn(`[AI_STREAM_ROUTER] ${candidate.p} (${candidate.m}) fallback notice:`, err?.message || err);
-      // Provider fallback is safe only before the first visible token. Once a
-      // partial answer has reached the user, restarting the original prompt on
-      // another provider would append a second answer and repeat whole sections.
-      if (hasEmittedAnyToken) break;
+      if (visibleStreamChars > 0) throw err;
     }
   }
 
