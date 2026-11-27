@@ -17,6 +17,7 @@ import {
   Columns
 } from 'lucide-react';
 import { VaultNote } from '../../types';
+import { extractApiErrorMessage, getServerAuthHeaders } from '../../lib/clientSession';
 
 interface ImageToNoteModalProps {
   isOpen: boolean;
@@ -102,7 +103,7 @@ export const ImageToNoteModal: React.FC<ImageToNoteModalProps> = ({
 
       const resp = await fetch('/api/ai/image-to-note', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getServerAuthHeaders(),
         body: JSON.stringify({
           images,
           subject,
@@ -110,9 +111,12 @@ export const ImageToNoteModal: React.FC<ImageToNoteModalProps> = ({
         })
       });
 
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({}));
       if (!resp.ok || !data.success) {
-        throw new Error(data.error || 'Failed to extract handwriting from the uploaded image.');
+        throw new Error(extractApiErrorMessage(data, `Image-to-note request failed (HTTP ${resp.status}).`));
+      }
+      if (typeof data.content !== 'string' || !data.content.trim()) {
+        throw new Error('The image-to-note service returned no extracted content.');
       }
 
       setProcessingStep('5. Organizing document & preparing editable preview...');
