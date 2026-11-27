@@ -46,6 +46,7 @@ import { VisualMathEditorModal } from './VisualMathEditorModal';
 import { SketchCanvasModal } from './SketchCanvasModal';
 import { generateFormattedPdf } from '../../lib/pdfGenerator';
 import { useDismissContextMenu } from '../../lib/useContextHoldMenu';
+import { extractApiErrorMessage, getServerAuthHeaders } from '../../lib/clientSession';
 
 interface LectureNotesWorkspaceProps {
   notes: VaultNote[];
@@ -281,16 +282,16 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
     try {
       const res = await fetch('/api/ai/notes', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getServerAuthHeaders(),
         body: JSON.stringify({
           action: 'create_note',
           topic: aiCreateQuery,
           subject: 'Academic'
         })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'AI note creation failed');
+        throw new Error(extractApiErrorMessage(data, `AI note creation failed (HTTP ${res.status}).`));
       }
       if (data.text) {
         onCreateNote({
@@ -317,7 +318,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
     try {
       const res = await fetch('/api/ai/notes', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getServerAuthHeaders(),
         body: JSON.stringify({
           action: 'edit_note',
           content: activeNote.content || '',
@@ -325,9 +326,9 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
           subject: activeNote.subject || 'Academic'
         })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'AI edit failed');
+        throw new Error(extractApiErrorMessage(data, `AI edit failed (HTTP ${res.status}).`));
       }
       if (data.text) {
         await onUpdateNote(activeNote.id, { content: data.text });
