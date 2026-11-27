@@ -72,6 +72,20 @@ function normalizePathname(rawUrl: unknown): string {
   return clean || '/';
 }
 
+function forceJson(res: NodeLikeRes, statusCode: number, payload: Record<string, any>): void {
+  try {
+    sendJson(res, statusCode, payload);
+  } catch {
+    try {
+      res.statusCode = statusCode;
+      res.setHeader?.('Content-Type', 'application/json; charset=utf-8');
+      res.end?.(JSON.stringify(payload));
+    } catch {
+      // last resort
+    }
+  }
+}
+
 export default async function handler(req: NodeLikeReq, res: NodeLikeRes) {
   const requestId = createRequestId();
   applyCorsHeaders(res, req);
@@ -102,7 +116,19 @@ export default async function handler(req: NodeLikeReq, res: NodeLikeRes) {
       return await handleOrionAssist(req, res, { requestId });
     }
     if (pathname === '/api/orion/execute' && method === 'POST') {
-      return await handleOrionExecute(req, res, { requestId });
+      try {
+        return await handleOrionExecute(req, res, { requestId });
+      } catch (orionErr: any) {
+        const reason = normalizePublicErrorMessage(orionErr, 'Orion execution failed on server.');
+        return forceJson(res, 502, {
+          success: false,
+          status: 'failed',
+          error: { code: 'ORION_EXECUTE_ERROR', message: reason, requestId },
+          message: reason,
+          requestId,
+          finalResponse: reason,
+        });
+      }
     }
     if (pathname === '/api/ai/notes' && method === 'POST') {
       return await handleAiNotes(req, res, { requestId });
@@ -164,7 +190,7 @@ export default async function handler(req: NodeLikeReq, res: NodeLikeRes) {
     );
   } catch (err: any) {
     const reason = normalizePublicErrorMessage(err, 'Serverless handler failed to process request.');
-    return sendJson(
+    return forceJson(
       res,
       502,
       buildErrorEnvelope({
