@@ -418,19 +418,6 @@ html.byte-viewport-locked #root {
   width: 100%;
 }
 
-[data-testid="byte-workspace"] {
-  overflow: hidden !important;
-}
-[data-testid="byte-primary-toolbar"] {
-  display: flex !important;
-  flex-wrap: nowrap !important;
-  height: 48px !important;
-  max-height: 48px !important;
-  min-height: 48px !important;
-  overflow: hidden !important;
-}
-
-
 /* Touch action optimization to prevent double-tap zoom delay */
 button, a, [role="button"], input, select, textarea {
   touch-action: manipulation;
@@ -1362,3 +1349,27 @@ button, a, [role="button"], input, select, textarea {
 }
 
 
+
+
+/* Byte: one toolbar, one workspace, no page stack */
+[data-testid="byte-workspace"] {
+  height: 100% !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+[data-testid="byte-workspace"] ~ [data-testid="byte-workspace"] {
+  display: none !important;
+}
+[data-testid="byte-primary-toolbar"] {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  height: 48px !important;
+  max-height: 48px !important;
+  min-height: 48px !important;
+  overflow: hidden !important;
+  flex: 0 0 48px !important;
+}
+[data-testid="byte-primary-toolbar"] ~ [data-testid="byte-primary-toolbar"] {
+  display: none !important;
+}
