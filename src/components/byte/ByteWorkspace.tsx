@@ -374,7 +374,10 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
   );
 
   return (
-    <div className="h-full flex-1 min-h-0 flex rounded-3xl border border-white/10 bg-slate-950/90 shadow-xl relative w-full overflow-hidden">
+    <div
+      data-testid="byte-workspace"
+      className="h-full flex-1 min-h-0 flex rounded-3xl border border-white/10 bg-slate-950/90 shadow-xl relative w-full overflow-hidden"
+    >
       {/* Slide-out Mobile Session Drawer */}
       <AnimatePresence>
         {showAiHistoryDrawer && (
@@ -468,9 +471,12 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
       {/* Main Studio Column */}
       <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
         {/* Clean 3-Zone Top Header */}
-        <header className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-white/10 bg-slate-950/70 shrink-0">
+        <header
+          data-testid="byte-primary-toolbar"
+          className="flex items-center justify-between gap-2 sm:gap-3 flex-wrap sm:flex-nowrap px-3 sm:px-5 py-2.5 sm:py-3 border-b border-white/10 bg-slate-950/70 shrink-0 min-w-0"
+        >
           {/* Zone 1: Identity & Rail Toggle */}
-          <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1">
             <button
               type="button"
               onClick={() => setDesktopRailOpen((v) => !v)}
@@ -484,7 +490,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
             <button
               type="button"
               onClick={() => setShowAiHistoryDrawer(true)}
-              className="lg:hidden inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-200 text-xs font-medium transition-colors cursor-pointer shrink-0 min-h-[40px]"
+              className="lg:hidden inline-flex items-center gap-1.5 px-2.5 py-1.5 sm:py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-200 text-xs font-medium transition-colors cursor-pointer shrink-0 min-h-[36px] sm:min-h-[40px]"
               aria-label="Open session history"
             >
               <History className="w-4 h-4 text-indigo-400" />
@@ -507,11 +513,11 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
           </div>
 
           {/* Zone 2 & 3: Focused Studio Actions */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap justify-end">
             <button
               type="button"
               onClick={() => setShowTeachTopicBar((v) => !v)}
-              className={`px-3 py-2 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 min-h-[40px] ${
+              className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 min-h-[36px] sm:min-h-[40px] ${
                 showTeachTopicBar
                   ? 'bg-indigo-600/25 border-indigo-400/50 text-white'
                   : 'bg-slate-900 hover:bg-slate-800 border-white/10 text-indigo-200'
@@ -525,7 +531,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
             <button
               type="button"
               onClick={() => setIsJarvisActive(true)}
-              className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-sky-500/35 text-sky-300 hover:text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 min-h-[40px]"
+              className="px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-sky-500/35 text-sky-300 hover:text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 min-h-[36px] sm:min-h-[40px]"
               title="Open Orion Ephemeral Action Agent"
             >
               <Sparkles className="w-3.5 h-3.5 text-sky-400" />
@@ -538,7 +544,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                 type="button"
                 onClick={() => setShowPrefsPopover((v) => !v)}
                 aria-expanded={showPrefsPopover}
-                className={`px-3 py-2 rounded-xl border text-xs font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 min-h-[40px] ${
+                className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl border text-xs font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 min-h-[36px] sm:min-h-[40px] ${
                   showPrefsPopover
                     ? 'bg-indigo-600/20 border-indigo-400/50 text-white'
                     : 'bg-slate-900 hover:bg-slate-800 border-white/10 text-slate-200'
@@ -558,7 +564,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                     animate={reduced ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
                     exit={reduced ? { opacity: 0 } : { opacity: 0, y: 4, scale: 0.98 }}
                     transition={{ duration: reduced ? 0 : 0.16, ease: MOTION_EASE.easeOutExpo }}
-                    className="absolute right-0 mt-2 w-80 max-w-[90vw] rounded-2xl border border-white/15 bg-slate-950/98 shadow-2xl p-4 z-40 space-y-4 backdrop-blur-xl"
+                    className="fixed inset-x-3 top-24 sm:inset-x-auto sm:top-auto sm:absolute sm:right-0 sm:mt-2 w-auto sm:w-80 max-h-[75dvh] overflow-y-auto rounded-2xl border border-white/15 bg-slate-950/98 shadow-2xl p-4 z-50 space-y-4 backdrop-blur-xl"
                   >
                     <div className="flex items-center justify-between border-b border-white/10 pb-2">
                       <span className="text-xs font-semibold text-white">Studio Preferences</span>
@@ -1303,7 +1309,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                       : `Ask Byte (${roleProfile.displayLabel} Assistant) — Shift+Enter for new line...`
                 }
                 disabled={aiLoading || aiUsageState.remaining <= 0}
-                className={`flex-1 bg-transparent px-2.5 py-2.5 text-sm leading-relaxed resize-none max-h-36 focus:outline-none text-white placeholder-slate-500 ${
+                className={`flex-1 min-w-0 min-h-[40px] bg-transparent px-2.5 py-2.5 text-sm leading-relaxed resize-none max-h-36 focus:outline-none text-white placeholder-slate-500 ${
                   aiUsageState.remaining <= 0 ? 'opacity-60 cursor-not-allowed' : ''
                 }`}
               />

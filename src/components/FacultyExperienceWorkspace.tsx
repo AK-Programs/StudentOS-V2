@@ -10,6 +10,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'motion/react';
+import { extractApiErrorMessage, getServerAuthHeaders } from '../lib/clientSession';
 import {
   ResponsiveContainer,
   BarChart,
@@ -672,21 +673,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
     const currentDraft = evalDrafts[key] || { score: '', feedback: '' };
     setEvalDrafts(prev => ({ ...prev, [key]: { ...currentDraft, orionLoading: true, error: undefined } }));
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
-      };
-      if (userId && !['guest', 'anonymous', 'user_guest'].includes(String(userId).toLowerCase())) {
-        headers['x-veylentra-uid'] = String(userId);
-      }
-      if (currentUser?.email) {
-        headers['x-veylentra-email'] = String(currentUser.email);
-      }
-      if (effectiveRole) {
-        headers['x-veylentra-role'] = String(effectiveRole);
-      }
+      const headers = await getServerAuthHeaders();
       const resp = await fetch('/api/ai/orion-assist', {
         method: 'POST',
         headers,
@@ -702,7 +689,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
       });
       const json = await resp.json().catch(() => ({}));
       if (!resp.ok || !json.success || !json.text) {
-        throw new Error(json.error || `Orion returned status ${resp.status}`);
+        throw new Error(extractApiErrorMessage(json, `Orion returned status ${resp.status}`));
       }
       setEvalDrafts(prev => ({
         ...prev,
@@ -823,22 +810,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
       : 'Provide constructive, encouraging, actionable 2-week next steps.';
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
-      };
-      if (userId && !['guest', 'anonymous', 'user_guest'].includes(String(userId).toLowerCase())) {
-        headers['x-veylentra-uid'] = String(userId);
-      }
-      if (currentUser?.email) {
-        headers['x-veylentra-email'] = String(currentUser.email);
-      }
-      if (effectiveRole) {
-        headers['x-veylentra-role'] = String(effectiveRole);
-      }
+      const headers = await getServerAuthHeaders();
 
       const resp = await fetch('/api/ai/orion-assist', {
         method: 'POST',
@@ -856,7 +828,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
 
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || !data.success || !data.text) {
-        throw new Error(data.error || `Orion returned status ${resp.status}`);
+        throw new Error(extractApiErrorMessage(data, `Orion returned status ${resp.status}`));
       }
       setRosterFeedbackText(String(data.text).trim());
       setRosterFeedbackProvider(data.providerUsed ? `${data.providerUsed}${data.modelUsed ? ` · ${data.modelUsed}` : ''}` : null);
@@ -940,22 +912,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
         : `Faculty role: ${effectiveRole}. Authorized grades: ${authorizedGrades.join(', ')}. Cohort size: ${scopedStudents.length}.`;
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
-      };
-      if (userId && !['guest', 'anonymous', 'user_guest'].includes(String(userId).toLowerCase())) {
-        headers['x-veylentra-uid'] = String(userId);
-      }
-      if (currentUser?.email) {
-        headers['x-veylentra-email'] = String(currentUser.email);
-      }
-      if (effectiveRole) {
-        headers['x-veylentra-role'] = String(effectiveRole);
-      }
+      const headers = await getServerAuthHeaders();
 
       const resp = await fetch('/api/ai/orion-assist', {
         method: 'POST',
@@ -973,7 +930,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
 
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || !data.success || !data.text) {
-        throw new Error(data.error || `Orion returned status ${resp.status}`);
+        throw new Error(extractApiErrorMessage(data, `Orion returned status ${resp.status}`));
       }
 
       const defaultTitleMap: Record<OrionFacultyIntent, string> = {

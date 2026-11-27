@@ -11,6 +11,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from './supabase';
+import { getServerAuthHeaders } from './clientSession';
 import { UserProfile } from '../types';
 
 export type FeatureCategory =
@@ -183,28 +184,8 @@ async function getFastAccessToken(): Promise<string | undefined> {
   return inflightSessionPromise;
 }
 
-export async function buildAuthHeadersForUser(user?: Partial<UserProfile> | null): Promise<Record<string, string>> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  try {
-    const token = await getFastAccessToken();
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-  } catch (_) {}
-
-  if (user) {
-    const uid = user.uid || (user as any).id || user.email || '';
-    if (uid) headers['x-veylentra-uid'] = String(uid);
-    if (user.email) headers['x-veylentra-email'] = String(user.email);
-    if (user.role) headers['x-veylentra-role'] = String(user.role);
-    if (user.name) headers['x-veylentra-name'] = String(user.name);
-    if (user.grade) headers['x-veylentra-grade'] = String(user.grade);
-    if (user.section) headers['x-veylentra-section'] = String(user.section);
-  }
-  return headers;
+export async function buildAuthHeadersForUser(_user?: Partial<UserProfile> | null): Promise<Record<string, string>> {
+  return getServerAuthHeaders();
 }
 
 export function isSuperAdminRole(role?: string | null): boolean {

@@ -6,6 +6,7 @@ import { AddressInfo } from 'node:net';
 import { app } from '../server';
 import serverlessHandler from '../api/index';
 import { recordAiUsageAsync, setForceAiQuotaSupabaseForTests } from '../server/aiQuotaService';
+import { createSignedSessionToken, issueRestrictedDemoSession } from '../server/sessionAuth';
 
 async function startServer(): Promise<{ baseUrl: string; close: () => Promise<void> }> {
   const server: http.Server = await new Promise((resolve) => {
@@ -125,7 +126,8 @@ async function runTests() {
       'src/components/FacultyExperienceWorkspace.tsx',
     ]) {
       const callerSrc = fs.readFileSync(path.join(rootDir, callerRel), 'utf8');
-      assert.ok(callerSrc.includes("'x-veylentra-uid'"), `${callerRel} must send signed-in x-veylentra-uid header`);
+      assert.ok(callerSrc.includes('getServerAuthHeaders'), `${callerRel} must use verified getServerAuthHeaders()`);
+      assert.ok(!callerSrc.includes("'x-veylentra-uid'"), `${callerRel} must never spoof x-veylentra-uid header`);
     }
 
     console.log('✓ 2. Approved provider lock & Orion client auth header checks passed');
@@ -285,29 +287,42 @@ async function runTests() {
         body: JSON.stringify({ intent: 'student_explain', topic: 'Newton Second Law' }),
       });
       const r502Json: any = await r502.json();
+      const r502Msg = (r502Json.error && typeof r502Json.error === 'object' ? r502Json.error.message : r502Json.error) || r502Json.message || '';
       assert.equal(r502.status, 502, `Expected 502 on AI provider failure, got ${r502.status}`);
       assert.notEqual(r502.status, 500);
       assert.equal(r502Json.success, false);
-      assert.ok(String(r502Json.error || '').includes('503'), `502 error should include real provider reason: ${r502Json.error}`);
+      assert.ok(String(r502Msg).includes('503'), `502 error should include real provider reason: ${r502Msg}`);
 
       const s502 = await invokeServerlessOrionAssist({
         headers: { authorization: 'Bearer valid-stu-jwt' },
         body: { intent: 'student_explain', topic: 'Newton Second Law' },
       });
+      const s502Msg = (s502.data?.error && typeof s502.data.error === 'object' ? s502.data.error.message : s502.data?.error) || s502.data?.message || '';
       assert.equal(s502.status, 502, `Serverless expected 502 on provider failure, got ${s502.status}`);
       assert.notEqual(s502.status, 500);
       assert.equal(s502.data?.success, false);
-      assert.ok(String(s502.data?.error || '').includes('503'), `Serverless 502 should include real reason: ${s502.data?.error}`);
+      assert.ok(String(s502Msg).includes('503'), `Serverless 502 should include real reason: ${s502Msg}`);
 
       aiShouldFail = false;
     }
 
-    // 3d. Express & Serverless: Valid request -> 200 using approved provider
+    // 3d. Express & Serverless: Unsigned spoof headers rejected (401); verified demo session -> 200 using approved provider
+    const demoStudentSession = issueRestrictedDemoSession('demo-student-uid');
+    assert.equal(demoStudentSession.ok, true, 'Demo student session must issue cleanly');
+    const demoStudentToken = demoStudentSession.ok ? demoStudentSession.token : '';
+
     {
+      const spoofed = await fetch(`${srv.baseUrl}/api/ai/orion-assist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-veylentra-uid': 'demo-student-uid', 'x-veylentra-role': 'student' },
+        body: JSON.stringify({ intent: 'student_explain', topic: 'Newton Second Law' }),
+      });
+      assert.equal(spoofed.status, 401, 'Bare x-veylentra-uid header without signed session must return 401');
+
       calledAiUrls.length = 0;
       const r200 = await fetch(`${srv.baseUrl}/api/ai/orion-assist`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-veylentra-uid': 'demo-student-uid', 'x-veylentra-role': 'student' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${demoStudentToken}` },
         body: JSON.stringify({ intent: 'student_explain', topic: 'Newton Second Law' }),
       });
       const r200Json: any = await r200.json();
@@ -317,7 +332,7 @@ async function runTests() {
       assert.ok(['ministral', 'groq', 'zai'].includes(r200Json.providerUsed));
 
       const s200 = await invokeServerlessOrionAssist({
-        headers: { 'x-veylentra-uid': 'demo-student-uid', 'x-veylentra-role': 'student' },
+        headers: { authorization: `Bearer ${demoStudentToken}` },
         body: { intent: 'student_explain', topic: 'Newton Second Law' },
       });
       assert.equal(s200.status, 200);
@@ -329,6 +344,12 @@ async function runTests() {
     // 3e. Express & Serverless: Daily limit reached -> 429
     {
       const limitUid = 'stu-quota-exhausted-orion';
+      const limitToken = createSignedSessionToken({
+        uid: limitUid,
+        name: 'Limit Student',
+        role: 'student',
+        sessionType: 'login',
+      }).token;
       for (let i = 0; i < 30; i++) {
         await recordAiUsageAsync({
           cfg: { url: process.env.VITE_SUPABASE_URL!, key: 'mock' },
@@ -340,22 +361,24 @@ async function runTests() {
 
       const r429 = await fetch(`${srv.baseUrl}/api/ai/orion-assist`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-veylentra-uid': limitUid, 'x-veylentra-role': 'student' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${limitToken}` },
         body: JSON.stringify({ intent: 'student_explain', topic: 'Thermodynamics' }),
       });
       const r429Json: any = await r429.json();
+      const r429Msg = (r429Json.error && typeof r429Json.error === 'object' ? r429Json.error.message : r429Json.error) || r429Json.message || '';
       assert.equal(r429.status, 429, `Expected 429 when daily limit reached, got ${r429.status}`);
       assert.equal(r429Json.success, false);
-      assert.ok(String(r429Json.error || '').toLowerCase().includes('limit'));
+      assert.ok(String(r429Msg).toLowerCase().includes('limit'));
 
       serverlessQuotaCount = 30;
       const s429 = await invokeServerlessOrionAssist({
-        headers: { 'x-veylentra-uid': limitUid, 'x-veylentra-role': 'student' },
+        headers: { authorization: `Bearer ${limitToken}` },
         body: { intent: 'student_explain', topic: 'Thermodynamics' },
       });
+      const s429Msg = (s429.data?.error && typeof s429.data.error === 'object' ? s429.data.error.message : s429.data?.error) || s429.data?.message || '';
       assert.equal(s429.status, 429, `Serverless expected 429 when daily limit reached, got ${s429.status}`);
       assert.equal(s429.data?.success, false);
-      assert.ok(String(s429.data?.error || '').toLowerCase().includes('limit'));
+      assert.ok(String(s429Msg).toLowerCase().includes('limit'));
     }
 
     console.log('✓ 3. Express & Serverless /api/ai/orion-assist 401/429/502/200 checks passed');
@@ -426,33 +449,35 @@ async function runTests() {
         body: JSON.stringify({ command: 'Explain quantum tunneling simply' }),
       });
       const e502Json: any = await e502.json();
+      const e502Msg = (e502Json.error && typeof e502Json.error === 'object' ? e502Json.error.message : e502Json.error) || e502Json.message || '';
       assert.equal(e502.status, 502, `Express /api/orion/execute expected 502 on AI provider failure, got ${e502.status}`);
       assert.notEqual(e502.status, 500);
       assert.equal(e502Json.success, false);
-      assert.ok(String(e502Json.error || '').includes('503'), `Express 502 error must expose real upstream reason: ${e502Json.error}`);
+      assert.ok(String(e502Msg).includes('503'), `Express 502 error must expose real upstream reason: ${e502Msg}`);
 
       const s502 = await invokeServerlessOrionExecute({
         headers: { authorization: 'Bearer valid-stu-jwt' },
         body: { command: 'Explain quantum tunneling simply' },
       });
+      const s502Msg = (s502.data?.error && typeof s502.data.error === 'object' ? s502.data.error.message : s502.data?.error) || s502.data?.message || '';
       assert.equal(s502.status, 502, `Serverless /api/orion/execute expected 502 on AI provider failure, got ${s502.status}`);
       assert.notEqual(s502.status, 500);
       assert.equal(s502.data?.success, false);
-      assert.ok(String(s502.data?.error || '').includes('503'), `Serverless 502 error must expose real upstream reason: ${s502.data?.error}`);
+      assert.ok(String(s502Msg).includes('503'), `Serverless 502 error must expose real upstream reason: ${s502Msg}`);
 
       aiShouldFail = false;
     }
 
-    // 4d. Express & Serverless: Valid signed-in request (JWT & demo-student-uid) -> 200 with approved providers
+    // 4d. Express & Serverless: Valid signed-in request (JWT & verified demo session) -> 200 with approved providers
     {
       calledAiUrls.length = 0;
       const e200 = await fetch(`${srv.baseUrl}/api/orion/execute`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-veylentra-uid': 'demo-student-uid' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${demoStudentToken}` },
         body: JSON.stringify({ command: 'Explain Newton laws briefly' }),
       });
       const e200Json: any = await e200.json();
-      assert.equal(e200.status, 200, `Expected 200 for demo-student-uid, got ${e200.status}`);
+      assert.equal(e200.status, 200, `Expected 200 for verified demo session, got ${e200.status}`);
       assert.equal(e200Json.success, true);
       assert.ok(['ministral', 'groq', 'zai'].includes(e200Json.providerUsed));
 

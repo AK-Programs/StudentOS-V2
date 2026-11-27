@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { extractApiErrorMessage, getServerAuthHeaders } from './clientSession';
 import {
   OrionAction,
   OrionActionType,
@@ -570,7 +571,10 @@ export interface ServerOrionExecuteResponse {
   providerUsed?: string;
   modelUsed?: string;
   snapshot?: OrionAgentProgressSnapshot;
-  error?: string;
+  error?: string | { code?: string; message?: string; requestId?: string };
+  message?: string;
+  requestId?: string;
+  deduplicated?: boolean;
 }
 
 export async function executeOrionViaServer(params: {
@@ -581,27 +585,9 @@ export async function executeOrionViaServer(params: {
   modelOverride?: string;
   history?: { role: 'user' | 'assistant'; content: string }[];
   userContext?: OrionUserContext;
+  idempotencyKey?: string;
 }): Promise<ServerOrionExecuteResponse> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  try {
-    const { data } = await supabase.auth.getSession();
-    const token = data?.session?.access_token;
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-  } catch {
-    // Session lookup optional for PIN/demo accounts
-  }
-
-  if (params.userContext?.userId) {
-    headers['x-veylentra-uid'] = String(params.userContext.userId);
-  }
-  if (params.userContext?.userEmail) {
-    headers['x-veylentra-email'] = String(params.userContext.userEmail);
-  }
+  const headers = await getServerAuthHeaders();
 
   const resp = await fetch('/api/orion/execute', {
     method: 'POST',
@@ -612,13 +598,51 @@ export async function executeOrionViaServer(params: {
       confirmed: Boolean(params.confirmed),
       activeTab: params.activeTab || 'dashboard',
       modelOverride: params.modelOverride || undefined,
+      idempotencyKey: params.idempotencyKey || undefined,
       history: (params.history || []).slice(-6),
     }),
   });
 
-  const payload = await resp.json().catch(() => null);
-  if (!payload || typeof payload !== 'object') {
-    throw new Error(`Orion execution endpoint returned HTTP ${resp.status} without a readable JSON payload.`);
+  const contentType = String(resp.headers?.get?.('content-type') || '').toLowerCase();
+  const rawText = await resp.text().catch(() => '');
+  let payload: any = null;
+  if (rawText.trim()) {
+    try {
+      payload = JSON.parse(rawText);
+    } catch {
+      payload = null;
+    }
   }
-  return payload as ServerOrionExecuteResponse;
+
+  if (!payload || typeof payload !== 'object') {
+    const cleanText = rawText
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 220);
+    const kindHint = contentType.includes('html') ? 'HTML error page' : contentType || 'non-JSON response';
+    throw new Error(
+      cleanText
+        ? `Orion execution failed (HTTP ${resp.status}, ${kindHint}): ${cleanText}`
+        : `Orion execution failed (HTTP ${resp.status}, ${kindHint}).`
+    );
+  }
+
+  const reqId = typeof payload.requestId === 'string' && payload.requestId ? payload.requestId : undefined;
+  if (!resp.ok) {
+    const errMsg = extractApiErrorMessage(payload, `Orion execution failed with HTTP ${resp.status}.`);
+    // For structured policy/execution gates (401/403/failed JSON from backend), allow caller to render clear status + message,
+    // while throwing clear Errors carrying status/requestId for transport/provider failures (5xx).
+    if (resp.status >= 500 || (resp.status !== 401 && resp.status !== 403 && !payload.status)) {
+      const serverErr: any = new Error(reqId ? `${errMsg} (Ref: ${reqId})` : errMsg);
+      serverErr.status = resp.status;
+      serverErr.requestId = reqId;
+      throw serverErr;
+    }
+  }
+
+  return {
+    ...(payload as ServerOrionExecuteResponse),
+    requestId: reqId,
+  };
 }

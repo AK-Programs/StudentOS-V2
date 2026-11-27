@@ -20,7 +20,7 @@ import {
   buildAdaptiveDepthSystemDirectives,
   classifyByteResponseDepth,
   resolveProviderOutputTokenBudget,
-} from './aiResponseDepth';
+} from './aiResponseDepth.js';
 
 export type AIProviderName = 'groq' | 'ministral' | 'zai';
 export type TaskComplexityTier = 'short' | 'fast' | 'general' | 'complex' | 'tool';
@@ -79,13 +79,13 @@ export interface AICompletionOptions {
 // Approved AI Provider API Key Getters (Strictly Ministral, Groq, and Z.ai)
 
 export function getMinistralApiKey(): string {
-  return (process.env.MINISTRAL_API_KEY || process.env.MISTRAL_API_KEY || process.env.VITE_MINISTRAL_API_KEY || '')
+  return (process.env.MINISTRAL_API_KEY || process.env.MISTRAL_API_KEY || '')
     .trim()
     .replace(/^["']|["']$/g, '');
 }
 
 export function getGroqApiKey(): string {
-  return (process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY || '').trim().replace(/^["']|["']$/g, '');
+  return (process.env.GROQ_API_KEY || '').trim().replace(/^["']|["']$/g, '');
 }
 
 // Security rule: Z.ai key is strictly read from server-side ZAI_API_KEY (never VITE_ZAI_API_KEY).
@@ -720,6 +720,27 @@ export async function generateAICompletion(
   return result.text;
 }
 
+export function stripOverlappingContinuationPrefix(existingText: string, continuationChunk: string): string {
+  if (!existingText || !continuationChunk) return continuationChunk;
+  const maxProbe = Math.min(220, existingText.length, continuationChunk.length);
+  for (let overlap = maxProbe; overlap >= 4; overlap--) {
+    const tail = existingText.slice(-overlap);
+    const head = continuationChunk.slice(0, overlap);
+    if (tail === head) {
+      return continuationChunk.slice(overlap);
+    }
+  }
+  const trimmedTail = existingText.trimEnd();
+  const trimmedHead = continuationChunk.trimStart();
+  const maxTrimmedProbe = Math.min(180, trimmedTail.length, trimmedHead.length);
+  for (let overlap = maxTrimmedProbe; overlap >= 8; overlap--) {
+    if (trimmedTail.slice(-overlap) === trimmedHead.slice(0, overlap)) {
+      return trimmedHead.slice(overlap);
+    }
+  }
+  return continuationChunk;
+}
+
 export async function streamAICompletion(
   options: AICompletionOptions,
   callbacks: {
@@ -771,7 +792,7 @@ export async function streamAICompletion(
     reasoningMode,
   });
   const effectiveSystemInstruction = `${systemInstruction}\n\n${buildAdaptiveDepthSystemDirectives(depthInfo)}`;
-  const messages = buildMessagesArray(effectiveSystemInstruction, prompt, history, images);
+  const baseMessages = buildMessagesArray(effectiveSystemInstruction, prompt, history, images);
   const initialBudget = resolveProviderOutputTokenBudget({
     provider: activeProvider,
     depth: depthInfo.depth,
@@ -786,7 +807,9 @@ export async function streamAICompletion(
   async function tryStreamOnce(
     p: AIProviderName,
     m: string,
-    customMaxTokens?: number
+    turnMessages: any[] = baseMessages,
+    alreadyEmittedText = '',
+    emitMeta = true
   ): Promise<{ fullText: string; firstTokenLatencyMs: number | null; finishReason?: string }> {
     const { apiUrl: targetUrl, apiKey } = getProviderEndpointAndKey(p);
 
@@ -802,7 +825,7 @@ export async function streamAICompletion(
     const budgetPlan = resolveProviderOutputTokenBudget({
       provider: p,
       depth: depthInfo.depth,
-      requestedMaxTokens: customMaxTokens || maxTokens,
+      requestedMaxTokens: maxTokens,
       reasoningMode,
     });
 
@@ -820,7 +843,7 @@ export async function streamAICompletion(
 
     const requestBody: Record<string, any> = {
       model: m,
-      messages,
+      messages: turnMessages,
       temperature,
       max_tokens: budgetPlan.maxTokens,
       stream: true
@@ -842,7 +865,7 @@ export async function streamAICompletion(
       abortSignal?.removeEventListener('abort', onExternalAbort);
       const err: any = new Error(
         fetchErr?.name === 'AbortError'
-          ? `${p} stream request timed out after 30 seconds.`
+          ? `${p} stream request timed out.`
           : (fetchErr?.message || `${p} stream request failed`)
       );
       err.status = fetchErr?.name === 'AbortError' ? 504 : 502;
@@ -862,15 +885,49 @@ export async function streamAICompletion(
       throw err;
     }
 
-    if (!customMaxTokens) {
+    if (emitMeta) {
       callbacks.onMeta?.({ requestId, provider: p, model: m, tier: routing.tier });
     }
+
+    const emitFilteredDelta = (rawDelta: string, state: {
+      segmentText: string;
+      prefixChecked: boolean;
+      pendingLead: string;
+      firstTokenLatencyMs: number | null;
+    }) => {
+      if (!rawDelta) return;
+      if (!alreadyEmittedText || state.prefixChecked) {
+        if (state.firstTokenLatencyMs === null) {
+          state.firstTokenLatencyMs = Date.now() - requestStart;
+        }
+        state.segmentText += rawDelta;
+        callbacks.onToken(rawDelta, state.firstTokenLatencyMs);
+        return;
+      }
+
+      state.pendingLead += rawDelta;
+      // Wait briefly until we have enough characters to compare boundary overlap OR stream ends
+      if (state.pendingLead.length < 48) {
+        return;
+      }
+      const deduped = stripOverlappingContinuationPrefix(alreadyEmittedText, state.pendingLead);
+      state.prefixChecked = true;
+      state.pendingLead = '';
+      if (deduped.length > 0) {
+        if (state.firstTokenLatencyMs === null) {
+          state.firstTokenLatencyMs = Date.now() - requestStart;
+        }
+        state.segmentText += deduped;
+        callbacks.onToken(deduped, state.firstTokenLatencyMs);
+      }
+    };
 
     const contentType = (response.headers.get('content-type') || '').toLowerCase();
     if (contentType.includes('application/json') && !contentType.includes('text/event-stream')) {
       const data = await response.json();
       const choice = data.choices?.[0];
-      const text = extractTextFromChoice(choice, data);
+      const rawText = extractTextFromChoice(choice, data);
+      const text = alreadyEmittedText ? stripOverlappingContinuationPrefix(alreadyEmittedText, rawText) : rawText;
       const finishReason = String(choice?.finish_reason || data?.finish_reason || '').toLowerCase();
       if (!text) return { fullText: '', firstTokenLatencyMs: null, finishReason };
       const firstTokenLatencyMs = Date.now() - requestStart;
@@ -881,8 +938,12 @@ export async function streamAICompletion(
     const reader = response.body.getReader();
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
-    let fullText = '';
-    let firstTokenLatencyMs: number | null = null;
+    const streamState = {
+      segmentText: '',
+      prefixChecked: !alreadyEmittedText,
+      pendingLead: '',
+      firstTokenLatencyMs: null as number | null,
+    };
     let lastChoice: any = null;
 
     while (true) {
@@ -909,20 +970,34 @@ export async function streamAICompletion(
           const choice = parsed.choices?.[0];
           if (choice) lastChoice = choice;
           const token = extractStreamingToken(choice);
-
           if (token.length > 0) {
-            if (firstTokenLatencyMs === null) {
-              firstTokenLatencyMs = Date.now() - requestStart;
-            }
-            fullText += token;
-            callbacks.onToken(token, firstTokenLatencyMs);
+            emitFilteredDelta(token, streamState);
           }
         } catch {}
       }
     }
 
+    if (!streamState.prefixChecked && streamState.pendingLead.length > 0) {
+      const deduped = alreadyEmittedText
+        ? stripOverlappingContinuationPrefix(alreadyEmittedText, streamState.pendingLead)
+        : streamState.pendingLead;
+      streamState.prefixChecked = true;
+      streamState.pendingLead = '';
+      if (deduped.length > 0) {
+        if (streamState.firstTokenLatencyMs === null) {
+          streamState.firstTokenLatencyMs = Date.now() - requestStart;
+        }
+        streamState.segmentText += deduped;
+        callbacks.onToken(deduped, streamState.firstTokenLatencyMs);
+      }
+    }
+
     const finishReason = String(lastChoice?.finish_reason || '').toLowerCase();
-    return { fullText, firstTokenLatencyMs, finishReason };
+    return {
+      fullText: streamState.segmentText,
+      firstTokenLatencyMs: streamState.firstTokenLatencyMs,
+      finishReason,
+    };
   }
 
   let streamResult: { fullText: string; firstTokenLatencyMs: number | null; finishReason?: string } | null = null;
@@ -969,7 +1044,7 @@ export async function streamAICompletion(
     finalProvider = candidate.p;
     activeModel = candidate.m;
     try {
-      const attempt = await tryStreamOnce(candidate.p, candidate.m);
+      const attempt = await tryStreamOnce(candidate.p, candidate.m, baseMessages, '', true);
       if (attempt.fullText.trim()) {
         streamResult = attempt;
         break;
@@ -987,6 +1062,43 @@ export async function streamAICompletion(
     err.providerUsed = finalProvider;
     err.modelUsed = activeModel;
     throw err;
+  }
+
+  // Automatic multi-segment streaming continuation when model stops due to token length limit
+  const MAX_STREAM_CONTINUATIONS = 3;
+  let continuationCount = 0;
+  while (
+    String(streamResult.finishReason || '').toLowerCase() === 'length' &&
+    continuationCount < MAX_STREAM_CONTINUATIONS &&
+    !abortSignal?.aborted
+  ) {
+    continuationCount++;
+    try {
+      const continuationMessages = [
+        ...baseMessages,
+        { role: 'assistant', content: streamResult.fullText },
+        {
+          role: 'user',
+          content:
+            'Continue seamlessly from the exact character where your previous message stopped. Do NOT repeat headings, formulas, sentences, or table rows you already wrote.',
+        },
+      ];
+      const nextSegment = await tryStreamOnce(
+        finalProvider,
+        activeModel,
+        continuationMessages,
+        streamResult.fullText,
+        false
+      );
+      if (!nextSegment.fullText) {
+        break;
+      }
+      streamResult.fullText += nextSegment.fullText;
+      streamResult.finishReason = nextSegment.finishReason || 'stop';
+    } catch (contErr: any) {
+      console.warn(`[AI_STREAM_ROUTER] Continuation segment #${continuationCount} stopped:`, contErr?.message || contErr);
+      break;
+    }
   }
 
   const finishedReply = streamResult.fullText.trim();
@@ -1012,4 +1124,5 @@ export async function streamAICompletion(
   callbacks.onComplete?.(finishedReply, telemetry);
   return { text: finishedReply, telemetry, finishReason: normalizedFinish, truncated };
 }
+
 

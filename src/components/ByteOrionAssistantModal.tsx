@@ -33,6 +33,7 @@ import { Byte3DCanvas } from './byte/Byte3DCanvas';
 import { Orion3DOrb } from './ui/Orion3DOrb';
 import { soundService } from '../lib/soundService';
 import { byteVoiceService } from '../lib/byteVoiceService';
+import { extractApiErrorMessage, getServerAuthHeaders } from '../lib/clientSession';
 import {
   ByteReminderItem,
   answerByteQueryLocally,
@@ -240,26 +241,11 @@ export const ByteOrionAssistantModal: React.FC<ByteOrionAssistantModalProps> = (
     setOrionProviderMeta(null);
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-
       const isFaculty = ['teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes(
         String(effectiveRole || '').toLowerCase()
       );
 
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
-      };
-      if (userId && !['guest', 'anonymous', 'user_guest'].includes(String(userId).toLowerCase())) {
-        headers['x-veylentra-uid'] = String(userId);
-      }
-      if (currentUser?.email) {
-        headers['x-veylentra-email'] = String(currentUser.email);
-      }
-      if (effectiveRole || currentUser?.role) {
-        headers['x-veylentra-role'] = String(effectiveRole || currentUser?.role);
-      }
+      const headers = await getServerAuthHeaders();
 
       const resp = await fetch('/api/ai/orion-assist', {
         method: 'POST',
@@ -277,7 +263,7 @@ export const ByteOrionAssistantModal: React.FC<ByteOrionAssistantModalProps> = (
 
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || !data.success) {
-        throw new Error(data.error || `Request failed (${resp.status})`);
+        throw new Error(extractApiErrorMessage(data, `Request failed (${resp.status})`));
       }
 
       const reply = data.text || 'Response received.';

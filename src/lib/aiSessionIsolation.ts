@@ -166,6 +166,39 @@ export function writeScopedActiveThreadIdToStorage(
   } catch (_) {}
 }
 
+export function deduplicateThreadsById<
+  T extends { id?: string; updatedAt?: number; messages?: any[] }
+>(threads: T[] | null | undefined): T[] {
+  if (!Array.isArray(threads)) return [];
+  const byId = new Map<string, { item: T; order: number }>();
+  let order = 0;
+
+  for (const thread of threads) {
+    if (!thread || typeof thread !== 'object') continue;
+    const cleanId = String(thread.id || '').trim();
+    if (!cleanId) continue;
+
+    const existing = byId.get(cleanId);
+    if (!existing) {
+      byId.set(cleanId, { item: thread, order: order++ });
+      continue;
+    }
+
+    const prevCount = Array.isArray(existing.item.messages) ? existing.item.messages.length : 0;
+    const nextCount = Array.isArray(thread.messages) ? thread.messages.length : 0;
+    const prevUpdated = Number(existing.item.updatedAt || 0);
+    const nextUpdated = Number(thread.updatedAt || 0);
+
+    if (nextUpdated > prevUpdated || (nextUpdated === prevUpdated && nextCount >= prevCount)) {
+      byId.set(cleanId, { item: thread, order: existing.order });
+    }
+  }
+
+  return Array.from(byId.values())
+    .sort((a, b) => a.order - b.order)
+    .map((entry) => entry.item);
+}
+
 export function isStreamSessionStillOwned(params: {
   currentEpoch: number;
   capturedEpoch: number;

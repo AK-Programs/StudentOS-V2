@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from './supabase';
+import { extractApiErrorMessage, getServerAuthHeaders } from './clientSession';
 import { persistDeckToSupabase, persistCardsBatchToSupabase } from './flashcardStorage';
 import { Flashcard, FlashcardDeck } from '../types';
 import {
@@ -183,20 +184,7 @@ export async function streamStudentOSAI(
   const requestStart = Date.now();
   const dataRetrievalLatencyMs = payload.dataRetrievalLatencyMs || 0;
 
-  const reqHeaders: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'Accept': 'text/event-stream, application/json'
-  };
-  if (payload.userId) {
-    reqHeaders['x-veylentra-uid'] = payload.userId;
-  }
-  try {
-    const { data } = await supabase.auth.getSession();
-    const token = data?.session?.access_token;
-    if (token) {
-      reqHeaders['Authorization'] = `Bearer ${token}`;
-    }
-  } catch (_) {}
+  const reqHeaders = await getServerAuthHeaders({ acceptSse: true });
 
   const res = await fetch('/api/ai/chat', {
     method: 'POST',
@@ -214,7 +202,7 @@ export async function streamStudentOSAI(
 
   if (res.status === 429) {
     const limitData = await res.json().catch(() => ({}));
-    const limitErr: any = new Error(limitData.message || limitData.error || 'Daily AI message limit reached.');
+    const limitErr: any = new Error(extractApiErrorMessage(limitData, 'Daily AI message limit reached.'));
     limitErr.isLimitReached = true;
     limitErr.limitData = limitData;
     throw limitErr;
@@ -224,7 +212,7 @@ export async function streamStudentOSAI(
     let errMessage = '';
     try {
       const errData = await res.json();
-      errMessage = errData.message || errData.error || errData.details;
+      errMessage = extractApiErrorMessage(errData, `HTTP error ${res.status}`);
     } catch (_) {
       const textErr = await res.text().catch(() => '');
       errMessage = textErr.slice(0, 200) || `HTTP error ${res.status}`;

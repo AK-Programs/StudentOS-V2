@@ -9,6 +9,7 @@
  */
 
 import { supabase } from './supabase';
+import { getServerAuthHeaders } from './clientSession';
 import {
   AssignmentSubmission,
   AttendanceAuditLog,
@@ -35,35 +36,8 @@ export type DerivedAssignmentStatus =
   | 'returned_for_revision'
   | 'completed';
 
-async function buildAcademicHeaders(user?: UserProfile | null): Promise<Record<string, string>> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json'
-  };
-
-  try {
-    const { data } = await supabase.auth.getSession();
-    const token = data?.session?.access_token;
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-  } catch (_) {}
-
-  if (user) {
-    const uid = user.uid || user.email || '';
-    if (uid) headers['x-veylentra-uid'] = uid;
-    if (user.role) headers['x-veylentra-role'] = String(user.role);
-    if (user.grade) headers['x-veylentra-grade'] = String(user.grade);
-    if (user.section) headers['x-veylentra-section'] = String(user.section);
-    if (user.name) headers['x-veylentra-name'] = String(user.name);
-    if (Array.isArray(user.assignedGrades) && user.assignedGrades.length > 0) {
-      headers['x-veylentra-assigned-grades'] = user.assignedGrades.join(',');
-    }
-    if (Array.isArray(user.assignedSections) && user.assignedSections.length > 0) {
-      headers['x-veylentra-assigned-sections'] = user.assignedSections.join(',');
-    }
-  }
-
-  return headers;
+async function buildAcademicHeaders(_user?: UserProfile | null): Promise<Record<string, string>> {
+  return getServerAuthHeaders();
 }
 
 export function dispatchAcademicSyncEvent(table: string, action: 'INSERT' | 'UPDATE' | 'DELETE', record?: any) {

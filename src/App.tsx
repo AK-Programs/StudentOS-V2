@@ -181,8 +181,16 @@ import {
   writeScopedActiveThreadIdToStorage,
   purgeLegacyUnscopedAiStorage,
   filterThreadsForUser,
+  deduplicateThreadsById,
   isStreamSessionStillOwned
 } from './lib/aiSessionIsolation';
+import {
+  clearClientSessionToken,
+  establishDemoSession,
+  extractApiErrorMessage,
+  getServerAuthHeaders,
+  setClientSessionToken
+} from './lib/clientSession';
 import { MOCK_QUIZZES, AI_PERSONAS, INITIAL_ANNOUNCEMENTS, INITIAL_FEEDBACK, INITIAL_MATERIALS, MOCK_SCHEDULES } from './mockData';
 import { FloatingByteWidget } from './components/byte/FloatingByteWidget';
 import { StudentOSOnboardingModal } from './components/onboarding/StudentOSOnboardingModal';
@@ -1546,7 +1554,7 @@ export default function App() {
   );
 
   const scopedAiThreads = useMemo(
-    () => filterThreadsForUser(aiThreads, currentUser?.uid),
+    () => deduplicateThreadsById(filterThreadsForUser(aiThreads, currentUser?.uid)),
     [aiThreads, currentUser?.uid]
   );
 
@@ -2479,6 +2487,7 @@ export default function App() {
         accountStatus: 'approved' as const
       };
       setCurrentUser(demoStudent);
+      void establishDemoSession(demoStudent.uid);
       setFirebaseLoading(false);
       return;
     }
@@ -2887,6 +2896,9 @@ export default function App() {
       { id: 'chat-2', name: 'Naitik Kashyap', role: 'student', message: 'Thank you Professor! The formulas sheet has been super helpful.', createdAt: new Date(Date.now() - 1800000).toISOString() }
     ]);
     const demoUid = currentUser?.uid || 'demo-student-uid';
+    if (demoUid === 'demo-student-uid' || demoUid === 'demo-parent-uid') {
+      void establishDemoSession(demoUid);
+    }
     const demoThreadId = `demo-thread-${demoUid}`;
     setAiThreads([
       {
@@ -3258,7 +3270,7 @@ export default function App() {
         }
         const scopedList = filterThreadsForUser(list || [], uid);
         if (scopedList.length > 0) {
-          const uniqueList = Array.from(new Map(scopedList.map(t => [t.id, t])).values());
+          const uniqueList = deduplicateThreadsById(scopedList);
           const sortedList = uniqueList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)) as any;
           setAiThreads(sortedList);
           setActiveThreadId(prev => {
@@ -3625,7 +3637,9 @@ What can I clarify today?` }
                   map.set(remote.id, remote);
                 }
               }
-              return Array.from(map.values()).sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0));
+              return deduplicateThreadsById(Array.from(map.values())).sort(
+                (a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0)
+              );
             });
           }
         }).catch(console.error);
@@ -3713,9 +3727,10 @@ What can I clarify today?` }
     try {
       let resultText = '';
       try {
+        const aiHeaders = await getServerAuthHeaders();
         const response = await fetch('/api/ai/notes', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: aiHeaders,
           body: JSON.stringify({
             content: promptText,
             action,
@@ -3725,12 +3740,12 @@ What can I clarify today?` }
         
         if (!response.ok) {
           const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.message || errData.error || `HTTP ${response.status}`);
+          throw new Error(extractApiErrorMessage(errData, `HTTP ${response.status}`));
         }
 
         const resData = await response.json();
         if (resData.error) {
-          throw new Error(resData.error);
+          throw new Error(extractApiErrorMessage(resData, 'AI notes failed'));
         }
         resultText = resData.text;
       } catch (err: any) {
@@ -3839,7 +3854,47 @@ ${resultText}
       let authenticated = false;
       let authUser: any = null;
 
-      // 1. First attempt Supabase Auth sign-in
+      // 1. Authenticate first via canonical server endpoint (/api/auth/login -> signed in-memory token)
+      let serverLoginError = '';
+      try {
+        const loginResp = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: loginEmail.trim(),
+            password: loginPassword
+          })
+        });
+        const loginPayload: any = await loginResp.json().catch(() => null);
+        if (loginResp.ok && loginPayload?.success && loginPayload?.sessionToken && loginPayload?.profile) {
+          setClientSessionToken(String(loginPayload.sessionToken), loginPayload.profile.uid);
+          const verifiedProfile = loginPayload.profile;
+          setCurrentUser(verifiedProfile);
+          localStorage.setItem('s_os_user', JSON.stringify(verifiedProfile));
+          updateRecentAccounts(verifiedProfile);
+          try {
+            await supabase.auth.signInWithPassword({
+              email: loginEmail.trim(),
+              password: loginPassword,
+            });
+          } catch (_) {}
+          try {
+            sessionStorage.removeItem('s_os_startup_shown');
+          } catch (_) {}
+          setShowStartup(true);
+          setFirebaseLoading(false);
+          if (verifiedProfile.role === 'parent') {
+            setActiveTab('parent_portal');
+          }
+          showNotification(`Welcome back, ${verifiedProfile.name}!`);
+          return;
+        }
+        serverLoginError = extractApiErrorMessage(loginPayload, '');
+      } catch (serverAuthErr) {
+        console.warn('Server login request failed, attempting Supabase Auth sign-in:', serverAuthErr);
+      }
+
+      // 2. Try Supabase Auth sign-in directly for Supabase-managed auth accounts
       try {
         const { data, error } = await supabase.auth.signInWithPassword({
           email: loginEmail.trim(),
@@ -3849,57 +3904,15 @@ ${resultText}
         if (!error && data?.user) {
           authenticated = true;
           authUser = data.user;
+        } else if (error && !serverLoginError) {
+          serverLoginError = error.message;
         }
       } catch (authErr) {
-        console.warn('Supabase Auth signIn failed, attempting fallback:', authErr);
+        console.warn('Supabase Auth signIn failed:', authErr);
       }
 
-      // 2. If Supabase Auth failed, attempt signUp to check/establish session
       if (!authenticated) {
-        try {
-          const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
-            email: loginEmail.trim(),
-            password: loginPassword,
-          });
-          if (!signUpErr && signUpData?.user && signUpData?.session) {
-            authenticated = true;
-            authUser = signUpData.user;
-          }
-        } catch (_) {}
-      }
-
-      // 3. Fallback to Supabase user_profiles table database lookup
-      if (!authenticated) {
-        const profile = await getSupabaseUserProfile(undefined, loginEmail.trim(), true);
-        if (profile) {
-          let pwdMatch = true;
-          if (profile.raw_data?.password_hash) {
-            const enteredHash = await hashPassword(loginPassword);
-            if (profile.raw_data.password_hash !== enteredHash) {
-              pwdMatch = false;
-            }
-          }
-          if (pwdMatch) {
-            authenticated = true;
-            setCurrentUser(profile);
-            localStorage.setItem('s_os_user', JSON.stringify(profile));
-            updateRecentAccounts(profile);
-            try {
-              sessionStorage.removeItem('s_os_startup_shown');
-            } catch (_) {}
-            setShowStartup(true);
-            setFirebaseLoading(false);
-            if (profile.role === 'parent') {
-              setActiveTab('parent_portal');
-            }
-            showNotification(`Welcome back, ${profile.name}! ✅`);
-            return;
-          } else {
-            throw new Error('Incorrect password. Please verify your credentials.');
-          }
-        } else {
-          throw new Error('No registered account found with this email. Please create an account.');
-        }
+        throw new Error(serverLoginError || 'Invalid email or password. Please verify your credentials.');
       }
 
       if (authUser) {
@@ -4391,6 +4404,7 @@ ${resultText}
   const handleLogout = async () => {
     try {
       (window as any).__studentos_explicit_logout__ = true;
+      clearClientSessionToken();
       resetAiSessionState();
       clearChatCache();
       clearSupabaseUserProfileCache();
@@ -5420,9 +5434,10 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
       saveSupabaseUserProfile(outgoingProfile).catch(() => {});
     }
 
-    // 2. Clear role simulation overrides, abort active AI streams, wipe AI/chat/user caches before switching accounts
+    // 2. Clear role simulation overrides, clear server memory session token, abort active AI streams, wipe AI/chat/user caches before switching accounts
     setSimulatedRole(null);
     setIsSuperAdmin(matched.role === 'super_admin');
+    clearClientSessionToken();
     resetAiSessionState();
     clearChatCache();
     clearSupabaseUserProfileCache();
@@ -5473,10 +5488,14 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
     prevAiOwnerUidRef.current = nextProfile.uid;
     currentUserRef.current = nextProfile;
     const switchEpoch = aiSessionEpochRef.current;
-    const scopedCachedThreads = readScopedAiThreadsFromStorage(nextProfile.uid);
+    const scopedCachedThreads = deduplicateThreadsById(readScopedAiThreadsFromStorage(nextProfile.uid));
     if (scopedCachedThreads.length > 0) {
       setAiThreads(scopedCachedThreads as any);
       setActiveThreadId(readScopedActiveThreadIdFromStorage(nextProfile.uid) || scopedCachedThreads[0].id);
+    }
+
+    if (nextProfile.uid === 'demo-student-uid' || nextProfile.uid === 'demo-parent-uid') {
+      void establishDemoSession(nextProfile.uid);
     }
 
     setCurrentUser(nextProfile);
@@ -5521,7 +5540,7 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
       })) {
         return;
       }
-      const ownedThreads = filterThreadsForUser(threads || [], targetUid);
+      const ownedThreads = deduplicateThreadsById(filterThreadsForUser(threads || [], targetUid));
       if (ownedThreads.length > 0) {
         setAiThreads(ownedThreads as any);
         setActiveThreadId(ownedThreads[0].id);
@@ -5578,9 +5597,10 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
     try {
       let resultText = '';
       try {
+        const matHeaders = await getServerAuthHeaders();
         const response = await fetch('/api/ai/material-action', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: matHeaders,
           body: JSON.stringify({
             title: mat.title,
             description: mat.description,
@@ -5592,12 +5612,12 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
         
         if (!response.ok) {
           const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.message || errData.error || `HTTP ${response.status}`);
+          throw new Error(extractApiErrorMessage(errData, `HTTP ${response.status}`));
         }
         
         const data = await response.json();
         if (data.error) {
-          throw new Error(data.error);
+          throw new Error(extractApiErrorMessage(data, 'Material AI failed'));
         }
         resultText = data.text;
       } catch (err: any) {
@@ -6411,7 +6431,7 @@ Date: ${new Date().toLocaleDateString()}
         console.error("Error saving AI buddy chat:", error);
       });
     }
-    setAiThreads(prev => [newThread, ...filterThreadsForUser(prev, ownerUid)]);
+    setAiThreads(prev => deduplicateThreadsById([newThread, ...filterThreadsForUser(prev, ownerUid)]));
     setActiveThreadId(newId);
     setAttachedFiles([]);
     showNotification('New study thread initialized!');
@@ -6785,9 +6805,10 @@ ${roleLabel}: ${userQuery}
       if (isWebSearchRequested) {
         setAiStatusMessage('🔍 Searching verified web & academic sources...');
         try {
+          const searchHeaders = await getServerAuthHeaders();
           const searchResp = await fetch('/api/ai/search', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: searchHeaders,
             body: JSON.stringify({ query: userQuery }),
             signal: abortCtrl.signal
           });
@@ -9473,7 +9494,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                 ? `min-h-0 overflow-hidden flex flex-col p-2 sm:p-4 md:p-6 ${presentationMode ? 'pb-2 md:pb-4' : 'pb-[calc(4.75rem+env(safe-area-inset-bottom))] md:pb-6'}`
                 : 'p-2 sm:p-6 md:p-8 pb-24 sm:pb-12 space-y-4 sm:space-y-8'
             } ${fontSize === 'large' ? 'text-lg' : fontSize === 'huge' ? 'text-xl' : 'text-sm'}`}>
-              <AnimatePresence mode="wait">
+              <AnimatePresence mode="wait" initial={false}>
                 <motion.div
                   key={activeTab}
                   initial={{ opacity: 0, y: 10 }}

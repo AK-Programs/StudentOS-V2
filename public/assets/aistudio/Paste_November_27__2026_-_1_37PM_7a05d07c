@@ -1,0 +1,954 @@
+VEYLENTRA — FULL AI SERVER STABILIZATION, BYTE DUPLICATE RENDERING, ORION EXECUTION, AND SECURITY REPAIR
+
+Repository: https://github.com/AK-Programs/StudentOS-V2
+
+Production website: https://veylentra-web.vercel.app/
+
+MISSION
+
+The AI system is currently experiencing serious problems:
+
+1. Byte repeatedly renders the same toolbar/interface elements on mobile.
+2. Orion execution is failing, including HTTP 500 responses.
+3. Orion has separate execution implementations in the Express server and Vercel serverless handler.
+4. Orion's natural-language action detection misses important commands such as "dispatch homework".
+5. AI request authentication and account isolation need stronger server-side enforcement.
+6. Provider routing and streaming implementations are duplicated.
+7. Byte's long-form streaming responses may not continue after reaching an output limit.
+8. Existing AI regression tests are not included in the regular test command.
+
+This is an engineering stabilization task.
+
+Do not perform another UI redesign. Do not just modify system prompts. Do not hide errors or manufacture successful responses. Fix the actual architecture, authentication, rendering, and execution problems.
+
+Inspect the existing code before changing it. Use the current implementation as the starting point, preserve working functionality, and make evidence-driven changes.
+
+---
+
+PRIORITY 0 — BACK UP AND MAP THE AI ARCHITECTURE
+
+Before implementation, inspect and document these files and their dependencies:
+
+Frontend
+
+- "src/App.tsx"
+- "src/components/byte/ByteWorkspace.tsx"
+- "src/components/StudentOSJarvis.tsx"
+- "src/lib/orionAgentEngine.ts"
+- "src/lib/aiSessionIsolation.ts"
+- "src/lib/studentosAiEngine.tsx"
+- "src/lib/clientAiFallback.ts"
+
+Backend
+
+- "server.ts"
+- "api/index.ts"
+- "server/aiClient.ts"
+- "server/orionService.ts"
+- "server/aiConversationOwnership.ts"
+- "server/aiResponseDepth.ts"
+- "server/aiQuotaService.ts"
+- "server/webSearchEngine.ts"
+
+Deployment and tests
+
+- "vercel.json"
+- "package.json"
+- "tests/orionHomeworkAndByteDepth.test.ts"
+- "tests/byteScrollAndOrionAssist.test.ts"
+- "tests/zaiAndOrionPipeline.test.ts"
+- "tests/crossAccountIsolation.test.ts"
+
+Create a dependency map showing:
+
+- Which frontend features call which endpoints.
+- Which endpoints run in Express.
+- Which endpoints run in Vercel serverless functions.
+- Which provider router each endpoint uses.
+- Where authentication is verified.
+- Where account ownership is enforced.
+- Where messages and context are assembled.
+- Where Orion tools are executed.
+- Where database operations are verified.
+
+Identify every duplicate implementation before deciding what to consolidate.
+
+Do not introduce a new architecture merely for aesthetic reasons.
+
+---
+
+PRIORITY 1 — CRITICAL AUTHENTICATION AND ACCOUNT ISOLATION REPAIR
+
+This must be completed before unrelated AI improvements.
+
+1.1 Remove unverified identity authentication
+
+Inspect the no-Bearer-token fallbacks in:
+
+- "server/orionService.ts"
+- "server.ts"
+- "api/index.ts"
+
+The current code contains paths that accept identity information through headers such as:
+
+- "x-veylentra-uid"
+- "x-veylentra-email"
+- "x-veylentra-role"
+
+Some paths look up a profile and then mark the caller authenticated. The Super Administrator path also contains a hardcoded identity shortcut.
+
+A database profile lookup is not authentication.
+
+A caller knowing another user's UID or email must not be sufficient to impersonate that person.
+
+Required authentication design
+
+For ordinary authenticated accounts:
+
+1. Require a valid Bearer access token.
+2. Verify it with the authoritative authentication provider.
+3. Derive the user ID from the verified identity.
+4. Fetch the authoritative role and school/tenant membership.
+5. Enforce permissions on the backend.
+6. Reject identity mismatches.
+7. Never allow frontend role headers to override the verified role.
+
+For legitimate PIN/demo accounts that do not use a normal Supabase Bearer session:
+
+- Preserve the supported PIN/demo login functionality.
+- Create or use a cryptographically verifiable server-issued session mechanism.
+- Validate the signature and expiry on every protected backend request.
+- Bind the token to the correct user ID, role, session, and relevant tenant.
+- Never use a raw UID, email, or role header as a substitute for authentication.
+
+Remove insecure hardcoded identity shortcuts.
+
+Do not break existing legitimate Super Administrator or demo-account login.
+
+1.2 Secure Byte "/api/ai/chat"
+
+Inspect "api/index.ts" around the "/api/ai/chat" handler.
+
+The backend must not trust the following request body values as authoritative identity:
+
+- "userId"
+- "userRole"
+- Conversation owner.
+- School or tenant identity.
+
+Derive them from the verified server-side session.
+
+A client-provided user ID may be checked for consistency, but it must never authenticate the request.
+
+A client-provided role must never grant permissions.
+
+1.3 Secure all supplied AI context
+
+Inspect:
+
+- "history"
+- "conversationId"
+- "threadId"
+- "studentosContext"
+- "ragContext"
+- Any other client-provided context fields.
+
+The backend must verify ownership and authorization before using private workspace information.
+
+Do not blindly trust client-supplied StudentOS context as verified institutional information.
+
+Where possible, retrieve private contextual records from the backend using the verified identity and allowed scope.
+
+Treat user-supplied documents and notes as untrusted content rather than instructions that can override security rules.
+
+Conversation history must be associated with the authenticated owner and active conversation.
+
+If the conversation does not belong to the current user, reject it.
+
+1.4 Secure Orion identity resolution
+
+Unify identity resolution for "/api/orion/execute" and "/api/ai/orion-assist".
+
+Enforce the same server-side authentication and role authorization rules across all execution paths.
+
+A Student must not become a Super Administrator by changing request headers.
+
+A request must not gain access to another school, tenant, class, student, or administrative record simply by submitting another user's identity.
+
+---
+
+PRIORITY 2 — CREATE ONE CANONICAL AI BACKEND
+
+2.1 Current architecture problem
+
+The project has separate Express and Vercel serverless implementations.
+
+The local Express "/api/orion/execute" path delegates to:
+
+"server/orionService.ts"
+
+The Vercel serverless handler in:
+
+"api/index.ts"
+
+contains its own Orion planning and execution implementation.
+
+The AI provider routing is duplicated too.
+
+This creates inconsistent behavior between production and local development.
+
+2.2 Required architecture
+
+Create or establish a single canonical backend implementation for:
+
+- Provider selection.
+- API-key loading.
+- Model configuration.
+- Request construction.
+- Provider response parsing.
+- Streaming.
+- Error handling.
+- AI response-depth handling.
+- Orion planning.
+- Orion action normalization.
+- Authorization.
+- Confirmation.
+- Action execution.
+- Result verification.
+
+Use shared, server-only modules that can safely run in both:
+
+- Local Express.
+- Vercel serverless functions.
+
+The Vercel handler should be a lightweight adapter that:
+
+1. Parses the request.
+2. Verifies authentication.
+3. Calls the shared service.
+4. Returns the shared service's structured response.
+
+The Express route should call exactly the same shared service.
+
+Do not import the entire Express application into the serverless handler just to reuse its implementation.
+
+Avoid circular dependencies and module initialization side effects.
+
+Do not keep two independent implementations that are merely intended to behave similarly.
+
+2.3 Provider consolidation
+
+Use "server/aiClient.ts" as the authoritative provider implementation where its runtime compatibility permits.
+
+Refactor "api/index.ts" to consume shared provider functions instead of maintaining an unrelated copy of the provider router.
+
+Preserve the current approved providers:
+
+- Ministral.
+- Groq.
+- Z.ai.
+
+Preserve Z.ai model configuration:
+
+"glm-4.7-flash"
+
+Preserve the server-side secret:
+
+"ZAI_API_KEY"
+
+Do not reintroduce APInex.
+
+Do not unexpectedly change the default provider or model.
+
+2.4 Environment variable security
+
+Remove "VITE_GROQ_API_KEY" and "VITE_MINISTRAL_API_KEY" as server-side credential fallbacks.
+
+Real API credentials must use server-only environment variables.
+
+Examples:
+
+GROQ_API_KEY=
+MINISTRAL_API_KEY=
+ZAI_API_KEY=
+
+Never put real private provider keys in "VITE_" variables.
+
+Audit:
+
+- ".env" and environment examples.
+- Vercel environment-variable configuration.
+- "dist" output.
+- Frontend bundles.
+- Serverless build output.
+
+If previously exposed provider keys are discovered in frontend bundles or public source, report the exposure and recommend rotation.
+
+Never print secrets in logs or final reports.
+
+---
+
+PRIORITY 3 — FIX THE VERCEL ORION HTTP 500 FAILURE
+
+The client currently reports:
+
+"Orion execution endpoint returned HTTP 500 without a readable JSON payload."
+
+This message is generated when the client cannot parse the response as JSON.
+
+Do not assume it identifies the actual server exception.
+
+3.1 Diagnose the actual failure
+
+Inspect:
+
+- Vercel function configuration.
+- "vercel.json" rewrites.
+- Serverless entrypoint.
+- Module imports.
+- Runtime initialization.
+- Function exports.
+- Request routing.
+- Environment variables.
+- Supabase initialization.
+- Required dependencies.
+- JSON request parsing.
+- Handler-level exceptions.
+
+Determine whether the failure occurs:
+
+- Before the handler loads.
+- During module initialization.
+- During authentication.
+- During provider initialization.
+- During Orion planning.
+- During tool execution.
+- During database operations.
+- During response serialization.
+
+Use Vercel runtime/function logs for the matching request ID whenever production access is available.
+
+If logs are unavailable, explicitly report that the production root cause could not be verified rather than inventing one.
+
+3.2 Standardize error handling
+
+All AI endpoints must return predictable structured errors.
+
+Use a consistent response format, such as:
+
+{
+  "success": false,
+  "error": {
+    "code": "ORION_EXECUTION_FAILED",
+    "message": "The task could not be completed.",
+    "requestId": "server-generated-id"
+  }
+}
+
+Every error should have:
+
+- Appropriate HTTP status.
+- Stable error code.
+- Safe user-facing message.
+- Request ID.
+- Server-side diagnostic details.
+
+Handle:
+
+- Valid JSON responses.
+- Invalid JSON.
+- Empty bodies.
+- Plain-text errors.
+- HTML platform error pages.
+- Server timeouts.
+- Authentication failures.
+- Provider errors.
+- Database failures.
+
+Do not expose stack traces, secret values, internal file paths, or sensitive database information to the frontend.
+
+3.3 Fix the Orion client response parser
+
+Inspect "executeOrionViaServer()" in "src/lib/orionAgentEngine.ts".
+
+Currently it relies on "resp.json()" and throws a generic parsing error when JSON is unavailable.
+
+Improve it to:
+
+1. Read the response content type.
+2. Parse JSON when appropriate.
+3. Safely capture a bounded non-JSON diagnostic message when appropriate.
+4. Check "resp.ok".
+5. Check the structured "success" and "status" fields.
+6. Distinguish HTTP errors from application-level failures.
+7. Preserve the request ID.
+8. Return a safe, meaningful user-facing error.
+
+A valid JSON body with HTTP 500 must not be treated as a successful task.
+
+A non-JSON HTTP 500 must not be presented as if it reveals the exact backend cause.
+
+---
+
+PRIORITY 4 — REPAIR ORION NATURAL-LANGUAGE ACTION DETECTION
+
+4.1 Fix the dispatch intent
+
+The actual user instruction was:
+
+"Dispatch homework for class 10 Astra, subject- Maths: complete ch-9 in notebook"
+
+The current deterministic action detection recognizes several homework verbs but omits "dispatch".
+
+Update the shared action-normalization layer to recognize natural-language variations including:
+
+- Dispatch homework.
+- Assign homework.
+- Create homework.
+- Publish homework.
+- Give homework.
+- Add an assignment.
+- Send an assignment to a class.
+
+Do not maintain separate regex implementations in "api/index.ts" and "server/orionService.ts".
+
+The canonical intent resolver must map supported commands to the correct action.
+
+Add a regression test using the exact command above.
+
+Expected action: an appropriate homework creation/assignment action, not "general_chat".
+
+4.2 Parse the content correctly
+
+The example command contains:
+
+- Target: Class 10 Astra.
+- Subject: Mathematics.
+- Instructions: Complete Chapter 9 in notebook.
+
+The system should extract these fields without inventing additional details.
+
+Determine the correct homework title and content from the actual instruction.
+
+For example:
+
+- Title: Chapter 9 — Notebook Completion.
+- Subject: Mathematics.
+- Class: Grade 10.
+- Section: Astra.
+- Instructions: Complete Chapter 9 in notebook.
+
+Only use this as a parsing interpretation when it matches the actual schema and user instruction.
+
+Ask for clarification if a required field is genuinely missing.
+
+4.3 Verify actual dispatch
+
+Orion must:
+
+1. Validate the authenticated user's permission.
+2. Resolve the actual target class record.
+3. Confirm school/tenant association.
+4. Create the homework record.
+5. Publish/assign it to the intended class.
+6. Read the saved record back.
+7. Verify the target class and publication status.
+8. Verify notification delivery separately when notifications are part of the request.
+9. Generate the final response from actual verified results.
+
+Do not confuse:
+
+- Draft creation.
+- Assignment creation.
+- Publication.
+- Class dispatch.
+- Notification delivery.
+
+A successful database insert alone does not prove the homework was delivered to the requested class.
+
+Use the actual schema and database implementation. Do not invent new table columns.
+
+4.4 Idempotency and retry safety
+
+Give each execution attempt an appropriate request/idempotency identifier.
+
+Prevent:
+
+- Duplicate homework.
+- Duplicate notification records.
+- Duplicate dispatch operations.
+- Automatic retry after an uncertain successful write.
+
+Before retrying a failed operation, inspect whether the original operation already persisted.
+
+Only report success after verifying the actual database state.
+
+---
+
+PRIORITY 5 — BYTE: FIND AND FIX THE ACTUAL REPEATED TOOLBAR
+
+5.1 Current observed problem
+
+On mobile, Byte's main toolbar appears repeatedly down the page.
+
+The existing source has one main header in "ByteWorkspace.tsx" and one visible "ByteWorkspace" mount in the main "App.tsx" render.
+
+Do not assume the header's JSX is the root cause.
+
+5.2 Reproduce the deployed issue
+
+Test the actual production build and mobile layout.
+
+Use the provided screenshot as a reference.
+
+Inspect:
+
+- Actual rendered DOM.
+- React component tree.
+- Number of "ByteWorkspace" instances.
+- Number of primary Byte toolbar instances.
+- Parent dashboard shell.
+- Navigation/layout composition.
+- "AnimatePresence".
+- Portal and modal rendering.
+- Responsive desktop/mobile conditions.
+- Fixed/sticky positioning.
+- CSS stacking.
+- Duplicate root mounts.
+- Browser-side DOM mutation.
+- Animation clone/transition behavior.
+- Conditional rendering.
+
+Identify whether the repeated visual content represents:
+
+1. Multiple actual React component instances.
+2. Repeated DOM nodes.
+3. Duplicate CSS/animation rendering.
+4. Duplicate parent layouts.
+5. Repeated records from the Byte thread list.
+6. A stale or mismatched deployed build.
+
+Do not merely change CSS until the actual cause is established.
+
+5.3 Add component-level safeguards and diagnostics
+
+Give the primary Byte workspace a stable test identifier, for example:
+
+"data-testid="byte-workspace""
+
+Give the primary toolbar a stable identifier, for example:
+
+"data-testid="byte-primary-toolbar""
+
+Use a proper browser-level regression test to verify that the expected number of instances exists.
+
+The test must verify the actual rendered DOM and must run on the mobile viewport that reproduces the bug.
+
+Do not rely only on source-string assertions.
+
+If the current test infrastructure supports Playwright or another browser testing framework, use it.
+
+Do not blindly install a new testing stack without first checking the existing dependencies.
+
+5.4 Fix thread-list data duplication separately
+
+Inspect Byte thread hydration, storage, database synchronization, state updates, and realtime subscriptions.
+
+The current "filterThreadsForUser()" filters by owner but does not deduplicate thread IDs.
+
+Implement safe normalization and deduplication by stable thread ID at appropriate ingestion boundaries.
+
+Requirements:
+
+- Preserve all valid unique conversations.
+- Prevent duplicate thread records.
+- Use stable unique React keys.
+- Do not merge messages from different owners.
+- Never discard another user's data into the current user's thread.
+- Resolve conflicting duplicate records deterministically and report any data anomalies.
+
+This must not be used to conceal repeated main toolbar rendering.
+
+5.5 Validate mobile and desktop
+
+Test:
+
+- Android Chrome mobile viewport.
+- Installed PWA viewport, if supported.
+- Desktop browser.
+- Browser resize between mobile and desktop.
+- Switching away from Byte and returning.
+- Opening and closing session history.
+- Account switching.
+- Page reload.
+- Long conversations.
+- Opening preferences and Orion.
+
+The improved Byte UI design must remain intact.
+
+---
+
+PRIORITY 6 — BYTE STREAMING AND LONG-RESPONSE COMPLETION
+
+The application currently has different continuation behavior between non-streaming and streaming AI paths.
+
+Inspect:
+
+- "server/aiClient.ts"
+- "api/index.ts"
+- "/api/ai/chat"
+- "/api/ai/chat/stream"
+- "streamAIChatClient"
+- Byte's "handleAskAIModel"
+
+Required behavior
+
+When Byte is asked for a full chapter or detailed explanation:
+
+- Use adaptive response depth.
+- Use the correct provider output-token budget.
+- Stream the response reliably.
+- Inspect the provider's finish reason.
+- Detect actual output truncation.
+- Continue the response when supported and safe.
+- Join continuation text without repeating previously delivered content.
+- Preserve Markdown, LaTeX, lists, tables, and whitespace.
+- Never silently display an incomplete response as a finished chapter.
+
+If the provider does not support continuation in the current request path, return an accurate truncated state and a safe continuation action.
+
+Do not falsely mark a truncated response as completed.
+
+Do not exceed the actual provider/model limits.
+
+Preserve:
+
+- Ministral.
+- Groq.
+- Z.ai.
+- Existing provider fallback.
+- "glm-4.7-flash".
+- Server-only API credentials.
+- Existing Byte intelligence.
+- Existing adaptive depth classification.
+
+Do not increase all token limits indiscriminately.
+
+---
+
+PRIORITY 7 — REAL EXECUTION PROGRESS, NOT FAKE STAGES
+
+Inspect Orion's progress generation in the production handler.
+
+Remove hardcoded one-millisecond stage durations.
+
+Stage transitions must reflect actual events.
+
+For example:
+
+1. Analyzing intent.
+2. Planning task.
+3. Checking authorization.
+4. Awaiting confirmation.
+5. Executing action.
+6. Verifying result.
+7. Completed or failed.
+
+Measure actual stage durations.
+
+Do not mark planning as completed before planning finishes.
+
+Do not mark execution as completed before the operation has executed.
+
+Do not mark verification as completed before read-back verification succeeds.
+
+The UI should show meaningful errors when an endpoint fails before planning or execution starts.
+
+Never fabricate percentages, durations, or tool activity.
+
+---
+
+PRIORITY 8 — PRIVACY AND CONVERSATION ISOLATION
+
+Preserve strict user and school/tenant isolation across Byte and Orion.
+
+Implement and test:
+
+- Server-derived authenticated identity.
+- Backend role validation.
+- Conversation ownership.
+- Cache isolation.
+- Session isolation.
+- Streaming response ownership.
+- Cancellation after account switch.
+- No stale response insertion into the new account.
+- No cross-user prompt history.
+- No cross-tenant private context.
+- No unauthorized database reads.
+
+Do not add persistent Orion chat history, saved Orion summaries, or hidden user conversation storage as a workaround.
+
+Orion's operational session should remain ephemeral, with no persistent conversational history.
+
+Do not log raw private prompts or responses unnecessarily.
+
+External provider retention must not be misrepresented as application-controlled zero retention.
+
+---
+
+PRIORITY 9 — TEST ALL AI ENDPOINTS THROUGH BOTH RUNTIMES
+
+Create a shared test matrix for:
+
+- Local Express.
+- Vercel serverless handler.
+
+Both must behave consistently because they use the same canonical services.
+
+AI provider tests
+
+- Ministral routing.
+- Groq routing.
+- Z.ai routing.
+- Missing API keys.
+- Invalid API credentials.
+- Provider timeout.
+- Rate limiting.
+- Fallback behavior.
+- Normal JSON response.
+- Streaming SSE response.
+- Long response.
+- Truncated response.
+- Continuation.
+- API key never exposed to browser.
+
+Byte tests
+
+- One toolbar instance.
+- One Byte workspace instance.
+- No duplicate thread records.
+- No duplicate React keys.
+- Mobile rendering.
+- Desktop rendering.
+- Account isolation.
+- Pending stream cancellation.
+- Full-chapter response.
+- LaTeX rendering.
+- Error and retry behavior.
+
+Orion tests
+
+- General question.
+- Homework lookup.
+- Homework creation.
+- Homework dispatch.
+- Explicit "dispatch" verb.
+- Correct Class 10 Astra targeting.
+- Role authorization.
+- Missing information clarification.
+- Confirmation gate.
+- Database insert.
+- Database read-back.
+- Notification delivery status.
+- Failed database write.
+- Duplicate retry.
+- HTTP 500 handling.
+- Non-JSON serverless error handling.
+- Final response accuracy.
+
+Security tests
+
+Use controlled test identities.
+
+- No authentication.
+- Invalid JWT.
+- Expired JWT.
+- Forged user ID header.
+- Forged email header.
+- Forged role header.
+- Demo/PIN session verification.
+- Super Administrator impersonation attempt.
+- Cross-account conversation access.
+- Cross-tenant context access.
+- Concurrent requests.
+- Account switch during streaming.
+
+Every unauthorized test must fail safely on the backend.
+
+---
+
+PRIORITY 10 — FIX THE TEST AND DEPLOYMENT PIPELINE
+
+Update "package.json" so the standard test command executes the relevant AI regression suites.
+
+At minimum, include the existing relevant suites:
+
+- "tests/crossAccountIsolation.test.ts"
+- "tests/orionHomeworkAndByteDepth.test.ts"
+- "tests/byteScrollAndOrionAssist.test.ts"
+- "tests/zaiAndOrionPipeline.test.ts"
+
+Improve those tests where they only check source-code strings rather than runtime behavior.
+
+Add the new Byte browser-level duplication test.
+
+Add regression tests for the exact dispatch homework instruction.
+
+Add parity tests that invoke the same behavior through the Express and Vercel handlers.
+
+Run:
+
+- Type checking.
+- Production build.
+- Existing regression suite.
+- AI regression suite.
+- Security suite.
+- Production API smoke tests, where access is available.
+
+Verify Vercel deployment and function logs if deployment access is available.
+
+Do not claim production verification if only local tests have been run.
+
+---
+
+IMPLEMENTATION ORDER
+
+Follow this priority order:
+
+1. Fix unverified identity authentication and cross-account security.
+2. Establish one canonical AI provider and Orion service implementation.
+3. Diagnose and fix the production Vercel HTTP 500.
+4. Repair Orion dispatch intent detection and task execution.
+5. Verify database writes and prevent duplicate retries.
+6. Reproduce and repair Byte's duplicate toolbar rendering.
+7. Fix duplicate Byte thread records and React keys.
+8. Improve streaming continuation and truncation behavior.
+9. Fix inaccurate Orion progress stages.
+10. Integrate AI-focused regression tests into the normal test command.
+11. Test local and production behavior.
+12. Provide a complete evidence-based report.
+
+Do not skip security work to focus on visual rendering.
+
+Do not stop after making endpoints return HTTP 200.
+
+Do not replace real tool execution with simulated results.
+
+Do not remove existing features just to simplify the implementation.
+
+---
+
+PRESERVATION REQUIREMENTS
+
+Preserve the currently improved:
+
+- Byte UI/UX.
+- Orion UI/UX.
+- Byte intelligence.
+- Byte reminders.
+- Adaptive response depth.
+- Z.ai GLM-4.7 Flash provider.
+- Ministral and Groq providers.
+- Orion tool capabilities.
+- Role-aware behavior.
+- VeylentraIcon system.
+- Existing purposeful animations.
+- Lecture Notes editor.
+- Image-to-Note OCR.
+- LaTeX/math rendering.
+- FCM and Web Push.
+- Brain Battle multiplayer.
+- Edge TTS.
+- Authentication and legitimate demo/PIN login.
+- Existing privacy and ephemeral Orion requirements.
+
+No unrelated redesign.
+
+---
+
+FINAL REPORT — REQUIRED
+
+At the end, provide a detailed report.
+
+1. AI architecture
+
+- Original production/local architecture.
+- Duplicate services identified.
+- Canonical implementation established.
+- Files changed.
+- Endpoint routing changes.
+
+2. Security
+
+- Authentication weaknesses found.
+- Identity-header fallback changes.
+- Session-token changes for supported demo/PIN users.
+- Byte account-isolation results.
+- Orion role-isolation results.
+- API credential exposure audit.
+
+3. Byte
+
+- Exact root cause of repeated toolbar rendering.
+- Whether multiple React components, duplicate DOM nodes, CSS, data, or deployment mismatch caused it.
+- Actual mobile browser test results.
+- Thread-list deduplication changes.
+- Streaming and long-response results.
+
+4. Orion
+
+- Exact cause of the HTTP 500.
+- Matching server-side error details, if available.
+- Vercel route and runtime changes.
+- Dispatch-intent detection changes.
+- Actual homework execution result.
+- Database read-back verification.
+- Duplicate retry protection.
+- Final response accuracy.
+
+5. Provider system
+
+- Shared routing implementation.
+- Ministral verification.
+- Groq verification.
+- Z.ai verification.
+- Streaming and fallback results.
+- Token and truncation handling.
+
+6. Testing
+
+- Tests executed.
+- Tests passed.
+- Tests failed.
+- Local Express results.
+- Vercel serverless results.
+- Production smoke-test status.
+- Remaining limitations.
+
+Clearly label every result:
+
+- Implemented.
+- Tested locally.
+- Tested against an actual provider.
+- Tested against deployed Vercel.
+- Not verified.
+
+Do not claim a bug has been fixed without a reproducible test proving it.
+
+FINAL ACCEPTANCE CONDITIONS
+
+The project is not complete until:
+
+1. Byte renders exactly one intended primary toolbar and workspace on mobile and desktop.
+2. Byte conversation threads cannot leak between accounts.
+3. Identity headers cannot impersonate authenticated users.
+4. Vercel and Express use the same canonical AI and Orion logic.
+5. Orion handles "dispatch homework" correctly.
+6. Orion executes authorized operations and verifies persisted results.
+7. The production execution endpoint returns consistent, diagnosable errors.
+8. AI providers use secure server-side credentials.
+9. Byte can complete long responses or explicitly report truncation.
+10. The regular test command includes AI and security regression suites.
+11. Existing working Veylentra functionality remains intact.
+
+Treat this as stabilization of the entire AI system, not another isolated bug fix. Find the actual causes, repair the shared architecture, and prove the result with tests.
