@@ -471,3 +471,4 @@ export function buildErrorEnvelope(params: {
     ...(params.extra || {}),
   };
 }
+ 
