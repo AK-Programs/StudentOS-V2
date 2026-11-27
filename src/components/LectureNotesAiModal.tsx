@@ -14,6 +14,7 @@ import {
   HelpCircle,
   Wand2
 } from 'lucide-react';
+import { extractApiErrorMessage, getServerAuthHeaders } from '../lib/clientSession';
 
 interface LectureNotesAiModalProps {
   isOpen: boolean;
@@ -127,7 +128,7 @@ export const LectureNotesAiModal: React.FC<LectureNotesAiModalProps> = ({
 
       const res = await fetch('/api/ai/notes', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getServerAuthHeaders(),
         body: JSON.stringify({
           action: actionToUse,
           topic: mode === 'create' ? promptToUse : noteTitle,
@@ -137,10 +138,10 @@ export const LectureNotesAiModal: React.FC<LectureNotesAiModalProps> = ({
         })
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
       if (!res.ok || !data.success || !data.text) {
-        throw new Error(data.error || 'Failed to generate note content with AI.');
+        throw new Error(extractApiErrorMessage(data, `AI note request failed (HTTP ${res.status}).`));
       }
 
       let cleanResult = data.text.trim();
