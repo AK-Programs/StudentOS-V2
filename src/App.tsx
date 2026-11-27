@@ -9491,7 +9491,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
             {/* Base View Layout Wrapper */}
             <main className={`flex-1 max-w-7xl w-full mx-auto min-w-0 ${
               isByteViewportLocked
-                ? `h-full min-h-0 overflow-hidden flex flex-col p-1 sm:p-4 md:p-6 ${presentationMode ? 'pb-2 md:pb-4' : 'pb-[calc(4.25rem+env(safe-area-inset-bottom))] md:pb-6'}`
+                ? `h-full min-h-0 overflow-hidden flex flex-col p-1 sm:p-4 md:p-6 ${presentationMode ? 'pb-2 md:pb-4' : 'pb-[calc(4.75rem+env(safe-area-inset-bottom))] md:pb-6'}`
                 : 'p-2 sm:p-6 md:p-8 pb-24 sm:pb-12 space-y-4 sm:space-y-8'
             } ${fontSize === 'large' ? 'text-lg' : fontSize === 'huge' ? 'text-xl' : 'text-sm'}`}>
               <AnimatePresence mode="wait" initial={false}>

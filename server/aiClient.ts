@@ -200,7 +200,7 @@ export function classifyTaskComplexity(
   const override = (ctx?.modelOverride || '').trim().toLowerCase();
   const endpoint = (ctx?.endpointName || '').toLowerCase();
 
-  // 1. Explicit model overrides (Groq, Ministral, or Z.ai — never legacy glm-5.3 or apinex)
+  // 1. Explicit model overrides (Groq, Ministral, or Z.ai — never legacy models)
   if (
     override.includes('groq') ||
     override.includes('llama') ||

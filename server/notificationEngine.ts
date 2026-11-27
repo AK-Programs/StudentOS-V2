@@ -193,11 +193,15 @@ export function isNotificationEligibleForUser(
     const ts = String(notif.targetSection || '').toLowerCase().trim();
     if (tg && tg !== 'all' && tg !== 'all grades') {
       const ug = String(user.grade || '').toLowerCase().trim();
-      if (ug && ug !== tg) return false;
+      const ntg = tg.replace(/[^a-z0-9]/g, '').replace(/grade|class|std/g, '');
+      const nug = ug.replace(/[^a-z0-9]/g, '').replace(/grade|class|std/g, '');
+      if (ug && tg && ug !== tg && nug !== ntg) return false;
     }
     if (ts && ts !== 'all' && ts !== 'all sections') {
       const us = String(user.section || '').toLowerCase().trim();
-      if (us && us !== ts) return false;
+      const nts = ts.replace(/[^a-z0-9]/g, '').replace(/section/g, '');
+      const nus = us.replace(/[^a-z0-9]/g, '').replace(/section/g, '');
+      if (us && ts && us !== ts && nus !== nts) return false;
     }
   }
 

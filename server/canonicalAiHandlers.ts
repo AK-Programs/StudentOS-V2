@@ -655,7 +655,7 @@ export async function handleAiChat(
 
     const pathname = String(req.path || req.url || '').split('?')[0];
     const isStreamingRequest = Boolean(stream || pathname.includes('/stream'));
-    const searchIntent = detectWebSearchIntent(String(prompt), String(persona), String(webSearchMode));
+    const searchIntent = detectWebSearchIntent(String(prompt), String(persona), webSearchMode as any);
     let webSearchUsed = false;
     let webSources: WebSearchSource[] = [];
     let webVideos: any[] = [];
@@ -1251,11 +1251,14 @@ export async function handleAiSearch(
     let summaryText = `Retrieved verified educational sources for "${cleanQuery}".`;
     if (getGroqApiKey() || getMinistralApiKey() || getZaiApiKey()) {
       try {
-        summaryText = await generateAICompletion(
-          'Synthesize a crisp 3-sentence educational summary strictly grounded in the cited sources.',
-          `Query: "${cleanQuery}"\n\nSources:\n${summaryContext}`,
-          { taskType: 'fast', endpointName: 'WebSearchSummary', maxTokens: 800, requestId }
-        );
+        summaryText = await generateAICompletion({
+          systemInstruction: 'Synthesize a crisp 3-sentence educational summary strictly grounded in the cited sources.',
+          prompt: `Query: "${cleanQuery}"\n\nSources:\n${summaryContext}`,
+          taskType: 'fast',
+          endpointName: 'WebSearchSummary',
+          maxTokens: 800,
+          requestId,
+        });
       } catch {
         // fallback already set
       }

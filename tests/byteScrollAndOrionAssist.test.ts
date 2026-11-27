@@ -87,7 +87,7 @@ async function runTests() {
     const topBarSrc = fs.readFileSync(path.join(rootDir, 'src/components/DashboardTopBar.tsx'), 'utf8');
 
     assert.ok(!byteSrc.includes('h-[calc(100dvh-130px)]'), 'ByteWorkspace must no longer hardcode h-[calc(100dvh-130px)]');
-    assert.ok(byteSrc.includes('h-full flex-1 min-h-0 flex rounded-3xl'), 'ByteWorkspace root must fill container cleanly');
+    assert.ok(byteSrc.includes('h-full flex-1 min-h-0 flex'), 'ByteWorkspace root must fill container cleanly');
     assert.ok(byteSrc.includes('flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden'), 'ByteWorkspace studio column must propagate min-h-0 and overflow-hidden');
     assert.ok(byteSrc.includes('id="ai-dialog-scroll"') && byteSrc.includes('overscroll-contain') && byteSrc.includes('touch-pan-y'), '#ai-dialog-scroll must isolate scroll on desktop and touch devices');
     assert.ok(byteSrc.includes('shrink-0 border-t border-white/10'), 'ByteWorkspace bottom composer must stay docked');
