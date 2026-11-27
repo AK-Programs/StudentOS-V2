@@ -191,7 +191,7 @@ export async function streamStudentOSAI(
     headers: reqHeaders,
     body: JSON.stringify({
       ...payload,
-      stream: true
+      stream: false
     }),
     signal: abortSignal
   });
@@ -247,7 +247,7 @@ export async function streamStudentOSAI(
       const { done, value } = await reader.read();
       if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
+      buffer += decoder.decode(value, { stream: false });
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
 
