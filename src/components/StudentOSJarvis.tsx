@@ -1234,8 +1234,16 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     showNotification('Copied structured summary to clipboard.');
   };
 
+  if (normalizedRole === 'parent' || normalizedRole === 'guardian') {
+    return (
+      <div className="h-full flex items-center justify-center p-6 text-sm text-slate-300">
+        Orion is not available for parent accounts.
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-slate-950/90 text-slate-100">
+    <div className="flex flex-col h-full overflow-hidden bg-slate-950 text-slate-100">
       {/* Module Navigation Transition Overlay */}
       {navigatingTransition && (
         <div className="fixed inset-0 z-[9999] bg-slate-950/95 backdrop-blur-xl flex flex-col items-center justify-center gap-4">
@@ -1248,7 +1256,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
       )}
 
       {/* 1. WORKSPACE HEADER */}
-      <header className="shrink-0 px-4 sm:px-6 py-3.5 border-b border-white/10 bg-slate-950/80 flex items-center justify-between gap-3 flex-wrap">
+      <header className="shrink-0 h-14 px-4 border-b border-white/10 bg-slate-950 flex items-center justify-between gap-2 flex-nowrap overflow-hidden">
         <div className="flex items-center gap-3 min-w-0">
           <div className="h-9 w-9 rounded-xl bg-indigo-500/15 border border-indigo-400/25 flex items-center justify-center shrink-0">
             <VeylentraIcon name="orion" size={24} />
