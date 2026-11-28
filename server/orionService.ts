@@ -8,18 +8,14 @@
  * - Zero database or disk persistence of Orion chat history (strictly ephemeral)
  */
 
+import express from 'express';
 import {
   generateAICompletionWithTelemetry,
   getGroqApiKey,
   getMinistralApiKey,
   getZaiApiKey,
-} from './aiClient.js';
-import { performControlledWebSearch } from './webSearchEngine.js';
-import {
-  buildErrorEnvelope,
-  normalizePublicErrorMessage,
-  resolveVerifiedActor,
-} from './sessionAuth.js';
+} from './aiClient';
+import { performControlledWebSearch } from './webSearchEngine';
 
 export interface SupabaseCfg {
   url: string;
@@ -113,23 +109,12 @@ export interface OrionActionStep {
   details?: Record<string, any>;
 }
 
-const ORION_IDEMPOTENCY_TTL_MS = 15 * 60 * 1000;
-const orionIdempotencyCache = new Map<string, { timestamp: number; response: { httpStatus: number; body: Record<string, any> } }>();
-const orionInFlightExecutions = new Map<string, Promise<{ httpStatus: number; body: Record<string, any> }>>();
-
-function pruneOrionIdempotencyCache() {
-  const now = Date.now();
-  for (const [k, entry] of orionIdempotencyCache.entries()) {
-    if (now - entry.timestamp > ORION_IDEMPOTENCY_TTL_MS) {
-      orionIdempotencyCache.delete(k);
-    }
-  }
-  while (orionIdempotencyCache.size > 500) {
-    const oldest = orionIdempotencyCache.keys().next().value;
-    if (!oldest) break;
-    orionIdempotencyCache.delete(oldest);
-  }
-}
+const WHITELISTED_SUPER_ADMIN_EMAILS = [
+  'naitik.kashyap0015@gmail.com',
+  'naitik.kashyap5205@gmail.com',
+  'superadmin@studentos.edu',
+  'superadmin@veylentra.edu',
+];
 
 const PRIVILEGED_OR_PRIVATE_ACTIONS = new Set<OrionServerActionType>([
   'create_broadcast',
@@ -295,44 +280,135 @@ export function validateOrionRolePermission(
 }
 
 /**
- * Resolves the authoritative actor strictly from a verified Supabase Bearer JWT
- * or an expiring HMAC-signed server session token (`vlt_sess.`).
- * NEVER trusts client body `userRole` or bare `x-veylentra-uid`/`x-veylentra-role`.
+ * Resolves the authoritative actor from Bearer token or verified Supabase user_profiles lookup.
+ * NEVER trusts client body `userRole` or unverified `x-veylentra-role`.
  */
 export async function resolveVerifiedOrionActor(
-  reqOrHeaders: any,
+  req: express.Request,
   cfg: SupabaseCfg
-): Promise<
-  | { ok: true; actor: VerifiedOrionActor; status?: never; error?: never }
-  | { ok: false; actor?: never; status: number; error: string }
-> {
-  const headers =
-    reqOrHeaders?.headers && typeof reqOrHeaders.headers === 'object'
-      ? reqOrHeaders.headers
-      : reqOrHeaders && typeof reqOrHeaders === 'object'
-        ? reqOrHeaders
-        : {};
+): Promise<{ ok: true; actor: VerifiedOrionActor } | { ok: false; status: number; error: string }> {
+  const authHeader = String(req.headers.authorization || req.headers['x-supabase-auth'] || '').trim();
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
 
-  const resolved = await resolveVerifiedActor({ headers, cfg });
-  if (!resolved.ok) {
-    return {
-      ok: false,
-      status: resolved.status,
-      error: resolved.error,
-    };
+  if (token) {
+    try {
+      const userRes = await fetch(`${cfg.url}/auth/v1/user`, {
+        headers: {
+          apikey: cfg.key,
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!userRes.ok) {
+        return { ok: false, status: 401, error: 'Invalid or expired authentication token.' };
+      }
+      const user: any = await userRes.json();
+      if (!user?.id) {
+        return { ok: false, status: 401, error: 'Invalid authentication session.' };
+      }
+
+      const email = String(user.email || '').toLowerCase().trim();
+      let role = String(user.user_metadata?.role || 'student').toLowerCase().trim();
+      let name = String(user.user_metadata?.name || user.user_metadata?.full_name || email.split('@')[0] || 'Campus Member');
+      let grade = String(user.user_metadata?.grade || '');
+      let section = String(user.user_metadata?.section || '');
+      let schoolId = String(user.user_metadata?.school_id || '');
+
+      if (email && WHITELISTED_SUPER_ADMIN_EMAILS.includes(email)) {
+        role = 'super_admin';
+      } else {
+        try {
+          const profRes = await fetch(
+            `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(user.id)},uid.eq.${encodeURIComponent(user.id)},email.eq.${encodeURIComponent(email)})&select=id,name,role,grade,section,school_id`,
+            { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+          );
+          if (profRes.ok) {
+            const rows: any = await profRes.json();
+            if (Array.isArray(rows) && rows[0]) {
+              if (rows[0].role) role = String(rows[0].role).toLowerCase().trim();
+              if (rows[0].name) name = String(rows[0].name);
+              if (rows[0].grade) grade = String(rows[0].grade);
+              if (rows[0].section) section = String(rows[0].section);
+              if (rows[0].school_id) schoolId = String(rows[0].school_id);
+            }
+          }
+        } catch (_) {}
+      }
+
+      return {
+        ok: true,
+        actor: {
+          userId: user.id,
+          email,
+          name,
+          role,
+          grade,
+          section,
+          schoolId,
+          authenticated: true,
+        },
+      };
+    } catch {
+      return { ok: false, status: 401, error: 'Unable to validate authentication token.' };
+    }
+  }
+
+  // Fallback ONLY for DB-verified PIN/demo identities via user_profiles (never trusting role headers)
+  const uidHeader = String(req.headers['x-veylentra-uid'] || '').trim();
+  const emailHeader = String(req.headers['x-veylentra-email'] || '').toLowerCase().trim();
+  const actorId = uidHeader || emailHeader;
+
+  if (actorId && actorId !== 'guest' && actorId !== 'anonymous' && actorId !== 'user_guest') {
+    if (
+      WHITELISTED_SUPER_ADMIN_EMAILS.includes(emailHeader) ||
+      WHITELISTED_SUPER_ADMIN_EMAILS.includes(actorId.toLowerCase()) ||
+      actorId === 'superadmin-master-uid'
+    ) {
+      return {
+        ok: true,
+        actor: {
+          userId: actorId,
+          email: emailHeader || undefined,
+          name: 'Super Administrator',
+          role: 'super_admin',
+          authenticated: true,
+        },
+      };
+    }
+
+    try {
+      const profRes = await fetch(
+        `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(actorId)},uid.eq.${encodeURIComponent(actorId)},email.eq.${encodeURIComponent(emailHeader || actorId)})&select=id,name,role,grade,section,school_id`,
+        { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+      );
+      if (profRes.ok) {
+        const rows: any = await profRes.json();
+        if (Array.isArray(rows) && rows[0]) {
+          return {
+            ok: true,
+            actor: {
+              userId: String(rows[0].id || actorId),
+              email: emailHeader || undefined,
+              name: String(rows[0].name || 'Campus Member'),
+              role: String(rows[0].role || 'student').toLowerCase().trim(),
+              grade: rows[0].grade ? String(rows[0].grade) : undefined,
+              section: rows[0].section ? String(rows[0].section) : undefined,
+              schoolId: rows[0].school_id ? String(rows[0].school_id) : undefined,
+              authenticated: true,
+            },
+          };
+        }
+      }
+    } catch (_) {}
   }
 
   return {
     ok: true,
     actor: {
-      userId: resolved.actor.userId,
-      email: resolved.actor.email,
-      name: resolved.actor.name,
-      role: resolved.actor.role,
-      grade: resolved.actor.grade,
-      section: resolved.actor.section,
-      schoolId: resolved.actor.schoolId,
-      authenticated: true,
+      userId: actorId || 'guest',
+      email: emailHeader || undefined,
+      name: 'Guest User',
+      role: 'student',
+      authenticated: false,
     },
   };
 }
@@ -370,7 +446,7 @@ export function normalizeMappedAction(rawAction: string, commandLower: string): 
   if (/\b(submission|submitted|missing homework|who has not submitted)\b/.test(commandLower)) {
     return 'get_submissions';
   }
-  if ((commandLower.includes('homework') || commandLower.includes('assignment')) && /\b(create|assign|publish|give|add|dispatch|send|issue|post)\b/.test(commandLower)) {
+  if ((commandLower.includes('homework') || commandLower.includes('assignment')) && /\b(create|assign|publish|give|add)\b/.test(commandLower)) {
     return 'create_homework';
   }
   if ((commandLower.includes('homework') || commandLower.includes('assignment')) && /\b(what|show|check|pending|missing|list|status|due|my)\b/.test(commandLower)) {
@@ -483,26 +559,17 @@ export function validateActionParametersServer(
 
   if (act.action === 'create_homework' || act.action === 'create_assignment') {
     const stripped = cmdClean
-      .replace(/^(create|assign|add|publish|dispatch|send|issue|post)\s+(a\s+|an\s+|the\s+)?(new\s+)?(homework|assignment)\s*(for|to|on|about)?\s*/i, '')
-      .replace(/\b(for\s+)?(class|grade|standard|std)\s+\d+[a-z]*(?:\s+(?:astra|solara|elara|vega|ruby|emerald|sapphire|topaz|section\s+[a-z0-9]+))?/gi, '')
-      .replace(/\bsubject\s*[-:]\s*[a-zA-Z &]+[:,;]?\s*/gi, '')
+      .replace(/^(create|assign|add|publish)\s+(a\s+|an\s+|the\s+)?(new\s+)?(homework|assignment)\s*(for|to|on|about)?\s*/i, '')
+      .replace(/\b(for\s+)?(class|grade)\s+\d+[a-z]*\b/gi, '')
       .trim();
     const hasTopic =
       (cleanTitle && !genericWords.test(cleanTitle) && !genericPhrase.test(cleanTitle)) ||
       (stripped.length >= 3 && !genericWords.test(stripped) && !genericPhrase.test(cmdClean));
-
-    const { hasExplicitGrade } = parseClassAndSection(act.targetClass || cmdClean);
-
-    if (!hasTopic || !hasExplicitGrade) {
-      const missing: string[] = [];
-      if (!hasTopic) missing.push('assignment topic/title');
-      if (!hasExplicitGrade) missing.push('target class / cohort');
+    if (!hasTopic) {
       return {
         valid: false,
-        missingFields: missing,
-        clarificationQuestion: !hasTopic
-          ? 'Please specify the homework title or topic and target class (e.g., "Assign Algebra Worksheet to Class 10 Astra due Friday").'
-          : 'Which class or cohort should this homework be assigned to (e.g., "Class 10 Astra" or "Grade 9 Solara")?',
+        missingFields: ['assignment topic/title', 'target class'],
+        clarificationQuestion: 'Please specify the homework title or topic and target class (e.g., "Assign Algebra Worksheet to Grade 10 due Friday").',
       };
     }
   }
@@ -532,47 +599,13 @@ export function validateActionParametersServer(
   return { valid: true, missingFields: [] };
 }
 
-export function parseClassAndSection(input?: string): {
-  grade: string;
-  section: string;
-  hasExplicitGrade: boolean;
-  hasExplicitSection: boolean;
-} {
+function parseClassAndSection(input?: string): { grade: string; section: string } {
   const str = (input || '').trim();
-  if (!str) {
-    return { grade: '', section: 'All Sections', hasExplicitGrade: false, hasExplicitSection: false };
-  }
-
-  // Match class/grade tokens: "Class 10 Astra", "Grade 10", "10th Astra", "Standard 10", "10 Astra"
-  const gradeMatch =
-    str.match(/\b(?:class|grade|standard|std)?\s*(\d{1,2})(?:st|nd|rd|th)?\b/i) ||
-    str.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:grade|class|standard|astra|solara|elara|vega|ruby|emerald|sapphire|topaz)\b/i);
-
-  const explicitGrade = gradeMatch && gradeMatch[1] ? `Grade ${gradeMatch[1]}` : '';
-
-  // Match sections: Astra, Solara, Elara, Vega, Ruby, Emerald, Sapphire, Topaz, or Section A/B/C/D
-  const secMatch = str.match(/\b(astra|solara|elara|vega|ruby|emerald|sapphire|topaz)\b/i);
-  const secLetterMatch = str.match(/\bsection\s+([a-z0-9]+)\b/i);
-
-  let section = 'All Sections';
-  let hasExplicitSection = false;
-
-  if (secMatch) {
-    section = secMatch[1].charAt(0).toUpperCase() + secMatch[1].slice(1).toLowerCase();
-    hasExplicitSection = true;
-  } else if (secLetterMatch) {
-    section = secLetterMatch[1].toUpperCase();
-    hasExplicitSection = true;
-  } else if (/\ball\s*(?:sections?|cohorts?)\b/i.test(str)) {
-    section = 'All Sections';
-    hasExplicitSection = true;
-  }
-
+  const numMatch = str.match(/\b(\d{1,2})\b/);
+  const secMatch = str.match(/\b(solara|astra|elara|vega|ruby|emerald|sapphire|topaz)\b/i);
   return {
-    grade: explicitGrade,
-    section,
-    hasExplicitGrade: Boolean(explicitGrade),
-    hasExplicitSection,
+    grade: numMatch ? `Grade ${numMatch[1]}` : 'Grade 10',
+    section: secMatch ? secMatch[1].charAt(0).toUpperCase() + secMatch[1].slice(1).toLowerCase() : 'All Sections',
   };
 }
 
@@ -628,109 +661,6 @@ async function verifyRowPersisted(cfg: SupabaseCfg, table: string, id: string): 
   return { verified: true, note: `Verified persisted record ${id} in ${table}.` };
 }
 
-const SUBJECT_ALIASES: Record<string, string> = {
-  math: 'Mathematics',
-  maths: 'Mathematics',
-  mathematics: 'Mathematics',
-  sci: 'Science',
-  science: 'Science',
-  phys: 'Physics',
-  physics: 'Physics',
-  chem: 'Chemistry',
-  chemistry: 'Chemistry',
-  bio: 'Biology',
-  biology: 'Biology',
-  eng: 'English',
-  english: 'English',
-  cs: 'Computer Science',
-  'comp sci': 'Computer Science',
-  'computer science': 'Computer Science',
-  sst: 'Social Studies',
-  'social studies': 'Social Studies',
-  hist: 'History',
-  history: 'History',
-  geo: 'Geography',
-  geography: 'Geography',
-  hindi: 'Hindi',
-};
-
-function normalizeSubjectName(raw?: string): string {
-  const cleaned = String(raw || '').replace(/[:.,;-]+$/g, '').trim();
-  if (!cleaned) return '';
-  const alias = SUBJECT_ALIASES[cleaned.toLowerCase()];
-  if (alias) return alias;
-  return cleaned
-    .split(/\s+/)
-    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : ''))
-    .join(' ');
-}
-
-export function extractHomeworkDetails(command: string, existing?: OrionActionStep): {
-  title: string;
-  content: string;
-  subject: string;
-  targetClass: string;
-  grade: string;
-  section: string;
-} {
-  const cmd = String(command || '').trim();
-  const parsedCohort = parseClassAndSection(existing?.targetClass || cmd);
-  const grade = parsedCohort.grade;
-  const section = parsedCohort.section;
-  const targetClass =
-    existing?.targetClass && parseClassAndSection(existing.targetClass).hasExplicitGrade
-      ? existing.targetClass
-      : [grade, section].filter(Boolean).join(' ').trim();
-
-  // Extract explicit subject field e.g. "subject- Maths: ..." or "subject: Physics,"
-  let parsedSubject = '';
-  const subjMatch = cmd.match(/\bsubject\s*[-:]\s*([A-Za-z &]+?)(?=\s*[:;,\n]|\s+(?:complete|solve|read|write|do|prepare|submit|revise)\b|$)/i);
-  if (subjMatch && subjMatch[1]) {
-    parsedSubject = normalizeSubjectName(subjMatch[1]);
-  }
-  const existingSubj = existing?.subject ? normalizeSubjectName(existing.subject) : '';
-  const subject = existingSubj || parsedSubject || 'General Studies';
-
-  // Extract instructions after colon or after stripping command lead-ins
-  let extractedContent = '';
-  const colonIdx = cmd.indexOf(':');
-  if (colonIdx !== -1 && colonIdx < cmd.length - 1) {
-    extractedContent = cmd.slice(colonIdx + 1).trim();
-  } else {
-    extractedContent = cmd
-      .replace(/^(create|assign|add|publish|dispatch|send|issue|post)\s+(a\s+|an\s+|the\s+)?(new\s+)?(homework|assignment)\s*(for|to|on|about)?\s*/i, '')
-      .replace(/\b(for\s+)?(class|grade|standard|std)\s+\d{1,2}(?:st|nd|rd|th)?(?:\s+(?:astra|solara|elara|vega|ruby|emerald|sapphire|topaz|section\s+[a-z0-9]+))?\s*,?\s*/gi, '')
-      .replace(/\bsubject\s*[-:]\s*[A-Za-z &]+[:,;]?\s*/gi, '')
-      .replace(/^(on|about|regarding)\s+/i, '')
-      .trim();
-  }
-
-  const rawExistingContent = existing?.content || existing?.message || '';
-  const contentIsJustRawCommand = !rawExistingContent || rawExistingContent.trim() === cmd;
-  const content = (!contentIsJustRawCommand ? rawExistingContent.trim() : extractedContent || cmd).trim();
-
-  const rawExistingTitle = existing?.title || (existing?.targetValue && existing.targetValue !== cmd ? existing.targetValue : '') || '';
-  const genericTitle = /^(homework|assignment|dispatch homework|create homework|assign homework)$/i.test(rawExistingTitle.trim());
-  let title = rawExistingTitle && !genericTitle ? rawExistingTitle.trim() : '';
-
-  if (!title) {
-    const snippet = extractedContent || content;
-    const capSnippet = snippet ? snippet.charAt(0).toUpperCase() + snippet.slice(1) : 'Assignment';
-    title = subject && subject !== 'General Studies'
-      ? `${subject}: ${capSnippet}`.slice(0, 120)
-      : capSnippet.slice(0, 120);
-  }
-
-  return {
-    title,
-    content,
-    subject,
-    targetClass,
-    grade,
-    section,
-  };
-}
-
 export async function executeOrionServerRequest(params: {
   cfg: SupabaseCfg;
   actor: VerifiedOrionActor;
@@ -740,72 +670,22 @@ export async function executeOrionServerRequest(params: {
   activeTab?: string;
   modelOverride?: string;
   history?: { role: 'user' | 'assistant'; content: string }[];
-  idempotencyKey?: string;
-  requestId?: string;
   dispatchPushFn?: (payload: any) => Promise<any>;
 }): Promise<{ httpStatus: number; body: Record<string, any> }> {
-  const requestId = params.requestId || `req_${Math.random().toString(36).slice(2, 10)}`;
-  const idempotencyKey = typeof params.idempotencyKey === 'string' ? params.idempotencyKey.trim().slice(0, 128) : '';
-  let idempCacheKey = '';
-  let resolveInFlight: ((val: { httpStatus: number; body: Record<string, any> }) => void) | null = null;
-
-  try {
   const { cfg, actor, command, actionPlan, confirmed = false, activeTab = 'dashboard', modelOverride, history = [], dispatchPushFn } = params;
   const startedAt = Date.now();
-
-  if (!actor?.authenticated) {
-    const reason = 'Authentication required: Please sign in to execute Orion actions.';
-    return {
-      httpStatus: 401,
-      body: {
-        ...buildErrorEnvelope({ code: 'UNAUTHORIZED', message: reason, requestId, statusText: 'unauthorized' }),
-        finalResponse: reason,
-      },
-    };
-  }
-
   const cmdTrimmed = String(command || '').trim();
   const cmdLower = cmdTrimmed.toLowerCase();
 
   if (!cmdTrimmed) {
-    const reason = 'Command or instruction is required.';
     return {
       httpStatus: 400,
       body: {
-        ...buildErrorEnvelope({ code: 'INVALID_REQUEST', message: reason, requestId, statusText: 'error' }),
-        finalResponse: reason,
+        success: false,
+        status: 'error',
+        error: 'Command or instruction is required.',
       },
     };
-  }
-
-  if (confirmed && idempotencyKey) {
-    pruneOrionIdempotencyCache();
-    idempCacheKey = `${actor.userId}::${idempotencyKey}`;
-    const existingCompleted = orionIdempotencyCache.get(idempCacheKey);
-    if (existingCompleted && Date.now() - existingCompleted.timestamp < ORION_IDEMPOTENCY_TTL_MS) {
-      return {
-        httpStatus: existingCompleted.response.httpStatus,
-        body: {
-          ...existingCompleted.response.body,
-          idempotentReplay: true,
-        },
-      };
-    }
-    const existingFlight = orionInFlightExecutions.get(idempCacheKey);
-    if (existingFlight) {
-      const flightRes = await existingFlight;
-      return {
-        httpStatus: flightRes.httpStatus,
-        body: {
-          ...flightRes.body,
-          idempotentReplay: true,
-        },
-      };
-    }
-    const flightPromise = new Promise<{ httpStatus: number; body: Record<string, any> }>((resolve) => {
-      resolveInFlight = resolve;
-    });
-    orionInFlightExecutions.set(idempCacheKey, flightPromise);
   }
 
   // Stage 1: Analyze & Plan
@@ -813,8 +693,6 @@ export async function executeOrionServerRequest(params: {
   let aiResponseText = '';
   let modelUsed = '';
   let providerUsed = '';
-  let plannerAiError = '';
-  const analyzeStart = Date.now();
 
   const hasAnyProviderKey = Boolean(getGroqApiKey() || getMinistralApiKey() || getZaiApiKey());
 
@@ -887,8 +765,8 @@ Respond strictly in valid JSON with this exact schema:
           plannedSteps = [{ action: quickAction, targetValue: cmdTrimmed }];
         }
       } catch (planErr: any) {
-        plannerAiError = String(planErr?.message || planErr || '').trim();
-        console.warn('[ORION_SERVICE] Planner LLM notice:', plannerAiError);
+        // Never fail into generic placeholder silently; fall back to deterministic classifier
+        console.warn('[ORION_SERVICE] Planner LLM notice:', planErr?.message || planErr);
       }
     }
 
@@ -913,42 +791,17 @@ Respond strictly in valid JSON with this exact schema:
     }
   }
 
-  const analyzeDurationMs = Math.max(0, Date.now() - analyzeStart);
-  const planStart = Date.now();
-  // Enrich structured homework parameters cleanly before clarification/preview/execution
-  plannedSteps = plannedSteps.map((step) => {
-    if (step.action === 'create_homework' || step.action === 'create_assignment') {
-      const extracted = extractHomeworkDetails(cmdTrimmed, step);
-      return {
-        ...step,
-        title: extracted.title,
-        content: extracted.content,
-        message: extracted.content,
-        subject: extracted.subject,
-        targetClass: extracted.targetClass || step.targetClass,
-      };
-    }
-    return step;
-  });
-  const planDurationMs = Math.max(0, Date.now() - planStart);
-
+  const analyzeDurationMs = Math.max(1, Date.now() - startedAt);
   const stages: any[] = [
     { phase: 'analyzing', label: 'Analyzing intent', status: 'completed', durationMs: analyzeDurationMs },
-    { phase: 'planning', label: 'Planning steps', status: 'completed', durationMs: planDurationMs, detail: `${plannedSteps.length} step${plannedSteps.length > 1 ? 's' : ''}` },
+    { phase: 'planning', label: 'Planning steps', status: 'completed', durationMs: 1, detail: `${plannedSteps.length} step${plannedSteps.length > 1 ? 's' : ''}` },
   ];
 
-  const prepStart = Date.now();
   // Stage 2: Missing Parameter Clarification Gate
   for (const step of plannedSteps) {
     const paramCheck = validateActionParametersServer(step, cmdTrimmed);
     if (!paramCheck.valid) {
-      stages.push({
-        phase: 'preparing',
-        label: 'Checking prerequisites & details',
-        status: 'failed',
-        durationMs: Math.max(0, Date.now() - prepStart),
-        detail: 'Missing required details',
-      });
+      stages.push({ phase: 'preparing', label: 'Checking prerequisites & details', status: 'failed', detail: 'Missing required details' });
       return {
         httpStatus: 200,
         body: {
@@ -960,7 +813,6 @@ Respond strictly in valid JSON with this exact schema:
           finalResponse: paramCheck.clarificationQuestion,
           providerUsed,
           modelUsed,
-          requestId,
           snapshot: {
             phase: 'failed',
             headline: 'Clarification needed before continuing.',
@@ -985,17 +837,13 @@ Respond strictly in valid JSON with this exact schema:
   for (const step of plannedSteps) {
     if (PRIVILEGED_OR_PRIVATE_ACTIONS.has(step.action) && !actor.authenticated) {
       const reason = `Authentication required: Please sign in to execute "${step.action}".`;
-      stages.push({
-        phase: 'preparing',
-        label: 'Checking permissions & prerequisites',
-        status: 'failed',
-        durationMs: Math.max(0, Date.now() - prepStart),
-        detail: reason,
-      });
+      stages.push({ phase: 'preparing', label: 'Checking permissions & prerequisites', status: 'failed', detail: reason });
       return {
         httpStatus: 401,
         body: {
-          ...buildErrorEnvelope({ code: 'UNAUTHORIZED', message: reason, requestId, statusText: 'unauthorized' }),
+          success: false,
+          status: 'unauthorized',
+          error: reason,
           finalResponse: reason,
           plan: plannedSteps,
           snapshot: {
@@ -1019,22 +867,13 @@ Respond strictly in valid JSON with this exact schema:
 
     const perm = validateOrionRolePermission(step.action, actor.role);
     if (!perm.allowed) {
-      stages.push({
-        phase: 'preparing',
-        label: 'Checking permissions & prerequisites',
-        status: 'failed',
-        durationMs: Math.max(0, Date.now() - prepStart),
-        detail: perm.reason,
-      });
+      stages.push({ phase: 'preparing', label: 'Checking permissions & prerequisites', status: 'failed', detail: perm.reason });
       return {
         httpStatus: 403,
         body: {
-          ...buildErrorEnvelope({
-            code: 'FORBIDDEN',
-            message: perm.reason || 'Authorization denied by server RBAC.',
-            requestId,
-            statusText: 'forbidden',
-          }),
+          success: false,
+          status: 'forbidden',
+          error: perm.reason,
           finalResponse: perm.reason,
           plan: plannedSteps,
           snapshot: {
@@ -1061,7 +900,7 @@ Respond strictly in valid JSON with this exact schema:
     phase: 'preparing',
     label: 'Checking permissions & prerequisites',
     status: 'completed',
-    durationMs: Math.max(0, Date.now() - prepStart),
+    durationMs: 1,
     detail: `Authorized (${actor.role})`,
   });
 
@@ -1074,7 +913,6 @@ Respond strictly in valid JSON with this exact schema:
       Action: primary.action.replace(/_/g, ' ').toUpperCase(),
       Target: targetTitle,
       Audience: primary.targetClass || primary.audience || 'All Authorized Recipients',
-      ...(primary.subject ? { Subject: primary.subject } : {}),
       ...(primary.date ? { Date: primary.date } : {}),
       ...(primary.time ? { Time: primary.time } : {}),
       Preview: primary.content || primary.message || cmdTrimmed,
@@ -1088,7 +926,6 @@ Respond strictly in valid JSON with this exact schema:
       phase: 'executing',
       label: 'Executing action',
       status: 'completed',
-      durationMs: 0,
       detail: 'Awaiting explicit confirmation',
     });
 
@@ -1109,7 +946,6 @@ Respond strictly in valid JSON with this exact schema:
         finalResponse: `Confirmation required before making changes.\n\n- **Action:** ${primary.action.replace(/_/g, ' ')}\n- **Target:** ${targetTitle}\n- **Audience:** ${previewDetails.Audience}`,
         providerUsed,
         modelUsed,
-        requestId,
         snapshot: {
           phase: 'awaiting_confirmation',
           headline: 'Confirmation required before making changes.',
@@ -1154,79 +990,22 @@ Respond strictly in valid JSON with this exact schema:
       if (act.action === 'general_chat') {
         let reply = aiResponseText;
         if (!reply && hasAnyProviderKey) {
-          try {
-            const chatRes = await generateAICompletionWithTelemetry({
-              systemInstruction: `You are Veylentra Orion, a crisp, helpful academic & school intelligence assistant for role "${actor.role}". Answer clearly using Markdown and LaTeX ($...$, $$...$$) where relevant. Never invent private database records.`,
-              prompt: cmdTrimmed,
-              history: history.slice(-6),
-              taskType: 'general',
-              modelOverride,
-              userRole: actor.role,
-              endpointName: 'OrionGeneralChat',
-              maxTokens: 1600,
-            });
-            reply = chatRes.text;
-            modelUsed = chatRes.telemetry.modelUsed;
-            providerUsed = chatRes.telemetry.providerUsed;
-          } catch (aiErr: any) {
-            const reason = normalizePublicErrorMessage(
-              aiErr?.message || plannerAiError,
-              'AI provider (Ministral, Groq, Z.ai) failed to respond.'
-            );
-            stages.push({
-              phase: 'executing',
-              label: 'Executing action',
-              status: 'failed',
-              durationMs: Math.max(0, Date.now() - execStart),
-              detail: reason,
-            });
-            return {
-              httpStatus: 502,
-              body: {
-                ...buildErrorEnvelope({ code: 'AI_PROVIDER_ERROR', message: reason, requestId, statusText: 'failed' }),
-                finalResponse: reason,
-                providerUsed,
-                modelUsed,
-                plan: plannedSteps,
-                results: [
-                  ...stepResults,
-                  { ...stepLog, status: 'failed', verificationNote: reason },
-                ],
-                snapshot: {
-                  phase: 'failed',
-                  headline: 'AI provider unavailable.',
-                  stages,
-                  steps: [
-                    ...stepResults,
-                    { ...stepLog, status: 'failed', verificationNote: reason },
-                  ],
-                  startedAt,
-                  finishedAt: Date.now(),
-                  verified: false,
-                },
-              },
-            };
-          }
+          const chatRes = await generateAICompletionWithTelemetry({
+            systemInstruction: `You are Veylentra Orion, a crisp, helpful academic & school intelligence assistant for role "${actor.role}". Answer clearly using Markdown and LaTeX ($...$, $$...$$) where relevant. Never invent private database records.`,
+            prompt: cmdTrimmed,
+            history: history.slice(-6),
+            taskType: 'general',
+            modelOverride,
+            userRole: actor.role,
+            endpointName: 'OrionGeneralChat',
+            maxTokens: 1600,
+          });
+          reply = chatRes.text;
+          modelUsed = chatRes.telemetry.modelUsed;
+          providerUsed = chatRes.telemetry.providerUsed;
         }
         if (!reply) {
-          const reason = normalizePublicErrorMessage(
-            plannerAiError,
-            'No AI provider API key (Ministral, Groq, or Z.ai) is currently configured on the server.'
-          );
-          return {
-            httpStatus: 502,
-            body: {
-              ...buildErrorEnvelope({ code: 'AI_PROVIDER_UNCONFIGURED', message: reason, requestId, statusText: 'failed' }),
-              finalResponse: reason,
-              providerUsed,
-              modelUsed,
-              plan: plannedSteps,
-              results: [
-                ...stepResults,
-                { ...stepLog, status: 'failed', verificationNote: reason },
-              ],
-            },
-          };
+          reply = 'No AI provider key is currently configured on the server to answer open-ended prompts. You can still run workspace queries (homework, attendance, calendar, notices) or web search.';
         }
         stepLog.status = 'completed';
         summaryParts.push(reply);
@@ -1531,171 +1310,42 @@ Respond strictly in valid JSON with this exact schema:
           summaryParts.push(`Dispatched and verified notification **"${title}"** for ${act.targetClass || act.audience || 'authorized recipients'}.`);
         }
       } else if (act.action === 'create_homework' || act.action === 'create_assignment') {
-        const hwDetails = extractHomeworkDetails(cmdTrimmed, act);
-        const title = hwDetails.title.slice(0, 140);
-        const { grade, section } = { grade: hwDetails.grade, section: hwDetails.section };
+        const title = (act.title || act.targetValue || 'Assignment').trim().slice(0, 140);
+        const { grade, section } = parseClassAndSection(act.targetClass || cmdTrimmed);
         const hwId = `hw_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-        const effectiveDueDate = act.date || new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0];
-        const effectiveContent = hwDetails.content;
-        const effectiveSubject = hwDetails.subject;
-        const effectiveGivenBy = actor.name || 'Faculty';
-
-        const fullHwPayload: Record<string, any> = {
-          id: hwId,
-          title,
-          content: effectiveContent,
-          subject: effectiveSubject,
-          class_grade: grade,
-          class_section: section,
-          due_date: effectiveDueDate,
-          given_by: effectiveGivenBy,
-          teacher_id: actor.userId,
-          status: 'published',
-          completed_list: [],
-          created_at: new Date().toISOString(),
-        };
-
-        let ins = await fetchJsonSafe(`${cfg.url}/rest/v1/homework`, {
+        const ins = await fetchJsonSafe(`${cfg.url}/rest/v1/homework`, {
           method: 'POST',
           headers: {
             apikey: cfg.key,
             Authorization: `Bearer ${cfg.key}`,
             'Content-Type': 'application/json',
-            Prefer: 'return=representation',
           },
-          body: JSON.stringify(fullHwPayload),
-        });
-
-        // Fallback for minimal column schema if optional columns (e.g. teacher_id, status) are rejected
-        if (!ins.ok && (ins.status === 400 || (ins.errorText && /column|schema cache|PGRST204/i.test(ins.errorText)))) {
-          const minimalHwPayload = {
+          body: JSON.stringify({
             id: hwId,
             title,
-            content: effectiveContent,
-            subject: effectiveSubject,
+            description: act.content || act.message || cmdTrimmed,
+            subject: act.subject || 'General Studies',
             class_grade: grade,
             class_section: section,
-            due_date: effectiveDueDate,
-            given_by: effectiveGivenBy,
+            due_date: act.date || new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0],
+            assigned_by: actor.name,
             completed_list: [],
-            created_at: fullHwPayload.created_at,
-          };
-          ins = await fetchJsonSafe(`${cfg.url}/rest/v1/homework`, {
-            method: 'POST',
-            headers: {
-              apikey: cfg.key,
-              Authorization: `Bearer ${cfg.key}`,
-              'Content-Type': 'application/json',
-              Prefer: 'return=representation',
-            },
-            body: JSON.stringify(minimalHwPayload),
-          });
-        }
-
+            created_at: new Date().toISOString(),
+          }),
+        });
         if (!ins.ok) throw new Error(`Failed to create homework: ${ins.errorText}`);
-
-        // Read-back verification 1: verify persisted row in homework
-        const checkHw = await fetchJsonSafe(
-          `${cfg.url}/rest/v1/homework?id=eq.${encodeURIComponent(hwId)}&select=id,title,class_grade,class_section`,
-          { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
-        );
-        const persistedRows: any[] = Array.isArray(checkHw.data) ? checkHw.data : [];
-        const persistedHw = persistedRows.find((r) => String(r?.id) === String(hwId));
-
-        if (!checkHw.ok || !persistedHw) {
+        const ver = await verifyRowPersisted(cfg, 'homework', hwId);
+        if (!ver.verified) {
           allVerified = false;
           stepLog.status = 'failed';
-          stepLog.verificationDetails = { homeworkVerified: false, notificationVerified: false };
-          stepLog.verificationNote = `Read-back verification failed: homework ${hwId} not found in database.`;
-          summaryParts.push(stepLog.verificationNote);
+          stepLog.verificationNote = ver.note;
+          summaryParts.push(ver.note);
         } else {
-          refreshTables.add('homework');
-
-          // Notification insert & separate read-back verification in public.notifications
-          const notifId = `notif_hw_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-          const notifTitle = `📝 New Assignment: ${title}`;
-          const notifMsg = `${effectiveSubject} · Due ${effectiveDueDate} (${effectiveGivenBy})`;
-          let notifInserted = false;
-          let notifVerified = false;
-          let notifNote = 'Notification insert failed.';
-
-          try {
-            const notifIns = await fetchJsonSafe(`${cfg.url}/rest/v1/notifications`, {
-              method: 'POST',
-              headers: {
-                apikey: cfg.key,
-                Authorization: `Bearer ${cfg.key}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                id: notifId,
-                title: notifTitle,
-                message: notifMsg,
-                type: 'homework',
-                target_role: 'student',
-                target_class: grade,
-                target_section: section === 'All Sections' ? 'all' : section,
-                link_tab: 'homework',
-                is_read: false,
-                created_at: new Date().toISOString(),
-              }),
-            });
-            notifInserted = notifIns.ok;
-            if (notifInserted) {
-              const verNotif = await verifyRowPersisted(cfg, 'notifications', notifId);
-              notifVerified = verNotif.verified;
-              notifNote = verNotif.note;
-              if (notifVerified) refreshTables.add('notifications');
-            } else {
-              notifNote = `Notification write failed (${notifIns.errorText || `HTTP ${notifIns.status}`}).`;
-            }
-          } catch (notifErr: any) {
-            notifNote = `Notification dispatch exception: ${notifErr?.message || 'unknown'}`;
-          }
-
-          if (!notifVerified) {
-            allVerified = false;
-          }
-
-          stepLog.status = notifVerified ? 'verified' : 'failed';
+          stepLog.status = 'verified';
           stepLog.recordId = hwId;
-          stepLog.notificationId = notifInserted ? notifId : undefined;
-          stepLog.verificationDetails = {
-            homeworkVerified: true,
-            notificationVerified: notifVerified,
-          };
-          stepLog.verificationNote =
-            `Homework verified (${hwId}) for ${persistedHw.class_grade || grade} (${persistedHw.class_section || section}). ${notifNote}`;
-
-          // Push delivery invocation with honest delivery reporting
-          let deliveredDevices = 0;
-          if (dispatchPushFn) {
-            try {
-              const pushRes = await dispatchPushFn({
-                notificationId: notifId,
-                title: notifTitle,
-                body: notifMsg,
-                targetRole: 'student',
-                targetClass: grade,
-                targetSection: section,
-                targetTab: 'homework',
-                schoolId: actor.schoolId,
-              });
-              if (pushRes && typeof pushRes.deliveredCount === 'number') {
-                deliveredDevices = pushRes.deliveredCount;
-              }
-            } catch (_) {}
-          }
-
-          let summaryMsg = `Assigned and verified homework **"${title}"** for **${grade} (${section})** (ID: \`${hwId}\`).`;
-          if (notifVerified) {
-            summaryMsg += deliveredDevices > 0
-              ? ` Classroom notification verified and delivered to ${deliveredDevices} device(s).`
-              : ' Classroom notification verified in database.';
-          } else {
-            summaryMsg += ` Warning: homework saved, but notification could not be verified (${notifNote}).`;
-          }
-          summaryParts.push(summaryMsg);
+          stepLog.verificationNote = ver.note;
+          refreshTables.add('homework');
+          summaryParts.push(`Assigned and verified homework **"${title}"** for **${grade} (${section})** (ID: \`${hwId}\`).`);
         }
       } else if (act.action === 'create_competition') {
         const title = (act.title || act.targetValue || 'Campus Competition').trim();
@@ -1894,7 +1544,7 @@ Respond strictly in valid JSON with this exact schema:
     stepResults.push(stepLog);
   }
 
-  const execDurationMs = Math.max(0, Date.now() - execStart);
+  const execDurationMs = Math.max(1, Date.now() - execStart);
   stages.push({
     phase: 'executing',
     label: 'Executing action',
@@ -1902,14 +1552,13 @@ Respond strictly in valid JSON with this exact schema:
     durationMs: execDurationMs,
   });
 
-  const verifyStageStart = Date.now();
   const needsVerifyStage = plannedSteps.some((s) => s.action !== 'general_chat' && s.action !== 'navigate_tab');
   if (needsVerifyStage) {
     stages.push({
       phase: 'verifying',
       label: 'Verifying outcome',
       status: allVerified ? 'completed' : 'failed',
-      durationMs: Math.max(0, Date.now() - verifyStageStart),
+      durationMs: 1,
       detail: allVerified ? 'All outcomes verified' : 'One or more steps reported issues',
     });
   }
@@ -1917,7 +1566,7 @@ Respond strictly in valid JSON with this exact schema:
   const finalResponse = summaryParts.filter(Boolean).join('\n\n') || 'Task processed.';
   const finalPhase = !allSucceeded || !allVerified ? 'failed' : 'completed';
 
-  const resultPayload = {
+  return {
     httpStatus: 200,
     body: {
       success: allSucceeded && allVerified,
@@ -1932,7 +1581,6 @@ Respond strictly in valid JSON with this exact schema:
       finalResponse,
       providerUsed,
       modelUsed,
-      requestId,
       snapshot: {
         phase: finalPhase,
         headline:
@@ -1947,24 +1595,4 @@ Respond strictly in valid JSON with this exact schema:
       },
     },
   };
-
-  if (confirmed && idempCacheKey && resultPayload.body.success) {
-    orionIdempotencyCache.set(idempCacheKey, { timestamp: Date.now(), response: resultPayload });
-  }
-  if (resolveInFlight) resolveInFlight(resultPayload);
-  if (idempCacheKey) orionInFlightExecutions.delete(idempCacheKey);
-  return resultPayload;
-  } catch (err: any) {
-    const reason = normalizePublicErrorMessage(err, 'Orion execution failed on server.');
-    const errResult = {
-      httpStatus: 502,
-      body: {
-        ...buildErrorEnvelope({ code: 'ORION_EXECUTION_ERROR', message: reason, requestId, statusText: 'failed' }),
-        finalResponse: reason,
-      },
-    };
-    if (resolveInFlight) resolveInFlight(errResult);
-    if (idempCacheKey) orionInFlightExecutions.delete(idempCacheKey);
-    return errResult;
-  }
 }

@@ -35,8 +35,6 @@ import {
 } from '../server/aiQuotaService';
 import { getSantaWindowStatus } from '../server/rewardEngine';
 import { fetchAIUsageStatus } from '../src/lib/aiUsageManager';
-import { setClientSessionToken, clearClientSessionToken } from '../src/lib/clientSession';
-import { createSignedSessionToken } from '../server/sessionAuth';
 import {
   fetchCachedSantaGlb,
   getSantaPreloadMetrics,
@@ -814,16 +812,7 @@ async function main() {
       setForceAiQuotaSupabaseForTests(true);
       setForceWinterSupabaseForTests(true);
 
-      const quotaToken = createSignedSessionToken({
-        uid: quotaUid,
-        name: 'Quota Tester',
-        role: 'student',
-        sessionType: 'login',
-      }).token;
-
-      const statusRes = await apiJson(baseUrl, `/api/ai/usage-status?userId=${quotaUid}&role=student`, {
-        headers: { Authorization: `Bearer ${quotaToken}` },
-      });
+      const statusRes = await apiJson(baseUrl, `/api/ai/usage-status?userId=${quotaUid}&role=student`);
       assert.equal(statusRes.status, 200);
       assert.equal(statusRes.data.baseLimit, 30);
       assert.equal(statusRes.data.winterBonus, 3);
@@ -842,12 +831,6 @@ async function main() {
 
     await runTest('Part 3.2: Byte AI enforcement honors +3 Winter bonus (allows 33, rejects 34th with 429) in Express & Vercel handler', async () => {
       const quotaUid = 'stu-quota-1';
-      const quotaToken = createSignedSessionToken({
-        uid: quotaUid,
-        name: 'Quota Tester',
-        role: 'student',
-        sessionType: 'login',
-      }).token;
       const cfg = { url: mockSupabaseUrl, key: 'test-key-12345678901234567890' };
 
       // Record 32 usages in Supabase
@@ -868,12 +851,11 @@ async function main() {
       // 34th request via Express /api/ai/chat must return HTTP 429
       const express429 = await apiJson(baseUrl, '/api/ai/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${quotaToken}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: 'Hello Byte', userId: quotaUid, userRole: 'student' }),
       });
       assert.equal(express429.status, 429);
-      const express429Code = typeof express429.data.error === 'object' ? express429.data.error?.code : express429.data.error;
-      assert.equal(express429Code, 'AI_LIMIT_REACHED');
+      assert.equal(express429.data.error, 'AI_LIMIT_REACHED');
       assert.equal(express429.data.limit, 33);
       assert.equal(express429.data.winterBonus, 3);
 
@@ -884,7 +866,7 @@ async function main() {
         {
           url: '/api/ai/chat',
           method: 'POST',
-          headers: { authorization: `Bearer ${quotaToken}` },
+          headers: {},
           body: { prompt: 'Hello Byte', userId: quotaUid, userRole: 'student' },
         },
         {
@@ -905,23 +887,16 @@ async function main() {
         }
       );
       assert.equal(serverlessStatus, 429);
-      const serverless429Code = typeof serverlessBody.error === 'object' ? serverlessBody.error?.code : serverlessBody.error;
-      assert.equal(serverless429Code, 'AI_LIMIT_REACHED');
+      assert.equal(serverlessBody.error, 'AI_LIMIT_REACHED');
       assert.equal(serverlessBody.limit, 33);
       assert.equal(serverlessBody.winterBonus, 3);
     });
 
     await runTest('Part 3.3: Voucher redemption persists across restart & fetchAIUsageStatus does NOT double-count bonus', async () => {
       const quotaUid = 'stu-quota-1';
-      const quotaToken = createSignedSessionToken({
-        uid: quotaUid,
-        name: 'Quota Tester',
-        role: 'student',
-        sessionType: 'login',
-      }).token;
       const vRes = await apiJson(baseUrl, '/api/ai/redeem-voucher', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${quotaToken}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: 'STUDENTOS-PRO', userId: quotaUid, userRole: 'student' }),
       });
       assert.equal(vRes.status, 200);
@@ -930,7 +905,7 @@ async function main() {
       // Duplicate voucher fails cleanly
       const dupV = await apiJson(baseUrl, '/api/ai/redeem-voucher', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${quotaToken}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: 'STUDENTOS-PRO', userId: quotaUid, userRole: 'student' }),
       });
       assert.equal(dupV.status, 400);
@@ -939,7 +914,6 @@ async function main() {
       resetAiQuotaMemoryForTests();
       setForceAiQuotaSupabaseForTests(true);
       const origFetch = globalThis.fetch;
-      setClientSessionToken(quotaToken);
       globalThis.fetch = ((input: any, init?: any) => {
         const u = String(input);
         if (u.startsWith('/api/')) return origFetch(`${baseUrl}${u}`, init);
@@ -954,7 +928,6 @@ async function main() {
         assert.equal(clientState.used, 33);
         assert.equal(clientState.remaining, 25);
       } finally {
-        clearClientSessionToken();
         globalThis.fetch = origFetch;
       }
     });

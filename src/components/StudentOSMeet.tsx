@@ -1,4 +1,3 @@
-import { getServerAuthHeaders, extractApiErrorMessage } from '../lib/clientSession';
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -1429,20 +1428,21 @@ export const StudentOSMeet: React.FC<StudentOSMeetProps> = ({
 
       const res = await fetch('/api/ai/notes', {
         method: 'POST',
-        headers: await getServerAuthHeaders(),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          content: rawContext,
-          action: 'summarize',
+          rawText: rawContext,
+          mode: 'summary',
           subject: activeMeeting.subject || 'General'
         })
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.success || !data.text) {
-        throw new Error(extractApiErrorMessage(data, `Meeting summary failed (HTTP ${res.status}).`));
+      const data = await res.json();
+      if (data && data.text) {
+        setAiSessionSummary(data.text);
+      } else {
+        setAiSessionSummary('Unable to generate summary right now. Please try again.');
       }
-      setAiSessionSummary(data.text);
-    } catch (err: any) {
-      setAiSessionSummary(`Unable to generate the meeting summary: ${err?.message || 'Network error.'}`);
+    } catch (err) {
+      setAiSessionSummary('Network error while generating session summary.');
     } finally {
       setIsGeneratingAiSummary(false);
     }

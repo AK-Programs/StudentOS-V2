@@ -292,7 +292,7 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
       </AnimatePresence>
 
       <div
-        className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] right-3.5 sm:right-6 md:bottom-8 md:right-8 z-40 flex flex-col items-end pointer-events-none select-none"
+        className="fixed bottom-20 right-3.5 sm:bottom-6 sm:right-6 md:bottom-8 md:right-8 z-40 flex flex-col items-end pointer-events-none select-none"
         aria-label="Byte Productivity Companion"
       >
         <AnimatePresence mode="wait">

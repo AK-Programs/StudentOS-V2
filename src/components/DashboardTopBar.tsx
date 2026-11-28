@@ -224,7 +224,7 @@ export const DashboardTopBar: React.FC<DashboardTopBarProps> = ({
 
   return (
     <header
-      className="sticky top-0 z-40 shrink-0 px-3 sm:px-6 py-2.5 flex items-center justify-between gap-2.5 sm:gap-4 border-b border-white/[0.08] bg-slate-950/85 backdrop-blur-xl shadow-[0_1px_0_0_rgba(255,255,255,0.03)]"
+      className="sticky top-0 z-40 px-3 sm:px-6 py-2.5 flex items-center justify-between gap-2.5 sm:gap-4 border-b border-white/[0.08] bg-slate-950/85 backdrop-blur-xl shadow-[0_1px_0_0_rgba(255,255,255,0.03)]"
       role="banner"
     >
       {/* Left Navigation Context */}

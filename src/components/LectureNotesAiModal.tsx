@@ -1,4 +1,3 @@
-import { getServerAuthHeaders, extractApiErrorMessage } from '../lib/clientSession';
 import React, { useState, useEffect } from 'react';
 import { 
   Sparkles, 
@@ -128,7 +127,7 @@ export const LectureNotesAiModal: React.FC<LectureNotesAiModalProps> = ({
 
       const res = await fetch('/api/ai/notes', {
         method: 'POST',
-        headers: await getServerAuthHeaders(),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: actionToUse,
           topic: mode === 'create' ? promptToUse : noteTitle,
@@ -141,7 +140,7 @@ export const LectureNotesAiModal: React.FC<LectureNotesAiModalProps> = ({
       const data = await res.json();
 
       if (!res.ok || !data.success || !data.text) {
-        throw new Error(extractApiErrorMessage(data, `Failed to generate note content with AI (HTTP ${res.status}).`));
+        throw new Error(data.error || 'Failed to generate note content with AI.');
       }
 
       let cleanResult = data.text.trim();

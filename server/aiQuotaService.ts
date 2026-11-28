@@ -10,13 +10,13 @@
  */
 
 import crypto from 'crypto';
-import { MAX_DAILY_WINTER_AI_BONUS } from './rewardEngine.js';
+import { MAX_DAILY_WINTER_AI_BONUS } from './rewardEngine';
 import {
   WORKING_ANON_KEY,
   markSupabaseKeyInvalid,
   supabaseFetchWithAnonRetry,
   getFeatureAndWinterSupabaseKey,
-} from './supabaseKeyManager.js';
+} from './supabaseKeyManager';
 
 export interface SupabaseConfig {
   url: string;

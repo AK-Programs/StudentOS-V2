@@ -10,7 +10,6 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getMessaging, getToken, onMessage, isSupported, deleteToken, Messaging } from 'firebase/messaging';
 import { getFirestore, doc, setDoc } from 'firebase/firestore';
 import { supabase } from './supabase';
-import { getClientSessionUid, getServerAuthHeaders } from './clientSession';
 import { soundService } from './soundService';
 import {
   buildNotificationUrl,
@@ -45,13 +44,57 @@ export function isAnonymousPushUserId(uid?: string | null): boolean {
 }
 
 export async function buildPushApiAuthHeaders(
-  _explicitUserId?: string | null,
-  _metadata?: { role?: string; grade?: string; section?: string }
+  explicitUserId?: string | null,
+  metadata?: { role?: string; grade?: string; section?: string }
 ): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json'
+  };
   if (typeof window === 'undefined') {
-    return { 'Content-Type': 'application/json' };
+    return headers;
   }
-  return getServerAuthHeaders();
+
+  let cachedUser: any = {};
+  try {
+    cachedUser = JSON.parse(localStorage.getItem('s_os_user') || '{}') || {};
+  } catch (_) {
+    cachedUser = {};
+  }
+
+  let accessToken = '';
+  let sessionUser: any = null;
+  try {
+    const { data } = await supabase.auth.getSession();
+    accessToken = data?.session?.access_token || '';
+    sessionUser = data?.session?.user || null;
+  } catch (_) {}
+
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
+
+  const uid = String(
+    (!isAnonymousPushUserId(explicitUserId) ? explicitUserId : '') ||
+    sessionUser?.id ||
+    cachedUser?.uid ||
+    cachedUser?.id ||
+    cachedUser?.email ||
+    ''
+  ).trim();
+  const email = String(sessionUser?.email || cachedUser?.email || '').trim();
+  const name = String(cachedUser?.name || sessionUser?.user_metadata?.name || '').trim();
+  const role = String(metadata?.role || cachedUser?.role || sessionUser?.user_metadata?.role || '').trim();
+  const grade = String(metadata?.grade || cachedUser?.grade || '').trim();
+  const section = String(metadata?.section || cachedUser?.section || '').trim();
+
+  if (uid) headers['x-veylentra-uid'] = uid;
+  if (email) headers['x-veylentra-email'] = email;
+  if (name) headers['x-veylentra-name'] = name;
+  if (role) headers['x-veylentra-role'] = role;
+  if (grade) headers['x-veylentra-grade'] = grade;
+  if (section) headers['x-veylentra-section'] = section;
+
+  return headers;
 }
 
 async function waitForActiveServiceWorker(registration: ServiceWorkerRegistration): Promise<ServiceWorkerRegistration> {
@@ -852,7 +895,7 @@ export async function sendTestFCMNotification(
     const authHeaders = await buildPushApiAuthHeaders(userId, { role: userRole || 'student' });
     const resolvedTargetUid = !isAnonymousPushUserId(userId)
       ? userId
-      : (getClientSessionUid() || localStorage.getItem('s_os_fcm_user_id') || 'all');
+      : (authHeaders['x-veylentra-uid'] || localStorage.getItem('s_os_fcm_user_id') || 'all');
     const res = await fetch('/api/push/send', {
       method: 'POST',
       headers: authHeaders,

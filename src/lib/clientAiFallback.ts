@@ -7,8 +7,6 @@
  * No mock or hardcoded fake AI fallbacks.
  */
 
-import { extractApiErrorMessage, getServerAuthHeaders } from './clientSession';
-
 export function sanitizeHistory(history: any[] = []): any[] {
   if (!Array.isArray(history) || history.length === 0) return [];
 
@@ -44,11 +42,10 @@ export async function clientSideAI(
   modelOverride?: string
 ): Promise<string> {
   const sanitized = sanitizeHistory(history);
-  const headers = await getServerAuthHeaders();
 
   const res = await fetch('/api/ai/chat', {
     method: 'POST',
-    headers,
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       prompt: userMessage,
       history: sanitized,
@@ -59,7 +56,7 @@ export async function clientSideAI(
 
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));
-    const errorMsg = extractApiErrorMessage(errData, `AI request failed (HTTP ${res.status})`);
+    const errorMsg = errData.message || errData.error || `AI request failed (HTTP ${res.status})`;
     throw new Error(errorMsg);
   }
 
@@ -69,7 +66,7 @@ export async function clientSideAI(
   }
 
   if (data.error) {
-    throw new Error(extractApiErrorMessage(data, 'AI request failed.'));
+    throw new Error(data.error);
   }
 
   throw new Error('AI is temporarily unavailable. Please try again.');

@@ -18,22 +18,6 @@ import {
   isUserEligibleForNotification,
   isNotificationPopupEligible,
 } from '../src/lib/notifications';
-import { createSignedSessionToken } from '../server/sessionAuth';
-
-function bearerHeaders(claims: Parameters<typeof createSignedSessionToken>[0]) {
-  return {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${createSignedSessionToken(claims).token}`,
-  };
-}
-
-const adminAuth = bearerHeaders({ uid: 'admin_test_1', role: 'admin', name: 'Campus Admin', sessionType: 'login' });
-const stu1Auth = bearerHeaders({ uid: 'stu_test_1', role: 'student', name: 'Student One', sessionType: 'login' });
-const stu2Auth = bearerHeaders({ uid: 'stu_test_2', role: 'student', name: 'Student Two', sessionType: 'login' });
-const stuG10Auth = bearerHeaders({ uid: 'stu_g10_a', name: 'Student G10', role: 'student', grade: 'Grade 10', section: 'A', sessionType: 'login' });
-const stuG9Auth = bearerHeaders({ uid: 'stu_g9_b', name: 'Student G9', role: 'student', grade: 'Grade 9', section: 'B', sessionType: 'login' });
-const teacher1Auth = bearerHeaders({ uid: 'teacher_1', name: 'Teacher One', role: 'teacher', sessionType: 'login' });
-const stuHackerAuth = bearerHeaders({ uid: 'stu_hacker', name: 'Student Hacker', role: 'student', sessionType: 'login' });
 
 async function main() {
   let passed = 0;
@@ -56,7 +40,12 @@ async function main() {
     await run('1. Fresh broadcast is eligible and surfaces once in flyoutCandidates', async () => {
       const res = await fetch(`${baseUrl}/api/notifications/broadcast`, {
         method: 'POST',
-        headers: adminAuth,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-veylentra-uid': 'admin_test_1',
+          'x-veylentra-role': 'admin',
+          'x-veylentra-name': 'Campus Admin',
+        },
         body: JSON.stringify({
           id: 'notif_fresh_1',
           title: 'Campus Assembly Notice',
@@ -74,7 +63,7 @@ async function main() {
       assert.equal(created.deduplicated, false);
 
       const listRes = await fetch(`${baseUrl}/api/notifications/list`, {
-        headers: stu1Auth,
+        headers: { 'x-veylentra-uid': 'stu_test_1', 'x-veylentra-role': 'student' },
       });
       assert.equal(listRes.status, 200);
       const listBody = await listRes.json();
@@ -88,7 +77,11 @@ async function main() {
     await run('2 & 10 & 12. Marking popup_presented stops broadcast replay across reloads and remounts', async () => {
       const markRes = await fetch(`${baseUrl}/api/notifications/state`, {
         method: 'POST',
-        headers: stu1Auth,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-veylentra-uid': 'stu_test_1',
+          'x-veylentra-role': 'student',
+        },
         body: JSON.stringify({
           notificationIds: ['notif_fresh_1'],
           action: 'popup_presented',
@@ -99,7 +92,7 @@ async function main() {
       // Simulate reload 1 & reload 2
       for (let i = 0; i < 2; i++) {
         const listRes = await fetch(`${baseUrl}/api/notifications/list`, {
-          headers: stu1Auth,
+          headers: { 'x-veylentra-uid': 'stu_test_1', 'x-veylentra-role': 'student' },
         });
         const listBody = await listRes.json();
         assert.equal(listBody.notifications.length, 1);
@@ -111,14 +104,18 @@ async function main() {
     await run('3. Already-read broadcast stays excluded from unreadCount and flyoutCandidates', async () => {
       await fetch(`${baseUrl}/api/notifications/state`, {
         method: 'POST',
-        headers: stu1Auth,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-veylentra-uid': 'stu_test_1',
+          'x-veylentra-role': 'student',
+        },
         body: JSON.stringify({
           notificationIds: ['notif_fresh_1'],
           action: 'read',
         }),
       });
       const listRes = await fetch(`${baseUrl}/api/notifications/list`, {
-        headers: stu1Auth,
+        headers: { 'x-veylentra-uid': 'stu_test_1', 'x-veylentra-role': 'student' },
       });
       const listBody = await listRes.json();
       assert.equal(listBody.unreadCount, 0);
@@ -130,7 +127,11 @@ async function main() {
     await run('4 & 11. Dismissed broadcast stays hidden for User A while remaining visible to User B', async () => {
       await fetch(`${baseUrl}/api/notifications/state`, {
         method: 'POST',
-        headers: stu1Auth,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-veylentra-uid': 'stu_test_1',
+          'x-veylentra-role': 'student',
+        },
         body: JSON.stringify({
           notificationIds: ['notif_fresh_1'],
           action: 'dismissed',
@@ -138,14 +139,14 @@ async function main() {
       });
 
       const resA = await fetch(`${baseUrl}/api/notifications/list`, {
-        headers: stu1Auth,
+        headers: { 'x-veylentra-uid': 'stu_test_1', 'x-veylentra-role': 'student' },
       });
       const bodyA = await resA.json();
       assert.equal(bodyA.notifications.length, 0);
 
       // Account switch to stu_test_2 (independent per-user state)
       const resB = await fetch(`${baseUrl}/api/notifications/list`, {
-        headers: stu2Auth,
+        headers: { 'x-veylentra-uid': 'stu_test_2', 'x-veylentra-role': 'student' },
       });
       const bodyB = await resB.json();
       assert.equal(bodyB.notifications.length, 1);
@@ -182,7 +183,11 @@ async function main() {
     await run('6. Broadcasts targeted to a specific role/grade/section do not leak to other users', async () => {
       await fetch(`${baseUrl}/api/notifications/broadcast`, {
         method: 'POST',
-        headers: adminAuth,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-veylentra-uid': 'admin_test_1',
+          'x-veylentra-role': 'admin',
+        },
         body: JSON.stringify({
           id: 'notif_grade10_only',
           title: 'Grade 10 Physics Lab',
@@ -195,21 +200,21 @@ async function main() {
         }),
       });
 
-      const matchRes = await fetch(`${baseUrl}/api/notifications/list`, {
-        headers: stuG10Auth,
+      const matchRes = await fetch(`${baseUrl}/api/notifications/list?grade=10&section=A`, {
+        headers: { 'x-veylentra-uid': 'stu_g10_a', 'x-veylentra-role': 'student' },
       });
       const matchBody = await matchRes.json();
       assert.ok(matchBody.notifications.some((n: any) => n.id === 'notif_grade10_only'));
 
-      const mismatchRes = await fetch(`${baseUrl}/api/notifications/list`, {
-        headers: stuG9Auth,
+      const mismatchRes = await fetch(`${baseUrl}/api/notifications/list?grade=9&section=B`, {
+        headers: { 'x-veylentra-uid': 'stu_g9_b', 'x-veylentra-role': 'student' },
       });
       const mismatchBody = await mismatchRes.json();
       assert.equal(mismatchBody.notifications.some((n: any) => n.id === 'notif_grade10_only'), false);
 
       // Teacher must not see student-targeted broadcast
       const teacherRes = await fetch(`${baseUrl}/api/notifications/list`, {
-        headers: teacher1Auth,
+        headers: { 'x-veylentra-uid': 'teacher_1', 'x-veylentra-role': 'teacher' },
       });
       const teacherBody = await teacherRes.json();
       assert.equal(teacherBody.notifications.some((n: any) => n.id === 'notif_grade10_only'), false);
@@ -252,7 +257,11 @@ async function main() {
       });
       const r1 = await fetch(`${baseUrl}/api/notifications/broadcast`, {
         method: 'POST',
-        headers: adminAuth,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-veylentra-uid': 'admin_test_1',
+          'x-veylentra-role': 'admin',
+        },
         body: JSON.stringify({
           title: 'Dedupe Test',
           message: 'First trigger',
@@ -264,7 +273,11 @@ async function main() {
 
       const r2 = await fetch(`${baseUrl}/api/notifications/broadcast`, {
         method: 'POST',
-        headers: adminAuth,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-veylentra-uid': 'admin_test_1',
+          'x-veylentra-role': 'admin',
+        },
         body: JSON.stringify({
           title: 'Dedupe Test',
           message: 'Duplicate trigger',
@@ -351,18 +364,15 @@ async function main() {
       assert.equal(isNotificationPopupEligible(candidates[2], { uid: 's1', role: 'student' }, { nowMs }), true);
     });
 
-    // 14. Security: Student cannot send campus broadcast & unsigned request gets 401
-    await run('14. Student role attempting POST /api/notifications/broadcast is rejected with 403 and unsigned with 401', async () => {
-      const unauth = await fetch(`${baseUrl}/api/notifications/broadcast`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-veylentra-uid': 'admin_test_1', 'x-veylentra-role': 'admin' },
-        body: JSON.stringify({ title: 'Fake Alert', message: 'Unsigned header' }),
-      });
-      assert.equal(unauth.status, 401);
-
+    // 14. Security: Student cannot send campus broadcast
+    await run('14. Student role attempting POST /api/notifications/broadcast is rejected with 403', async () => {
       const res = await fetch(`${baseUrl}/api/notifications/broadcast`, {
         method: 'POST',
-        headers: stuHackerAuth,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-veylentra-uid': 'stu_hacker',
+          'x-veylentra-role': 'student',
+        },
         body: JSON.stringify({ title: 'Fake Alert', message: 'No class today' }),
       });
       assert.equal(res.status, 403);

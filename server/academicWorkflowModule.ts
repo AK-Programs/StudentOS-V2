@@ -302,21 +302,34 @@ export function registerAcademicWorkflowRoutes(
   };
 
   async function resolveActor(req: express.Request): Promise<{ actor: RequestActor | null; errorStatus?: number; errorMsg?: string }> {
+    const authHeader = req.headers.authorization || (req.headers['x-supabase-auth'] as string) || '';
+    const hasBearer = Boolean(authHeader.replace(/^Bearer\s+/i, '').trim());
     const verified = await deps.getVerifiedUserFromRequest(req);
-    if (!verified || !verified.id) {
-      return { actor: null, errorStatus: 401, errorMsg: 'Authentication required. Please sign in.' };
+
+    if (hasBearer && !verified) {
+      return { actor: null, errorStatus: 401, errorMsg: 'Invalid or expired authentication token.' };
     }
 
-    const uid = String(verified.id).trim();
-    const meta = verified.user_metadata || {};
-    let assignedGrades: string[] | undefined = Array.isArray(meta.assignedGrades) ? meta.assignedGrades.map(String) : undefined;
-    let assignedSections: string[] | undefined = Array.isArray(meta.assignedSections) ? meta.assignedSections.map(String) : undefined;
-    let assignedClasses: string[] | undefined = Array.isArray(meta.assignedClasses) ? meta.assignedClasses.map(String) : undefined;
-    let dbRole: string | undefined;
-    let dbGrade = String(meta.grade || '').trim();
-    let dbSection = String(meta.section || '').trim();
-    let dbName = String(meta.name || verified.email || 'Veylentra User').trim();
+    const headerUid = String(req.headers['x-veylentra-uid'] || req.body?.actorId || req.body?.studentId || '').trim();
+    const headerRole = String(req.headers['x-veylentra-role'] || '').trim().toLowerCase();
+    const headerGrade = String(req.headers['x-veylentra-grade'] || '').trim();
+    const headerSection = String(req.headers['x-veylentra-section'] || '').trim();
+    const headerName = String(req.headers['x-veylentra-name'] || '').trim();
 
+    let assignedGrades: string[] | undefined;
+    let assignedSections: string[] | undefined;
+    let assignedClasses: string[] | undefined;
+    let dbRole: string | undefined;
+    let dbGrade = headerGrade;
+    let dbSection = headerSection;
+    let dbName = headerName;
+
+    const uid = verified?.id || headerUid;
+    if (!uid && !headerRole) {
+      return { actor: null, errorStatus: 401, errorMsg: 'Authentication context required.' };
+    }
+
+    // Look up authoritative profile in Supabase if available (non-blocking in test env)
     if (uid && process.env.NODE_ENV !== 'test') {
       try {
         const sb = getSb();
@@ -333,30 +346,46 @@ export function registerAcademicWorkflowRoutes(
             if (prof.section) dbSection = prof.section;
             if (prof.name) dbName = prof.name;
             if (prof.raw_data) {
-              if (Array.isArray(prof.raw_data.assignedGrades)) assignedGrades = prof.raw_data.assignedGrades.map(String);
-              if (Array.isArray(prof.raw_data.assignedSections)) assignedSections = prof.raw_data.assignedSections.map(String);
-              if (Array.isArray(prof.raw_data.assignedClasses)) assignedClasses = prof.raw_data.assignedClasses.map(String);
+              assignedGrades = prof.raw_data.assignedGrades;
+              assignedSections = prof.raw_data.assignedSections;
+              assignedClasses = prof.raw_data.assignedClasses;
             }
           }
         }
       } catch (_) {}
     }
 
-    const resolvedRole = String(dbRole || verified.role || 'student').toLowerCase().trim();
+    // Parse optional JSON arrays in headers for assigned scope
+    const parseArrHeader = (h: unknown): string[] | undefined => {
+      if (typeof h !== 'string' || !h.trim()) return undefined;
+      try {
+        const parsed = JSON.parse(h);
+        return Array.isArray(parsed) ? parsed.map(String) : undefined;
+      } catch {
+        return h.split(',').map(s => s.trim()).filter(Boolean);
+      }
+    };
+
+    const resolvedRole = verified?.role || dbRole || headerRole || 'student';
+
+    // Prevent role escalation when a non-faculty DB profile tries sending a faculty header
+    if (dbRole && !isFacultyOrAdminRole(dbRole) && headerRole && isFacultyOrAdminRole(headerRole) && !verified) {
+      return { actor: null, errorStatus: 403, errorMsg: 'Forbidden: role escalation is not permitted.' };
+    }
 
     return {
       actor: {
-        id: uid,
-        name: dbName,
-        email: verified.email || '',
+        id: uid || 'anonymous',
+        name: dbName || verified?.user_metadata?.name || verified?.email || 'Veylentra User',
+        email: verified?.email || String(req.headers['x-veylentra-email'] || ''),
         role: resolvedRole,
-        grade: dbGrade,
-        section: dbSection,
-        assignedGrades,
-        assignedSections,
-        assignedClasses,
-        isVerifiedJwt: true,
-      },
+        grade: dbGrade || verified?.user_metadata?.grade || '',
+        section: dbSection || verified?.user_metadata?.section || '',
+        assignedGrades: assignedGrades || parseArrHeader(req.headers['x-veylentra-assigned-grades']),
+        assignedSections: assignedSections || parseArrHeader(req.headers['x-veylentra-assigned-sections']),
+        assignedClasses: assignedClasses || parseArrHeader(req.headers['x-veylentra-assigned-classes']),
+        isVerifiedJwt: Boolean(verified)
+      }
     };
   }
 

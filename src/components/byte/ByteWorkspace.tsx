@@ -319,7 +319,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
   };
 
   const renderSessionList = (closeMobileOnSelect: boolean) => (
-    <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 py-2 pr-1">
+    <div className="flex-1 overflow-y-auto space-y-1.5 py-2 pr-1">
       {aiThreads.length === 0 ? (
         <p className="text-center text-slate-500 text-xs py-8 px-2">No saved Byte sessions yet</p>
       ) : (
@@ -374,10 +374,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
   );
 
   return (
-    <div
-      data-testid="byte-workspace"
-      className="h-full flex-1 min-h-0 flex flex-col lg:flex-row rounded-none sm:rounded-3xl border-0 sm:border border-white/10 bg-slate-950/90 shadow-xl relative w-full overflow-hidden"
-    >
+    <div className="h-[calc(100dvh-130px)] flex rounded-3xl border border-white/10 bg-slate-950/90 shadow-xl relative w-full overflow-hidden">
       {/* Slide-out Mobile Session Drawer */}
       <AnimatePresence>
         {showAiHistoryDrawer && (
@@ -439,7 +436,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
 
       {/* Collapsible Desktop Left Session Rail */}
       {desktopRailOpen && (
-        <aside className="hidden lg:flex w-64 shrink-0 flex-col min-h-0 overflow-hidden border-r border-white/10 bg-slate-950/80 p-3.5">
+        <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-white/10 bg-slate-950/80 p-3.5">
           <div className="flex items-center justify-between pb-3 border-b border-white/10">
             <span className="text-xs font-semibold text-slate-200 flex items-center gap-2">
               <History className="w-3.5 h-3.5 text-indigo-400" />
@@ -469,14 +466,11 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
       )}
 
       {/* Main Studio Column */}
-      <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
-        {/* Clean 3-Zone Top Header - strictly flex-nowrap to prevent stacked toolbar boxes on phone viewports */}
-        <header
-          data-testid="byte-primary-toolbar"
-          className="flex items-center justify-between gap-1.5 sm:gap-3 flex-nowrap px-2.5 sm:px-5 py-2 sm:py-2.5 border-b border-white/10 bg-slate-950/80 shrink-0 min-w-0 w-full overflow-hidden h-14"
-        >
+      <div className="flex-1 min-w-0 flex flex-col">
+        {/* Clean 3-Zone Top Header */}
+        <header className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-white/10 bg-slate-950/70 shrink-0">
           {/* Zone 1: Identity & Rail Toggle */}
-          <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-1 overflow-hidden">
+          <div className="flex items-center gap-2.5 min-w-0">
             <button
               type="button"
               onClick={() => setDesktopRailOpen((v) => !v)}
@@ -490,21 +484,21 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
             <button
               type="button"
               onClick={() => setShowAiHistoryDrawer(true)}
-              className="lg:hidden inline-flex items-center gap-1 px-2 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-200 text-xs font-medium transition-colors cursor-pointer shrink-0 min-h-[36px]"
+              className="lg:hidden inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-slate-200 text-xs font-medium transition-colors cursor-pointer shrink-0 min-h-[40px]"
               aria-label="Open session history"
             >
               <History className="w-4 h-4 text-indigo-400" />
               <span className="font-mono tabular-nums text-[11px]">{aiThreads.length}</span>
             </button>
 
-            <ByteStatusAvatar state={assistantState} size="sm" />
+            <ByteStatusAvatar state={assistantState} size="md" />
 
-            <div className="min-w-0 flex-1 truncate">
-              <div className="flex items-center gap-1.5 truncate">
-                <h2 className="text-sm font-bold text-white tracking-tight whitespace-nowrap shrink-0">Byte</h2>
-                <span className="text-[11px] font-medium text-indigo-300 truncate">{roleProfile.displayLabel}</span>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm sm:text-base font-bold text-white tracking-tight whitespace-nowrap">Byte</h2>
+                <span className="text-xs font-medium text-indigo-300 truncate">{roleProfile.displayLabel}</span>
               </div>
-              <p className="hidden md:flex text-[11px] text-slate-400 truncate items-center gap-1.5">
+              <p className="text-[11px] text-slate-400 truncate flex items-center gap-1.5">
                 <span>{BYTE_STATE_LABELS[assistantState]}</span>
                 <span aria-hidden="true">·</span>
                 <span className="truncate">{activePersonaObj?.name}</span>
@@ -512,12 +506,12 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
             </div>
           </div>
 
-          {/* Zone 2 & 3: Focused Studio Actions - strictly flex-nowrap single row */}
-          <div className="flex items-center gap-1 sm:gap-2 shrink-0 flex-nowrap justify-end">
+          {/* Zone 2 & 3: Focused Studio Actions */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               type="button"
               onClick={() => setShowTeachTopicBar((v) => !v)}
-              className={`hidden md:inline-flex px-2.5 sm:px-3 py-1.5 rounded-xl border text-xs font-semibold items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 min-h-[36px] ${
+              className={`px-3 py-2 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 min-h-[40px] ${
                 showTeachTopicBar
                   ? 'bg-indigo-600/25 border-indigo-400/50 text-white'
                   : 'bg-slate-900 hover:bg-slate-800 border-white/10 text-indigo-200'
@@ -531,7 +525,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
             <button
               type="button"
               onClick={() => setIsJarvisActive(true)}
-              className="px-2 sm:px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-sky-500/35 text-sky-300 hover:text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 min-h-[36px]"
+              className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-sky-500/35 text-sky-300 hover:text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 min-h-[40px]"
               title="Open Orion Ephemeral Action Agent"
             >
               <Sparkles className="w-3.5 h-3.5 text-sky-400" />
@@ -544,7 +538,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                 type="button"
                 onClick={() => setShowPrefsPopover((v) => !v)}
                 aria-expanded={showPrefsPopover}
-                className={`p-2 sm:px-3 sm:py-1.5 rounded-xl border text-xs font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 min-h-[36px] ${
+                className={`px-3 py-2 rounded-xl border text-xs font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 min-h-[40px] ${
                   showPrefsPopover
                     ? 'bg-indigo-600/20 border-indigo-400/50 text-white'
                     : 'bg-slate-900 hover:bg-slate-800 border-white/10 text-slate-200'
@@ -552,7 +546,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                 title="Configure persona, mode, reasoning, web search & model routing"
               >
                 <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-400" />
-                <span className="hidden sm:inline">Preferences</span>
+                <span className="hidden md:inline">Preferences</span>
               </button>
 
               <AnimatePresence>
@@ -564,7 +558,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                     animate={reduced ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
                     exit={reduced ? { opacity: 0 } : { opacity: 0, y: 4, scale: 0.98 }}
                     transition={{ duration: reduced ? 0 : 0.16, ease: MOTION_EASE.easeOutExpo }}
-                    className="fixed inset-x-3 top-24 sm:inset-x-auto sm:top-auto sm:absolute sm:right-0 sm:mt-2 w-auto sm:w-80 max-h-[75dvh] overflow-y-auto rounded-2xl border border-white/15 bg-slate-950/98 shadow-2xl p-4 z-50 space-y-4 backdrop-blur-xl"
+                    className="absolute right-0 mt-2 w-80 max-w-[90vw] rounded-2xl border border-white/15 bg-slate-950/98 shadow-2xl p-4 z-40 space-y-4 backdrop-blur-xl"
                   >
                     <div className="flex items-center justify-between border-b border-white/10 pb-2">
                       <span className="text-xs font-semibold text-white">Studio Preferences</span>
@@ -704,11 +698,11 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
             <button
               type="button"
               onClick={() => setShowQuotaModal(true)}
-              className="px-2 py-1.5 sm:px-2.5 sm:py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs inline-flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0 min-h-[36px] sm:min-h-[40px]"
+              className="px-2.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/10 text-xs inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 min-h-[40px]"
               title="View or boost daily Byte AI quota"
             >
               <Zap className="w-3.5 h-3.5 text-amber-400" />
-              <span className={`font-mono font-bold tabular-nums text-xs ${aiUsageState.remaining <= 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+              <span className={`font-mono font-bold tabular-nums ${aiUsageState.remaining <= 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
                 {aiUsageState.remaining}
               </span>
               <span className="text-slate-500 font-mono text-[11px] tabular-nums hidden sm:inline">
@@ -727,17 +721,17 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
             <button
               type="button"
               onClick={handleClearThreadHistory}
-              className="p-1.5 sm:p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-white/10 transition-colors cursor-pointer shrink-0 min-h-[36px] min-w-[36px] flex items-center justify-center"
+              className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-white/10 transition-colors cursor-pointer shrink-0 min-h-[40px] min-w-[40px] flex items-center justify-center"
               title="Clear messages in active session"
               aria-label="Clear active session"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <Trash2 className="w-4 h-4" />
             </button>
           </div>
         </header>
 
         {/* Subtle Unboxed Studio Configuration Line & Inline Teach Me Anything Bar */}
-        <div className="px-4 sm:px-6 py-2 border-b border-white/5 bg-slate-950/40 shrink-0 hidden sm:block">
+        <div className="px-4 sm:px-6 py-2 border-b border-white/5 bg-slate-950/40 shrink-0">
           <div className="max-w-3xl mx-auto flex items-center justify-between gap-3 text-[11px] text-slate-400 flex-wrap">
             <div className="flex items-center gap-2 min-w-0 flex-wrap">
               <span>Mode: {activeModeObj.label}</span>
@@ -801,7 +795,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
         <div
           id="ai-dialog-scroll"
           ref={scrollContainerRef}
-          className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y px-4 sm:px-6 py-5"
+          className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-5"
         >
           <div className="max-w-3xl mx-auto w-full space-y-5">
             {/* Empty State: Role-Aware Welcome Canvas */}
@@ -1003,28 +997,6 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                     />
                   )}
 
-                  {(m.truncated || m.finishReason === 'length') && !isActivelyStreamingMsg && !msgIsError && (
-                    <div className="mt-3 p-3 rounded-xl bg-amber-950/30 border border-amber-500/35 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                      <div className="flex items-start gap-2 text-xs text-amber-200">
-                        <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                        <span>Response reached the model output length limit and may be incomplete.</span>
-                      </div>
-                      {!aiLoading && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleAskAIModel(
-                              'Continue the previous explanation seamlessly from exactly where it stopped without repeating prior sections.'
-                            )
-                          }
-                          className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-100 text-xs font-semibold shrink-0 cursor-pointer transition-colors"
-                        >
-                          Continue explanation
-                        </button>
-                      )}
-                    </div>
-                  )}
-
                   {mathWidget && <InteractiveMathWidget widgetType={mathWidget} />}
 
                   {detectedTopic && !isActivelyStreamingMsg && !msgIsError && (
@@ -1216,8 +1188,8 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
           </div>
         </div>
 
-        {/* Ergonomic Docked Bottom Composer - stays fixed at bottom above mobile navigation bar */}
-        <div className="shrink-0 border-t border-white/10 bg-slate-950/95 px-3 sm:px-6 py-2 sm:py-3 z-10">
+        {/* Ergonomic Docked Bottom Composer */}
+        <div className="shrink-0 border-t border-white/10 bg-slate-950/75 px-4 sm:px-6 py-3">
           <div className="max-w-3xl mx-auto w-full space-y-2">
             {attachedFiles && attachedFiles.length > 0 && (
               <div className="flex flex-wrap gap-2 p-2 bg-slate-900/80 rounded-xl border border-white/10 max-h-[88px] overflow-y-auto">
@@ -1303,13 +1275,15 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                 }}
                 placeholder={
                   aiUsageState.remaining <= 0
-                    ? 'Type your question here. You can compose while your daily send quota is reached.'
+                    ? 'Daily quota exhausted — boost to unlock more queries.'
                     : attachedFiles && attachedFiles.length > 0
                       ? `Ask Byte about ${attachedFiles.map((f) => f.name).join(', ')}...`
                       : `Ask Byte (${roleProfile.displayLabel} Assistant) — Shift+Enter for new line...`
                 }
-                disabled={aiLoading}
-                className="flex-1 min-w-0 min-h-[40px] bg-transparent px-2.5 py-2.5 text-sm leading-relaxed resize-none max-h-36 focus:outline-none text-white placeholder-slate-500"
+                disabled={aiLoading || aiUsageState.remaining <= 0}
+                className={`flex-1 bg-transparent px-2.5 py-2.5 text-sm leading-relaxed resize-none max-h-36 focus:outline-none text-white placeholder-slate-500 ${
+                  aiUsageState.remaining <= 0 ? 'opacity-60 cursor-not-allowed' : ''
+                }`}
               />
 
               {aiLoading ? (
@@ -1324,18 +1298,25 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
               ) : (
                 <button
                   type="button"
-                  onClick={() => handleAskAIModel()}
-                  disabled={!aiInput.trim()}
+                  onClick={aiUsageState.remaining <= 0 ? () => setShowQuotaModal(true) : () => handleAskAIModel()}
+                  disabled={aiUsageState.remaining > 0 && !aiInput.trim()}
                   className={`min-h-[44px] px-4 sm:px-5 rounded-xl font-semibold text-xs flex items-center justify-center gap-1.5 shrink-0 transition-colors cursor-pointer disabled:opacity-45 ${
                     aiUsageState.remaining <= 0
                       ? 'bg-amber-600 hover:bg-amber-500 text-white'
                       : 'bg-indigo-600 hover:bg-indigo-500 text-white'
                   }`}
                 >
-                  <>
-                    <Send className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Send</span>
-                  </>
+                  {aiUsageState.remaining <= 0 ? (
+                    <>
+                      <Zap className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Boost</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Send</span>
+                    </>
+                  )}
                 </button>
               )}
             </div>

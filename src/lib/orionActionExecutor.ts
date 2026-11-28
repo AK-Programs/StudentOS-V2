@@ -5,7 +5,6 @@ import { createOrUpdateMeeting, deleteMeeting } from './supabaseMeet';
 import { saveAppNotification } from './notifications';
 import { executeOrionCommunicationDispatch } from './orionCommunication';
 import { Homework, Meeting, AppNotification, Competition, SchoolEvent } from '../types';
-import { extractApiErrorMessage, getServerAuthHeaders } from './clientSession';
 
 export type OrionActionType =
   | 'create_broadcast'
@@ -2316,13 +2315,10 @@ export async function executeOrionActionPipeline(
         try {
           const searchResp = await fetch('/api/ai/search', {
             method: 'POST',
-            headers: await getServerAuthHeaders(),
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ query: searchQuery })
           });
           const searchData = await searchResp.json().catch(() => ({}));
-          if (!searchResp.ok || searchData?.success === false) {
-            throw new Error(extractApiErrorMessage(searchData, `Web search failed (HTTP ${searchResp.status}).`));
-          }
           if (searchData && searchData.success && Array.isArray(searchData.results) && searchData.results.length > 0) {
             const sources = searchData.results;
             const rows: OrionStructuredTableRow[] = sources.slice(0, 6).map((s: any, idx: number) => ({
