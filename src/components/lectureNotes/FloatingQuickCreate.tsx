@@ -142,7 +142,7 @@ export const FloatingQuickCreate: React.FC<FloatingQuickCreateProps> = ({
   return (
     <>
       {/* Floating Plus Button (Desktop & Mobile) */}
-      <div className="fixed bottom-6 right-6 z-40">
+      <div className="fixed bottom-[calc(5.75rem+env(safe-area-inset-bottom))] right-4 sm:right-6 md:bottom-6 z-40">
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}

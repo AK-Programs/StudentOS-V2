@@ -611,7 +611,7 @@ export async function buildRoleAwareByteContext(
     };
   }
 
-  const cacheKey = `${userId}:${normalizedRole}:${scopeSummary}:${options.activeTab || ''}`;
+  const cacheKey = `${userId}:${schoolId}:${normalizedRole}:${scopeSummary}:${options.activeTab || ''}`;
   const cached = roleContextCache.get(cacheKey);
   if (
     !options.supabaseClient &&
@@ -649,26 +649,21 @@ export async function buildRoleAwareByteContext(
     hasVeylentraData = true;
   }
 
-  if (
-    normalizedRole !== 'parent' &&
-    options.localSnapshot?.homeworkList &&
-    options.localSnapshot.homeworkList.length > 0
-  ) {
-    const scopedHw = options.localSnapshot.homeworkList.filter((h: any) => {
-      if (normalizedRole === 'admin' || normalizedRole === 'super_admin') return true;
-      const hwGrade = String(h.classGrade || h.class_grade || '').trim();
-      if (!hwGrade) return true;
-      if (normalizedRole === 'teacher' || normalizedRole === 'coordinator') {
-        return authorizedGrades.includes(hwGrade);
-      }
-      return hwGrade === userGrade;
-    });
+  if (options.localSnapshot?.homeworkList && options.localSnapshot.homeworkList.length > 0) {
+    const rawHw = options.localSnapshot.homeworkList;
+    const scopedHw = normalizedRole === 'student'
+      ? rawHw.filter((h: any) => {
+          const hwGrade = String(h.classGrade || h.class_grade || 'All').trim();
+          return hwGrade === 'All' || hwGrade === 'All Grades' || authorizedGrades.includes(hwGrade);
+        })
+      : rawHw;
+
     if (scopedHw.length > 0) {
       const hwLines = scopedHw.slice(0, 8).map(
         (h: any) =>
-          `- [${sanitizeByteContextText(h.subject || 'General', 35)}] "${sanitizeByteContextText(h.title, 80)}" (${sanitizeByteContextText(h.classGrade || h.class_grade || userGrade, 20)}) | Due: ${sanitizeByteContextText(h.dueDate || h.due_date || 'Unspecified', 30)}`
+          `- [ASSIGNMENT] ${sanitizeByteContextText(h.subject || 'General', 35)}: "${sanitizeByteContextText(h.title, 75)}" (${sanitizeByteContextText(h.classGrade || h.class_grade || 'All', 20)}) | Due: ${h.dueDate || h.due_date || 'Flexible'}`
       );
-      sections.push(`Local Snapshot Homework (${scopedHw.length}):\n${hwLines.join('\n')}`);
+      sections.push(`Authorized Homework & Assignments (${scopedHw.length} total):\n${hwLines.join('\n')}`);
       hasVeylentraData = true;
     }
   }
@@ -1088,12 +1083,4 @@ export async function buildRoleAwareByteContext(
   return finalResult;
 }
 
-export async function buildAuthorizedByteContext(
-  prompt: string,
-  currentUser: any,
-  effectiveRole: string,
-  options: BuildByteContextOptions = {}
-): Promise<BuiltByteContextResult> {
-  return buildRoleAwareByteContext(prompt, currentUser, effectiveRole, options);
-}
-
+export const buildAuthorizedByteContext = buildRoleAwareByteContext;

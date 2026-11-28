@@ -1,3 +1,5 @@
+import { getServerAuthHeaders } from './clientSession';
+
 /**
  * StudentOS AI Buddy Usage & Limits Manager
  * Handles daily rolling quotas, tier limits, local fallback synchronization,
@@ -159,7 +161,8 @@ export function recordLocalMessage(userId: string, role = 'student'): AIUsageSta
 export async function fetchAIUsageStatus(userId: string, role = 'student'): Promise<AIUsageState> {
   const local = getLocalUsageState(userId, role);
   try {
-    const res = await fetch(`/api/ai/usage-status?userId=${encodeURIComponent(userId || 'guest')}&role=${encodeURIComponent(role || 'student')}`);
+    const headers = await getServerAuthHeaders();
+    const res = await fetch(`/api/ai/usage-status?userId=${encodeURIComponent(userId || 'guest')}&role=${encodeURIComponent(role || 'student')}`, { headers });
     if (res.ok) {
       const serverData = await res.json();
       const localBonus = typeof localStorage !== 'undefined'
@@ -227,7 +230,7 @@ export async function redeemAIVoucher(
   try {
     const res = await fetch('/api/ai/redeem-voucher', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await getServerAuthHeaders(),
       body: JSON.stringify({ code: cleanCode, userId, userRole: role })
     });
 

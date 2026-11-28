@@ -1,3 +1,4 @@
+import { getServerAuthHeaders, extractApiErrorMessage } from '../../lib/clientSession';
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   FileText, 
@@ -281,7 +282,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
     try {
       const res = await fetch('/api/ai/notes', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getServerAuthHeaders(),
         body: JSON.stringify({
           action: 'create_note',
           topic: aiCreateQuery,
@@ -290,7 +291,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'AI note creation failed');
+        throw new Error(extractApiErrorMessage(data, `AI note creation failed (HTTP ${res.status}).`));
       }
       if (data.text) {
         onCreateNote({
@@ -302,7 +303,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
         setAiCreateQuery('');
         showNotification('✨ Note created with AI!');
       } else {
-        throw new Error(data.error || 'No content returned from AI');
+        throw new Error(extractApiErrorMessage(data, 'No content returned from AI.'));
       }
     } catch (err: any) {
       showNotification(`❌ AI error: ${err.message}`);
@@ -317,7 +318,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
     try {
       const res = await fetch('/api/ai/notes', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getServerAuthHeaders(),
         body: JSON.stringify({
           action: 'edit_note',
           content: activeNote.content || '',
@@ -327,7 +328,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'AI edit failed');
+        throw new Error(extractApiErrorMessage(data, `AI edit failed (HTTP ${res.status}).`));
       }
       if (data.text) {
         await onUpdateNote(activeNote.id, { content: data.text });
@@ -335,7 +336,7 @@ export const LectureNotesWorkspace: React.FC<LectureNotesWorkspaceProps> = ({
         setAiEditInstruction('');
         showNotification('✨ Note updated with AI!');
       } else {
-        throw new Error(data.error || 'No updated text returned from AI');
+        throw new Error(extractApiErrorMessage(data, 'No updated text returned from AI.'));
       }
     } catch (err: any) {
       showNotification(`❌ AI error: ${err.message}`);

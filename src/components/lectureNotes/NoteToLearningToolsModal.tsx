@@ -1,3 +1,4 @@
+import { getServerAuthHeaders, extractApiErrorMessage } from '../../lib/clientSession';
 import React, { useState } from 'react';
 import { 
   X, 
@@ -56,7 +57,7 @@ export const NoteToLearningToolsModal: React.FC<NoteToLearningToolsModalProps> =
         // Generate flashcards through AI endpoint
         const resp = await fetch('/api/ai/flashcards', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await getServerAuthHeaders(),
           body: JSON.stringify({
             topic: noteTitle,
             subject: noteSubject,
@@ -65,16 +66,11 @@ export const NoteToLearningToolsModal: React.FC<NoteToLearningToolsModalProps> =
           })
         });
 
-        const data = await resp.json();
-        if (data.cards && Array.isArray(data.cards)) {
-          setGeneratedFlashcards(data.cards);
-        } else {
-          // Heuristic cards from definitions and formulas in note
-          setGeneratedFlashcards([
-            { front: `What is the core definition in ${noteTitle}?`, back: `See lecture notes for detailed principles in ${noteSubject}.` },
-            { front: `Key Formula / Principle in ${noteTitle}`, back: `Key derivation and applications covered in ${noteSubject}.` }
-          ]);
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.success || !Array.isArray(data.cards) || data.cards.length === 0) {
+          throw new Error(extractApiErrorMessage(data, `Flashcard generation failed (HTTP ${resp.status}).`));
         }
+        setGeneratedFlashcards(data.cards);
       } else {
         // Quiz, Revision Sheet, or Lesson
         let action = 'quiz';
@@ -89,7 +85,7 @@ export const NoteToLearningToolsModal: React.FC<NoteToLearningToolsModalProps> =
 
         const resp = await fetch('/api/ai/notes', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await getServerAuthHeaders(),
           body: JSON.stringify({
             content: noteContent,
             topic: noteTitle,
@@ -99,13 +95,16 @@ export const NoteToLearningToolsModal: React.FC<NoteToLearningToolsModalProps> =
           })
         });
 
-        const data = await resp.json();
-        setGeneratedText(data.text || '');
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.success || !data.text) {
+          throw new Error(extractApiErrorMessage(data, `Learning tool generation failed (HTTP ${resp.status}).`));
+        }
+        setGeneratedText(data.text);
       }
       setHasGenerated(true);
     } catch (err: any) {
       console.error('[LearningTools] Error:', err);
-      onNotify?.(`⚠️ ${err.message || 'Generation failed, using structured template.'}`);
+      onNotify?.(`⚠️ ${err.message || 'AI generation failed. No generated content was saved.'}`);
     } finally {
       setIsLoading(false);
     }
@@ -152,8 +151,7 @@ export const NoteToLearningToolsModal: React.FC<NoteToLearningToolsModalProps> =
       onClose();
     } catch (err: any) {
       console.error('Save flashcards error:', err);
-      onNotify?.('✓ Flashcards saved to local Study Center deck!');
-      onClose();
+      onNotify?.(`⚠️ Could not save flashcards: ${err?.message || 'Storage request failed.'}`);
     }
   };
 

@@ -272,21 +272,16 @@ async function runTests() {
     const capturedProviderRequests: Array<{ prompt: string; history: any[] }> = [];
 
     globalThis.fetch = (async (input: any, init: any) => {
-      const url = typeof input === 'string' ? input : String(input?.url || input);
+      const url = String(input);
+
+      // Pass local test server requests to real fetch
       if (url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost')) {
         return prevFetch(input, init);
       }
 
-      const readHeader = (name: string): string => {
-        const h = init?.headers || input?.headers;
-        if (!h) return '';
-        if (typeof h.get === 'function') return String(h.get(name) || '');
-        return String(h[name] || h[name.toLowerCase()] || h[name.toUpperCase()] || '');
-      };
-
       // Mock Supabase Auth verification
       if (url.includes('/auth/v1/user')) {
-        const authHeader = readHeader('Authorization');
+        const authHeader = String(init?.headers?.Authorization || init?.headers?.authorization || '');
         if (authHeader === 'Bearer token-super') {
           return new Response(
             JSON.stringify({
@@ -400,8 +395,8 @@ async function runTests() {
         });
         assert.equal(rMismatch.status, 403, `${base} must reject body.userId !== JWT uid with 403`);
 
-        // Test 4c: Header x-veylentra-uid mismatch vs body.userId -> 403
-        const rHeaderMismatch = await fetch(`${base}/api/ai/chat`, {
+        // Test 4c: Unsigned x-veylentra-uid header without verified Bearer token -> 401
+        const rHeaderSpoof = await fetch(`${base}/api/ai/chat`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -412,7 +407,7 @@ async function runTests() {
             userId: 'demo-super',
           }),
         });
-        assert.equal(rHeaderMismatch.status, 403, `${base} must reject x-veylentra-uid !== body.userId with 403`);
+        assert.equal(rHeaderSpoof.status, 401, `${base} must reject unsigned x-veylentra-uid header with 401`);
       }
 
       // Test 3a: Cold-start DB conversation ownership check:

@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { extractApiErrorMessage, getServerAuthHeaders } from './clientSession';
 import {
   OrionAction,
   OrionActionType,
@@ -13,18 +14,14 @@ import {
 } from './orionActionExecutor';
 
 export type OrionProgressPhase =
-  | 'queued'
   | 'analyzing'
   | 'planning'
   | 'clarifying'
   | 'preparing'
   | 'executing'
-  | 'running'
   | 'verifying'
-  | 'validating'
   | 'awaiting_confirmation'
   | 'completed'
-  | 'cancelled'
   | 'failed';
 
 export interface OrionPlanStep {
@@ -343,34 +340,37 @@ export async function runOrionAgentTask({
   const deniedSteps: { index: number; reason: string }[] = [];
   const missingParamErrors: { index: number; prompt: string; missingFields: string[] }[] = [];
 
-  if (role === 'parent' || role === 'guardian') {
-    for (let i = 0; i < safeActions.length; i++) {
-      const msg = 'Authorization denied: Orion Academic Agent is restricted to students, faculty, coordinators, and administrators.';
+  for (let i = 0; i < safeActions.length; i++) {
+    const act = safeActions[i];
+    const paramCheck = validateOrionActionParameters(act, rawCommand);
+    if (!paramCheck.valid && paramCheck.clarificationPrompt) {
       steps[i].status = 'blocked';
-      steps[i].detail = msg;
-      deniedSteps.push({ index: i, reason: msg });
+      steps[i].detail = `Missing: ${paramCheck.missingFields.join(', ')}`;
+      missingParamErrors.push({
+        index: i,
+        prompt: paramCheck.clarificationPrompt,
+        missingFields: paramCheck.missingFields,
+      });
+      continue;
     }
-  } else {
-    for (let i = 0; i < safeActions.length; i++) {
-      const act = safeActions[i];
-      const paramCheck = validateOrionActionParameters(act, rawCommand);
-      if (!paramCheck.valid && paramCheck.clarificationPrompt) {
-        steps[i].status = 'blocked';
-        steps[i].detail = `Missing: ${paramCheck.missingFields.join(', ')}`;
-        missingParamErrors.push({
-          index: i,
-          prompt: paramCheck.clarificationPrompt,
-          missingFields: paramCheck.missingFields,
-        });
-        continue;
-      }
 
-      const perm = validateActionPermission(act.action, role);
-      if (!perm.allowed) {
+    const perm = validateActionPermission(act.action, role);
+    if (!perm.allowed) {
+      steps[i].status = 'blocked';
+      steps[i].detail = perm.reason;
+      deniedSteps.push({ index: i, reason: perm.reason || 'Authorization denied.' });
+      continue;
+    }
+
+    if (act.action === 'get_child_overview') {
+      const linkedCount =
+        (userContext.linkedStudentIds?.length || 0) + (userContext.linkedStudents?.length || 0);
+      if (linkedCount === 0) {
+        const msg =
+          'No verified linked ward found on this Parent session. Link your child in Parental Portal via OTP first.';
         steps[i].status = 'blocked';
-        steps[i].detail = perm.reason;
-        deniedSteps.push({ index: i, reason: perm.reason || 'Authorization denied.' });
-        continue;
+        steps[i].detail = msg;
+        deniedSteps.push({ index: i, reason: msg });
       }
     }
   }
@@ -547,26 +547,9 @@ export async function runOrionAgentTask({
   };
 }
 
-export interface OrionCompletionReport {
-  taskId: string;
-  generatedAt: string;
-  actorRole: string;
-  command: string;
-  status: string;
-  verified: boolean;
-  providerUsed?: string;
-  modelUsed?: string;
-  durationMs: number;
-  stages: any[];
-  steps: any[];
-  summary: string;
-  markdown: string;
-}
-
 export interface ServerOrionExecuteResponse {
   success: boolean;
-  taskId?: string;
-  status: 'needs_clarification' | 'awaiting_confirmation' | 'completed' | 'forbidden' | 'unauthorized' | 'failed' | 'error' | 'cancelled';
+  status: 'needs_clarification' | 'awaiting_confirmation' | 'completed' | 'forbidden' | 'unauthorized' | 'failed' | 'error';
   clarificationQuestion?: string;
   missingFields?: string[];
   pendingConfirmation?: {
@@ -587,31 +570,11 @@ export interface ServerOrionExecuteResponse {
   finalResponse?: string;
   providerUsed?: string;
   modelUsed?: string;
-  report?: OrionCompletionReport;
   snapshot?: OrionAgentProgressSnapshot;
-  error?: string;
-}
-
-async function buildOrionAuthHeaders(userContext?: OrionUserContext): Promise<Record<string, string>> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  try {
-    const { data } = await supabase.auth.getSession();
-    const token = data?.session?.access_token;
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-  } catch {
-    // Session lookup optional for PIN/demo accounts
-  }
-  if (userContext?.userId) {
-    headers['x-veylentra-uid'] = String(userContext.userId);
-  }
-  if (userContext?.userEmail) {
-    headers['x-veylentra-email'] = String(userContext.userEmail);
-  }
-  return headers;
+  error?: string | { code?: string; message?: string; requestId?: string };
+  message?: string;
+  requestId?: string;
+  deduplicated?: boolean;
 }
 
 export async function executeOrionViaServer(params: {
@@ -622,84 +585,64 @@ export async function executeOrionViaServer(params: {
   modelOverride?: string;
   history?: { role: 'user' | 'assistant'; content: string }[];
   userContext?: OrionUserContext;
-  taskId?: string;
   idempotencyKey?: string;
-  signal?: AbortSignal;
 }): Promise<ServerOrionExecuteResponse> {
-  const normRole = String(params.userContext?.userRole || params.userContext?.role || '').toLowerCase().trim();
-  if (normRole === 'parent' || normRole === 'guardian') {
-    const msg = 'Forbidden: Orion Academic Agent is unavailable for Parent and Guardian accounts.';
-    return {
-      success: false,
-      status: 'forbidden',
-      error: msg,
-      finalResponse: msg,
-    };
-  }
-
-  const headers = await buildOrionAuthHeaders(params.userContext);
+  const headers = await getServerAuthHeaders();
 
   const resp = await fetch('/api/orion/execute', {
     method: 'POST',
     headers,
-    signal: params.signal,
     body: JSON.stringify({
       command: params.command,
       actionPlan: params.actionPlan,
       confirmed: Boolean(params.confirmed),
       activeTab: params.activeTab || 'dashboard',
       modelOverride: params.modelOverride || undefined,
+      idempotencyKey: params.idempotencyKey || undefined,
       history: (params.history || []).slice(-6),
-      taskId: params.taskId,
-      idempotencyKey: params.idempotencyKey,
     }),
   });
 
-  const payload = await resp.json().catch(() => null);
-  if (!payload || typeof payload !== 'object') {
-    throw new Error(`Orion execution endpoint returned HTTP ${resp.status} without a readable JSON payload.`);
+  const contentType = String(resp.headers?.get?.('content-type') || '').toLowerCase();
+  const rawText = await resp.text().catch(() => '');
+  let payload: any = null;
+  if (rawText.trim()) {
+    try {
+      payload = JSON.parse(rawText);
+    } catch {
+      payload = null;
+    }
   }
-  return payload as ServerOrionExecuteResponse;
-}
 
-export async function cancelOrionTaskViaServer(
-  taskId: string,
-  userContext?: OrionUserContext
-): Promise<{ success: boolean; status?: string; error?: string }> {
-  const headers = await buildOrionAuthHeaders(userContext);
-  const resp = await fetch(`/api/orion/tasks/${encodeURIComponent(taskId)}/cancel`, {
-    method: 'POST',
-    headers,
-  });
-  const payload = await resp.json().catch(() => ({}));
+  if (!payload || typeof payload !== 'object') {
+    const cleanText = rawText
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 220);
+    const kindHint = contentType.includes('html') ? 'HTML error page' : contentType || 'non-JSON response';
+    throw new Error(
+      cleanText
+        ? `Orion execution failed (HTTP ${resp.status}, ${kindHint}): ${cleanText}`
+        : `Orion execution failed (HTTP ${resp.status}, ${kindHint}).`
+    );
+  }
+
+  const reqId = typeof payload.requestId === 'string' && payload.requestId ? payload.requestId : undefined;
+  if (!resp.ok) {
+    const errMsg = extractApiErrorMessage(payload, `Orion execution failed with HTTP ${resp.status}.`);
+    // For structured policy/execution gates (401/403/failed JSON from backend), allow caller to render clear status + message,
+    // while throwing clear Errors carrying status/requestId for transport/provider failures (5xx).
+    if (resp.status >= 500 || (resp.status !== 401 && resp.status !== 403 && !payload.status)) {
+      const serverErr: any = new Error(reqId ? `${errMsg} (Ref: ${reqId})` : errMsg);
+      serverErr.status = resp.status;
+      serverErr.requestId = reqId;
+      throw serverErr;
+    }
+  }
+
   return {
-    success: Boolean(resp.ok && payload?.success),
-    status: payload?.status,
-    error: payload?.error,
+    ...(payload as ServerOrionExecuteResponse),
+    requestId: reqId,
   };
-}
-
-export async function retryOrionTaskViaServer(
-  taskId: string,
-  userContext?: OrionUserContext
-): Promise<ServerOrionExecuteResponse> {
-  const headers = await buildOrionAuthHeaders(userContext);
-  const resp = await fetch(`/api/orion/tasks/${encodeURIComponent(taskId)}/retry`, {
-    method: 'POST',
-    headers,
-  });
-  const payload = await resp.json().catch(() => null);
-  if (!payload || typeof payload !== 'object') {
-    throw new Error(`Orion task retry returned HTTP ${resp.status}`);
-  }
-  return payload as ServerOrionExecuteResponse;
-}
-
-export function buildOrionCompletionReportMarkdown(report: OrionCompletionReport): string {
-  if (report.markdown) return report.markdown;
-  return `# Orion Task Completion Report\n- **Task ID:** ${report.taskId}\n- **Status:** ${report.status}\n- **Instruction:** ${report.command}\n\n## Summary\n${report.summary}`;
-}
-
-export function buildOrionCompletionReportJson(report: OrionCompletionReport): string {
-  return JSON.stringify(report, null, 2);
 }

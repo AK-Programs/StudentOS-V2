@@ -1,3 +1,4 @@
+import { getServerAuthHeaders } from './clientSession';
 import { useState, useEffect, useCallback } from 'react';
 
 export interface AIUsageStatus {
@@ -23,7 +24,8 @@ export async function fetchAiUsageStatus(userId: string, role?: string): Promise
   const fallbackLimit = DEFAULT_ROLE_LIMITS[normRole] || 30;
 
   try {
-    const res = await fetch(`/api/ai/usage-status?userId=${encodeURIComponent(userId)}&role=${encodeURIComponent(normRole)}`);
+    const headers = await getServerAuthHeaders();
+    const res = await fetch(`/api/ai/usage-status?userId=${encodeURIComponent(userId)}&role=${encodeURIComponent(normRole)}`, { headers });
     if (!res.ok) throw new Error('Failed to fetch status');
     const data = await res.json();
     const used = Number(data.used) || 0;

@@ -1,3 +1,4 @@
+import { getServerAuthHeaders, extractApiErrorMessage } from '../../lib/clientSession';
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Heading2, 
@@ -513,7 +514,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
     try {
       const res = await fetch('/api/ai/notes', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getServerAuthHeaders(),
         body: JSON.stringify({
           action: 'edit_note',
           content: contentToEdit,
@@ -522,7 +523,7 @@ export const LectureNotesEditor: React.FC<LectureNotesEditorProps> = ({
         })
       });
 
-      if (!res.ok) throw new Error('AI Edit failed');
+      if (!res.ok) { const errorData = await res.json().catch(() => ({})); throw new Error(extractApiErrorMessage(errorData, `AI edit failed (HTTP ${res.status}).`)); }
       const data = await res.json();
       
       const returnedText = data.text || data.content;

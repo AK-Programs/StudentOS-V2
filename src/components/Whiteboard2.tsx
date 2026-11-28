@@ -1,3 +1,4 @@
+import { getServerAuthHeaders, extractApiErrorMessage } from '../lib/clientSession';
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { 
   Stage as StageComp, Layer as LayerComp, Line as LineComp, Rect as RectComp, 
@@ -625,7 +626,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     try {
       const resp = await fetch('/api/3d-model-requests', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getServerAuthHeaders(),
         body: JSON.stringify({
           requestType: modelRequestType,
           subject: modelRequestTopic,
@@ -739,7 +740,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       try {
         const res = await fetch('/api/ai/magic-draw', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await getServerAuthHeaders(),
           body: JSON.stringify({ prompt: promptText }),
           signal: controller.signal
         });
@@ -1165,7 +1166,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
         setAiTip(`🎨 Generating classroom SVG visual for "${cleanTopic}"...`);
         const res = await fetch('/api/ai/svg-diagram', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await getServerAuthHeaders(),
           body: JSON.stringify({ query: cleanTopic })
         });
         if (!res.ok) throw new Error('SVG generation service unavailable');
@@ -1209,7 +1210,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
         setAiTip(`✨ Analyzing selected object with NVIDIA AI...`);
         const res = await fetch('/api/ai/notes', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await getServerAuthHeaders(),
           body: JSON.stringify({
             content: contextDesc,
             action: 'custom',
@@ -1279,7 +1280,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
       } else if (effectiveTool === 'mermaid') {
         const response = await fetch('/api/ai/mermaid', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await getServerAuthHeaders(),
           body: JSON.stringify({ query: aiPromptQuery })
         });
         let data: any = {};
@@ -1334,7 +1335,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
         try {
           const response = await fetch('/api/ai/svg-diagram', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: await getServerAuthHeaders(),
             body: JSON.stringify({ query: aiPromptQuery })
           });
           if (!response.ok) throw new Error('SVG API unavailable');
@@ -1378,7 +1379,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
         try {
           const response = await fetch('/api/ai/diagram', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: await getServerAuthHeaders(),
             body: JSON.stringify({ query: aiPromptQuery, type: aiToolType })
           });
           if (!response.ok) throw new Error('Diagram API unavailable');
@@ -1754,7 +1755,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
     try {
       const res = await fetch('/api/ai/handwriting-formula', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getServerAuthHeaders(),
         body: JSON.stringify({ image: base64Image })
       });
       const data = await res.json();
@@ -4499,7 +4500,7 @@ export const Whiteboard2 = ({ onClose, currentUser }: any) => {
             try {
               const res = await fetch('/api/ai/svg-diagram', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: await getServerAuthHeaders(),
                 body: JSON.stringify({ query })
               });
               const data = await res.json();

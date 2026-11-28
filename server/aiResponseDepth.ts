@@ -57,7 +57,7 @@ export function classifyByteResponseDepth(params: {
       reason: 'User explicitly requested full chapter / complete teaching coverage',
       isLongForm: true,
       requiresWebFreshnessHint,
-      targetOutputBudget: 24576,
+      targetOutputBudget: 32768,
     };
   }
 
@@ -67,7 +67,7 @@ export function classifyByteResponseDepth(params: {
       reason: 'User requested deep dive / comprehensive analysis',
       isLongForm: true,
       requiresWebFreshnessHint,
-      targetOutputBudget: 16384,
+      targetOutputBudget: 28672,
     };
   }
 
@@ -123,7 +123,7 @@ export function classifyByteResponseDepth(params: {
       reason: 'User requested detailed explanation with examples',
       isLongForm: true,
       requiresWebFreshnessHint,
-      targetOutputBudget: 12288,
+      targetOutputBudget: 24576,
     };
   }
 
@@ -151,7 +151,7 @@ export function classifyByteResponseDepth(params: {
       reason: 'Deep Reasoning mode enabled',
       isLongForm: true,
       requiresWebFreshnessHint,
-      targetOutputBudget: 12288,
+      targetOutputBudget: 24576,
     };
   }
 
@@ -217,9 +217,9 @@ export function resolveProviderOutputTokenBudget(
       normal_explanation: 8192,
       revision_notes: 12288,
       step_by_step_tutorial: 16384,
-      detailed_explanation: 16384,
-      deep_dive: 20480,
-      full_chapter: 24576,
+      detailed_explanation: 24576,
+      deep_dive: 28672,
+      full_chapter: 32768,
     };
     const base = zaiDefaults[depth] || 8192;
     const desired =
@@ -227,8 +227,11 @@ export function resolveProviderOutputTokenBudget(
         ? Math.max(base, requestedMaxTokens)
         : base;
     const clamped = Math.min(32768, Math.max(2048, desired));
-    const disableThinking =
-      !reasoningMode && (depth === 'quick_answer' || depth === 'summary');
+    // GLM-4.7 Flash uses the max_tokens allowance for both visible output and
+    // internal thinking. Keep thinking disabled for normal tutoring responses
+    // unless the user explicitly enables Deep Reasoning, so detailed lessons
+    // receive the output budget requested by their depth classification.
+    const disableThinking = !reasoningMode;
     result = { maxTokens: clamped, disableThinking };
   } else if (provider === 'ministral') {
     const ministralDefaults: Record<ByteResponseDepthMode, number> = {

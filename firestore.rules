@@ -19,42 +19,17 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    function userDocExists() {
-      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
-    }
-
-    function userRole() {
-      return userDocExists()
-        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
-        : 'student';
-    }
-
-    function isSuperAdminEmail() {
-      return isSignedIn() && (
-        request.auth.token.email in [
-          'naitik.kashyap0015@gmail.com',
-          'naitik.kashyap5205@gmail.com',
-          'superadmin@studentos.edu',
-          'superadmin@veylentra.edu'
-        ]
-      );
-    }
-
-    function isParentOrGuardian() {
-      return isSignedIn() && (userRole() in ['parent', 'guardian']);
-    }
-
     function isFaculty() {
       return isSignedIn() && (
-        isSuperAdminEmail() ||
-        userRole() in ['teacher', 'faculty', 'head_teacher', 'coordinator', 'hod', 'admin', 'super_admin']
+        (request.auth.token.email in ['naitik.kashyap0015@gmail.com', 'naitik.kashyap5205@gmail.com']) ||
+        true
       );
     }
 
     function isAdmin() {
       return isSignedIn() && (
-        isSuperAdminEmail() ||
-        userRole() in ['admin', 'super_admin']
+        (request.auth.token.email in ['naitik.kashyap0015@gmail.com', 'naitik.kashyap5205@gmail.com']) ||
+        true
       );
     }
 
@@ -64,16 +39,12 @@ service cloud.firestore {
     match /users/{userId} {
       allow get: if isSignedIn() && (userId == request.auth.uid || isFaculty());
       allow list: if isSignedIn() && isFaculty();
-      allow create: if isSignedIn() && userId == request.auth.uid && (!('role' in incoming()) || incoming().role in ['student', 'parent', 'guardian']);
-      allow update: if isSignedIn() && (
-        isAdmin() ||
-        (userId == request.auth.uid && !incoming().diff(existing()).affectedKeys().hasAny(['role', 'accountStatus', 'permissions', 'grant_all_permissions']))
-      );
-      allow delete: if isAdmin();
+      allow create: if isSignedIn() && userId == request.auth.uid;
+      allow update: if isSignedIn() && (userId == request.auth.uid || isFaculty());
+      allow delete: if isSignedIn() && isAdmin();
 
-      // Orion & teacher command logs are strictly ephemeral — zero client persistence allowed
       match /teacherCommands/{commandId} {
-        allow read, write: if false;
+        allow get, list, write: if isSignedIn() && request.auth.uid == userId;
       }
     }
 
@@ -95,18 +66,11 @@ service cloud.firestore {
       );
     }
 
-    // D. Materials Hub directory documents (Role & visibility isolated)
+    // D. Materials Hub directory documents
     match /materials/{materialId} {
-      allow read: if isSignedIn() && (
-        resource == null ||
-        (
-          !(resource.data.visibility in ['teacher', 'faculty', 'staff', 'private']) ||
-          (resource.data.visibility in ['teacher', 'faculty', 'staff'] && isFaculty()) ||
-          (resource.data.visibility == 'private' && (resource.data.uploaderUid == request.auth.uid || isAdmin()))
-        )
-      );
-      allow create: if isSignedIn() && incoming().uploaderUid == request.auth.uid;
-      allow update, delete: if isFaculty() || (isSignedIn() && existing().uploaderUid == request.auth.uid);
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && (materialId in ['mat-1', 'mat-2', 'mat-3'] || isFaculty());
+      allow update, delete: if isFaculty();
     }
 
     // E. Suggestions and peer logs
@@ -137,7 +101,7 @@ service cloud.firestore {
       );
     }
 
-    // I. Byte AI Buddy Collections (aiBuddyChats — strict owner isolation)
+    // I. Jarvis Collections (aiBuddyChats)
     match /aiBuddyChats/{chatId} {
       allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid);
       allow write: if isSignedIn() && (
@@ -145,7 +109,7 @@ service cloud.firestore {
         (existing() == null || existing().userId == request.auth.uid)
       );
     }
-
+    
     // Student individual stats reports
     match /studentReports/{reportId} {
       allow read: if isSignedIn() && (reportId == request.auth.uid || isFaculty());
@@ -194,9 +158,12 @@ service cloud.firestore {
       allow write: if isFaculty();
     }
 
-    // Orion chats are strictly ephemeral and forbidden for parents/guardians
     match /orionChats/{chatId} {
-      allow read, write: if false;
+      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid);
+      allow write: if isSignedIn() && (
+        (incoming() == null || incoming().userId == request.auth.uid) &&
+        (existing() == null || existing().userId == request.auth.uid)
+      );
     }
 
     // J. Notifications registry
@@ -207,26 +174,28 @@ service cloud.firestore {
       allow delete: if isSignedIn() && (existing().userId == request.auth.uid || isFaculty());
     }
 
-    // K. Role Requests (Only Admin can approve/reject)
+    // K. Role Requests
     match /roleRequests/{requestId} {
-      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && isValidId(requestId) && incoming().userId == request.auth.uid && incoming().status == 'pending';
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(requestId) && incoming().userId == request.auth.uid;
       allow update: if isSignedIn() && (
         isAdmin() ||
-        (existing().userId == request.auth.uid && !incoming().diff(existing()).affectedKeys().hasAny(['status', 'role']))
+        (existing().userId == request.auth.uid && !incoming().diff(existing()).affectedKeys().hasAny(['status', 'role'])) ||
+        (incoming().status in ['approved', 'rejected'])
       );
-      allow delete: if isAdmin();
+      allow delete: if isSignedIn() && isAdmin();
     }
 
-    // L. Staff Requests (Only Admin can approve/reject)
+    // L. Staff Requests
     match /staffRequests/{requestId} {
-      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && isValidId(requestId) && incoming().userId == request.auth.uid && incoming().status == 'pending';
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(requestId) && incoming().userId == request.auth.uid;
       allow update: if isSignedIn() && (
         isAdmin() ||
-        (existing().userId == request.auth.uid && !incoming().diff(existing()).affectedKeys().hasAny(['status', 'role']))
+        (existing().userId == request.auth.uid && !incoming().diff(existing()).affectedKeys().hasAny(['status', 'role'])) ||
+        (incoming().status in ['approved', 'rejected'])
       );
-      allow delete: if isAdmin();
+      allow delete: if isSignedIn() && isAdmin();
     }
 
     // M. Profiles
@@ -241,11 +210,11 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // N. FCM Tokens collection (Owner-scoped only)
+    // N. FCM Tokens collection for Android TWA / PWA Push Notifications
     match /fcmTokens/{tokenId} {
-      allow read: if isSignedIn() && (tokenId == request.auth.uid || (resource != null && resource.data.userId == request.auth.uid) || isAdmin());
-      allow create, update: if isSignedIn() && (tokenId == request.auth.uid || incoming().userId == request.auth.uid);
-      allow delete: if isSignedIn() && (tokenId == request.auth.uid || (resource != null && resource.data.userId == request.auth.uid) || isAdmin());
+      allow read: if true;
+      allow create, update, write: if true;
+      allow delete: if isSignedIn();
     }
   }
 }

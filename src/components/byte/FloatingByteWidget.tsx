@@ -72,8 +72,6 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
 
   const userId = currentUser.uid || currentUser.email || 'guest';
   const activeRole = effectiveRole || currentUser.role || 'student';
-  const isParentOrGuardian =
-    activeRole.toLowerCase().trim() === 'parent' || activeRole.toLowerCase().trim() === 'guardian';
 
   const [isMinimized, setIsMinimized] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
@@ -152,7 +150,7 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
       isLongPressTriggeredRef.current = true;
       clearLongPressTimers();
       soundService.playButtonClick();
-      onOpenByteOrionModal?.(isParentOrGuardian ? 'byte' : 'select');
+      onOpenByteOrionModal?.('select');
     }, LONG_PRESS_DURATION_MS);
   };
 
@@ -294,7 +292,7 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
       </AnimatePresence>
 
       <div
-        className="fixed bottom-20 right-3.5 sm:bottom-6 sm:right-6 md:bottom-8 md:right-8 z-40 flex flex-col items-end pointer-events-none select-none"
+        className="fixed bottom-[calc(5.5rem+env(safe-area-inset-bottom))] right-3.5 sm:right-6 md:bottom-8 md:right-8 z-40 flex flex-col items-end pointer-events-none select-none"
         aria-label="Byte Productivity Companion"
       >
         <AnimatePresence mode="wait">
@@ -327,9 +325,9 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
                   {onOpenByteOrionModal && (
                     <button
                       type="button"
-                      onClick={() => onOpenByteOrionModal(isParentOrGuardian ? 'byte' : 'select')}
+                      onClick={() => onOpenByteOrionModal('select')}
                       className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-300 hover:bg-slate-800 transition-colors cursor-pointer"
-                      title={isParentOrGuardian ? 'Voice & Byte Assistant' : 'Voice & Byte / Orion Selector'}
+                      title="Voice & Byte / Orion Selector"
                     >
                       <Mic className="w-3.5 h-3.5" />
                     </button>
@@ -450,11 +448,11 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
               ) : (
                 <button
                   type="button"
-                  onClick={() => onOpenByteOrionModal?.(isParentOrGuardian ? 'byte' : 'select')}
+                  onClick={() => onOpenByteOrionModal?.('select')}
                   className="w-full py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                 >
                   <Mic className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>{isParentOrGuardian ? 'Open Byte Voice & Reminders' : 'Open Byte / Orion Assistant'}</span>
+                  <span>Open Byte / Orion Assistant</span>
                 </button>
               )}
             </motion.div>
@@ -479,7 +477,7 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
                     />
                   </svg>
                   <span className="absolute -top-7 text-[10px] font-bold text-cyan-200 bg-slate-950/95 px-2.5 py-0.5 rounded-md border border-sky-500/40 whitespace-nowrap">
-                    {isParentOrGuardian ? 'Hold 3s for Byte Voice' : 'Hold 3s for Byte / Orion'}
+                    Hold 3s for Byte / Orion
                   </span>
                 </div>
               )}
@@ -502,7 +500,7 @@ export const FloatingByteWidget: React.FC<FloatingByteWidgetProps> = ({
                   }
                 }}
                 className="pointer-events-auto relative w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-slate-950/95 backdrop-blur-xl border border-sky-500/35 p-0 flex items-center justify-center shadow-[0_8px_30px_rgba(14,165,233,0.25)] hover:border-sky-400 transition-colors cursor-pointer touch-none"
-                title={isParentOrGuardian ? 'Tap to open Byte · Hold 3s for Byte Voice' : 'Tap to open Byte · Hold 3s for Byte / Orion Selector'}
+                title="Tap to open Byte · Hold 3s for Byte / Orion Selector"
               >
                 <div className="relative w-full h-full flex items-center justify-center">
                   <Byte3DCanvas size={58} mood={currentMood} interactiveGaze={true} />

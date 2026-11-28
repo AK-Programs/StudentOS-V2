@@ -5,6 +5,7 @@ import { createOrUpdateMeeting, deleteMeeting } from './supabaseMeet';
 import { saveAppNotification } from './notifications';
 import { executeOrionCommunicationDispatch } from './orionCommunication';
 import { Homework, Meeting, AppNotification, Competition, SchoolEvent } from '../types';
+import { extractApiErrorMessage, getServerAuthHeaders } from './clientSession';
 
 export type OrionActionType =
   | 'create_broadcast'
@@ -198,12 +199,22 @@ export function validateActionPermission(
     isCoordinator ||
     isAdmin;
 
-  if (normRole === 'parent' || normRole === 'guardian') {
-    return {
-      allowed: false,
-      reason: 'Authorization denied: Orion Academic Agent is restricted to students, faculty, coordinators, and administrators.',
-    };
-  }
+  const parentAllowedActions: OrionActionType[] = [
+    'get_child_overview',
+    'show_pending_assignments',
+    'show_timetable',
+    'show_announcements',
+    'navigate_tab',
+    'general_chat',
+    'add_study_planner',
+    'create_study_plan',
+    'create_note',
+    'add_task',
+    'complete_task',
+    'delete_task',
+    'web_search',
+    'search_internet'
+  ];
 
   // Student permissions whitelist (Orion staff/admin operations are restricted)
   const studentAllowedActions: OrionActionType[] = [
@@ -231,6 +242,16 @@ export function validateActionPermission(
     'delete_broadcast',
     'notify_all'
   ];
+
+  if (normRole === 'parent' || normRole === 'guardian') {
+    if (parentAllowedActions.includes(action)) {
+      return { allowed: true };
+    }
+    return {
+      allowed: false,
+      reason: `🔒 Authorization Denied: Parent accounts can inspect their verified linked child overview, timetable, and notices, or search study topics. Action "${action}" requires school Staff or Administrator credentials.`
+    };
+  }
 
   if (!isStaff) {
     if (studentAllowedActions.includes(action)) {
@@ -1970,24 +1991,7 @@ export async function executeGenerateAcademicReport(
  * 21. Linked Child Overview Tool for Parents (strict OTP-link isolation)
  */
 export async function executeGetChildOverview(
-  _actionObj: OrionAction,
-  _user: OrionUserContext
-): Promise<OrionExecutionResult> {
-  return {
-    success: false,
-    action: 'get_child_overview',
-    message: 'Authorization denied: Orion Academic Agent is unavailable for Parent and Guardian accounts.',
-    summaryText: 'Authorization denied: Orion Academic Agent is unavailable for Parent and Guardian accounts.',
-    error: 'FORBIDDEN_PARENT_ROLE'
-  };
-}
-
-function _unusedPlaceholderCheck() {
-  return null;
-}
-
-export async function _legacyChildOverviewDisabled(
-  _actionObj: OrionAction,
+  actionObj: OrionAction,
   user: OrionUserContext
 ): Promise<OrionExecutionResult> {
   const linkedStudents = Array.isArray(user.linkedStudents) ? user.linkedStudents : [];
@@ -2003,9 +2007,10 @@ export async function _legacyChildOverviewDisabled(
     return {
       success: false,
       action: 'get_child_overview',
-      message: 'Forbidden.',
-      summaryText: 'Orion Academic Agent is unavailable for Parent and Guardian accounts.',
-      error: 'FORBIDDEN_PARENT_ROLE'
+      message: 'No linked child records available on this session.',
+      summaryText:
+        '🔒 **Parent Account Isolation:** No verified linked ward was found for this session. Please complete OTP linking in the **Parental Portal** before requesting child attendance or homework records.',
+      error: 'NO_LINKED_CHILDREN'
     };
   }
 
@@ -2311,10 +2316,13 @@ export async function executeOrionActionPipeline(
         try {
           const searchResp = await fetch('/api/ai/search', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: await getServerAuthHeaders(),
             body: JSON.stringify({ query: searchQuery })
           });
           const searchData = await searchResp.json().catch(() => ({}));
+          if (!searchResp.ok || searchData?.success === false) {
+            throw new Error(extractApiErrorMessage(searchData, `Web search failed (HTTP ${searchResp.status}).`));
+          }
           if (searchData && searchData.success && Array.isArray(searchData.results) && searchData.results.length > 0) {
             const sources = searchData.results;
             const rows: OrionStructuredTableRow[] = sources.slice(0, 6).map((s: any, idx: number) => ({

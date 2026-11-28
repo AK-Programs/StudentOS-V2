@@ -47,13 +47,8 @@ import {
 } from '../lib/orionActionExecutor';
 import {
   OrionAgentProgressSnapshot,
-  OrionCompletionReport,
   executeOrionViaServer,
   runOrionAgentTask,
-  cancelOrionTaskViaServer,
-  retryOrionTaskViaServer,
-  buildOrionCompletionReportMarkdown,
-  buildOrionCompletionReportJson,
 } from '../lib/orionAgentEngine';
 import { OrionActivityTimeline } from './orion/OrionActivityTimeline';
 import { AcademicRichRenderer } from './ui/AcademicRichRenderer';
@@ -63,6 +58,7 @@ import {
   InteractiveMathWidget,
 } from '../lib/studentosAiEngine';
 import { useReducedMotionPreference } from '../lib/motionSystem';
+import { extractApiErrorMessage, getServerAuthHeaders } from '../lib/clientSession';
 import { StudentReport, HouseAnalytics, SectionAnalytics } from '../types';
 
 interface StudentOSJarvisProps {
@@ -85,21 +81,23 @@ interface StudentOSJarvisProps {
 
 interface OrionExecutionTurn {
   id: string;
-  taskId?: string;
+  idempotencyKey?: string;
   userCommand: string;
   plannedSteps?: OrionAction[];
   snapshot?: OrionAgentProgressSnapshot | null;
   finalResponse: string;
-  status: 'running' | 'needs_clarification' | 'awaiting_confirmation' | 'completed' | 'cancelled' | 'failed';
+  status: 'running' | 'needs_clarification' | 'awaiting_confirmation' | 'completed' | 'failed';
   errorMessage?: string;
   providerUsed?: string;
   modelUsed?: string;
-  report?: OrionCompletionReport;
   mathWidget?: ReturnType<typeof detectMathInteractiveWidget>;
 }
 
 const getRoleGreeting = (role: string): string => {
   const norm = (role || 'student').toLowerCase().trim();
+  if (norm === 'parent' || norm === 'guardian') {
+    return 'Ephemeral session active. Ask about your verified linked ward, notices, or curriculum topics.';
+  }
   if (norm === 'student') {
     return 'Ephemeral session active. Check pending homework, build a study plan, or research curriculum topics.';
   }
@@ -180,6 +178,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
 
   const [pendingConfirmation, setPendingConfirmation] = useState<{
     originalCommand: string;
+    idempotencyKey?: string;
     action: string;
     targetValue?: string;
     promptText: string;
@@ -196,8 +195,9 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
   const ephemeralTurnsRef = useRef<{ role: 'user' | 'assistant'; content: string }[]>([]);
   const lastEntityRef = useRef<{ type: string; title: string; id?: string } | null>(null);
   const streamEndRef = useRef<HTMLDivElement>(null);
-  const activeAbortRef = useRef<{ taskId: string; controller: AbortController } | null>(null);
+  const isExecutingRef = useRef<boolean>(false);
 
+  const [linkedChildren, setLinkedChildren] = useState<any[]>([]);
   const [reports, setReports] = useState<StudentReport[]>([]);
   const [houses, setHouses] = useState<HouseAnalytics[]>([]);
   const [sections, setSections] = useState<SectionAnalytics[]>([]);
@@ -218,10 +218,6 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
   };
 
   const clearEphemeralSession = () => {
-    if (activeAbortRef.current) {
-      activeAbortRef.current.controller.abort();
-      activeAbortRef.current = null;
-    }
     ephemeralTurnsRef.current = [];
     lastEntityRef.current = null;
     setCommandText('');
@@ -245,10 +241,6 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
 
   useEffect(() => {
     return () => {
-      if (activeAbortRef.current) {
-        activeAbortRef.current.controller.abort();
-        activeAbortRef.current = null;
-      }
       ephemeralTurnsRef.current = [];
       lastEntityRef.current = null;
       if ('speechSynthesis' in window) {
@@ -333,9 +325,23 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     return () => clearTimeout(timer);
   }, [initialQuery]);
 
-  // Fetch cohort directory (Staff only — Parents/Guardians strictly excluded)
+  const getAuthHeaders = async (): Promise<Record<string, string>> => {
+    return getServerAuthHeaders();
+  };
+
+  // Fetch linked children (Parent) and cohort directory (Staff)
   useEffect(() => {
-    if (!currentUser || normalizedRole === 'parent' || normalizedRole === 'guardian') return;
+    if (!currentUser) return;
+    if ((normalizedRole === 'parent' || normalizedRole === 'guardian') && currentUser?.uid) {
+      void getAuthHeaders().then(headers =>
+        fetch(`/api/parent/linked-children?parentUid=${encodeURIComponent(currentUser.uid)}`, { headers })
+      )
+        .then((res) => (res.ok ? res.json() : null))
+        .then((payload) => {
+          if (Array.isArray(payload?.children)) setLinkedChildren(payload.children);
+        })
+        .catch(() => {});
+    }
 
     if (isStaffRole) {
       fetchAllSupabaseUsers()
@@ -433,21 +439,20 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
   const queryJarvisAIStream = async (
     command: string
   ): Promise<{ responseText: string; action: string; targetValue?: string; details?: any; error?: string }> => {
-    if (normalizedRole === 'parent' || normalizedRole === 'guardian') {
-      throw new Error('Orion Intelligence is not available for parent or guardian accounts.');
-    }
     const { contextString: ragContext } = await buildAuthorizedStudentOSContext(
       command,
       currentUser,
       normalizedRole,
       {
         activeTab,
+        linkedStudents: linkedChildren.length > 0 ? linkedChildren : undefined,
       }
     );
 
+    const headers = await getAuthHeaders();
     const response = await fetch('/api/ai/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         prompt: `User request inside Veylentra Orion (${normalizedRole}, tab=${activeTab}): "${command}". Answer accurately in clear Markdown (and LaTeX $...$ / $$...$$ for math/science) without inventing school records.`,
         persona: 'orion',
@@ -539,16 +544,18 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     setIsNotesSaved(false);
     setSearchResults(`Searching verified web and academic sources for "${cleanQ}"...`);
 
+    const searchStartedAt = Date.now();
     try {
+      const headers = await getAuthHeaders();
       const response = await fetch('/api/ai/search', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ query: cleanQ }),
       });
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.message || `HTTP ${response.status}`);
+        throw new Error(extractApiErrorMessage(errData, `HTTP ${response.status}`));
       }
 
       const searchData = await response.json();
@@ -560,6 +567,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
         published_source: s.published_source || 'Web Source',
       }));
       const rawVideos = Array.isArray(searchData.videos) ? searchData.videos : [];
+      const searchElapsedMs = Math.max(0, Date.now() - searchStartedAt);
 
       setSearchResults(textOut);
       setSearchSources(mappedSources);
@@ -579,13 +587,13 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
           snapshot: {
             phase: 'completed',
             headline: `Retrieved ${mappedSources.length} verified sources`,
-            startedAt: Date.now(),
+            startedAt: searchStartedAt,
             finishedAt: Date.now(),
             verified: mappedSources.length > 0,
             stages: [
-              { phase: 'analyzing', label: 'Analyzing query', status: 'completed', durationMs: 1 },
-              { phase: 'executing', label: 'Searching sources', status: 'completed', durationMs: 120 },
-              { phase: 'verifying', label: 'Verified citations', status: 'completed', durationMs: 1 },
+              { phase: 'analyzing', label: 'Analyzing query', status: 'completed', durationMs: 0 },
+              { phase: 'executing', label: 'Searching sources', status: 'completed', durationMs: searchElapsedMs },
+              { phase: 'verifying', label: 'Verified citations', status: 'completed', durationMs: 0 },
             ],
             steps: [
               {
@@ -623,9 +631,10 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
 
       setLocalMaterials(!error && matchedMaterials ? matchedMaterials : []);
 
+      const headers = await getAuthHeaders();
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           prompt: `List 4 high-yield academic learning resources and active experiments for "${query}" with concise descriptions.`,
           persona: 'study_buddy',
@@ -654,9 +663,10 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     setSearching(true);
     setSearchQuery(topic);
     try {
+      const headers = await getAuthHeaders();
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           prompt: `Create a structured 1-hour study plan block for "${topic}" with Timing, Activities, and Learning Objectives.`,
           persona: 'study_buddy',
@@ -706,9 +716,10 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     setIsNotesSaved(false);
 
     try {
+      const headers = await getAuthHeaders();
       const response = await fetch('/api/ai/notes', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           content: `Create ${typeLabels[type]} for "${topic}" formatted in Markdown with headings, tables, and LaTeX formulas where applicable.`,
           action: 'generate_notes',
@@ -759,83 +770,9 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     userClass: currentUser?.className || currentUser?.grade,
     grade: currentUser?.grade,
     section: currentUser?.section,
+    linkedStudentIds: linkedChildren.map((c: any) => c?.uid || c?.id).filter(Boolean),
+    linkedStudents: linkedChildren,
   });
-
-  const downloadOrionReport = (report: OrionCompletionReport | undefined, format: 'markdown' | 'json') => {
-    if (!report) return;
-    const content =
-      format === 'json'
-        ? buildOrionCompletionReportJson(report)
-        : buildOrionCompletionReportMarkdown(report);
-    const ext = format === 'json' ? 'json' : 'md';
-    const mime = format === 'json' ? 'application/json' : 'text/markdown';
-    const blob = new Blob([content], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${report.taskId || 'orion-report'}.${ext}`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showNotification(`Downloaded Orion task report (.${ext.toUpperCase()}).`);
-  };
-
-  const handleCancelOrionTurn = async (turnId: string, taskId?: string) => {
-    if (activeAbortRef.current && (!taskId || activeAbortRef.current.taskId === taskId)) {
-      activeAbortRef.current.controller.abort();
-      activeAbortRef.current = null;
-    }
-    if (taskId) {
-      void cancelOrionTaskViaServer(taskId, buildOrionUserContext());
-    }
-    setTurns((prev) =>
-      prev.map((t) =>
-        t.id === turnId
-          ? {
-              ...t,
-              status: 'cancelled',
-              finalResponse: 'Task cancelled by user.',
-              snapshot: t.snapshot
-                ? { ...t.snapshot, phase: 'cancelled', headline: 'Task cancelled.', finishedAt: Date.now() }
-                : t.snapshot,
-            }
-          : t
-      )
-    );
-    setIsProcessing(false);
-    showNotification('Orion task cancelled.');
-  };
-
-  const handleRetryOrionTurn = async (turn: OrionExecutionTurn) => {
-    if (turn.taskId) {
-      setIsProcessing(true);
-      try {
-        const res = await retryOrionTaskViaServer(turn.taskId, buildOrionUserContext());
-        if (res.snapshot) setOrionProgress(res.snapshot);
-        if (res.structuredData) setStructuredOutput(res.structuredData);
-        setTurns((prev) =>
-          prev.map((t) =>
-            t.id === turn.id
-              ? {
-                  ...t,
-                  taskId: res.taskId || t.taskId,
-                  status: res.success ? 'completed' : 'failed',
-                  snapshot: res.snapshot || t.snapshot,
-                  finalResponse: res.finalResponse || res.error || 'Retried.',
-                  report: res.report,
-                  providerUsed: res.providerUsed,
-                  modelUsed: res.modelUsed,
-                }
-              : t
-          )
-        );
-        setIsProcessing(false);
-        return;
-      } catch {
-        // fallback to re-running command
-      }
-    }
-    executeVoiceCommand(turn.userCommand);
-  };
 
   const applyNavigationTarget = (targetVal: string) => {
     const tabVal = targetVal.toLowerCase();
@@ -848,36 +785,37 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     else if (tabVal.includes('assignment')) triggerNavTransition('Assignments', 'assignments');
     else if (tabVal.includes('timetable') || tabVal.includes('schedule')) triggerNavTransition('Timetable', 'timetable_viewer');
     else if (tabVal.includes('notice') || tabVal.includes('announcement')) triggerNavTransition('Notices', 'notice_viewer');
+    else if (tabVal.includes('parent')) triggerNavTransition('Parental Portal', 'parent_portal');
     else if (tabVal.includes('dashboard')) triggerNavTransition('Dashboard', 'dashboard');
   };
 
-  const executeServerConfirmedAction = async (confirmPayload: NonNullable<typeof pendingConfirmation>) => {
+  const executeServerConfirmedActionInternal = async (confirmPayload: NonNullable<typeof pendingConfirmation>) => {
     setIsProcessing(true);
     setPendingConfirmation(null);
-    const turnId = `turn_${Date.now()}`;
-    const generatedTaskId = `orion_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    const controller = new AbortController();
-    activeAbortRef.current = { taskId: generatedTaskId, controller };
+    const confirmStartedAt = Date.now();
+    const idempotencyKey =
+      confirmPayload.idempotencyKey || `orion_conf_${confirmStartedAt}_${Math.random().toString(36).slice(2, 8)}`;
+    const turnId = `turn_${confirmStartedAt}`;
     const userCtx = buildOrionUserContext();
 
     setTurns((prev) => [
       ...prev,
       {
         id: turnId,
-        taskId: generatedTaskId,
+        idempotencyKey,
         userCommand: `Confirm: ${confirmPayload.action.replace(/_/g, ' ')} (${confirmPayload.targetValue || ''})`,
         plannedSteps: confirmPayload.plannedSteps,
         status: 'running',
         finalResponse: 'Executing confirmed action against server...',
         snapshot: {
-          phase: 'running',
+          phase: 'executing',
           headline: 'Executing confirmed action...',
-          startedAt: Date.now(),
+          startedAt: confirmStartedAt,
           verified: false,
           stages: [
-            { phase: 'preparing', label: 'Confirmed by user', status: 'completed', durationMs: 1 },
-            { phase: 'running', label: 'Running action', status: 'active' },
-            { phase: 'validating', label: 'Validating outcome', status: 'pending' },
+            { phase: 'preparing', label: 'Confirmed by user', status: 'completed', durationMs: 0 },
+            { phase: 'executing', label: 'Executing action', status: 'active' },
+            { phase: 'verifying', label: 'Verifying outcome', status: 'pending' },
           ],
           steps: (confirmPayload.plannedSteps || []).map((s, idx) => ({
             id: `step-${idx + 1}`,
@@ -896,14 +834,11 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
         confirmed: true,
         activeTab,
         modelOverride,
+        idempotencyKey,
         history: ephemeralTurnsRef.current.slice(-6),
         userContext: userCtx,
-        taskId: generatedTaskId,
-        idempotencyKey: `confirm_${confirmPayload.action}_${confirmPayload.targetValue || 'default'}_${Date.now()}`,
-        signal: controller.signal,
       });
 
-      activeAbortRef.current = null;
       if (res.snapshot) setOrionProgress(res.snapshot);
       if (res.structuredData) setStructuredOutput(res.structuredData);
       if (res.modelUsed) setOrionModelUsed(res.modelUsed);
@@ -923,21 +858,20 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
         });
       }
 
-      const finalText = res.finalResponse || res.error || 'Action processed.';
+      const errorText = res.success ? undefined : extractApiErrorMessage(res, 'Action failed');
+      const finalText = res.finalResponse || errorText || 'Action processed.';
       setJarvisFeedback(finalText);
       setTurns((prev) =>
         prev.map((t) =>
           t.id === turnId
             ? {
                 ...t,
-                taskId: res.taskId || generatedTaskId,
-                status: res.status === 'cancelled' ? 'cancelled' : res.success ? 'completed' : 'failed',
+                status: res.success ? 'completed' : 'failed',
                 snapshot: res.snapshot || t.snapshot,
                 finalResponse: finalText,
-                errorMessage: res.success ? undefined : res.error || finalText,
-                providerUsed: res.providerUsed,
+                errorMessage: errorText,
                 modelUsed: res.modelUsed,
-                report: res.report,
+                providerUsed: res.providerUsed,
               }
             : t
         )
@@ -949,396 +883,415 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
         { role: 'assistant' as const, content: finalText.slice(0, 600) },
       ].slice(-6);
       speakFeedback(finalText.slice(0, 220));
-      showNotification(res.success ? `Orion: ${confirmPayload.action} verified.` : `Orion: ${res.error || 'Action failed'}`);
+      showNotification(res.success ? `Orion: ${confirmPayload.action} verified.` : `Orion: ${errorText || 'Action failed'}`);
     } catch (err: any) {
-      activeAbortRef.current = null;
-      const isAbort = err?.name === 'AbortError';
-      const msg = isAbort ? 'Task cancelled by user.' : err?.message || 'Failed to execute confirmed action.';
+      const msg = err?.message || 'Failed to execute confirmed action.';
+      const elapsedMs = Math.max(0, Date.now() - confirmStartedAt);
       setTurns((prev) =>
         prev.map((t) =>
           t.id === turnId
-            ? { ...t, status: isAbort ? 'cancelled' : 'failed', finalResponse: msg, errorMessage: isAbort ? undefined : msg }
+            ? {
+                ...t,
+                status: 'failed',
+                finalResponse: msg,
+                errorMessage: msg,
+                snapshot: {
+                  phase: 'failed',
+                  headline: 'Execution encountered an error.',
+                  startedAt: confirmStartedAt,
+                  finishedAt: Date.now(),
+                  verified: false,
+                  stages: [
+                    { phase: 'preparing', label: 'Confirmed by user', status: 'completed', durationMs: 0 },
+                    { phase: 'executing', label: 'Server execution', status: 'failed', durationMs: elapsedMs, detail: msg },
+                  ],
+                  steps: [{ id: 'step-1', label: 'Execute command', action: confirmPayload.action as OrionActionType, status: 'failed', verificationNote: msg }],
+                },
+              }
             : t
         )
       );
-      if (!isAbort) setLastFailedCommand(confirmPayload.originalCommand);
+      setLastFailedCommand(confirmPayload.originalCommand);
+    }
+  };
+
+  const executeServerConfirmedAction = async (confirmPayload: NonNullable<typeof pendingConfirmation>) => {
+    if (isExecutingRef.current) return;
+    isExecutingRef.current = true;
+    try {
+      await executeServerConfirmedActionInternal(confirmPayload);
     } finally {
+      isExecutingRef.current = false;
       setIsProcessing(false);
     }
   };
 
-  const executeVoiceCommand = async (rawInput: string) => {
+  const executeVoiceCommand = async (
+    rawInput: string,
+    retryTurn?: { id: string; idempotencyKey?: string }
+  ) => {
     const trimmedInput = rawInput.trim();
     if (!trimmedInput) return;
+    if (isExecutingRef.current) return;
+    isExecutingRef.current = true;
 
     setIsProcessing(true);
     setLastFailedCommand(null);
-    let textToParse = trimmedInput;
-    let textLow = textToParse.toLowerCase();
-
-    // 1. Handle active confirmation prompt if user typed/spoke yes or no
-    if (pendingConfirmation) {
-      const confirmAffirmatives = ['yes', 'confirm', 'proceed', 'sure', 'do it', 'ok', 'yeah'];
-      const confirmNegatives = ['no', 'cancel', 'dont', "don't", 'abort', 'stop', 'keep it'];
-      if (confirmAffirmatives.some((k) => textLow === k || textLow.startsWith(k + ' '))) {
-        await executeServerConfirmedAction(pendingConfirmation);
-        return;
-      }
-      if (confirmNegatives.some((k) => textLow === k || textLow.startsWith(k + ' '))) {
-        setPendingConfirmation(null);
-        setOrionProgress(null);
-        setJarvisFeedback('Operation canceled. No changes were made.');
-        setIsProcessing(false);
-        return;
-      }
-    }
-
-    // 2. If replying to clarification question, combine with original command
-    if (pendingClarification) {
-      textToParse = `${pendingClarification.originalCommand}: ${trimmedInput}`;
-      textLow = textToParse.toLowerCase();
-      setPendingClarification(null);
-    }
-
-    // 3. Explicit Tab Navigation Intercept ONLY (never hijacks data queries)
-    if (isExplicitTabNavigationCommand(textLow)) {
-      applyNavigationTarget(textLow);
-      setIsProcessing(false);
-      return;
-    }
-
-    // 4. Explicit Video / Web Discovery Intercept
-    const isExplicitVideoQuery =
-      textLow.includes('video') ||
-      textLow.includes('youtube') ||
-      /\b(?:find|show|get|recommend|suggest|give|watch)?\s*(?:a\s+)?videos?\s*(?:about|on|for|regarding)?\b/i.test(textLow);
-    if (isExplicitVideoQuery) {
-      const cleanVideoQuery = textLow
-        .replace(/\b(?:find|show|get|recommend|suggest|give|watch)?\s*(?:a\s+)?videos?\s*(?:about|on|for|regarding)?\s*/gi, '')
-        .replace(/\b(?:on|from|in)\s+youtube\b/gi, '')
-        .replace(/[?.!]+$/, '')
-        .trim();
-      await handleRunInternetSearch(cleanVideoQuery || textToParse);
-      setIsProcessing(false);
-      return;
-    }
-
-    // 5. Resolve Ephemeral In-Session Pronouns ("it", "that")
-    if ((textLow.includes(' it ') || textLow.endsWith(' it') || textLow.includes(' that ')) && lastEntityRef.current) {
-      textToParse = textToParse.replace(/\b(it|that)\b/gi, lastEntityRef.current.title);
-      textLow = textToParse.toLowerCase().trim();
-    }
-
-    // 6. Super Admin unlock protocol check
-    if (textLow.includes('naitik kashyap') || textLow.includes('super admin protocol')) {
-      if (normalizedRole === 'super_admin') {
-        setJarvisFeedback('Super Admin credentials verified. Control Center activated.');
-        if (onSuperAdminUnlocked) onSuperAdminUnlocked();
-        showNotification('Super Admin Mode Activated.');
-      } else {
-        setJarvisFeedback('Access Denied: Super Admin privileges required.');
-        showNotification('Access Denied.');
-      }
-      setIsProcessing(false);
-      return;
-    }
-
-    const turnId = `turn_${Date.now()}`;
-    const generatedTaskId = `orion_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    const controller = new AbortController();
-    activeAbortRef.current = { taskId: generatedTaskId, controller };
-
-    const initialSnapshot: OrionAgentProgressSnapshot = {
-      phase: 'queued',
-      headline: 'Analyzing request on server...',
-      startedAt: Date.now(),
-      verified: false,
-      stages: [
-        { phase: 'analyzing', label: 'Analyzing intent', status: 'active' },
-        { phase: 'planning', label: 'Planning steps', status: 'pending' },
-        { phase: 'preparing', label: 'Verifying RBAC', status: 'pending' },
-        { phase: 'running', label: 'Running', status: 'pending' },
-      ],
-      steps: [],
-    };
-
-    setOrionProgress(initialSnapshot);
-    setTurns((prev) => [
-      ...prev,
-      {
-        id: turnId,
-        taskId: generatedTaskId,
-        userCommand: trimmedInput,
-        status: 'running',
-        snapshot: initialSnapshot,
-        finalResponse: '',
-      },
-    ]);
-
-    const userCtx = buildOrionUserContext();
 
     try {
-      const serverRes = await executeOrionViaServer({
-        command: textToParse,
-        confirmed: false,
-        activeTab,
-        modelOverride,
-        history: ephemeralTurnsRef.current.slice(-6),
-        userContext: userCtx,
-        taskId: generatedTaskId,
-        idempotencyKey: `${turnId}_${trimmedInput.slice(0, 32)}`,
-        signal: controller.signal,
+      let textToParse = trimmedInput;
+      let textLow = textToParse.toLowerCase();
+
+      // 1. Handle active confirmation prompt if user typed/spoke yes or no
+      if (!retryTurn && pendingConfirmation) {
+        const confirmAffirmatives = ['yes', 'confirm', 'proceed', 'sure', 'do it', 'ok', 'yeah'];
+        const confirmNegatives = ['no', 'cancel', 'dont', "don't", 'abort', 'stop', 'keep it'];
+        if (confirmAffirmatives.some((k) => textLow === k || textLow.startsWith(k + ' '))) {
+          await executeServerConfirmedActionInternal(pendingConfirmation);
+          return;
+        }
+        if (confirmNegatives.some((k) => textLow === k || textLow.startsWith(k + ' '))) {
+          setPendingConfirmation(null);
+          setOrionProgress(null);
+          setJarvisFeedback('Operation canceled. No changes were made.');
+          return;
+        }
+      }
+
+      // 2. If replying to clarification question, combine with original command
+      if (!retryTurn && pendingClarification) {
+        textToParse = `${pendingClarification.originalCommand}: ${trimmedInput}`;
+        textLow = textToParse.toLowerCase();
+        setPendingClarification(null);
+      }
+
+      // 3. Explicit Tab Navigation Intercept ONLY (never hijacks data queries)
+      if (!retryTurn && isExplicitTabNavigationCommand(textLow)) {
+        applyNavigationTarget(textLow);
+        return;
+      }
+
+      // 4. Explicit Video / Web Discovery Intercept
+      const isExplicitVideoQuery =
+        !retryTurn &&
+        (textLow.includes('video') ||
+          textLow.includes('youtube') ||
+          /\b(?:find|show|get|recommend|suggest|give|watch)?\s*(?:a\s+)?videos?\s*(?:about|on|for|regarding)?\b/i.test(textLow));
+      if (isExplicitVideoQuery) {
+        const cleanVideoQuery = textLow
+          .replace(/\b(?:find|show|get|recommend|suggest|give|watch)?\s*(?:a\s+)?videos?\s*(?:about|on|for|regarding)?\s*/gi, '')
+          .replace(/\b(?:on|from|in)\s+youtube\b/gi, '')
+          .replace(/[?.!]+$/, '')
+          .trim();
+        await handleRunInternetSearch(cleanVideoQuery || textToParse);
+        return;
+      }
+
+      // 5. Resolve Ephemeral In-Session Pronouns ("it", "that")
+      if ((textLow.includes(' it ') || textLow.endsWith(' it') || textLow.includes(' that ')) && lastEntityRef.current) {
+        textToParse = textToParse.replace(/\b(it|that)\b/gi, lastEntityRef.current.title);
+        textLow = textToParse.toLowerCase().trim();
+      }
+
+      // 6. Super Admin unlock protocol check
+      if (textLow.includes('naitik kashyap') || textLow.includes('super admin protocol')) {
+        if (normalizedRole === 'super_admin') {
+          setJarvisFeedback('Super Admin credentials verified. Control Center activated.');
+          if (onSuperAdminUnlocked) onSuperAdminUnlocked();
+          showNotification('Super Admin Mode Activated.');
+        } else {
+          setJarvisFeedback('Access Denied: Super Admin privileges required.');
+          showNotification('Access Denied.');
+        }
+        return;
+      }
+
+      const cmdStartedAt = Date.now();
+      const turnId = retryTurn?.id || `turn_${cmdStartedAt}`;
+      const turnIdempotencyKey =
+        retryTurn?.idempotencyKey || `orion_cmd_${cmdStartedAt}_${Math.random().toString(36).slice(2, 8)}`;
+
+      const initialSnapshot: OrionAgentProgressSnapshot = {
+        phase: 'analyzing',
+        headline: 'Analyzing request on server...',
+        startedAt: cmdStartedAt,
+        verified: false,
+        stages: [
+          { phase: 'analyzing', label: 'Analyzing intent', status: 'active' },
+          { phase: 'planning', label: 'Planning steps', status: 'pending' },
+          { phase: 'preparing', label: 'Verifying RBAC', status: 'pending' },
+          { phase: 'executing', label: 'Executing', status: 'pending' },
+        ],
+        steps: [],
+      };
+
+      setOrionProgress(initialSnapshot);
+      setTurns((prev) => {
+        const existingIndex = prev.findIndex((t) => t.id === turnId);
+        if (existingIndex >= 0) {
+          return prev.map((t) =>
+            t.id === turnId
+              ? {
+                  ...t,
+                  idempotencyKey: turnIdempotencyKey,
+                  status: 'running',
+                  errorMessage: undefined,
+                  snapshot: initialSnapshot,
+                  finalResponse: '',
+                }
+              : t
+          );
+        }
+        return [
+          ...prev,
+          {
+            id: turnId,
+            idempotencyKey: turnIdempotencyKey,
+            userCommand: trimmedInput,
+            status: 'running',
+            snapshot: initialSnapshot,
+            finalResponse: '',
+          },
+        ];
       });
 
-      activeAbortRef.current = null;
-      if (serverRes.modelUsed) setOrionModelUsed(serverRes.modelUsed);
-      if (serverRes.snapshot) setOrionProgress(serverRes.snapshot);
-      if (serverRes.structuredData) setStructuredOutput(serverRes.structuredData);
+      const userCtx = buildOrionUserContext();
 
-      if (Array.isArray(serverRes.webSources) && serverRes.webSources.length > 0) {
-        setSearchSources(
-          serverRes.webSources.map((s: any) => ({
-            title: s.title || s.domain || 'Web Source',
-            uri: s.url || s.uri || '#',
-            published_source: s.sourceType === 'academic' ? `Academic · ${s.domain}` : s.domain,
-          }))
-        );
-      }
-      if (Array.isArray(serverRes.webVideos) && serverRes.webVideos.length > 0) {
-        setSearchVideos(serverRes.webVideos);
-      }
-
-      if (serverRes.plan?.[0]?.targetValue) {
-        lastEntityRef.current = {
-          type: serverRes.plan[0].action,
-          title: serverRes.plan[0].targetValue,
-        };
-      }
-
-      if (serverRes.status === 'cancelled') {
-        setTurns((prev) =>
-          prev.map((t) =>
-            t.id === turnId
-              ? {
-                  ...t,
-                  taskId: serverRes.taskId || generatedTaskId,
-                  status: 'cancelled',
-                  snapshot: serverRes.snapshot || t.snapshot,
-                  finalResponse: serverRes.finalResponse || 'Task cancelled.',
-                  report: serverRes.report,
-                }
-              : t
-          )
-        );
-        setIsProcessing(false);
-        return;
-      }
-
-      // Clarification Needed
-      if (serverRes.status === 'needs_clarification') {
-        const q = serverRes.clarificationQuestion || 'Please provide additional details before Orion can proceed.';
-        setPendingClarification({
-          originalCommand: textToParse,
-          question: q,
-          missingFields: serverRes.missingFields || [],
+      try {
+        const serverRes = await executeOrionViaServer({
+          command: textToParse,
+          confirmed: false,
+          activeTab,
+          modelOverride,
+          idempotencyKey: turnIdempotencyKey,
+          history: ephemeralTurnsRef.current.slice(-6),
+          userContext: userCtx,
         });
-        setJarvisFeedback(q);
+
+        if (serverRes.modelUsed) setOrionModelUsed(serverRes.modelUsed);
+        if (serverRes.snapshot) setOrionProgress(serverRes.snapshot);
+        if (serverRes.structuredData) setStructuredOutput(serverRes.structuredData);
+
+        if (Array.isArray(serverRes.webSources) && serverRes.webSources.length > 0) {
+          setSearchSources(
+            serverRes.webSources.map((s: any) => ({
+              title: s.title || s.domain || 'Web Source',
+              uri: s.url || s.uri || '#',
+              published_source: s.sourceType === 'academic' ? `Academic · ${s.domain}` : s.domain,
+            }))
+          );
+        }
+        if (Array.isArray(serverRes.webVideos) && serverRes.webVideos.length > 0) {
+          setSearchVideos(serverRes.webVideos);
+        }
+
+        if (serverRes.plan?.[0]?.targetValue) {
+          lastEntityRef.current = {
+            type: serverRes.plan[0].action,
+            title: serverRes.plan[0].targetValue,
+          };
+        }
+
+        // Clarification Needed
+        if (serverRes.status === 'needs_clarification') {
+          const q = serverRes.clarificationQuestion || 'Please provide additional details before Orion can proceed.';
+          setPendingClarification({
+            originalCommand: textToParse,
+            question: q,
+            missingFields: serverRes.missingFields || [],
+          });
+          setJarvisFeedback(q);
+          setTurns((prev) =>
+            prev.map((t) =>
+              t.id === turnId
+                ? {
+                    ...t,
+                    status: 'needs_clarification',
+                    plannedSteps: serverRes.plan,
+                    snapshot: serverRes.snapshot || t.snapshot,
+                    finalResponse: q,
+                  }
+                : t
+            )
+          );
+          return;
+        }
+
+        // Awaiting User Confirmation
+        if (serverRes.status === 'awaiting_confirmation' && serverRes.pendingConfirmation) {
+          setPendingConfirmation({
+            originalCommand: textToParse,
+            idempotencyKey: `orion_conf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            action: serverRes.pendingConfirmation.action,
+            targetValue: serverRes.pendingConfirmation.targetTitle,
+            promptText: serverRes.pendingConfirmation.promptText,
+            previewDetails: serverRes.pendingConfirmation.previewDetails,
+            actionObject: serverRes.pendingConfirmation.actionObject,
+            plannedSteps: serverRes.pendingConfirmation.plannedSteps || serverRes.plan,
+          });
+          const msg = serverRes.finalResponse || serverRes.pendingConfirmation.promptText;
+          setJarvisFeedback(msg);
+          setTurns((prev) =>
+            prev.map((t) =>
+              t.id === turnId
+                ? {
+                    ...t,
+                    status: 'awaiting_confirmation',
+                    plannedSteps: serverRes.plan,
+                    snapshot: serverRes.snapshot || t.snapshot,
+                    finalResponse: msg,
+                  }
+                : t
+            )
+          );
+          return;
+        }
+
+        // Authorization Denied or Error
+        if (serverRes.status === 'forbidden' || serverRes.status === 'unauthorized' || serverRes.status === 'failed' || serverRes.status === 'error') {
+          const errText = extractApiErrorMessage(serverRes, 'Request could not be completed.');
+          setJarvisFeedback(errText);
+          setLastFailedCommand(serverRes.status === 'failed' || serverRes.status === 'error' ? trimmedInput : null);
+          setTurns((prev) =>
+            prev.map((t) =>
+              t.id === turnId
+                ? {
+                    ...t,
+                    status: 'failed',
+                    plannedSteps: serverRes.plan,
+                    snapshot: serverRes.snapshot || t.snapshot,
+                    finalResponse: errText,
+                    errorMessage: errText,
+                  }
+                : t
+            )
+          );
+          return;
+        }
+
+        // Completed! Process any authorized local client bridge actions
+        let finalAnswer = serverRes.finalResponse || '';
+        if (Array.isArray(serverRes.clientBridgeActions) && serverRes.clientBridgeActions.length > 0) {
+          const bridgeNav = serverRes.clientBridgeActions.find((a) => a.action === 'navigate_tab');
+          if (bridgeNav && (bridgeNav.targetValue || bridgeNav.title)) {
+            applyNavigationTarget(bridgeNav.targetValue || bridgeNav.title || '');
+          }
+          const notesAct = serverRes.clientBridgeActions.find((a) => a.action === 'generate_notes');
+          if (notesAct) {
+            setActiveTab('notes');
+            handleGenerateSpecializedNotes(notesAct.title || notesAct.targetValue || textToParse, 'detailed_notes');
+          }
+          const localBridgeOnly = serverRes.clientBridgeActions.filter(
+            (a) => a.action !== 'navigate_tab' && a.action !== 'generate_notes' && a.action !== 'general_chat'
+          );
+          if (localBridgeOnly.length > 0) {
+            const bridgeRes = await runOrionAgentTask({
+              rawCommand: textToParse,
+              actions: localBridgeOnly,
+              userContext: userCtx,
+              isConfirmed: true,
+              onProgress: setOrionProgress,
+            });
+            if (bridgeRes.combinedSummary) {
+              finalAnswer = bridgeRes.combinedSummary;
+            }
+            if (bridgeRes.structuredData) setStructuredOutput(bridgeRes.structuredData);
+          }
+        }
+
+        // If general_chat returned no AI text because server key check differed, try /api/ai/chat explicitly
+        if (!finalAnswer || finalAnswer.includes('No AI provider key is currently configured')) {
+          try {
+            const aiDirect = await queryJarvisAIStream(textToParse);
+            if (aiDirect.responseText) finalAnswer = aiDirect.responseText;
+          } catch (aiFallbackErr: any) {
+            if (!finalAnswer) throw aiFallbackErr;
+          }
+        }
+
+        if (Array.isArray(serverRes.refreshTables)) {
+          serverRes.refreshTables.forEach((table) => {
+            window.dispatchEvent(new CustomEvent('studentos-db-update', { detail: { table, action: 'INSERT', timestamp: Date.now() } }));
+          });
+        }
+
+        const detectedWidget = detectMathInteractiveWidget(textToParse, finalAnswer);
+        setOrionMathWidget(detectedWidget);
+        setJarvisFeedback(finalAnswer);
+
         setTurns((prev) =>
           prev.map((t) =>
             t.id === turnId
               ? {
                   ...t,
-                  taskId: serverRes.taskId || generatedTaskId,
-                  status: 'needs_clarification',
+                  status: 'completed',
                   plannedSteps: serverRes.plan,
                   snapshot: serverRes.snapshot || t.snapshot,
-                  finalResponse: q,
+                  finalResponse: finalAnswer,
+                  providerUsed: serverRes.providerUsed,
+                  modelUsed: serverRes.modelUsed,
+                  mathWidget: detectedWidget,
                 }
               : t
           )
         );
-        setIsProcessing(false);
-        return;
-      }
 
-      // Awaiting User Confirmation
-      if (serverRes.status === 'awaiting_confirmation' && serverRes.pendingConfirmation) {
-        setPendingConfirmation({
-          originalCommand: textToParse,
-          action: serverRes.pendingConfirmation.action,
-          targetValue: serverRes.pendingConfirmation.targetTitle,
-          promptText: serverRes.pendingConfirmation.promptText,
-          previewDetails: serverRes.pendingConfirmation.previewDetails,
-          actionObject: serverRes.pendingConfirmation.actionObject,
-          plannedSteps: serverRes.pendingConfirmation.plannedSteps || serverRes.plan,
-        });
-        const msg = serverRes.finalResponse || serverRes.pendingConfirmation.promptText;
+        ephemeralTurnsRef.current = [
+          ...ephemeralTurnsRef.current,
+          { role: 'user' as const, content: textToParse },
+          { role: 'assistant' as const, content: finalAnswer.slice(0, 600) },
+        ].slice(-6);
+
+        speakFeedback(finalAnswer.slice(0, 220));
+      } catch (err: any) {
+        const msg = err?.message || 'Orion could not complete the request right now.';
+        const elapsedMs = Math.max(0, Date.now() - cmdStartedAt);
+        setLastFailedCommand(trimmedInput);
         setJarvisFeedback(msg);
         setTurns((prev) =>
           prev.map((t) =>
             t.id === turnId
               ? {
                   ...t,
-                  taskId: serverRes.taskId || generatedTaskId,
-                  status: 'awaiting_confirmation',
-                  plannedSteps: serverRes.plan,
-                  snapshot: serverRes.snapshot || t.snapshot,
-                  finalResponse: msg,
-                }
-              : t
-          )
-        );
-        setIsProcessing(false);
-        return;
-      }
-
-      // Authorization Denied or Error
-      if (serverRes.status === 'forbidden' || serverRes.status === 'unauthorized' || serverRes.status === 'failed' || serverRes.status === 'error') {
-        const errText = serverRes.error || serverRes.finalResponse || 'Request could not be completed.';
-        setJarvisFeedback(errText);
-        setLastFailedCommand(serverRes.status === 'failed' || serverRes.status === 'error' ? trimmedInput : null);
-        setTurns((prev) =>
-          prev.map((t) =>
-            t.id === turnId
-              ? {
-                  ...t,
-                  taskId: serverRes.taskId || generatedTaskId,
                   status: 'failed',
-                  plannedSteps: serverRes.plan,
-                  snapshot: serverRes.snapshot || t.snapshot,
-                  finalResponse: errText,
-                  errorMessage: errText,
-                  report: serverRes.report,
+                  finalResponse: msg,
+                  errorMessage: msg,
+                  snapshot: {
+                    phase: 'failed',
+                    headline: 'Execution encountered an error.',
+                    startedAt: cmdStartedAt,
+                    finishedAt: Date.now(),
+                    verified: false,
+                    stages: [
+                      { phase: 'analyzing', label: 'Analyzing intent', status: 'completed', durationMs: 0 },
+                      { phase: 'executing', label: 'Server execution', status: 'failed', durationMs: elapsedMs, detail: msg },
+                    ],
+                    steps: [{ id: 'step-1', label: 'Execute command', action: 'general_chat', status: 'failed', verificationNote: msg }],
+                  },
                 }
               : t
           )
         );
-        setIsProcessing(false);
-        return;
       }
-
-      // Completed! Process any authorized local client bridge actions
-      let finalAnswer = serverRes.finalResponse || '';
-      if (Array.isArray(serverRes.clientBridgeActions) && serverRes.clientBridgeActions.length > 0) {
-        const bridgeNav = serverRes.clientBridgeActions.find((a) => a.action === 'navigate_tab');
-        if (bridgeNav && (bridgeNav.targetValue || bridgeNav.title)) {
-          applyNavigationTarget(bridgeNav.targetValue || bridgeNav.title || '');
-        }
-        const notesAct = serverRes.clientBridgeActions.find((a) => a.action === 'generate_notes');
-        if (notesAct) {
-          setActiveTab('notes');
-          handleGenerateSpecializedNotes(notesAct.title || notesAct.targetValue || textToParse, 'detailed_notes');
-        }
-        const localBridgeOnly = serverRes.clientBridgeActions.filter(
-          (a) => a.action !== 'navigate_tab' && a.action !== 'generate_notes' && a.action !== 'general_chat'
-        );
-        if (localBridgeOnly.length > 0) {
-          const bridgeRes = await runOrionAgentTask({
-            rawCommand: textToParse,
-            actions: localBridgeOnly,
-            userContext: userCtx,
-            isConfirmed: true,
-            onProgress: setOrionProgress,
-          });
-          if (bridgeRes.combinedSummary) {
-            finalAnswer = bridgeRes.combinedSummary;
-          }
-          if (bridgeRes.structuredData) setStructuredOutput(bridgeRes.structuredData);
-        }
-      }
-
-      // If general_chat returned no AI text because server key check differed, try /api/ai/chat explicitly
-      if (!finalAnswer || finalAnswer.includes('No AI provider key is currently configured')) {
-        try {
-          const aiDirect = await queryJarvisAIStream(textToParse);
-          if (aiDirect.responseText) finalAnswer = aiDirect.responseText;
-        } catch (aiFallbackErr: any) {
-          if (!finalAnswer) throw aiFallbackErr;
-        }
-      }
-
-      if (Array.isArray(serverRes.refreshTables)) {
-        serverRes.refreshTables.forEach((table) => {
-          window.dispatchEvent(new CustomEvent('studentos-db-update', { detail: { table, action: 'INSERT', timestamp: Date.now() } }));
-        });
-      }
-
-      const detectedWidget = detectMathInteractiveWidget(textToParse, finalAnswer);
-      setOrionMathWidget(detectedWidget);
-      setJarvisFeedback(finalAnswer);
-
-      setTurns((prev) =>
-        prev.map((t) =>
-          t.id === turnId
-            ? {
-                ...t,
-                taskId: serverRes.taskId || generatedTaskId,
-                status: 'completed',
-                plannedSteps: serverRes.plan,
-                snapshot: serverRes.snapshot || t.snapshot,
-                finalResponse: finalAnswer,
-                providerUsed: serverRes.providerUsed,
-                modelUsed: serverRes.modelUsed,
-                report: serverRes.report,
-                mathWidget: detectedWidget,
-              }
-            : t
-        )
-      );
-
-      ephemeralTurnsRef.current = [
-        ...ephemeralTurnsRef.current,
-        { role: 'user' as const, content: textToParse },
-        { role: 'assistant' as const, content: finalAnswer.slice(0, 600) },
-      ].slice(-6);
-
-      speakFeedback(finalAnswer.slice(0, 220));
-    } catch (err: any) {
-      activeAbortRef.current = null;
-      const isAbort = err?.name === 'AbortError';
-      const msg = isAbort ? 'Task cancelled by user.' : err?.message || 'Orion could not complete the request right now.';
-      if (!isAbort) setLastFailedCommand(trimmedInput);
-      setJarvisFeedback(msg);
-      setTurns((prev) =>
-        prev.map((t) =>
-          t.id === turnId
-            ? {
-                ...t,
-                status: isAbort ? 'cancelled' : 'failed',
-                finalResponse: msg,
-                errorMessage: isAbort ? undefined : msg,
-                snapshot: {
-                  phase: isAbort ? 'cancelled' : 'failed',
-                  headline: isAbort ? 'Task cancelled.' : 'Execution encountered an error.',
-                  startedAt: Date.now(),
-                  finishedAt: Date.now(),
-                  verified: false,
-                  stages: [
-                    { phase: 'analyzing', label: 'Analyzing intent', status: 'completed', durationMs: 1 },
-                    { phase: 'running', label: 'Server execution', status: 'failed', detail: msg },
-                  ],
-                  steps: [{ id: 'step-1', label: 'Execute command', action: 'general_chat', status: 'blocked', verificationNote: msg }],
-                },
-              }
-            : t
-        )
-      );
     } finally {
+      isExecutingRef.current = false;
       setIsProcessing(false);
     }
   };
 
   const handleTextSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isExecutingRef.current || isProcessing) return;
     const val = commandText.trim();
     if (!val) return;
     setCommandText('');
-    executeVoiceCommand(val);
+    void executeVoiceCommand(val);
   };
 
   const handleQuickTouchAction = (cmd: string) => {
+    if (isExecutingRef.current || isProcessing) return;
     setCommandText('');
-    executeVoiceCommand(cmd);
+    void executeVoiceCommand(cmd);
   };
 
   const filteredReports = reports.filter((r) => {
@@ -1364,33 +1317,6 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     navigator.clipboard.writeText(`${header}${metricsMd}\n\n${rowsMd}`.trim());
     showNotification('Copied structured summary to clipboard.');
   };
-
-  if (normalizedRole === 'parent' || normalizedRole === 'guardian') {
-    return (
-      <div className="flex flex-col h-full items-center justify-center p-6 bg-slate-950/95 text-slate-100">
-        <div className="max-w-md w-full rounded-2xl border border-rose-500/30 bg-slate-900/90 p-6 text-center space-y-4">
-          <div className="w-12 h-12 rounded-2xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center mx-auto">
-            <ShieldAlert className="w-6 h-6 text-rose-400" />
-          </div>
-          <div className="space-y-1.5">
-            <h3 className="text-base font-semibold text-white">403 · Orion Restricted</h3>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Orion Academic Agent is restricted to students, faculty, coordinators, and administrators. Parent and Guardian accounts can use the Parental Portal and Byte assistant instead.
-            </p>
-          </div>
-          {onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white transition-colors"
-            >
-              Close
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-950/90 text-slate-100">
@@ -1556,7 +1482,32 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {normalizedRole === 'student' ? (
+                    {normalizedRole === 'parent' || normalizedRole === 'guardian' ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickTouchAction('Show my linked child overview')}
+                          className="p-3.5 rounded-xl bg-slate-950/70 hover:bg-slate-900 border border-white/10 hover:border-indigo-400/40 text-left transition-colors flex items-start gap-3"
+                        >
+                          <Users className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+                          <div>
+                            <span className="text-xs font-semibold text-white block">Linked Ward Overview</span>
+                            <span className="text-[11px] text-slate-400">Inspect attendance and progress</span>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickTouchAction('Show recent notices')}
+                          className="p-3.5 rounded-xl bg-slate-950/70 hover:bg-slate-900 border border-white/10 hover:border-indigo-400/40 text-left transition-colors flex items-start gap-3"
+                        >
+                          <Bell className="w-4 h-4 text-indigo-400 mt-0.5 shrink-0" />
+                          <div>
+                            <span className="text-xs font-semibold text-white block">School Notices</span>
+                            <span className="text-[11px] text-slate-400">Read latest official updates</span>
+                          </div>
+                        </button>
+                      </>
+                    ) : normalizedRole === 'student' ? (
                       <>
                         <button
                           type="button"
@@ -1654,43 +1605,28 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
                     </div>
 
                     {/* 2. Orion Plan & 3. Activity Timeline */}
-                    {turn.snapshot && (
-                      <OrionActivityTimeline
-                        snapshot={turn.snapshot}
-                        onCancel={
-                          turn.status === 'running'
-                            ? () => handleCancelOrionTurn(turn.id, turn.taskId)
-                            : undefined
-                        }
-                        onRetry={
-                          turn.status === 'failed' || turn.status === 'cancelled'
-                            ? () => handleRetryOrionTurn(turn)
-                            : undefined
-                        }
-                        onExportReport={
-                          turn.report
-                            ? (fmt) => downloadOrionReport(turn.report, fmt)
-                            : undefined
-                        }
-                      />
-                    )}
+                    {turn.snapshot && <OrionActivityTimeline snapshot={turn.snapshot} />}
 
-                    {/* 4. Error Banner with Retry */}
+                    {/* 4. Error Banner with In-Place Retry */}
                     {turn.status === 'failed' && turn.errorMessage && (
                       <div className="rounded-xl border border-rose-500/35 bg-rose-950/25 p-4 flex items-start justify-between gap-3 flex-wrap">
                         <div className="flex items-start gap-2.5 min-w-0">
                           <AlertTriangle className="w-4 h-4 text-rose-400 mt-0.5 shrink-0" />
                           <div className="text-xs text-rose-100 leading-relaxed">{turn.errorMessage}</div>
                         </div>
-                        {lastFailedCommand && (
-                          <button
-                            type="button"
-                            onClick={() => executeVoiceCommand(turn.userCommand)}
-                            className="px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 text-xs font-medium text-rose-200 inline-flex items-center gap-1.5 shrink-0"
-                          >
-                            <RefreshCw className="w-3.5 h-3.5" /> Retry
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          disabled={isProcessing}
+                          onClick={() =>
+                            void executeVoiceCommand(turn.userCommand, {
+                              id: turn.id,
+                              idempotencyKey: turn.idempotencyKey,
+                            })
+                          }
+                          className="px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 disabled:opacity-50 border border-rose-400/30 text-xs font-medium text-rose-200 inline-flex items-center gap-1.5 shrink-0"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" /> Retry
+                        </button>
                       </div>
                     )}
 
