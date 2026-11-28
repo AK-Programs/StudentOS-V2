@@ -9,11 +9,13 @@ import {
   executeOrionActionPipeline,
   isConsequentialAction,
   validateActionPermission,
+  validateOrionActionParameters,
 } from './orionActionExecutor';
 
 export type OrionProgressPhase =
   | 'analyzing'
   | 'planning'
+  | 'clarifying'
   | 'preparing'
   | 'executing'
   | 'verifying'
@@ -335,9 +337,22 @@ export async function runOrionAgentTask({
 
   const role = (userContext.userRole || userContext.role || 'student').toLowerCase().trim();
   const deniedSteps: { index: number; reason: string }[] = [];
+  const missingParamErrors: { index: number; prompt: string; missingFields: string[] }[] = [];
 
   for (let i = 0; i < safeActions.length; i++) {
     const act = safeActions[i];
+    const paramCheck = validateOrionActionParameters(act, rawCommand);
+    if (!paramCheck.valid && paramCheck.clarificationPrompt) {
+      steps[i].status = 'blocked';
+      steps[i].detail = `Missing: ${paramCheck.missingFields.join(', ')}`;
+      missingParamErrors.push({
+        index: i,
+        prompt: paramCheck.clarificationPrompt,
+        missingFields: paramCheck.missingFields,
+      });
+      continue;
+    }
+
     const perm = validateActionPermission(act.action, role);
     if (!perm.allowed) {
       steps[i].status = 'blocked';
@@ -357,6 +372,28 @@ export async function runOrionAgentTask({
         deniedSteps.push({ index: i, reason: msg });
       }
     }
+  }
+
+  if (missingParamErrors.length > 0) {
+    setStageStatus('preparing', 'failed', Math.max(1, Date.now() - prepStart), 'Needs clarification');
+    snapshot.phase = 'clarifying';
+    snapshot.headline = 'Additional details needed before executing.';
+    snapshot.finishedAt = Date.now();
+    snapshot.verified = false;
+    emit();
+
+    return {
+      results: missingParamErrors.map((m) => ({
+        success: false,
+        action: safeActions[m.index].action,
+        message: 'Needs clarification',
+        summaryText: m.prompt,
+        error: 'NEEDS_CLARIFICATION',
+      })),
+      combinedSummary: missingParamErrors[0].prompt,
+      structuredCards: [],
+      snapshot: cloneSnapshot(snapshot),
+    };
   }
 
   if (deniedSteps.length > 0) {
@@ -507,4 +544,81 @@ export async function runOrionAgentTask({
     structuredData: pipelineRes.structuredData,
     snapshot: cloneSnapshot(snapshot),
   };
+}
+
+export interface ServerOrionExecuteResponse {
+  success: boolean;
+  status: 'needs_clarification' | 'awaiting_confirmation' | 'completed' | 'forbidden' | 'unauthorized' | 'failed' | 'error';
+  clarificationQuestion?: string;
+  missingFields?: string[];
+  pendingConfirmation?: {
+    action: string;
+    targetTitle: string;
+    promptText: string;
+    previewDetails?: Record<string, string>;
+    actionObject?: OrionAction;
+    plannedSteps?: OrionAction[];
+  };
+  plan?: OrionAction[];
+  results?: any[];
+  structuredData?: StructuredOrionPayload;
+  webSources?: any[];
+  webVideos?: any[];
+  clientBridgeActions?: OrionAction[];
+  refreshTables?: string[];
+  finalResponse?: string;
+  providerUsed?: string;
+  modelUsed?: string;
+  snapshot?: OrionAgentProgressSnapshot;
+  error?: string;
+}
+
+export async function executeOrionViaServer(params: {
+  command: string;
+  actionPlan?: OrionAction[];
+  confirmed?: boolean;
+  activeTab?: string;
+  modelOverride?: string;
+  history?: { role: 'user' | 'assistant'; content: string }[];
+  userContext?: OrionUserContext;
+}): Promise<ServerOrionExecuteResponse> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  } catch {
+    // Session lookup optional for PIN/demo accounts
+  }
+
+  if (params.userContext?.userId) {
+    headers['x-veylentra-uid'] = String(params.userContext.userId);
+  }
+  if (params.userContext?.userEmail) {
+    headers['x-veylentra-email'] = String(params.userContext.userEmail);
+  }
+
+  const resp = await fetch('/api/orion/execute', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      command: params.command,
+      actionPlan: params.actionPlan,
+      confirmed: Boolean(params.confirmed),
+      activeTab: params.activeTab || 'dashboard',
+      modelOverride: params.modelOverride || undefined,
+      history: (params.history || []).slice(-6),
+    }),
+  });
+
+  const payload = await resp.json().catch(() => null);
+  if (!payload || typeof payload !== 'object') {
+    throw new Error(`Orion execution endpoint returned HTTP ${resp.status} without a readable JSON payload.`);
+  }
+  return payload as ServerOrionExecuteResponse;
 }

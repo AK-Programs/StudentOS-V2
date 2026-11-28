@@ -272,6 +272,102 @@ export function validateActionPermission(
   return { allowed: true };
 }
 
+export function validateOrionActionParameters(
+  act: OrionAction,
+  rawCommand: string
+): { valid: boolean; missingFields: string[]; clarificationPrompt?: string } {
+  const cmdClean = (rawCommand || '').trim();
+  const cleanTitle = (act.title || (act.targetValue && act.targetValue !== cmdClean ? act.targetValue : '') || '').trim();
+  const cleanMsg = (act.message || (act.content && act.content !== cmdClean ? act.content : '') || '').trim();
+  const genericWords = /^(delete|cancel|remove|create|send|publish|post|assign|schedule|notify|item|something|it|that|this|homework|assignment|broadcast|notice|announcement|alert|reminder|meeting|meet|event|competition|users?|class|all)$/i;
+  const genericPhrase = /^(delete|cancel|remove|create|send|publish|post|make|assign|schedule|notify|add|host|book|launch)\s+(a\s+|an\s+|the\s+|new\s+|school\s+)?(competition|event|meeting|meet|homework|assignment|broadcast|notice|announcement|notification|reminder|alert|calendar event|item|users?|class|all)$/i;
+
+  if (DESTRUCTIVE_ACTIONS.includes(act.action)) {
+    const rawCandidate = (act.targetId || (act.targetValue && act.targetValue !== cmdClean ? act.targetValue : '') || act.title || '').trim();
+    const stripDestructive = (s: string) =>
+      s.replace(/^(delete|cancel|remove)\s+(a\s+|an\s+|the\s+)?(competition|event|meeting|meet|homework|assignment|broadcast|notice|announcement|item)?\s*/i, '').trim();
+    const strippedCandidate = stripDestructive(rawCandidate);
+    const strippedCmd = stripDestructive(cmdClean);
+    const effectiveTarget = (!genericWords.test(strippedCandidate) && !genericPhrase.test(rawCandidate) && strippedCandidate.length >= 2)
+      ? strippedCandidate
+      : strippedCmd;
+    if (!effectiveTarget || effectiveTarget.length < 2 || genericWords.test(effectiveTarget) || genericPhrase.test(cmdClean)) {
+      return {
+        valid: false,
+        missingFields: ['target item name or ID'],
+        clarificationPrompt: 'Which exact competition, event, meeting, notice, or homework should I remove? Please provide its title or keyword.',
+      };
+    }
+  }
+
+  if (
+    act.action === 'create_broadcast' ||
+    act.action === 'create_notice' ||
+    act.action === 'notify_users' ||
+    act.action === 'notify_class' ||
+    act.action === 'notify_all' ||
+    act.action === 'create_notification' ||
+    act.action === 'create_reminder'
+  ) {
+    const stripped = cmdClean
+      .replace(/^(send|create|publish|post|make)\s+(a\s+|an\s+|the\s+)?(school\s+)?(broadcast|notice|announcement|notification|reminder|alert)\s*(to|for|saying|about)?\s*/i, '')
+      .replace(/^notify\s+(all\s+)?(students|teachers|staff|parents|class\s+\d+[a-z]?)?\s*(about|that)?\s*/i, '')
+      .trim();
+    const hasDetails =
+      (cleanMsg && !genericWords.test(cleanMsg) && !genericPhrase.test(cleanMsg)) ||
+      (cleanTitle && !genericWords.test(cleanTitle) && !genericPhrase.test(cleanTitle)) ||
+      (stripped.length >= 4 && !genericWords.test(stripped) && !genericPhrase.test(cmdClean));
+    if (!hasDetails) {
+      return {
+        valid: false,
+        missingFields: ['message content', 'target audience'],
+        clarificationPrompt: 'What exact message and target audience (for example, "All Students", "Class 10", or "Teachers") should this announcement use?',
+      };
+    }
+  }
+
+  if (act.action === 'create_homework' || act.action === 'create_assignment') {
+    const stripped = cmdClean
+      .replace(/^(create|assign|add|publish)\s+(a\s+|an\s+|the\s+)?(new\s+)?(homework|assignment)\s*(for|to|on|about)?\s*/i, '')
+      .replace(/\b(for\s+)?(class|grade)\s+\d+[a-z]*\b/gi, '')
+      .trim();
+    const hasTopic =
+      (cleanTitle && !genericWords.test(cleanTitle) && !genericPhrase.test(cleanTitle)) ||
+      (stripped.length >= 3 && !genericWords.test(stripped) && !genericPhrase.test(cmdClean));
+    if (!hasTopic) {
+      return {
+        valid: false,
+        missingFields: ['assignment topic/title', 'target class'],
+        clarificationPrompt: 'Please specify the homework title or topic and target class (e.g., "Assign Algebra Worksheet to Grade 10 due Friday").',
+      };
+    }
+  }
+
+  if (
+    act.action === 'create_competition' ||
+    act.action === 'create_event' ||
+    act.action === 'create_meeting' ||
+    act.action === 'schedule_meeting' ||
+    act.action === 'create_calendar_event'
+  ) {
+    const stripped = cmdClean
+      .replace(/^(create|schedule|add|host|book|launch)\s+(a\s+|an\s+|the\s+)?(new\s+)?(competition|event|meeting|meet|calendar event)\s*(called|named|titled|for|on|at)?\s*/i, '')
+      .trim();
+    const hasDetails =
+      (cleanTitle && !genericWords.test(cleanTitle) && !genericPhrase.test(cleanTitle)) ||
+      (stripped.length >= 3 && !genericWords.test(stripped) && !genericPhrase.test(cmdClean));
+    if (!hasDetails) {
+      return {
+        valid: false,
+        missingFields: ['title', 'date/time'],
+        clarificationPrompt: `What should the ${act.action.replace(/_/g, ' ').replace('create ', '')} be titled, and what date/time should it be scheduled for?`,
+      };
+    }
+  }
+
+  return { valid: true, missingFields: [] };
+}
+
 /**
  * Consequential actions that modify school records or notify groups require explicit confirmation
  * before Orion executes them against the database.

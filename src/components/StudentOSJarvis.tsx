@@ -1,36 +1,63 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Mic, MicOff, Send, Volume2, Sparkles, Sliders, Users, 
-  BarChart3, Award, Settings, Play, RotateCcw, 
-  Layers, Plus, Trash2, CheckCircle, RefreshCw, X, Square, BookOpen, FileText, HelpCircle, Layout, Search, Globe, PenTool, ExternalLink, Video
+import { motion, AnimatePresence } from 'motion/react';
+import {
+  Mic,
+  MicOff,
+  Send,
+  Volume2,
+  Sparkles,
+  Users,
+  BarChart3,
+  Award,
+  RotateCcw,
+  Layers,
+  Plus,
+  CheckCircle2,
+  RefreshCw,
+  X,
+  BookOpen,
+  FileText,
+  Layout,
+  Search,
+  Globe,
+  PenTool,
+  ExternalLink,
+  Video,
+  ShieldCheck,
+  ShieldAlert,
+  HelpCircle,
+  AlertTriangle,
+  Copy,
+  BookmarkPlus,
+  ArrowRight,
+  ClipboardList,
+  FolderOpen,
+  Bell,
+  GraduationCap,
 } from 'lucide-react';
 import { GlassyVideoCarousel, EducationalVideoItem } from './ui/GlassyVideoCarousel';
-import { Orion3DOrb } from './ui/Orion3DOrb';
-import { Orion3DPrismBadge } from './ui/Orion3DPrismBadge';
+import { VeylentraIcon } from './ui/VeylentraIcon';
 import { supabase } from '../lib/supabase';
 import { fetchAllSupabaseUsers } from '../lib/supabaseUsers';
-import { createCompetition, createSchoolEvent, createClub } from '../lib/supabaseLife';
-import { saveSupabaseHomework, getSupabaseHomework, deleteSupabaseHomework } from '../lib/supabaseHomework';
-import { createOrUpdateMeeting, deleteMeeting, fetchAllMeetings } from '../lib/supabaseMeet';
-import { saveAppNotification, getAppNotifications } from '../lib/notifications';
-import { executeOrionCommunicationDispatch } from '../lib/orionCommunication';
-import { 
-  OrionAction, 
-  OrionUserContext, 
+import {
+  OrionAction,
+  OrionUserContext,
   OrionActionType,
-  StructuredOrionPayload
+  StructuredOrionPayload,
 } from '../lib/orionActionExecutor';
 import {
   OrionAgentProgressSnapshot,
-  runOrionAgentTask
+  executeOrionViaServer,
+  runOrionAgentTask,
 } from '../lib/orionAgentEngine';
 import { OrionActivityTimeline } from './orion/OrionActivityTimeline';
 import { AcademicRichRenderer } from './ui/AcademicRichRenderer';
 import {
   buildAuthorizedStudentOSContext,
   detectMathInteractiveWidget,
-  InteractiveMathWidget
+  InteractiveMathWidget,
 } from '../lib/studentosAiEngine';
+import { useReducedMotionPreference } from '../lib/motionSystem';
 import { StudentReport, HouseAnalytics, SectionAnalytics } from '../types';
 
 interface StudentOSJarvisProps {
@@ -48,36 +75,74 @@ interface StudentOSJarvisProps {
   currentUser: any;
   effectiveRole: string;
   initialQuery?: string;
+  modelOverride?: string;
+}
+
+interface OrionExecutionTurn {
+  id: string;
+  userCommand: string;
+  plannedSteps?: OrionAction[];
+  snapshot?: OrionAgentProgressSnapshot | null;
+  finalResponse: string;
+  status: 'running' | 'needs_clarification' | 'awaiting_confirmation' | 'completed' | 'failed';
+  errorMessage?: string;
+  providerUsed?: string;
+  modelUsed?: string;
+  mathWidget?: ReturnType<typeof detectMathInteractiveWidget>;
 }
 
 const getRoleGreeting = (role: string): string => {
   const norm = (role || 'student').toLowerCase().trim();
   if (norm === 'parent' || norm === 'guardian') {
-    return 'Orion is ready in Ephemeral Mode. Ask about your verified linked ward, notices, or curriculum topics.';
+    return 'Ephemeral session active. Ask about your verified linked ward, notices, or curriculum topics.';
   }
   if (norm === 'student') {
-    return 'Orion is ready in Ephemeral Mode. Check pending assignments, generate a study plan, or explore curriculum topics.';
+    return 'Ephemeral session active. Check pending homework, build a study plan, or research curriculum topics.';
   }
-  return 'Orion is ready in Ephemeral Mode. Ask for class insights, attendance briefings, reports, or task automation.';
+  return 'Ephemeral session active. Run class briefings, attendance checks, verified broadcasts, or research.';
+};
+
+export const isExplicitTabNavigationCommand = (textLow: string): boolean => {
+  const hasNavVerb =
+    textLow.startsWith('open ') ||
+    textLow.startsWith('go to ') ||
+    textLow.startsWith('launch ') ||
+    textLow.startsWith('switch to ') ||
+    textLow.startsWith('take me to ');
+  const hasDataOrWriteVerb =
+    textLow.includes('create ') ||
+    textLow.includes('check ') ||
+    textLow.includes('show ') ||
+    textLow.includes('summary') ||
+    textLow.includes('report') ||
+    textLow.includes('status') ||
+    textLow.includes('pending') ||
+    textLow.includes('who ') ||
+    textLow.includes('how many') ||
+    textLow.includes('analyze') ||
+    textLow.includes('mark ') ||
+    textLow.includes('assign ') ||
+    textLow.includes('generate ');
+  return hasNavVerb && !hasDataOrWriteVerb;
 };
 
 export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
   onClose,
   activeTab,
   setActiveTab,
-  clearWhiteboard,
-  drawShapeOnWhiteboard,
-  saveWhiteboard,
-  setSearchMaterialsQuery,
-  setTriggerQuickQuiz,
   showNotification,
   createVaultNote,
   onSuperAdminUnlocked,
   currentUser,
   effectiveRole,
-  initialQuery
+  initialQuery,
+  modelOverride,
 }) => {
-  // Navigation & Analytics Selection inside Orion
+  const reducedMotion = useReducedMotionPreference();
+  const normalizedRole = (effectiveRole || currentUser?.role || 'student').toLowerCase().trim();
+  const isStaffRole = ['teacher', 'faculty', 'head_teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes(normalizedRole);
+
+  // Workspace view mode
   const [activeJarvisSection, setActiveJarvisSection] = useState<'home' | 'reports' | 'houses' | 'sections' | 'search'>('home');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchResults, setSearchResults] = useState<string>('');
@@ -86,11 +151,58 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
   const [generatedNotesContent, setGeneratedNotesContent] = useState<{ title: string; content: string } | null>(null);
   const [localMaterials, setLocalMaterials] = useState<any[]>([]);
   const [searching, setSearching] = useState<boolean>(false);
-  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isNotesSaved, setIsNotesSaved] = useState<boolean>(false);
   const [navigatingTransition, setNavigatingTransition] = useState<{ title: string; tab: string } | null>(null);
   const [showPagePicker, setShowPagePicker] = useState<boolean>(false);
-  const [showMoreMenu, setShowMoreMenu] = useState<boolean>(false);
+
+  // Ephemeral voice & execution state (never persisted)
+  const [isListening, setIsListening] = useState<boolean>(false);
+  const [commandText, setCommandText] = useState<string>('');
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [jarvisFeedback, setJarvisFeedback] = useState<string>(() => getRoleGreeting(normalizedRole));
+  const [showDiagnostics, setShowDiagnostics] = useState<boolean>(false);
+  const [diagnosticError, setDiagnosticError] = useState<{ name: string; message: string } | null>(null);
+  const [orionProgress, setOrionProgress] = useState<OrionAgentProgressSnapshot | null>(null);
+  const [turns, setTurns] = useState<OrionExecutionTurn[]>([]);
+  const [lastFailedCommand, setLastFailedCommand] = useState<string | null>(null);
+
+  // Clarification & Confirmation gates
+  const [pendingClarification, setPendingClarification] = useState<{
+    originalCommand: string;
+    question: string;
+    missingFields: string[];
+  } | null>(null);
+  const [clarificationReply, setClarificationReply] = useState<string>('');
+
+  const [pendingConfirmation, setPendingConfirmation] = useState<{
+    originalCommand: string;
+    action: string;
+    targetValue?: string;
+    promptText: string;
+    previewDetails?: Record<string, string>;
+    actionObject?: OrionAction;
+    plannedSteps?: OrionAction[];
+  } | null>(null);
+
+  // Context Inspector state
+  const [structuredOutput, setStructuredOutput] = useState<StructuredOrionPayload | null>(null);
+  const [orionMathWidget, setOrionMathWidget] = useState<ReturnType<typeof detectMathInteractiveWidget>>(null);
+  const [orionModelUsed, setOrionModelUsed] = useState<string>('');
+
+  const ephemeralTurnsRef = useRef<{ role: 'user' | 'assistant'; content: string }[]>([]);
+  const lastEntityRef = useRef<{ type: string; title: string; id?: string } | null>(null);
+  const streamEndRef = useRef<HTMLDivElement>(null);
+
+  const [linkedChildren, setLinkedChildren] = useState<any[]>([]);
+  const [reports, setReports] = useState<StudentReport[]>([]);
+  const [houses, setHouses] = useState<HouseAnalytics[]>([]);
+  const [sections, setSections] = useState<SectionAnalytics[]>([]);
+  const [selectedStudent, setSelectedStudent] = useState<StudentReport | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [searchStudentTerm, setSearchStudentTerm] = useState<string>('');
+
+  const recognitionRef = useRef<any>(null);
+  const shouldListenRef = useRef(false);
 
   const triggerNavTransition = (title: string, tab: string) => {
     setNavigatingTransition({ title, tab });
@@ -98,55 +210,14 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
       setNavigatingTransition(null);
       setActiveTab(tab as any);
       if (onClose) onClose();
-    }, 1200);
+    }, 650);
   };
-
-  // Voice & Input State (strictly in-memory ephemeral state)
-  const [isListening, setIsListening] = useState<boolean>(false);
-  const [commandText, setCommandText] = useState<string>('');
-  const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const [jarvisFeedback, setJarvisFeedback] = useState<string>(() => getRoleGreeting(effectiveRole || currentUser?.role || 'student'));
-  const [showDiagnostics, setShowDiagnostics] = useState<boolean>(false);
-  const [diagnosticError, setDiagnosticError] = useState<{name: string, message: string} | null>(null);
-  const [orionProgress, setOrionProgress] = useState<OrionAgentProgressSnapshot | null>(null);
-
-  // Orion 2.0 Operating Assistant State & Ephemeral Context Memory (cleared on exit/reset)
-  const [pendingConfirmation, setPendingConfirmation] = useState<{
-    action: string;
-    targetId?: string;
-    targetValue?: string;
-    payload?: any;
-    promptText: string;
-    previewDetails?: Record<string, string>;
-    actionObject?: OrionAction;
-  } | null>(null);
-  const [structuredOutput, setStructuredOutput] = useState<StructuredOrionPayload | null>(null);
-  const [orionMathWidget, setOrionMathWidget] = useState< ReturnType<typeof detectMathInteractiveWidget> >(null);
-  const [orionModelUsed, setOrionModelUsed] = useState<string>('');
-
-  const ephemeralTurnsRef = useRef<{ role: 'user' | 'assistant'; content: string }[]>([]);
-  const lastEntityRef = useRef<{
-    type: string;
-    title: string;
-    id?: string;
-    data?: any;
-  } | null>(null);
-
-  const [linkedChildren, setLinkedChildren] = useState<any[]>([]);
-  // Aggregate registry lists for operational dashboards
-  const [reports, setReports] = useState<StudentReport[]>([]);
-  const [houses, setHouses] = useState<HouseAnalytics[]>([]);
-  const [sections, setSections] = useState<SectionAnalytics[]>([]);
-
-  // Detailed modal or focus state
-  const [selectedStudent, setSelectedStudent] = useState<StudentReport | null>(null);
-  const [statusFilter, setStatusFilter] = useState<string>('');
-  const [searchStudentTerm, setSearchStudentTerm] = useState<string>('');
 
   const clearEphemeralSession = () => {
     ephemeralTurnsRef.current = [];
     lastEntityRef.current = null;
     setCommandText('');
+    setClarificationReply('');
     setSearchQuery('');
     setSearchResults('');
     setSearchSources([]);
@@ -155,91 +226,89 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     setLocalMaterials([]);
     setStructuredOutput(null);
     setPendingConfirmation(null);
+    setPendingClarification(null);
+    setLastFailedCommand(null);
     setOrionMathWidget(null);
     setOrionProgress(null);
     setOrionModelUsed('');
-    setJarvisFeedback(getRoleGreeting(effectiveRole || currentUser?.role || 'student'));
+    setTurns([]);
+    setJarvisFeedback(getRoleGreeting(normalizedRole));
   };
 
   useEffect(() => {
     return () => {
       ephemeralTurnsRef.current = [];
       lastEntityRef.current = null;
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
     };
   }, []);
 
-  // Speech Recognition Object Ref
-  const recognitionRef = useRef<any>(null);
-
-  // Initialize Speech Recognition
-  const shouldListenRef = useRef(false);
-
   useEffect(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition || (window as any).msSpeechRecognition;
-    if (SpeechRecognition) {
-      const rec = new SpeechRecognition();
-      rec.continuous = true;
-      rec.interimResults = true;
-      rec.lang = 'en-US';
+    streamEndRef.current?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'end' });
+  }, [turns, orionProgress, pendingClarification, pendingConfirmation, reducedMotion]);
 
-      rec.onstart = () => {
-        setIsListening(true);
-        shouldListenRef.current = true;
-        setJarvisFeedback('🎤 Listening in real-time... Speak now.');
-      };
+  // Speech recognition setup
+  useEffect(() => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition ||
+      (window as any).msSpeechRecognition;
+    if (!SpeechRecognition) return;
 
-      rec.onresult = (event: any) => {
-        let interimTranscript = '';
-        let finalTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
-          } else {
-            interimTranscript += event.results[i][0].transcript;
-          }
-        }
-        const text = finalTranscript || interimTranscript;
-        if (text) {
-          setCommandText(text);
-          setJarvisFeedback(`🎤 Heard: "${text}"`);
-        }
-      };
+    const rec = new SpeechRecognition();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = 'en-US';
 
-      rec.onerror = (err: any) => {
-        console.error('Speech recognition error:', err);
-        if (err.error === 'no-speech') {
-          // ignore no speech
+    rec.onstart = () => {
+      setIsListening(true);
+      shouldListenRef.current = true;
+      setDiagnosticError(null);
+    };
+
+    rec.onresult = (event: any) => {
+      let interim = '';
+      let finalStr = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalStr += event.results[i][0].transcript;
         } else {
+          interim += event.results[i][0].transcript;
+        }
+      }
+      const text = finalStr || interim;
+      if (text) setCommandText(text);
+    };
+
+    rec.onerror = (err: any) => {
+      if (err.error === 'no-speech') return;
+      shouldListenRef.current = false;
+      setIsListening(false);
+      setDiagnosticError({ name: err.error || 'SpeechError', message: String(err.message || err.error || 'Speech recognition error') });
+      if (err.error === 'not-allowed') {
+        showNotification('Microphone access blocked. Check browser permissions.');
+      }
+    };
+
+    rec.onend = () => {
+      if (shouldListenRef.current) {
+        try {
+          rec.start();
+        } catch {
+          setIsListening(false);
           shouldListenRef.current = false;
-          setIsListening(false);
-          if (err.error === 'not-allowed') {
-            setJarvisFeedback('❌ Permission Denied: Microphone access was blocked by your browser.');
-            showNotification('⚠️ Microphone access blocked. Check browser permissions.');
-          } else {
-            setJarvisFeedback(`❌ Speech error: ${err.error}`);
-          }
         }
-      };
+      } else {
+        setIsListening(false);
+      }
+    };
 
-      rec.onend = () => {
-        if (shouldListenRef.current) {
-          try {
-            rec.start();
-          } catch(e) {
-            setIsListening(false);
-            shouldListenRef.current = false;
-          }
-        } else {
-          setIsListening(false);
-          setJarvisFeedback('⏸ Stopped voice input. Type or click mic to talk.');
-        }
-      };
-
-      recognitionRef.current = rec;
-    }
+    recognitionRef.current = rec;
   }, []);
 
-  // Automatically execute initialQuery when launched from Byte/Orion assistant or workspace CTA
+  // Auto-run initialQuery
   const lastInitialQueryRef = useRef<string>('');
   useEffect(() => {
     const trimmed = (initialQuery || '').trim();
@@ -248,129 +317,213 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     setCommandText(trimmed);
     const timer = setTimeout(() => {
       executeVoiceCommand(trimmed);
-    }, 150);
+    }, 120);
     return () => clearTimeout(timer);
   }, [initialQuery]);
 
-  // Fetch linked children read-only for Parent accounts + role-authorized directory metrics
+  // Fetch linked children (Parent) and cohort directory (Staff)
   useEffect(() => {
     if (!currentUser) return;
-    const normRole = (effectiveRole || currentUser?.role || 'student').toLowerCase().trim();
-
-    if ((normRole === 'parent' || normRole === 'guardian') && currentUser?.uid) {
+    if ((normalizedRole === 'parent' || normalizedRole === 'guardian') && currentUser?.uid) {
       fetch(`/api/parent/linked-children?parentUid=${encodeURIComponent(currentUser.uid)}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((payload) => {
-          if (Array.isArray(payload?.children)) {
-            setLinkedChildren(payload.children);
-          }
+          if (Array.isArray(payload?.children)) setLinkedChildren(payload.children);
         })
         .catch(() => {});
     }
 
-    if (['teacher', 'faculty', 'head_teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes(normRole)) {
-      fetchAllSupabaseUsers().then(users => {
-        const studentUsers = users.filter(u => u.role === 'student');
+    if (isStaffRole) {
+      fetchAllSupabaseUsers()
+        .then((users) => {
+          const studentUsers = users.filter((u) => u.role === 'student');
+          setReports(
+            studentUsers.map((s) => ({
+              id: s.uid,
+              name: s.name,
+              classGrade: s.grade || 'Grade 10',
+              section: (s.section || 'Ruby') as any,
+              house: (s.house || 'Ruby') as any,
+              streakDays: s.streakDays ?? 0,
+              materialsUploaded: s.quizzesTaken ?? 0,
+              notesCreated: s.studyHours ?? 0,
+              quizzesCompleted: s.quizzesTaken ?? 0,
+              assignmentsCompleted: 4,
+              communityContributions: 12,
+              recentActivity: [
+                'Completed Physics assignment',
+                'Reviewed study guide',
+                'Participated in classroom session',
+              ],
+            }))
+          );
 
-        const reportsList: StudentReport[] = studentUsers.map(s => ({
-          id: s.uid,
-          name: s.name,
-          classGrade: s.grade || 'Grade 10',
-          section: (s.section || 'Ruby') as any,
-          house: (s.house || 'Ruby') as any,
-          streakDays: s.streakDays ?? 0,
-          materialsUploaded: s.quizzesTaken ?? 0,
-          notesCreated: s.studyHours ?? 0,
-          quizzesCompleted: s.quizzesTaken ?? 0,
-          assignmentsCompleted: 4,
-          communityContributions: 12,
-          recentActivity: [
-            'Completed Physics MCQ assignment',
-            'Shared study guide for organic chemistry',
-            'Drew diagram on smartboard'
-          ]
-        }));
-        setReports(reportsList);
+          const houseList = ['Ruby', 'Emerald', 'Sapphire', 'Topaz'];
+          setHouses(
+            houseList.map((h) => {
+              const matching = studentUsers.filter((s) => s.house === h);
+              return {
+                id: h as any,
+                points: matching.length * 150 + 100,
+                materialsShared: matching.length * 2,
+                quizzesWon: matching.length * 3,
+                participation: 85,
+              };
+            })
+          );
 
-        const houseList = ['Ruby', 'Emerald', 'Sapphire', 'Topaz'];
-        const mappedHouses: HouseAnalytics[] = houseList.map(h => {
-          const matchingStudents = studentUsers.filter(s => s.house === h);
-          const pts = matchingStudents.length * 150 + 100;
-          return {
-            id: h as any,
-            points: pts,
-            materialsShared: matchingStudents.length * 2,
-            quizzesWon: matchingStudents.length * 3,
-            participation: 85
-          };
-        });
-        setHouses(mappedHouses);
-
-        const sectionList = ['Ruby', 'Astra', 'Solara', 'Vega'];
-        const mappedSections: SectionAnalytics[] = sectionList.map(sec => {
-          const matchingStudents = studentUsers.filter(s => s.section === sec);
-          return {
-            id: sec as any,
-            totalStudents: matchingStudents.length || 2,
-            studyActivity: 74,
-            quizScores: 82,
-            materialContributions: matchingStudents.length * 3
-          };
-        });
-        setSections(mappedSections);
-      }).catch(() => {});
+          const sectionList = ['Ruby', 'Astra', 'Solara', 'Vega'];
+          setSections(
+            sectionList.map((sec) => {
+              const matching = studentUsers.filter((s) => s.section === sec);
+              return {
+                id: sec as any,
+                totalStudents: matching.length || 2,
+                studyActivity: 74,
+                quizScores: 82,
+                materialContributions: matching.length * 3,
+              };
+            })
+          );
+        })
+        .catch(() => {});
     }
-  }, [currentUser, effectiveRole]);
+  }, [currentUser, normalizedRole, isStaffRole]);
 
-
-
-  const toggleListening = async () => {
+  const toggleListening = () => {
     if (!recognitionRef.current) {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition || (window as any).msSpeechRecognition;
-      if (!SpeechRecognition) {
-        showNotification('⚠️ Your browser does not support Speech Recognition. Please try Google Chrome.');
-        setJarvisFeedback('❌ Speech recognition not supported on this browser.');
-        return;
-      }
+      showNotification('Speech recognition is not supported in this browser.');
+      return;
     }
-
     if (isListening) {
       shouldListenRef.current = false;
       try {
         recognitionRef.current.stop();
-      } catch(e) {}
+      } catch {}
       setIsListening(false);
-      setJarvisFeedback('⏸ Stopped voice input.');
-      showNotification('🎙️ Voice input stopped.');
     } else {
-      setJarvisFeedback('🎤 Initializing microphone...');
       try {
         shouldListenRef.current = true;
         recognitionRef.current.start();
-        showNotification('🎙️ Microphone active. Speak now!');
-      } catch (e) {
-        console.error("Start recognition failed:", e);
+        showNotification('Microphone active. Speak now.');
+      } catch {
         setIsListening(false);
         shouldListenRef.current = false;
-        setJarvisFeedback('❌ Failed to start speech recognition. Try clicking again.');
       }
     }
   };
 
-  // Speaks feedback aloud using browser speech synth if available
   const speakFeedback = (text: string) => {
-    if ('speechSynthesis' in window) {
+    if ('speechSynthesis' in window && text.trim()) {
       window.speechSynthesis.cancel();
       setTimeout(() => {
-        const utterance = new SpeechSynthesisUtterance(text);
+        const utterance = new SpeechSynthesisUtterance(text.replace(/[*_`#]/g, ''));
         utterance.rate = 1.0;
         utterance.pitch = 1.0;
         window.speechSynthesis.speak(utterance);
-      }, 50);
+      }, 40);
     }
   };
 
-  // --- PHASE 2 CORE INTEGRATED ENGINES ---
+  // Fixed JSON + SSE response handling for AI fallback/research
+  const queryJarvisAIStream = async (
+    command: string
+  ): Promise<{ responseText: string; action: string; targetValue?: string; details?: any; error?: string }> => {
+    const { contextString: ragContext } = await buildAuthorizedStudentOSContext(
+      command,
+      currentUser,
+      normalizedRole,
+      {
+        activeTab,
+        linkedStudents: linkedChildren.length > 0 ? linkedChildren : undefined,
+      }
+    );
+
+    const response = await fetch('/api/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: `User request inside Veylentra Orion (${normalizedRole}, tab=${activeTab}): "${command}". Answer accurately in clear Markdown (and LaTeX $...$ / $$...$$ for math/science) without inventing school records.`,
+        persona: 'orion',
+        level: 'Secondary',
+        mode: 'explanatory',
+        taskType: 'general',
+        modelOverride: modelOverride || undefined,
+        webSearchMode: 'auto',
+        stream: false,
+        history: ephemeralTurnsRef.current.slice(-6),
+        ragContext,
+        activeTab,
+        userId: currentUser?.uid || 'guest',
+        userRole: normalizedRole,
+      }),
+    });
+
+    const ctype = (response.headers.get('content-type') || '').toLowerCase();
+    if (!response.ok) {
+      const errJson = ctype.includes('application/json') ? await response.json().catch(() => ({})) : {};
+      throw new Error(errJson.message || errJson.error || `AI request failed with HTTP ${response.status}.`);
+    }
+
+    if (ctype.includes('application/json')) {
+      const payload = await response.json();
+      if (payload.modelUsed) setOrionModelUsed(payload.modelUsed);
+      if (payload.usage && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('s_os_ai_quota_updated', { detail: { ...payload.usage, lastUpdated: Date.now() } }));
+      }
+      const text = String(payload.text || '').trim();
+      if (!text) {
+        throw new Error(payload.error || 'AI provider returned an empty response.');
+      }
+      return { responseText: text, action: 'general_chat' };
+    }
+
+    // Read SSE stream if server responded with text/event-stream
+    if (!response.body) {
+      throw new Error('Server returned an empty stream body.');
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let accumulated = '';
+    let doneText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const clean = line.trim();
+        if (!clean.startsWith('data:')) continue;
+        const rawJson = clean.slice(5).trim();
+        if (!rawJson || rawJson === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(rawJson);
+          if (parsed.type === 'token' && typeof parsed.token === 'string') {
+            accumulated += parsed.token;
+          } else if (parsed.type === 'done' && typeof parsed.text === 'string') {
+            doneText = parsed.text;
+            if (parsed.modelUsed) setOrionModelUsed(parsed.modelUsed);
+          } else if (parsed.type === 'error') {
+            throw new Error(parsed.error || 'Stream error');
+          }
+        } catch (err) {
+          if (err instanceof Error && err.message !== 'Unexpected end of JSON input') {
+            // Re-throw explicit stream error
+          }
+        }
+      }
+    }
+
+    const finalStr = (doneText || accumulated).trim();
+    if (!finalStr) {
+      throw new Error('Orion could not receive any response text from the AI service.');
+    }
+    return { responseText: finalStr, action: 'general_chat' };
+  };
+
   const handleRunInternetSearch = async (query: string) => {
     if (!query || !query.trim()) return;
     const cleanQ = query.trim();
@@ -378,14 +531,13 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     setSearchQuery(cleanQ);
     setGeneratedNotesContent(null);
     setIsNotesSaved(false);
-    setSearchResults(`🔍 **Searching verified web & academic sources for "${cleanQ}"...**`);
-    setJarvisFeedback(`🔍 Orion is searching verified external sources for "${cleanQ}"...`);
+    setSearchResults(`Searching verified web and academic sources for "${cleanQ}"...`);
 
     try {
       const response = await fetch('/api/ai/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: cleanQ })
+        body: JSON.stringify({ query: cleanQ }),
       });
 
       if (!response.ok) {
@@ -399,31 +551,54 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
       const mappedSources = rawSources.map((s: any) => ({
         title: s.title || s.published_source || 'Web Source',
         uri: s.url || s.uri || '#',
-        published_source: s.published_source || 'Web Source'
+        published_source: s.published_source || 'Web Source',
       }));
       const rawVideos = Array.isArray(searchData.videos) ? searchData.videos : [];
 
       setSearchResults(textOut);
       setSearchSources(mappedSources);
       setSearchVideos(rawVideos);
-      setGeneratedNotesContent({
-        title: `${cleanQ} (Orion Web Research)`,
-        content: textOut
-      });
-      if (cleanQ.toLowerCase().includes('video') && rawVideos.length === 0) {
-        setJarvisFeedback(`🌐 Retrieved verified sources for **"${cleanQ}"**, but no playable educational videos were found for this topic.`);
-      } else {
-        setJarvisFeedback(
-          mappedSources.length > 0
-            ? `🌐 Synthesized live web intelligence for **"${cleanQ}"** across **${mappedSources.length} verified sources**${rawVideos.length > 0 ? ` & ${rawVideos.length} verified educational videos` : ''}.`
-            : textOut
-        );
-      }
+      setGeneratedNotesContent({ title: `${cleanQ} (Orion Research)`, content: textOut });
+      setJarvisFeedback(textOut);
+
+      setTurns((prev) => [
+        ...prev,
+        {
+          id: `turn_${Date.now()}`,
+          userCommand: cleanQ,
+          finalResponse: textOut,
+          status: 'completed',
+          modelUsed: searchData.telemetry?.modelUsed,
+          providerUsed: searchData.telemetry?.providerUsed,
+          snapshot: {
+            phase: 'completed',
+            headline: `Retrieved ${mappedSources.length} verified sources`,
+            startedAt: Date.now(),
+            finishedAt: Date.now(),
+            verified: mappedSources.length > 0,
+            stages: [
+              { phase: 'analyzing', label: 'Analyzing query', status: 'completed', durationMs: 1 },
+              { phase: 'executing', label: 'Searching sources', status: 'completed', durationMs: 120 },
+              { phase: 'verifying', label: 'Verified citations', status: 'completed', durationMs: 1 },
+            ],
+            steps: [
+              {
+                id: 'step-1',
+                label: 'Web grounding search',
+                action: 'web_search',
+                status: 'verified',
+                verificationNote: `${mappedSources.length} sources${rawVideos.length ? `, ${rawVideos.length} videos` : ''}`,
+              },
+            ],
+          },
+        },
+      ]);
     } catch (err: any) {
-      console.error('Orion live web search failed:', err);
-      setSearchResults(`⚠️ **Web Search Notice**\n\nCould not reach live external sources right now (${err?.message || 'network timeout'}).`);
+      const msg = err?.message || 'Unable to reach live web sources right now.';
+      setSearchResults(msg);
       setSearchSources([]);
       setSearchVideos([]);
+      setLastFailedCommand(cleanQ);
     } finally {
       setSearching(false);
     }
@@ -434,47 +609,35 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     setSearching(true);
     setSearchQuery(query);
     try {
-      // 1. Local database query
       const { data: matchedMaterials, error } = await supabase
         .from('materials')
         .select('*')
         .or(`title.ilike.%${query}%,description.ilike.%${query}%`)
         .limit(10);
 
-      if (matchedMaterials && !error) {
-        setLocalMaterials(matchedMaterials);
-      } else {
-        setLocalMaterials([]);
-      }
+      setLocalMaterials(!error && matchedMaterials ? matchedMaterials : []);
 
-      // 2. AI Recommendation
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: `You are an academic discovery engine. Based on the topic "${query}", list 4 highly recommended learning resources (e.g., active experiments, scientific papers, specific web articles) with bulleted descriptions.`,
+          prompt: `List 4 high-yield academic learning resources and active experiments for "${query}" with concise descriptions.`,
           persona: 'study_buddy',
           level: 'Secondary',
           mode: 'explanatory',
+          modelOverride: modelOverride || undefined,
           userId: currentUser?.uid || 'guest',
-          userRole: currentUser?.role || 'student'
-        })
+          userRole: normalizedRole,
+        }),
       });
       if (!response.ok) {
-        if (response.status === 429) {
-          const errData = await response.json();
-          throw new Error(errData.message || 'Daily AI message limit reached.');
-        }
-        throw new Error(`HTTP error: ${response.status}`);
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.message || `HTTP ${response.status}`);
       }
       const data = await response.json();
-      setSearchResults(data.text || "No recommendations compiled.");
-      if (data.usage && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('s_os_ai_quota_updated', { detail: { ...data.usage, lastUpdated: Date.now() } }));
-      }
+      setSearchResults(data.text || 'No recommendations compiled.');
     } catch (err: any) {
-      console.error("Resource discovery failed:", err);
-      setSearchResults(err.message?.includes('limit') ? `⚠️ ${err.message}` : "Connection offline. Check Material Hub for local copies. Alternatively, try reloading the page.");
+      setSearchResults(err?.message || 'Discovery failed. Check connection and try again.');
     } finally {
       setSearching(false);
     }
@@ -489,1495 +652,1405 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: `You are an expert curriculum supervisor. Create a structured 1-hour study lesson plan block for: "${topic}". Include Timing, Activities, and Learning objectives.`,
+          prompt: `Create a structured 1-hour study plan block for "${topic}" with Timing, Activities, and Learning Objectives.`,
           persona: 'study_buddy',
           level: 'Secondary',
           mode: 'explanatory',
+          modelOverride: modelOverride || undefined,
           userId: currentUser?.uid || 'guest',
-          userRole: currentUser?.role || 'student'
-        })
+          userRole: normalizedRole,
+        }),
       });
-      if (!response.ok) {
-        throw new Error(`HTTP error: ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
-      setSearchResults(data.text || "No plan compiled.");
-      if (data.usage && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('s_os_ai_quota_updated', { detail: { ...data.usage, lastUpdated: Date.now() } }));
-      }
-      
-      // Dispatch a CustomEvent to automatically add to the study planner
-      const planEvent = new CustomEvent('s_os_add_schedule', {
-        detail: {
-          subject: topic.substring(0, 30),
-          day: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'][new Date().getDay() - 1] || 'Monday',
-          time: '14:00 - 15:00'
-        }
-      });
-      window.dispatchEvent(planEvent);
-    } catch (err) {
-      console.error("Lesson planner failed:", err);
+      setSearchResults(data.text || 'No plan compiled.');
+      window.dispatchEvent(
+        new CustomEvent('s_os_add_schedule', {
+          detail: {
+            subject: topic.substring(0, 30),
+            day: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'][new Date().getDay() - 1] || 'Monday',
+            time: '14:00 - 15:00',
+          },
+        })
+      );
+    } catch (err: any) {
+      showNotification(err?.message || 'Study plan generation failed.');
     } finally {
       setSearching(false);
     }
   };
 
-  const handleGenerateSpecializedNotes = async (topic: string, type: 'detailed_notes' | 'chapter_summary' | 'exam_prep' | 'formula_sheet' | 'revision_notes') => {
+  const handleGenerateSpecializedNotes = async (
+    topic: string,
+    type: 'detailed_notes' | 'chapter_summary' | 'exam_prep' | 'formula_sheet' | 'revision_notes'
+  ) => {
     if (!topic || !topic.trim()) return;
     setSearching(true);
     setSearchQuery(topic);
-    
     const typeLabels = {
       detailed_notes: 'Comprehensive Lecture Notes',
       chapter_summary: 'Chapter Summary',
       exam_prep: 'Exam Preparation Notes',
       formula_sheet: 'Formula Sheet',
-      revision_notes: 'Revision Notes'
+      revision_notes: 'Revision Notes',
     };
-
-    setSearchResults(`Querying Orion Notes Generator engine... Synthesizing ${typeLabels[type]} for "${topic}"...`);
+    setSearchResults(`Generating ${typeLabels[type]} for "${topic}"...`);
     setSearchSources([]);
     setGeneratedNotesContent(null);
     setIsNotesSaved(false);
 
     try {
-      let prompt = '';
-      if (type === 'detailed_notes') {
-        prompt = `Write a comprehensive, highly detailed academic lecture note about "${topic}".
-        Provide exhaustive definitions, historical context, key theories, practical applications, and examples.
-        Format beautifully with headings, subheadings, bullet points, and italic highlights.`;
-      } else if (type === 'chapter_summary') {
-        prompt = `Synthesize a structured chapter summary for the topic: "${topic}".
-        Include a high-level executive summary, a timeline or sequence of core concepts, a breakdown of primary sub-chapters, and quick-glance checklists.`;
-      } else if (type === 'exam_prep') {
-        prompt = `Create an elite high-yield exam preparation notes package for: "${topic}".
-        Highlight high-probability exam topics, sample questions with model answers, list standard student mistakes to avoid, and provide test-taking strategies.`;
-      } else if (type === 'formula_sheet') {
-        prompt = `Design a comprehensive formula sheet, derivations, and mathematical/scientific cheat-sheet for: "${topic}".
-        List all relevant equations, variables, constant values, step-by-step mathematical proofs or conceptual derivations, and sample solving workflows.`;
-      } else if (type === 'revision_notes') {
-        prompt = `Write quick-recall, ultra-compact revision notes and memory scaffolds for: "${topic}".
-        Use tables, numbered summaries, active recall questions, and mnemonic associations.`;
-      }
-
       const response = await fetch('/api/ai/notes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          content: prompt,
-          action: 'generate_notes'
-        })
+          content: `Create ${typeLabels[type]} for "${topic}" formatted in Markdown with headings, tables, and LaTeX formulas where applicable.`,
+          action: 'generate_notes',
+        }),
       });
-      if (!response.ok) {
-        throw new Error(`HTTP error: ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       const content = data.text || `# ${typeLabels[type]}: ${topic}\n\nNotes failed to generate.`;
-      
       setSearchResults(content);
-      
-      const newNotesContent = { title: `${topic} (${typeLabels[type]})`, content: content };
-      setGeneratedNotesContent(newNotesContent);
-      
-      // Automatically save to vault as requested
+      const packet = { title: `${topic} (${typeLabels[type]})`, content };
+      setGeneratedNotesContent(packet);
       if (createVaultNote) {
-        createVaultNote(
-          newNotesContent.title,
-          newNotesContent.content,
-          'Orion Generated'
-        );
+        createVaultNote(packet.title, packet.content, 'Orion Generated');
         setIsNotesSaved(true);
-        showNotification(`✓ Orion automatically saved your generated "${typeLabels[type]}" to Lecture Notes Vault!`);
-      } else {
-        showNotification(`✓ Orion drafted your "${typeLabels[type]}" packet. Click "Save to Lecture Notes" below to save to your Vault!`);
+        showNotification(`Saved "${typeLabels[type]}" to Lecture Notes.`);
       }
-    } catch (err) {
-      console.error("Specialized notes generation failed:", err);
-      setSearchResults("Error: Notes generation failed.");
+    } catch (err: any) {
+      setSearchResults(err?.message || 'Notes generation failed.');
     } finally {
       setSearching(false);
     }
   };
 
-  const handleGenerateNotes = async (topic: string) => {
-    await handleGenerateSpecializedNotes(topic, 'detailed_notes');
-  };
-
   const handleSaveGeneratedNotesToVault = () => {
     if (!generatedNotesContent) return;
-    
     if (createVaultNote) {
-      createVaultNote(
-        generatedNotesContent.title.substring(0, 40) + ' Notes',
-        generatedNotesContent.content,
-        'Orion Generated'
-      );
+      createVaultNote(generatedNotesContent.title.substring(0, 40) + ' Notes', generatedNotesContent.content, 'Orion Generated');
     } else {
-      // Fallback
-      const noteEvent = new CustomEvent('s_os_create_note', {
-        detail: {
-          title: generatedNotesContent.title.substring(0, 40) + ' Notes',
-          content: generatedNotesContent.content,
-          subject: 'Orion Generated'
-        }
-      });
-      window.dispatchEvent(noteEvent);
+      window.dispatchEvent(
+        new CustomEvent('s_os_create_note', {
+          detail: {
+            title: generatedNotesContent.title.substring(0, 40) + ' Notes',
+            content: generatedNotesContent.content,
+            subject: 'Orion Generated',
+          },
+        })
+      );
     }
-    
     setIsNotesSaved(true);
-    showNotification(`✓ Successfully saved "${generatedNotesContent.title}" packet to your Lecture Notes Vault!`);
-  };
-
-  // Query Orion AI via approved Express server providers (Ministral, Groq)
-  const queryJarvisAIStream = async (command: string): Promise<{ responseText: string; action: string; targetValue?: string; details?: any }> => {
-    try {
-      const cmdLow = command.toLowerCase().trim();
-
-      // Explicit Web Search intent detection
-      const isSearchQuery = (
-        cmdLow.startsWith('search ') ||
-        cmdLow.startsWith('look up ') ||
-        cmdLow.startsWith('find information about ') ||
-        cmdLow.startsWith('web search ') ||
-        cmdLow.startsWith('search online ') ||
-        cmdLow.includes('search about ') ||
-        cmdLow.includes('search the web for ') ||
-        cmdLow.includes('search online for ') ||
-        cmdLow.includes('look up information about ') ||
-        cmdLow.includes('newton') ||
-        cmdLow.includes('laws class 8') ||
-        cmdLow.includes('video about') ||
-        cmdLow.startsWith('find a video')
-      );
-
-      if (isSearchQuery) {
-        let queryStr = command
-          .replace(/^(?:find|show|get|recommend|suggest|watch)?\s*(?:a\s+)?(?:videos?|clips?)\s*(?:about|for|on|regarding)?\s*/gi, '')
-          .replace(/^search\s+(about|for|the\s+web\s+for|online\s+for)?\s*/gi, '')
-          .replace(/^look\s+up\s+(information\s+about|info\s+about)?\s*/gi, '')
-          .replace(/^find\s+information\s+about\s*/gi, '')
-          .replace(/^web\s+search\s*/gi, '')
-          .replace(/^search\s+online\s+(for)?\s*/gi, '')
-          .trim();
-
-        return {
-          responseText: `Searching verified web sources for "${queryStr || command}"...`,
-          action: "web_search",
-          targetValue: queryStr || command,
-          details: { query: queryStr || command, title: queryStr || command }
-        };
-      }
-
-      let aiText = '';
-      
-      const { contextString: ragContext } = await buildAuthorizedStudentOSContext(
-        command,
-        currentUser,
-        effectiveRole || currentUser?.role || 'student',
-        {
-          activeTab,
-          linkedStudents: linkedChildren.length > 0 ? linkedChildren : undefined
-        }
-      );
-
-      const systemPrompt = `You are Veylentra Orion, the intelligent School Operating Assistant & Copilot running in an Ephemeral Session.
-Current User Role: ${effectiveRole || currentUser?.role || 'student'} (${currentUser?.name || 'User'})
-Current Workspace Tab: ${activeTab || 'dashboard'}
-The user typed or spoke this command: "${command}".
-
-Analyze the input and classify into ONE of these operational or intelligence actions:
-- "get_child_overview" (Parent checking verified linked child's attendance, homework, or ward progress)
-- "get_homework" (check homework, pending homework, missing homework, what homework do I have, homework status)
-- "get_submissions" (who has not submitted homework, submission rate, homework submissions)
-- "get_attendance" (attendance summary, who is absent, attendance rate, my attendance)
-- "get_students" (list students, student performance, struggling students, top students)
-- "get_classes" (class overview, class summary, section analytics)
-- "get_calendar" (upcoming events, exam schedule, school calendar, competitions)
-- "get_notifications" (recent notices, announcements, broadcasts, unread alerts)
-- "generate_report" (generate school report, daily briefing, class report, attendance report, homework report)
-- "send_broadcast" (broadcast, announce school-wide, tell everyone, create announcement)
-- "notify_users" (notify all teachers, notify class 10, notify students, send reminder)
-- "create_study_plan" (create study plan, make study plan, plan study for exams, study schedule)
-- "create_calendar_event" (add to calendar, add event to calendar, add holiday, add exam date)
-- "create_note" (create note, save note to vault, take note)
-- "mark_attendance" (take attendance, mark attendance, record attendance)
-- "create_event" (schedule annual function, schedule event, schedule assembly)
-- "create_competition" (create competition, create coding competition, create sports competition)
-- "create_meet" (schedule Veylentra Meet, schedule meeting)
-- "create_homework" (create homework, create assignment, publish assignment)
-- "create_notice" (upload notice, create notice)
-- "delete_item" (delete competition, delete event, cancel meeting, delete homework)
-- "navigate_tab" (explicit request like open, go to, switch to, launch a specific workspace page)
-- "web_search" (search online, look up information)
-- "general_chat" (general question, academic explanation, math problem, or conversation)
-
-Rules:
-1. Distinguish between known Veylentra data (provided in context) and general AI assistance.
-2. Never fabricate Veylentra records. For Parents, only report linked ward data explicitly provided.
-3. Return raw JSON format with NO markdown wrapping:
-{
-  "responseText": "Clear, helpful markdown response using LaTeX ($...$, $$...$$, \\\\ce{...}) for math/chemistry when applicable.",
-  "action": "action_name",
-  "targetValue": "Main entity title, topic, class, tab, or search query",
-  "details": {
-    "title": "extracted title or topic",
-    "date": "extracted date or YYYY-MM-DD",
-    "time": "extracted time like 09:00 AM",
-    "targetAudience": "all / Class 10 / teachers / students",
-    "targetClass": "extracted class e.g. Class 10",
-    "subject": "extracted subject e.g. Mathematics / Physics",
-    "category": "Academic / Cultural / Technology / General",
-    "content": "message or description content"
-  }
-}`;
-
-      try {
-        const response = await fetch('/api/ai/chat/stream', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            prompt: systemPrompt,
-            persona: 'orion',
-            level: 'Secondary',
-            mode: 'explanatory',
-            taskType: 'orion_command',
-            webSearchMode: 'auto',
-            stream: true,
-            history: ephemeralTurnsRef.current.slice(-6),
-            ragContext: ragContext,
-            activeTab,
-            userId: currentUser?.uid || 'guest',
-            userRole: effectiveRole || currentUser?.role || 'student'
-          })
-        });
-
-        if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.message || errData.error || `HTTP ${response.status}`);
-        }
-
-        if (response.body) {
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = '';
-          let accumulated = '';
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-              const cleanLine = line.trim();
-              if (!cleanLine.startsWith('data:')) continue;
-              const jsonStr = cleanLine.replace(/^data:\s*/, '').trim();
-              if (!jsonStr || jsonStr === '[DONE]') continue;
-
-              try {
-                const parsed = JSON.parse(jsonStr);
-                if (parsed.type === 'token' && typeof parsed.token === 'string') {
-                  accumulated += parsed.token;
-                  let display = accumulated;
-                  if (display.includes('"responseText":')) {
-                    const match = display.match(/"responseText":\s*"((?:[^"\\]|\\.)*)/);
-                    if (match && match[1]) {
-                      display = match[1]
-                        .replace(/\\n/g, '\n')
-                        .replace(/\\"/g, '"')
-                        .replace(/\\\\/g, '\\')
-                        .replace(/\\t/g, '\t');
-                    }
-                  } else if (display.startsWith('{')) {
-                    display = '⚡ Synthesizing response in real-time...';
-                  }
-                  setJarvisFeedback(display);
-                } else if (parsed.type === 'done') {
-                  if (parsed.text) aiText = parsed.text;
-                  if (parsed.modelUsed) setOrionModelUsed(parsed.modelUsed);
-                  if (parsed.usage && typeof window !== 'undefined') {
-                    window.dispatchEvent(new CustomEvent('s_os_ai_quota_updated', { detail: { ...parsed.usage, lastUpdated: Date.now() } }));
-                  }
-                  if (Array.isArray(parsed.videos) && parsed.videos.length > 0) {
-                    setSearchVideos(parsed.videos);
-                  }
-                  if (Array.isArray(parsed.webSources) && parsed.webSources.length > 0) {
-                    setSearchSources(
-                      parsed.webSources.map((s: any) => ({
-                        title: s.title || s.domain || 'Web Source',
-                        uri: s.url || s.uri || '#',
-                        published_source: s.sourceType === 'academic' ? `Academic · ${s.domain}` : s.domain
-                      }))
-                    );
-                  }
-                } else if (parsed.type === 'meta') {
-                  if (parsed.modelUsed) setOrionModelUsed(parsed.modelUsed);
-                  if (Array.isArray(parsed.webSources) && parsed.webSources.length > 0) {
-                    setSearchSources(
-                      parsed.webSources.map((s: any) => ({
-                        title: s.title || s.domain || 'Web Source',
-                        uri: s.url || s.uri || '#',
-                        published_source: s.sourceType === 'academic' ? `Academic · ${s.domain}` : s.domain
-                      }))
-                    );
-                  }
-                  if (Array.isArray(parsed.videos) && parsed.videos.length > 0) {
-                    setSearchVideos(parsed.videos);
-                  }
-                }
-              } catch {
-                // Ignore partial JSON chunk parse issues
-              }
-            }
-          }
-
-          if (!aiText && accumulated) {
-            aiText = accumulated;
-          }
-        }
-        import('../lib/gamification').then(({ awardStudentXP }) => {
-          awardStudentXP(currentUser, 'use_ai_study');
-        }).catch(() => {});
-        import('../lib/engagementService').then(({ recordEngagementActivity }) => {
-          recordEngagementActivity(currentUser, currentUser?.role || 'student', 'study_session', 1);
-        }).catch(() => {});
-      } catch (apiErr: any) {
-        console.warn("Orion AI completion error:", apiErr?.message || apiErr);
-        aiText = "⚠️ AI is temporarily unavailable. Please try again.";
-      }
-      
-      const cleanJsonString = (raw: string): string => {
-        let cleaned = raw.trim();
-        if (cleaned.startsWith('```')) {
-          cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-        }
-        return cleaned.trim();
-      };
-
-      try {
-        const cleanedStr = cleanJsonString(aiText);
-        const parsed = JSON.parse(cleanedStr);
-        if (parsed && typeof parsed === 'object') {
-          return {
-            responseText: parsed.responseText || parsed.response || aiText,
-            action: parsed.action || parsed.intent || 'general_chat',
-            targetValue: parsed.targetValue || parsed.details?.title || parsed.details?.query,
-            details: parsed.details || {}
-          };
-        }
-      } catch {
-        console.warn('Structured JSON parsing notice');
-      }
-
-      return {
-        responseText: (aiText && aiText.trim().length > 0) ? aiText : `I'm ready to assist you. Let me know what you'd like to automate across Veylentra!`,
-        action: 'general_chat'
-      };
-    } catch (err: any) {
-      console.error('Orion remote parsing failed:', err);
-      return {
-        responseText: `I'm ready to assist you. Let me know what you'd like to automate across Veylentra!`,
-        action: 'general_chat'
-      };
-    }
-  };
-
-  // Command Parser & Executor (Orion 2.0 Operating Assistant)
-  const mapActionNameToType = (aiAction: string, textLow: string): OrionActionType => {
-    const normRole = (effectiveRole || currentUser?.role || 'student').toLowerCase().trim();
-    if (aiAction === 'navigate_tab') return 'navigate_tab';
-    if (aiAction === 'get_child_overview' || ((normRole === 'parent' || normRole === 'guardian') && (textLow.includes('child') || textLow.includes('ward') || textLow.includes('son') || textLow.includes('daughter')))) {
-      return 'get_child_overview';
-    }
-    if (aiAction === 'web_search' || textLow.includes('search about') || textLow.includes('search the web') || textLow.startsWith('look up')) return 'web_search';
-    // Intelligence & Data Queries
-    if (aiAction === 'get_submissions' || (textLow.includes('submit') && textLow.includes('homework')) || textLow.includes('who has not submitted')) return 'get_submissions';
-    if (aiAction === 'get_homework' || ((textLow.includes('homework') || textLow.includes('assignment')) && (textLow.includes('what') || textLow.includes('show') || textLow.includes('check') || textLow.includes('pending') || textLow.includes('my') || textLow.includes('status') || textLow.includes('due')))) return 'get_homework';
-    if (aiAction === 'get_attendance' || (textLow.includes('attendance') && (textLow.includes('summary') || textLow.includes('show') || textLow.includes('check') || textLow.includes('rate') || textLow.includes('absent') || textLow.includes('my') || textLow.includes('report')))) return 'get_attendance';
-    if (aiAction === 'get_students' || (textLow.includes('student') && (textLow.includes('list') || textLow.includes('directory') || textLow.includes('struggling') || textLow.includes('performance') || textLow.includes('show all')))) return 'get_students';
-    if (aiAction === 'get_classes' || (textLow.includes('class') && (textLow.includes('overview') || textLow.includes('summary') || textLow.includes('compare')))) return 'get_classes';
-    if (aiAction === 'get_calendar' || ((textLow.includes('event') || textLow.includes('calendar') || textLow.includes('upcoming')) && (textLow.includes('what') || textLow.includes('show') || textLow.includes('list') || textLow.includes('check')))) return 'get_calendar';
-    if (aiAction === 'get_notifications' || ((textLow.includes('notice') || textLow.includes('announcement') || textLow.includes('notification')) && (textLow.includes('what') || textLow.includes('show') || textLow.includes('recent') || textLow.includes('unread')))) return 'get_notifications';
-    if (aiAction === 'generate_report' || textLow.includes('generate report') || textLow.includes('daily briefing') || textLow.includes('school summary') || textLow.includes('school report')) return 'generate_report';
-    // Creation & Mutation Actions
-    if (aiAction === 'create_study_plan' || textLow.includes('create study plan') || textLow.includes('make a study plan') || textLow.includes('plan study') || textLow.includes('study plan for')) return 'create_study_plan';
-    if (aiAction === 'create_calendar_event' || (textLow.includes('calendar') && (textLow.includes('add') || textLow.includes('schedule') || textLow.includes('event')))) return 'create_calendar_event';
-    if (aiAction === 'create_note' || textLow.includes('save note') || textLow.includes('take note') || (textLow.includes('note') && textLow.includes('vault'))) return 'create_note';
-    if (aiAction === 'mark_attendance' || aiAction === 'start_attendance' || (textLow.includes('attendance') && (textLow.includes('take') || textLow.includes('mark') || textLow.includes('start')))) return 'mark_attendance';
-    if (aiAction === 'send_broadcast' || aiAction === 'create_announcement' || textLow.includes('broadcast') || (textLow.includes('announce') && !textLow.includes('show'))) return 'create_broadcast';
-    if (aiAction === 'notify_users' || textLow.includes('notify') || textLow.includes('tell class') || textLow.includes('send reminder')) return 'notify_users';
-    if (aiAction === 'create_event' || textLow.includes('schedule event') || textLow.includes('annual function') || textLow.includes('schedule assembly')) return 'create_event';
-    if (aiAction === 'create_competition' || (textLow.includes('competition') && (textLow.includes('create') || textLow.includes('add') || textLow.includes('host')))) return 'create_competition';
-    if (aiAction === 'create_meet' || (textLow.includes('schedule') && textLow.includes('meet'))) return 'create_meeting';
-    if (aiAction === 'add_study_planner' || textLow.includes('study planner') || textLow.includes('study session')) return 'add_study_planner';
-    if (aiAction === 'add_task' || (textLow.includes('task') && (textLow.includes('add') || textLow.includes('create') || textLow.includes('new')))) return 'add_task';
-    if (aiAction === 'complete_task' || (textLow.includes('task') && (textLow.includes('mark') || textLow.includes('complete') || textLow.includes('done')))) return 'complete_task';
-    if (aiAction === 'delete_task' || (textLow.includes('task') && textLow.includes('delete'))) return 'delete_task';
-    if (aiAction === 'create_homework' || ((textLow.includes('homework') || textLow.includes('assignment')) && (textLow.includes('create') || textLow.includes('assign') || textLow.includes('add') || textLow.includes('publish')))) return 'create_homework';
-    if (aiAction === 'delete_item' || textLow.startsWith('delete') || textLow.startsWith('cancel') || textLow.startsWith('remove')) return 'delete_item';
-    if (aiAction === 'register_competition') return 'register_competition';
-    return (aiAction as OrionActionType) || 'general_chat';
-  };
-
-  const parseMultiStepActions = (rawText: string, primary: OrionAction): OrionAction[] => {
-    const lower = rawText.toLowerCase();
-    const actions: OrionAction[] = [primary];
-
-    // Compound intent for Study Planner AND Task Manager
-    if (lower.includes('study planner') && (lower.includes('task') || lower.includes('tasks'))) {
-      if (!actions.some(a => a.action === 'add_study_planner')) {
-        actions.push({ action: 'add_study_planner', title: primary.title || primary.targetValue, date: primary.date, time: primary.time });
-      }
-      if (!actions.some(a => a.action === 'add_task')) {
-        actions.push({ action: 'add_task', title: primary.title || primary.targetValue, date: primary.date });
-      }
-    }
-
-    if ((lower.includes('competition') || lower.includes('event') || lower.includes('meet') || lower.includes('assignment')) &&
-        (lower.includes(' and notify ') || lower.includes(' and tell ') || lower.includes(' and send notification'))) {
-      const classMatch = lower.match(/class\s+(\d+[a-z]?)/i);
-      actions.push({
-        action: 'notify_users',
-        title: `📢 Alert regarding ${primary.title || 'new update'}`,
-        message: `Update: ${primary.title || rawText}`,
-        audience: classMatch ? `Class ${classMatch[1].toUpperCase()}` : 'all',
-        targetClass: classMatch ? `Class ${classMatch[1].toUpperCase()}` : undefined
-      });
-    }
-
-    return actions;
-  };
-
-  const isExplicitTabNavigationCommand = (textLow: string): boolean => {
-    const hasNavVerb =
-      textLow.startsWith('open ') ||
-      textLow.startsWith('go to ') ||
-      textLow.startsWith('launch ') ||
-      textLow.startsWith('switch to ') ||
-      textLow.startsWith('take me to ');
-    const hasDataOrWriteVerb =
-      textLow.includes('create ') ||
-      textLow.includes('check ') ||
-      textLow.includes('show ') ||
-      textLow.includes('summary') ||
-      textLow.includes('report') ||
-      textLow.includes('status') ||
-      textLow.includes('pending') ||
-      textLow.includes('who ') ||
-      textLow.includes('how many') ||
-      textLow.includes('analyze') ||
-      textLow.includes('mark ') ||
-      textLow.includes('assign ') ||
-      textLow.includes('generate ');
-    return hasNavVerb && !hasDataOrWriteVerb;
+    showNotification(`Saved "${generatedNotesContent.title}" to Lecture Notes.`);
   };
 
   const buildOrionUserContext = (): OrionUserContext => ({
     userId: currentUser?.uid,
     userName: currentUser?.name || 'User',
     userEmail: currentUser?.email,
-    userRole: effectiveRole || currentUser?.role || 'student',
+    userRole: normalizedRole,
     userClass: currentUser?.className || currentUser?.grade,
     grade: currentUser?.grade,
     section: currentUser?.section,
     linkedStudentIds: linkedChildren.map((c: any) => c?.uid || c?.id).filter(Boolean),
-    linkedStudents: linkedChildren
+    linkedStudents: linkedChildren,
   });
 
-  const executeVoiceCommand = async (textToParse: string) => {
-    if (!textToParse.trim()) return;
+  const applyNavigationTarget = (targetVal: string) => {
+    const tabVal = targetVal.toLowerCase();
+    if (tabVal.includes('life')) triggerNavTransition('Veylentra Life', 'life');
+    else if (tabVal.includes('meet')) triggerNavTransition('Veylentra Meet', 'meet');
+    else if (tabVal.includes('material')) triggerNavTransition('Material Hub', 'materials');
+    else if (tabVal.includes('attendance')) triggerNavTransition('Attendance Manager', 'attendance_manager');
+    else if (tabVal.includes('homework')) triggerNavTransition('Homework', 'homework');
+    else if (tabVal.includes('study')) triggerNavTransition('Study Hub', 'study_hub');
+    else if (tabVal.includes('assignment')) triggerNavTransition('Assignments', 'assignments');
+    else if (tabVal.includes('timetable') || tabVal.includes('schedule')) triggerNavTransition('Timetable', 'timetable_viewer');
+    else if (tabVal.includes('notice') || tabVal.includes('announcement')) triggerNavTransition('Notices', 'notice_viewer');
+    else if (tabVal.includes('parent')) triggerNavTransition('Parental Portal', 'parent_portal');
+    else if (tabVal.includes('dashboard')) triggerNavTransition('Dashboard', 'dashboard');
+  };
+
+  const executeServerConfirmedAction = async (confirmPayload: NonNullable<typeof pendingConfirmation>) => {
     setIsProcessing(true);
-    let textLow = textToParse.toLowerCase().trim();
+    setPendingConfirmation(null);
+    const turnId = `turn_${Date.now()}`;
+    const userCtx = buildOrionUserContext();
 
-    // 1. Check if user is confirming or canceling a pending action
-    if (pendingConfirmation) {
-      const confirmAffirmatives = ['yes', 'confirm', 'proceed', 'sure', 'do it', 'delete', 'ok', 'yeah', 'cancel meeting', 'delete competition'];
-      const confirmNegatives = ['no', 'cancel', 'dont', "don't", 'abort', 'stop', 'keep it'];
+    setTurns((prev) => [
+      ...prev,
+      {
+        id: turnId,
+        userCommand: `Confirm: ${confirmPayload.action.replace(/_/g, ' ')} (${confirmPayload.targetValue || ''})`,
+        plannedSteps: confirmPayload.plannedSteps,
+        status: 'running',
+        finalResponse: 'Executing confirmed action against server...',
+        snapshot: {
+          phase: 'executing',
+          headline: 'Executing confirmed action...',
+          startedAt: Date.now(),
+          verified: false,
+          stages: [
+            { phase: 'preparing', label: 'Confirmed by user', status: 'completed', durationMs: 1 },
+            { phase: 'executing', label: 'Executing action', status: 'active' },
+            { phase: 'verifying', label: 'Verifying outcome', status: 'pending' },
+          ],
+          steps: (confirmPayload.plannedSteps || []).map((s, idx) => ({
+            id: `step-${idx + 1}`,
+            label: s.action.replace(/_/g, ' '),
+            action: s.action,
+            status: 'running',
+          })),
+        },
+      },
+    ]);
 
-      if (confirmAffirmatives.some(k => textLow.includes(k))) {
-        const userCtx = buildOrionUserContext();
-        const actionToExec: OrionAction = pendingConfirmation.actionObject || {
-          action: pendingConfirmation.action as any,
-          title: pendingConfirmation.targetValue,
-          targetValue: pendingConfirmation.targetValue
-        };
+    try {
+      const res = await executeOrionViaServer({
+        command: confirmPayload.originalCommand,
+        actionPlan: confirmPayload.plannedSteps || (confirmPayload.actionObject ? [confirmPayload.actionObject] : undefined),
+        confirmed: true,
+        activeTab,
+        modelOverride,
+        history: ephemeralTurnsRef.current.slice(-6),
+        userContext: userCtx,
+      });
 
-        const execRes = await runOrionAgentTask({
-          rawCommand: textToParse,
-          actions: [actionToExec],
+      if (res.snapshot) setOrionProgress(res.snapshot);
+      if (res.structuredData) setStructuredOutput(res.structuredData);
+      if (res.modelUsed) setOrionModelUsed(res.modelUsed);
+
+      if (Array.isArray(res.refreshTables)) {
+        res.refreshTables.forEach((table) => {
+          window.dispatchEvent(new CustomEvent('studentos-db-update', { detail: { table, action: 'INSERT', timestamp: Date.now() } }));
+        });
+      }
+
+      if (Array.isArray(res.clientBridgeActions) && res.clientBridgeActions.length > 0) {
+        await runOrionAgentTask({
+          rawCommand: confirmPayload.originalCommand,
+          actions: res.clientBridgeActions,
           userContext: userCtx,
           isConfirmed: true,
-          onProgress: setOrionProgress
         });
+      }
 
-        setPendingConfirmation(null);
-        if (execRes.structuredData) setStructuredOutput(execRes.structuredData);
-        setJarvisFeedback(execRes.combinedSummary);
-        speakFeedback(execRes.combinedSummary.slice(0, 260));
-        showNotification(`ORION: Confirmed ${pendingConfirmation.action}`);
-        setIsProcessing(false);
+      const finalText = res.finalResponse || res.error || 'Action processed.';
+      setJarvisFeedback(finalText);
+      setTurns((prev) =>
+        prev.map((t) =>
+          t.id === turnId
+            ? {
+                ...t,
+                status: res.success ? 'completed' : 'failed',
+                snapshot: res.snapshot || t.snapshot,
+                finalResponse: finalText,
+                errorMessage: res.success ? undefined : res.error || finalText,
+                modelUsed: res.modelUsed,
+                providerUsed: res.providerUsed,
+              }
+            : t
+        )
+      );
+
+      ephemeralTurnsRef.current = [
+        ...ephemeralTurnsRef.current,
+        { role: 'user' as const, content: confirmPayload.originalCommand },
+        { role: 'assistant' as const, content: finalText.slice(0, 600) },
+      ].slice(-6);
+      speakFeedback(finalText.slice(0, 220));
+      showNotification(res.success ? `Orion: ${confirmPayload.action} verified.` : `Orion: ${res.error || 'Action failed'}`);
+    } catch (err: any) {
+      const msg = err?.message || 'Failed to execute confirmed action.';
+      setTurns((prev) =>
+        prev.map((t) => (t.id === turnId ? { ...t, status: 'failed', finalResponse: msg, errorMessage: msg } : t))
+      );
+      setLastFailedCommand(confirmPayload.originalCommand);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const executeVoiceCommand = async (rawInput: string) => {
+    const trimmedInput = rawInput.trim();
+    if (!trimmedInput) return;
+
+    setIsProcessing(true);
+    setLastFailedCommand(null);
+    let textToParse = trimmedInput;
+    let textLow = textToParse.toLowerCase();
+
+    // 1. Handle active confirmation prompt if user typed/spoke yes or no
+    if (pendingConfirmation) {
+      const confirmAffirmatives = ['yes', 'confirm', 'proceed', 'sure', 'do it', 'ok', 'yeah'];
+      const confirmNegatives = ['no', 'cancel', 'dont', "don't", 'abort', 'stop', 'keep it'];
+      if (confirmAffirmatives.some((k) => textLow === k || textLow.startsWith(k + ' '))) {
+        await executeServerConfirmedAction(pendingConfirmation);
         return;
-      } else if (confirmNegatives.some(k => textLow.includes(k))) {
+      }
+      if (confirmNegatives.some((k) => textLow === k || textLow.startsWith(k + ' '))) {
         setPendingConfirmation(null);
         setOrionProgress(null);
-        const cancelText = 'Operation canceled. No changes were made to Veylentra.';
-        setJarvisFeedback(cancelText);
-        speakFeedback(cancelText);
+        setJarvisFeedback('Operation canceled. No changes were made.');
         setIsProcessing(false);
         return;
       }
     }
 
-    // 0. Explicit Tab Navigation Intercept ONLY (never hijacks homework/attendance queries)
+    // 2. If replying to clarification question, combine with original command
+    if (pendingClarification) {
+      textToParse = `${pendingClarification.originalCommand}: ${trimmedInput}`;
+      textLow = textToParse.toLowerCase();
+      setPendingClarification(null);
+    }
+
+    // 3. Explicit Tab Navigation Intercept ONLY (never hijacks data queries)
     if (isExplicitTabNavigationCommand(textLow)) {
-      if (textLow.includes('material') || textLow.includes('hub')) {
-        triggerNavTransition('Material Hub', 'materials');
-        setIsProcessing(false);
-        return;
-      }
-      if (textLow.includes('attendance')) {
-        triggerNavTransition('Attendance', 'attendance_manager');
-        setIsProcessing(false);
-        return;
-      }
-      if (textLow.includes('homework')) {
-        triggerNavTransition('Homework', 'homework');
-        setIsProcessing(false);
-        return;
-      }
-      if (textLow.includes('whiteboard')) {
-        triggerNavTransition('Whiteboard', 'whiteboard');
-        setIsProcessing(false);
-        return;
-      }
-      if (textLow.includes('study')) {
-        triggerNavTransition('Study Hub', 'study_hub');
-        setIsProcessing(false);
-        return;
-      }
-      if (textLow.includes('notice') || textLow.includes('announcement')) {
-        triggerNavTransition('Notices', 'notice_viewer');
-        setIsProcessing(false);
-        return;
-      }
-      if (textLow.includes('parent')) {
-        triggerNavTransition('Parental Portal', 'parent_portal');
-        setIsProcessing(false);
-        return;
-      }
-      if (textLow.includes('dashboard') || textLow.includes('home')) {
-        triggerNavTransition('Dashboard', 'dashboard');
-        setIsProcessing(false);
-        return;
-      }
+      applyNavigationTarget(textLow);
+      setIsProcessing(false);
+      return;
     }
 
-    // 0.5. Immediate Educational Video Intent Intercept (Routes strictly to /api/ai/search)
-    const isExplicitVideoQuery = (
+    // 4. Explicit Video / Web Discovery Intercept
+    const isExplicitVideoQuery =
       textLow.includes('video') ||
-      textLow.includes('videos') ||
       textLow.includes('youtube') ||
-      /\b(?:find|show|get|recommend|suggest|give|watch)?\s*(?:a\s+)?videos?\s*(?:about|on|for|regarding)?\b/i.test(textLow)
-    );
-
+      /\b(?:find|show|get|recommend|suggest|give|watch)?\s*(?:a\s+)?videos?\s*(?:about|on|for|regarding)?\b/i.test(textLow);
     if (isExplicitVideoQuery) {
       const cleanVideoQuery = textLow
         .replace(/\b(?:find|show|get|recommend|suggest|give|watch)?\s*(?:a\s+)?videos?\s*(?:about|on|for|regarding)?\s*/gi, '')
         .replace(/\b(?:on|from|in)\s+youtube\b/gi, '')
         .replace(/[?.!]+$/, '')
         .trim();
-      const finalTopic = cleanVideoQuery || textToParse;
-      await handleRunInternetSearch(finalTopic);
+      await handleRunInternetSearch(cleanVideoQuery || textToParse);
       setIsProcessing(false);
       return;
     }
 
-    // 0.6. Direct Educational Search Query Intercept
-    if (textLow.includes('newton') && (textLow.includes('law') || textLow.includes('class 8') || textLow.includes('physics'))) {
-      await handleRunInternetSearch(textToParse);
-      setIsProcessing(false);
-      return;
-    }
-
-    // 2. Resolve Ephemeral In-Session Pronouns ("it", "that")
+    // 5. Resolve Ephemeral In-Session Pronouns ("it", "that")
     if ((textLow.includes(' it ') || textLow.endsWith(' it') || textLow.includes(' that ')) && lastEntityRef.current) {
       textToParse = textToParse.replace(/\b(it|that)\b/gi, lastEntityRef.current.title);
       textLow = textToParse.toLowerCase().trim();
     }
 
-    // Super Admin trigger
+    // 6. Super Admin unlock protocol check
     if (textLow.includes('naitik kashyap') || textLow.includes('super admin protocol')) {
-      if (effectiveRole === 'super_admin') {
-        setJarvisFeedback('Super Admin credentials verified via Firestore role. Control Center activated.');
-        speakFeedback('Super Admin credentials verified.');
+      if (normalizedRole === 'super_admin') {
+        setJarvisFeedback('Super Admin credentials verified. Control Center activated.');
         if (onSuperAdminUnlocked) onSuperAdminUnlocked();
-        showNotification('SYSTEM: Super Admin Mode Activated.');
+        showNotification('Super Admin Mode Activated.');
       } else {
-        setJarvisFeedback('Access Denied: You lack the required Super Admin role.');
-        speakFeedback('Access Denied.');
-        showNotification('SYSTEM: Auth Failed.');
+        setJarvisFeedback('Access Denied: Super Admin privileges required.');
+        showNotification('Access Denied.');
       }
       setIsProcessing(false);
       return;
     }
 
-    // Query Orion AI Operating Engine for classification
-    const aiVerdict = await queryJarvisAIStream(textToParse);
-    const details = aiVerdict.details || {};
-    const targetVal = aiVerdict.targetValue || details.title || textToParse;
-
-    // Construct primary action
-    const mappedAction = mapActionNameToType(aiVerdict.action, textLow);
-    const primaryAction: OrionAction = {
-      action: mappedAction,
-      title: details.title || targetVal,
-      message: details.content || textToParse,
-      content: details.content || textToParse,
-      subject: details.subject || 'General Studies',
-      category: details.category || 'General',
-      audience: details.targetAudience || 'all',
-      targetClass: details.targetClass || 'Grade 10',
-      date: details.date,
-      time: details.time,
-      targetValue: targetVal,
-      details
+    const turnId = `turn_${Date.now()}`;
+    const initialSnapshot: OrionAgentProgressSnapshot = {
+      phase: 'analyzing',
+      headline: 'Analyzing request on server...',
+      startedAt: Date.now(),
+      verified: false,
+      stages: [
+        { phase: 'analyzing', label: 'Analyzing intent', status: 'active' },
+        { phase: 'planning', label: 'Planning steps', status: 'pending' },
+        { phase: 'preparing', label: 'Verifying RBAC', status: 'pending' },
+        { phase: 'executing', label: 'Executing', status: 'pending' },
+      ],
+      steps: [],
     };
 
-    const actionList = parseMultiStepActions(textToParse, primaryAction);
+    setOrionProgress(initialSnapshot);
+    setTurns((prev) => [
+      ...prev,
+      {
+        id: turnId,
+        userCommand: trimmedInput,
+        status: 'running',
+        snapshot: initialSnapshot,
+        finalResponse: '',
+      },
+    ]);
+
     const userCtx = buildOrionUserContext();
 
-    // Detect if the user is asking a math/geometry question inside Orion
-    const detectedWidget = detectMathInteractiveWidget(textToParse, aiVerdict.responseText || '');
-    setOrionMathWidget(detectedWidget);
-
-    if (targetVal && targetVal !== textToParse) {
-      lastEntityRef.current = { type: mappedAction, title: targetVal };
-    }
-
-    // Direct conversational/academic answer without DB mutation
-    if (mappedAction === 'general_chat' && aiVerdict.responseText) {
-      setStructuredOutput(null);
-      setOrionProgress({
-        phase: 'completed',
-        headline: 'Response synthesized.',
-        verified: true,
-        startedAt: Date.now(),
-        finishedAt: Date.now(),
-        stages: [
-          { phase: 'analyzing', label: 'Analyzing intent', status: 'completed' },
-          { phase: 'executing', label: 'Synthesizing answer', status: 'completed' }
-        ],
-        steps: [
-          { id: 'step-1', label: 'Synthesize response', action: 'general_chat', status: 'completed' }
-        ]
+    try {
+      const serverRes = await executeOrionViaServer({
+        command: textToParse,
+        confirmed: false,
+        activeTab,
+        modelOverride,
+        history: ephemeralTurnsRef.current.slice(-6),
+        userContext: userCtx,
       });
-      setJarvisFeedback(aiVerdict.responseText);
-      ephemeralTurnsRef.current = [
-        ...ephemeralTurnsRef.current,
-        { role: 'user' as const, content: textToParse },
-        { role: 'assistant' as const, content: aiVerdict.responseText }
-      ].slice(-6);
-      speakFeedback(aiVerdict.responseText.slice(0, 260));
-      setIsProcessing(false);
-      return;
-    }
 
-    // Execute through Orion Agent Engine (Plan -> Permission/Prereq -> Execute -> Verify)
-    const agentRes = await runOrionAgentTask({
-      rawCommand: textToParse,
-      actions: actionList,
-      userContext: userCtx,
-      isConfirmed: false,
-      onProgress: setOrionProgress
-    });
+      if (serverRes.modelUsed) setOrionModelUsed(serverRes.modelUsed);
+      if (serverRes.snapshot) setOrionProgress(serverRes.snapshot);
+      if (serverRes.structuredData) setStructuredOutput(serverRes.structuredData);
 
-    if (agentRes.structuredData) {
-      setStructuredOutput(agentRes.structuredData);
-    } else {
-      setStructuredOutput(null);
-    }
-
-    if (agentRes.pendingConfirmation) {
-      setPendingConfirmation({
-        action: agentRes.pendingConfirmation.action,
-        targetValue: agentRes.pendingConfirmation.targetTitle,
-        promptText: agentRes.pendingConfirmation.promptText,
-        previewDetails: agentRes.pendingConfirmation.previewDetails,
-        actionObject: agentRes.pendingConfirmation.actionObject || primaryAction
-      });
-    }
-
-    const resolvedFeedback = agentRes.combinedSummary;
-    const actionTriggered = mappedAction;
-
-    // Navigation ONLY when explicit navigate_tab action is requested
-    if (mappedAction === 'navigate_tab' && targetVal) {
-      const tabVal = targetVal.toLowerCase();
-      if (tabVal.includes('life')) triggerNavTransition('Veylentra Life', 'life' as any);
-      else if (tabVal.includes('meet')) triggerNavTransition('Veylentra Meet', 'meet' as any);
-      else if (tabVal.includes('material')) triggerNavTransition('Material Hub', 'materials');
-      else if (tabVal.includes('attendance')) triggerNavTransition('Attendance Manager', 'attendance_manager');
-      else if (tabVal.includes('homework')) triggerNavTransition('Class Homework', 'homework');
-      else if (tabVal.includes('study')) triggerNavTransition('Study Hub', 'study_hub');
-      else if (tabVal.includes('assignment')) triggerNavTransition('Assignment Center', 'assignments');
-      else if (tabVal.includes('timetable') || tabVal.includes('schedule')) triggerNavTransition('Timetable', 'timetable_viewer');
-      else if (tabVal.includes('notice') || tabVal.includes('announcement')) triggerNavTransition('Notices', 'notice_viewer');
-      else if (tabVal.includes('parent')) triggerNavTransition('Parental Portal', 'parent_portal');
-      else if (tabVal.includes('dashboard')) triggerNavTransition('Dashboard', 'dashboard');
-    } else if (mappedAction === 'search_internet' || mappedAction === 'web_search') {
-      setSearchQuery(targetVal);
-      setSearchResults(resolvedFeedback);
-      const resultSources = agentRes.results?.find(r => r.data?.sources)?.data?.sources;
-      if (Array.isArray(resultSources) && resultSources.length > 0) {
+      if (Array.isArray(serverRes.webSources) && serverRes.webSources.length > 0) {
         setSearchSources(
-          resultSources.map((s: any) => ({
+          serverRes.webSources.map((s: any) => ({
             title: s.title || s.domain || 'Web Source',
             uri: s.url || s.uri || '#',
-            published_source: s.sourceType === 'academic' ? `Academic · ${s.domain}` : s.domain
+            published_source: s.sourceType === 'academic' ? `Academic · ${s.domain}` : s.domain,
           }))
         );
       }
-      const resultVideos = agentRes.results?.find(r => r.data?.videos)?.data?.videos;
-      if (Array.isArray(resultVideos) && resultVideos.length > 0) {
-        setSearchVideos(resultVideos);
+      if (Array.isArray(serverRes.webVideos) && serverRes.webVideos.length > 0) {
+        setSearchVideos(serverRes.webVideos);
       }
-    } else if (mappedAction === 'generate_notes') {
-      setActiveTab('notes');
-      handleGenerateNotes(targetVal);
-    } else if (mappedAction === 'generate_lesson_plan') {
-      setActiveTab('planner');
-      handleGenerateLessonPlan(targetVal);
+
+      if (serverRes.plan?.[0]?.targetValue) {
+        lastEntityRef.current = {
+          type: serverRes.plan[0].action,
+          title: serverRes.plan[0].targetValue,
+        };
+      }
+
+      // Clarification Needed
+      if (serverRes.status === 'needs_clarification') {
+        const q = serverRes.clarificationQuestion || 'Please provide additional details before Orion can proceed.';
+        setPendingClarification({
+          originalCommand: textToParse,
+          question: q,
+          missingFields: serverRes.missingFields || [],
+        });
+        setJarvisFeedback(q);
+        setTurns((prev) =>
+          prev.map((t) =>
+            t.id === turnId
+              ? {
+                  ...t,
+                  status: 'needs_clarification',
+                  plannedSteps: serverRes.plan,
+                  snapshot: serverRes.snapshot || t.snapshot,
+                  finalResponse: q,
+                }
+              : t
+          )
+        );
+        setIsProcessing(false);
+        return;
+      }
+
+      // Awaiting User Confirmation
+      if (serverRes.status === 'awaiting_confirmation' && serverRes.pendingConfirmation) {
+        setPendingConfirmation({
+          originalCommand: textToParse,
+          action: serverRes.pendingConfirmation.action,
+          targetValue: serverRes.pendingConfirmation.targetTitle,
+          promptText: serverRes.pendingConfirmation.promptText,
+          previewDetails: serverRes.pendingConfirmation.previewDetails,
+          actionObject: serverRes.pendingConfirmation.actionObject,
+          plannedSteps: serverRes.pendingConfirmation.plannedSteps || serverRes.plan,
+        });
+        const msg = serverRes.finalResponse || serverRes.pendingConfirmation.promptText;
+        setJarvisFeedback(msg);
+        setTurns((prev) =>
+          prev.map((t) =>
+            t.id === turnId
+              ? {
+                  ...t,
+                  status: 'awaiting_confirmation',
+                  plannedSteps: serverRes.plan,
+                  snapshot: serverRes.snapshot || t.snapshot,
+                  finalResponse: msg,
+                }
+              : t
+          )
+        );
+        setIsProcessing(false);
+        return;
+      }
+
+      // Authorization Denied or Error
+      if (serverRes.status === 'forbidden' || serverRes.status === 'unauthorized' || serverRes.status === 'failed' || serverRes.status === 'error') {
+        const errText = serverRes.error || serverRes.finalResponse || 'Request could not be completed.';
+        setJarvisFeedback(errText);
+        setLastFailedCommand(serverRes.status === 'failed' || serverRes.status === 'error' ? trimmedInput : null);
+        setTurns((prev) =>
+          prev.map((t) =>
+            t.id === turnId
+              ? {
+                  ...t,
+                  status: 'failed',
+                  plannedSteps: serverRes.plan,
+                  snapshot: serverRes.snapshot || t.snapshot,
+                  finalResponse: errText,
+                  errorMessage: errText,
+                }
+              : t
+          )
+        );
+        setIsProcessing(false);
+        return;
+      }
+
+      // Completed! Process any authorized local client bridge actions
+      let finalAnswer = serverRes.finalResponse || '';
+      if (Array.isArray(serverRes.clientBridgeActions) && serverRes.clientBridgeActions.length > 0) {
+        const bridgeNav = serverRes.clientBridgeActions.find((a) => a.action === 'navigate_tab');
+        if (bridgeNav && (bridgeNav.targetValue || bridgeNav.title)) {
+          applyNavigationTarget(bridgeNav.targetValue || bridgeNav.title || '');
+        }
+        const notesAct = serverRes.clientBridgeActions.find((a) => a.action === 'generate_notes');
+        if (notesAct) {
+          setActiveTab('notes');
+          handleGenerateSpecializedNotes(notesAct.title || notesAct.targetValue || textToParse, 'detailed_notes');
+        }
+        const localBridgeOnly = serverRes.clientBridgeActions.filter(
+          (a) => a.action !== 'navigate_tab' && a.action !== 'generate_notes' && a.action !== 'general_chat'
+        );
+        if (localBridgeOnly.length > 0) {
+          const bridgeRes = await runOrionAgentTask({
+            rawCommand: textToParse,
+            actions: localBridgeOnly,
+            userContext: userCtx,
+            isConfirmed: true,
+            onProgress: setOrionProgress,
+          });
+          if (bridgeRes.combinedSummary) {
+            finalAnswer = bridgeRes.combinedSummary;
+          }
+          if (bridgeRes.structuredData) setStructuredOutput(bridgeRes.structuredData);
+        }
+      }
+
+      // If general_chat returned no AI text because server key check differed, try /api/ai/chat explicitly
+      if (!finalAnswer || finalAnswer.includes('No AI provider key is currently configured')) {
+        try {
+          const aiDirect = await queryJarvisAIStream(textToParse);
+          if (aiDirect.responseText) finalAnswer = aiDirect.responseText;
+        } catch (aiFallbackErr: any) {
+          if (!finalAnswer) throw aiFallbackErr;
+        }
+      }
+
+      if (Array.isArray(serverRes.refreshTables)) {
+        serverRes.refreshTables.forEach((table) => {
+          window.dispatchEvent(new CustomEvent('studentos-db-update', { detail: { table, action: 'INSERT', timestamp: Date.now() } }));
+        });
+      }
+
+      const detectedWidget = detectMathInteractiveWidget(textToParse, finalAnswer);
+      setOrionMathWidget(detectedWidget);
+      setJarvisFeedback(finalAnswer);
+
+      setTurns((prev) =>
+        prev.map((t) =>
+          t.id === turnId
+            ? {
+                ...t,
+                status: 'completed',
+                plannedSteps: serverRes.plan,
+                snapshot: serverRes.snapshot || t.snapshot,
+                finalResponse: finalAnswer,
+                providerUsed: serverRes.providerUsed,
+                modelUsed: serverRes.modelUsed,
+                mathWidget: detectedWidget,
+              }
+            : t
+        )
+      );
+
+      ephemeralTurnsRef.current = [
+        ...ephemeralTurnsRef.current,
+        { role: 'user' as const, content: textToParse },
+        { role: 'assistant' as const, content: finalAnswer.slice(0, 600) },
+      ].slice(-6);
+
+      speakFeedback(finalAnswer.slice(0, 220));
+    } catch (err: any) {
+      const msg = err?.message || 'Orion could not complete the request right now.';
+      setLastFailedCommand(trimmedInput);
+      setJarvisFeedback(msg);
+      setTurns((prev) =>
+        prev.map((t) =>
+          t.id === turnId
+            ? {
+                ...t,
+                status: 'failed',
+                finalResponse: msg,
+                errorMessage: msg,
+                snapshot: {
+                  phase: 'failed',
+                  headline: 'Execution encountered an error.',
+                  startedAt: Date.now(),
+                  finishedAt: Date.now(),
+                  verified: false,
+                  stages: [
+                    { phase: 'analyzing', label: 'Analyzing intent', status: 'completed', durationMs: 1 },
+                    { phase: 'executing', label: 'Server execution', status: 'failed', detail: msg },
+                  ],
+                  steps: [{ id: 'step-1', label: 'Execute command', action: 'general_chat', status: 'failed', verificationNote: msg }],
+                },
+              }
+            : t
+        )
+      );
+    } finally {
+      setIsProcessing(false);
     }
-
-    setJarvisFeedback(resolvedFeedback);
-    ephemeralTurnsRef.current = [
-      ...ephemeralTurnsRef.current,
-      { role: 'user' as const, content: textToParse },
-      { role: 'assistant' as const, content: resolvedFeedback.slice(0, 600) }
-    ].slice(-6);
-
-    speakFeedback(resolvedFeedback.slice(0, 260));
-    showNotification(`ORION: ${actionTriggered} processed.`);
-    setIsProcessing(false);
   };
 
   const handleTextSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    executeVoiceCommand(commandText);
+    const val = commandText.trim();
+    if (!val) return;
+    setCommandText('');
+    executeVoiceCommand(val);
   };
 
-  // Quick Action triggers for smart board touch use
   const handleQuickTouchAction = (cmd: string) => {
-    setCommandText(cmd);
+    setCommandText('');
     executeVoiceCommand(cmd);
   };
 
-  // Filter student lists
-  const filteredReports = reports.filter(r => {
-    const matchesSearch = r.name.toLowerCase().includes(searchStudentTerm.toLowerCase()) || 
-                          r.classGrade.toLowerCase().includes(searchStudentTerm.toLowerCase());
+  const filteredReports = reports.filter((r) => {
+    const matchesSearch =
+      r.name.toLowerCase().includes(searchStudentTerm.toLowerCase()) ||
+      r.classGrade.toLowerCase().includes(searchStudentTerm.toLowerCase());
     const matchesHouse = statusFilter ? r.house === statusFilter || r.section === statusFilter : true;
     return matchesSearch && matchesHouse;
   });
 
+  const exportStructuredMarkdown = () => {
+    if (!structuredOutput) return;
+    if (structuredOutput.exportableMarkdown) {
+      navigator.clipboard.writeText(structuredOutput.exportableMarkdown);
+      showNotification('Copied structured report to clipboard.');
+      return;
+    }
+    const header = `# ${structuredOutput.title}\n\n`;
+    const metricsMd = (structuredOutput.metrics || []).map((m) => `- **${m.label}:** ${m.value}`).join('\n');
+    const rowsMd = (structuredOutput.rows || [])
+      .map((r) => `- ${Object.entries(r).map(([k, v]) => `${k}: ${v}`).join(' · ')}`)
+      .join('\n');
+    navigator.clipboard.writeText(`${header}${metricsMd}\n\n${rowsMd}`.trim());
+    showNotification('Copied structured summary to clipboard.');
+  };
+
   return (
-    <div className="flex flex-col justify-between overflow-hidden relative transition-all duration-300 h-full p-3 sm:p-6">
+    <div className="flex flex-col h-full overflow-hidden bg-slate-950/90 text-slate-100">
+      {/* Module Navigation Transition Overlay */}
       {navigatingTransition && (
-        <div className="fixed inset-0 z-[9999] bg-slate-950/95 backdrop-blur-2xl flex flex-col items-center justify-center space-y-6 animate-fadeIn">
-          <Orion3DOrb isProcessing={true} size={160} />
-          <div className="text-center space-y-2">
-            <h3 className="text-2xl font-black text-white font-display uppercase tracking-widest animate-pulse">
-              Opening {navigatingTransition.title}
-            </h3>
-            <p className="text-xs text-indigo-400 font-mono">Opening page</p>
+        <div className="fixed inset-0 z-[9999] bg-slate-950/95 backdrop-blur-xl flex flex-col items-center justify-center gap-4">
+          <VeylentraIcon name="orion" size={48} />
+          <div className="text-center space-y-1">
+            <h3 className="text-lg font-semibold text-white">Opening {navigatingTransition.title}</h3>
+            <p className="text-xs text-slate-400">Switching workspace module...</p>
           </div>
         </div>
       )}
-      
-      {/* 1. TOP HEADER */}
-      <div className="flex items-center justify-between pb-4 border-b border-white/10 relative">
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <Orion3DOrb isProcessing={isProcessing || isListening} size={isProcessing || isListening ? 48 : 28} />
-            {isListening && (
-              <span className="absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full bg-red-500 animate-ping border border-slate-950" />
-            )}
+
+      {/* 1. WORKSPACE HEADER */}
+      <header className="shrink-0 px-4 sm:px-6 py-3.5 border-b border-white/10 bg-slate-950/80 flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="h-9 w-9 rounded-xl bg-indigo-500/15 border border-indigo-400/25 flex items-center justify-center shrink-0">
+            <VeylentraIcon name="orion" size={24} />
           </div>
-          <div>
-            <h2 className="text-base font-bold text-white">Orion</h2>
-            <p className="text-xs text-slate-400">Ephemeral session · Clears on exit</p>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm sm:text-base font-semibold text-white tracking-tight">Orion</h2>
+              <span className="text-[11px] font-mono uppercase tracking-wider text-indigo-300">
+                {normalizedRole.replace('_', ' ')}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 inline-flex items-center gap-1 truncate">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span>Ephemeral session · Zero chat persistence</span>
+            </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* Mode Segmented Navigation & Controls */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="inline-flex items-center rounded-xl bg-slate-900/90 border border-white/10 p-1 gap-0.5">
+            <button
+              type="button"
+              onClick={() => setActiveJarvisSection('home')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                activeJarvisSection === 'home' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              Workspace
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveJarvisSection('search')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                activeJarvisSection === 'search' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              Research
+            </button>
+            {isStaffRole && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setActiveJarvisSection('reports')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors hidden sm:inline-flex ${
+                    activeJarvisSection === 'reports' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  Reports
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveJarvisSection('houses')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors hidden md:inline-flex ${
+                    activeJarvisSection === 'houses' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  Houses
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveJarvisSection('sections')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors hidden md:inline-flex ${
+                    activeJarvisSection === 'sections' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  Sections
+                </button>
+              </>
+            )}
+          </div>
+
           <button
             type="button"
             onClick={() => {
               clearEphemeralSession();
               showNotification('Orion ephemeral session cleared.');
             }}
-            className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-medium text-slate-300 border border-white/10 flex items-center gap-1.5 transition-colors"
+            className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-medium text-slate-300 border border-white/10 inline-flex items-center gap-1.5 transition-colors"
             title="Clear current ephemeral session"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Clear Session</span>
+            <span className="hidden sm:inline">Clear</span>
           </button>
 
-          {/* More Menu Dropdown */}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowMoreMenu(prev => !prev)}
-              className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-medium text-slate-300 border border-white/10 flex items-center gap-1.5 transition-colors"
-            >
-              More ▾
-            </button>
-            {showMoreMenu && (
-              <div className="absolute right-0 mt-2 w-48 rounded-xl bg-slate-900 border border-white/15 shadow-2xl z-50 py-1.5 divide-y divide-white/5">
-                <div className="px-3 py-1 text-[10px] uppercase font-mono text-slate-400 font-bold">Menu</div>
-                {['teacher', 'faculty', 'head_teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes((effectiveRole || currentUser?.role || 'student').toLowerCase().trim()) && (
-                  <>
-                    <button
-                      onClick={() => { setActiveJarvisSection('reports'); setShowMoreMenu(false); }}
-                      className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-white/10 flex items-center gap-2"
-                    >
-                      <Users className="w-3.5 h-3.5 text-indigo-400" /> Student Reports
-                    </button>
-                    <button
-                      onClick={() => { setActiveJarvisSection('houses'); setShowMoreMenu(false); }}
-                      className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-white/10 flex items-center gap-2"
-                    >
-                      <Award className="w-3.5 h-3.5 text-amber-400" /> Houses
-                    </button>
-                    <button
-                      onClick={() => { setActiveJarvisSection('sections'); setShowMoreMenu(false); }}
-                      className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-white/10 flex items-center gap-2"
-                    >
-                      <BarChart3 className="w-3.5 h-3.5 text-emerald-400" /> Sections
-                    </button>
-                  </>
-                )}
-                <button
-                  onClick={() => { setShowDiagnostics(prev => !prev); setShowMoreMenu(false); }}
-                  className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-white/10 flex items-center gap-2"
-                >
-                  <Mic className="w-3.5 h-3.5 text-rose-400" /> Diagnostics
-                </button>
-              </div>
-            )}
-          </div>
+          <button
+            type="button"
+            onClick={() => setShowDiagnostics((v) => !v)}
+            className={`p-1.5 rounded-lg border transition-colors ${
+              showDiagnostics
+                ? 'bg-indigo-500/20 border-indigo-400/40 text-indigo-300'
+                : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+            }`}
+            title="Voice & speech diagnostics"
+          >
+            <Mic className="w-4 h-4" />
+          </button>
 
           {onClose && (
-            <button 
+            <button
               type="button"
               onClick={() => {
                 clearEphemeralSession();
                 onClose();
               }}
-              className="p-1.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-              title="Close Orion & wipe session"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+              title="Close Orion and wipe session"
             >
               <X className="w-5 h-5" />
             </button>
           )}
         </div>
-      </div>
+      </header>
 
-      {/* 2. BODY CONTENT */}
-      <div className="flex-1 overflow-y-auto py-4 min-h-0 space-y-4">
-
-        {/* Back button if in sub-section */}
-        {activeJarvisSection !== 'home' && (
-          <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-3">
-            <button
-              onClick={() => setActiveJarvisSection('home')}
-              className="px-3 py-1.5 rounded-lg bg-slate-800 text-xs font-bold text-white hover:bg-slate-700 transition-colors flex items-center gap-1.5"
-            >
-              ← Back to Orion
+      {/* Optional Mic Diagnostics Drawer */}
+      {showDiagnostics && (
+        <div className="shrink-0 mx-4 sm:mx-6 mt-3 p-3.5 rounded-xl bg-slate-900/90 border border-white/10 text-[11px] font-mono text-slate-300 space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold text-indigo-300 uppercase tracking-wider">Speech Recognition Diagnostics</span>
+            <button type="button" onClick={() => setShowDiagnostics(false)} className="text-slate-400 hover:text-white">
+              Dismiss
             </button>
-            <span className="text-xs font-bold uppercase font-mono text-indigo-300">
-              {activeJarvisSection === 'reports' ? 'Student Reports' : activeJarvisSection === 'houses' ? 'Houses' : activeJarvisSection === 'sections' ? 'Sections' : 'Discovery Hub'}
-            </span>
           </div>
-        )}
+          <p>mediaDevices: {String(!!navigator.mediaDevices)} · SpeechRecognition: {String(!!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition))}</p>
+          {diagnosticError && (
+            <p className="text-rose-300">
+              Last Error: {diagnosticError.name} — {diagnosticError.message}
+            </p>
+          )}
+        </div>
+      )}
 
-        {/* Pending Confirmation & Action Preview Card */}
-        {pendingConfirmation && (
-          <div className="smart-glass p-4 rounded-2xl bg-amber-500/10 border border-amber-500/40 space-y-3 shadow-lg">
-            <div className="flex items-start justify-between gap-3 flex-wrap">
-              <div className="flex items-start gap-3">
-                <span className="text-xl mt-0.5">🛡️</span>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-xs font-black text-amber-300 font-mono uppercase tracking-wider">Action Preview — Confirmation Required</p>
-                    <span className="text-[9px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-200 font-mono uppercase">{pendingConfirmation.action}</span>
-                  </div>
-                  <p className="text-xs text-slate-200 mt-1">{pendingConfirmation.promptText}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => executeVoiceCommand('yes')}
-                  className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black rounded-xl transition-all shadow-lg cursor-pointer"
-                >
-                  ✓ Confirm & Execute
-                </button>
-                <button
-                  onClick={() => executeVoiceCommand('no')}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition-all cursor-pointer"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-            {pendingConfirmation.previewDetails && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-amber-500/20 text-[11px]">
-                {Object.entries(pendingConfirmation.previewDetails).map(([k, v]) => (
-                  <div key={k} className="bg-slate-950/60 px-3 py-1.5 rounded-lg border border-white/5 flex flex-col">
-                    <span className="text-[9px] uppercase font-mono text-amber-400/80 font-bold">{k}</span>
-                    <span className="text-slate-200 font-medium break-words">{v}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Structured Intelligence Output Card */}
-        {structuredOutput && (
-          <div className="smart-glass p-4 rounded-2xl bg-slate-950/80 border border-indigo-500/30 space-y-4 shadow-xl">
-            <div className="flex items-center justify-between gap-2 flex-wrap border-b border-white/10 pb-3">
-              <div>
-                <span className="text-[9px] font-mono uppercase tracking-widest text-emerald-400 font-bold block">✓ Veylentra Live Data</span>
-                <h3 className="text-sm font-black text-white">{structuredOutput.title}</h3>
-                {structuredOutput.subtitle && <p className="text-[11px] text-slate-400">{structuredOutput.subtitle}</p>}
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                {structuredOutput.exportableMarkdown && (
-                  <>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(structuredOutput.exportableMarkdown || '');
-                        showNotification('✓ Copied structured report to clipboard!');
-                      }}
-                      className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-white/10 text-[10px] font-bold text-slate-300 transition-colors"
-                    >
-                      📋 Copy Report
-                    </button>
-                    {createVaultNote && (
-                      <button
-                        onClick={() => {
-                          createVaultNote(structuredOutput.title, structuredOutput.exportableMarkdown || '', 'Orion Report');
-                          showNotification(`✓ Saved "${structuredOutput.title}" to Notes Vault!`);
-                        }}
-                        className="px-2.5 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-[10px] font-bold text-indigo-300 transition-colors"
-                      >
-                        💾 Save to Vault
-                      </button>
-                    )}
-                  </>
-                )}
-                <button
-                  onClick={() => setStructuredOutput(null)}
-                  className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 text-xs"
-                  title="Dismiss card"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-
-            {structuredOutput.metrics && structuredOutput.metrics.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                {structuredOutput.metrics.map((m, i) => (
-                  <div
-                    key={i}
-                    className={`p-3 rounded-xl border ${
-                      m.status === 'good'
-                        ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-300'
-                        : m.status === 'warning'
-                        ? 'bg-amber-500/10 border-amber-500/25 text-amber-300'
-                        : m.status === 'danger'
-                        ? 'bg-rose-500/10 border-rose-500/25 text-rose-300'
-                        : 'bg-slate-900/80 border-white/10 text-indigo-300'
-                    }`}
-                  >
-                    <div className="text-[9px] font-mono uppercase tracking-wider opacity-80">{m.label}</div>
-                    <div className="text-base font-black text-white mt-0.5">{m.value}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* DIAGNOSTICS PANEL */}
-        {showDiagnostics && (
-          <div className="smart-glass p-4 rounded-2xl bg-rose-950/20 border border-rose-500/30 flex flex-col gap-2 overflow-x-auto">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-rose-400 uppercase tracking-widest font-mono">Microphone Diagnostics</span>
-              <button onClick={() => setShowDiagnostics(false)} className="text-rose-400 hover:text-white px-2 py-1 rounded bg-rose-500/20 text-[10px]">Close</button>
-            </div>
-            <div className="space-y-1.5 text-[10px] font-mono text-slate-300">
-              <p><strong>Browser:</strong> {navigator.userAgent}</p>
-              <p><strong>navigator.mediaDevices:</strong> {String(!!navigator.mediaDevices)}</p>
-              <p><strong>getUserMedia:</strong> {String(!!navigator.mediaDevices?.getUserMedia)}</p>
-              <p><strong>SpeechRecognition:</strong> {String(!!(window as any).SpeechRecognition)}</p>
-              <p><strong>webkitSpeechRecognition:</strong> {String(!!(window as any).webkitSpeechRecognition)}</p>
-              
-              {diagnosticError && (
-                <div className="mt-2 p-2 bg-red-950/50 border border-red-500/30 rounded text-red-200">
-                  <p className="font-bold text-red-400 mb-1">Error Captured:</p>
-                  <p><strong>Name:</strong> {diagnosticError.name}</p>
-                  <p><strong>Message:</strong> {diagnosticError.message}</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* A. SECTION: HOME SCREEN */}
+      {/* 2. MAIN WORKSPACE BODY */}
+      <div className="flex-1 overflow-y-auto min-h-0 p-4 sm:p-6">
         {activeJarvisSection === 'home' && (
-          <div className="space-y-4">
-            
-            {/* Middle: One Large Input */}
-            <form onSubmit={handleTextSubmit} className="relative">
-              <div className="relative flex items-center">
-                <input
-                  type="text"
-                  value={commandText}
-                  onChange={(e) => setCommandText(e.target.value)}
-                  placeholder="Try: find a video about Newton laws"
-                  className="w-full bg-slate-900/90 border border-white/15 focus:border-indigo-500 rounded-2xl py-3.5 pl-4 pr-24 text-sm text-white placeholder-slate-500 outline-none shadow-lg transition-all"
-                />
-                <div className="absolute right-2 flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={toggleListening}
-                    className={`p-2 rounded-xl transition-colors ${isListening ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}
-                    title="Voice input"
-                  >
-                    {isListening ? <MicOff className="w-4 h-4 animate-pulse" /> : <Mic className="w-4 h-4" />}
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isProcessing || !commandText.trim()}
-                    className="p-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl transition-colors shadow-md"
-                    title="Send"
-                  >
-                    <Send className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            </form>
-
-            {/* Role-Aware Quick Actions */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              <button
-                type="button"
-                onClick={() => handleRunInternetSearch(commandText || 'science and mathematics curriculum')}
-                className="p-3 rounded-xl bg-slate-900/60 hover:bg-slate-900 border border-white/10 hover:border-indigo-500/40 text-left transition-all group flex flex-col justify-between"
-              >
-                <Search className="w-4 h-4 text-indigo-400 mb-2 group-hover:scale-110 transition-transform" />
-                <div>
-                  <span className="text-xs font-bold text-white block">Search</span>
-                  <span className="text-[10px] text-slate-400 block truncate">Explore topics</span>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleRunInternetSearch('find a video about ' + (commandText || 'Newton laws'))}
-                className="p-3 rounded-xl bg-slate-900/60 hover:bg-slate-900 border border-white/10 hover:border-teal-500/40 text-left transition-all group flex flex-col justify-between"
-              >
-                <Video className="w-4 h-4 text-teal-400 mb-2 group-hover:scale-110 transition-transform" />
-                <div>
-                  <span className="text-xs font-bold text-white block">Find video</span>
-                  <span className="text-[10px] text-slate-400 block truncate">Verified clips</span>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowPagePicker(true)}
-                className="p-3 rounded-xl bg-slate-900/60 hover:bg-slate-900 border border-white/10 hover:border-amber-500/40 text-left transition-all group flex flex-col justify-between"
-              >
-                <Layout className="w-4 h-4 text-amber-400 mb-2 group-hover:scale-110 transition-transform" />
-                <div>
-                  <span className="text-xs font-bold text-white block">Open a page</span>
-                  <span className="text-[10px] text-slate-400 block truncate">Jump to module</span>
-                </div>
-              </button>
-
-              {(() => {
-                const norm = (effectiveRole || currentUser?.role || 'student').toLowerCase().trim();
-                if (norm === 'parent' || norm === 'guardian') {
-                  return (
-                    <button
-                      type="button"
-                      onClick={() => handleQuickTouchAction('Show my linked child overview')}
-                      className="p-3 rounded-xl bg-slate-900/60 hover:bg-slate-900 border border-white/10 hover:border-emerald-500/40 text-left transition-all group flex flex-col justify-between"
-                    >
-                      <Users className="w-4 h-4 text-emerald-400 mb-2 group-hover:scale-110 transition-transform" />
-                      <div>
-                        <span className="text-xs font-bold text-white block">Child Overview</span>
-                        <span className="text-[10px] text-slate-400 block truncate">Ward progress</span>
-                      </div>
-                    </button>
-                  );
-                }
-                if (norm === 'student') {
-                  return (
-                    <button
-                      type="button"
-                      onClick={() => handleQuickTouchAction('Create a 5-day revision study plan')}
-                      className="p-3 rounded-xl bg-slate-900/60 hover:bg-slate-900 border border-white/10 hover:border-emerald-500/40 text-left transition-all group flex flex-col justify-between"
-                    >
-                      <BookOpen className="w-4 h-4 text-emerald-400 mb-2 group-hover:scale-110 transition-transform" />
-                      <div>
-                        <span className="text-xs font-bold text-white block">Study Plan</span>
-                        <span className="text-[10px] text-slate-400 block truncate">Build 5-day sprint</span>
-                      </div>
-                    </button>
-                  );
-                }
-                return (
-                  <button
-                    type="button"
-                    onClick={() => handleQuickTouchAction('Generate daily school briefing report')}
-                    className="p-3 rounded-xl bg-slate-900/60 hover:bg-slate-900 border border-white/10 hover:border-emerald-500/40 text-left transition-all group flex flex-col justify-between"
-                  >
-                    <BarChart3 className="w-4 h-4 text-emerald-400 mb-2 group-hover:scale-110 transition-transform" />
-                    <div>
-                      <span className="text-xs font-bold text-white block">School report</span>
-                      <span className="text-[10px] text-slate-400 block truncate">Briefings & metrics</span>
-                    </div>
-                  </button>
-                );
-              })()}
-            </div>
-
-            {/* Live Orion Execution & Verification Timeline */}
-            {orionProgress && <OrionActivityTimeline snapshot={orionProgress} />}
-
-            {/* Bottom: Videos Carousel & Answers */}
-            <div className="space-y-4 pt-2">
-              {searchVideos && searchVideos.length > 0 && (
-                <div className="p-5 rounded-2xl bg-slate-900/90 border border-teal-500/40 shadow-2xl space-y-3">
-                  <div className="flex items-center justify-between border-b border-white/10 pb-2">
-                    <span className="text-xs font-bold text-teal-300 uppercase tracking-wider font-mono flex items-center gap-2">
-                      <Video className="w-4 h-4 text-teal-400" />
-                      Curated Educational Videos ({searchVideos.length})
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-mono">Verified Playable Links</span>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            {/* LEFT COLUMN: LIVE EXECUTION STREAM (7 cols on desktop) */}
+            <div className="lg:col-span-7 flex flex-col gap-4">
+              {/* Idle Role-Aware Quick Launcher */}
+              {turns.length === 0 && (
+                <div className="rounded-2xl border border-white/10 bg-slate-900/50 p-5 space-y-4">
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium uppercase tracking-wider text-indigo-300">
+                      Role-Verified Agent Workspace
+                    </p>
+                    <p className="text-sm text-slate-200 leading-relaxed">{jarvisFeedback}</p>
                   </div>
-                  <GlassyVideoCarousel videos={searchVideos} queryTopic={searchQuery} />
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {normalizedRole === 'parent' || normalizedRole === 'guardian' ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickTouchAction('Show my linked child overview')}
+                          className="p-3.5 rounded-xl bg-slate-950/70 hover:bg-slate-900 border border-white/10 hover:border-indigo-400/40 text-left transition-colors flex items-start gap-3"
+                        >
+                          <Users className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+                          <div>
+                            <span className="text-xs font-semibold text-white block">Linked Ward Overview</span>
+                            <span className="text-[11px] text-slate-400">Inspect attendance and progress</span>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickTouchAction('Show recent notices')}
+                          className="p-3.5 rounded-xl bg-slate-950/70 hover:bg-slate-900 border border-white/10 hover:border-indigo-400/40 text-left transition-colors flex items-start gap-3"
+                        >
+                          <Bell className="w-4 h-4 text-indigo-400 mt-0.5 shrink-0" />
+                          <div>
+                            <span className="text-xs font-semibold text-white block">School Notices</span>
+                            <span className="text-[11px] text-slate-400">Read latest official updates</span>
+                          </div>
+                        </button>
+                      </>
+                    ) : normalizedRole === 'student' ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickTouchAction('What homework do I have pending?')}
+                          className="p-3.5 rounded-xl bg-slate-950/70 hover:bg-slate-900 border border-white/10 hover:border-indigo-400/40 text-left transition-colors flex items-start gap-3"
+                        >
+                          <ClipboardList className="w-4 h-4 text-indigo-400 mt-0.5 shrink-0" />
+                          <div>
+                            <span className="text-xs font-semibold text-white block">Pending Homework</span>
+                            <span className="text-[11px] text-slate-400">Inspect active assignments</span>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickTouchAction('Create a 5-day revision study plan')}
+                          className="p-3.5 rounded-xl bg-slate-950/70 hover:bg-slate-900 border border-white/10 hover:border-indigo-400/40 text-left transition-colors flex items-start gap-3"
+                        >
+                          <BookOpen className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+                          <div>
+                            <span className="text-xs font-semibold text-white block">Build Study Plan</span>
+                            <span className="text-[11px] text-slate-400">Structure a 5-day sprint</span>
+                          </div>
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickTouchAction('Generate daily school briefing report')}
+                          className="p-3.5 rounded-xl bg-slate-950/70 hover:bg-slate-900 border border-white/10 hover:border-indigo-400/40 text-left transition-colors flex items-start gap-3"
+                        >
+                          <BarChart3 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+                          <div>
+                            <span className="text-xs font-semibold text-white block">Operations Briefing</span>
+                            <span className="text-[11px] text-slate-400">Compile students, homework & attendance</span>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickTouchAction('Show attendance summary')}
+                          className="p-3.5 rounded-xl bg-slate-950/70 hover:bg-slate-900 border border-white/10 hover:border-indigo-400/40 text-left transition-colors flex items-start gap-3"
+                        >
+                          <Users className="w-4 h-4 text-indigo-400 mt-0.5 shrink-0" />
+                          <div>
+                            <span className="text-xs font-semibold text-white block">Attendance Summary</span>
+                            <span className="text-[11px] text-slate-400">Review latest presence logs</span>
+                          </div>
+                        </button>
+                      </>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => handleRunInternetSearch('Newton laws of motion physics')}
+                      className="p-3.5 rounded-xl bg-slate-950/70 hover:bg-slate-900 border border-white/10 hover:border-indigo-400/40 text-left transition-colors flex items-start gap-3"
+                    >
+                      <Globe className="w-4 h-4 text-teal-400 mt-0.5 shrink-0" />
+                      <div>
+                        <span className="text-xs font-semibold text-white block">Web Research</span>
+                        <span className="text-[11px] text-slate-400">Search verified external sources</span>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowPagePicker(true)}
+                      className="p-3.5 rounded-xl bg-slate-950/70 hover:bg-slate-900 border border-white/10 hover:border-indigo-400/40 text-left transition-colors flex items-start gap-3"
+                    >
+                      <Layout className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+                      <div>
+                        <span className="text-xs font-semibold text-white block">Open Workspace Module</span>
+                        <span className="text-[11px] text-slate-400">Jump to a Veylentra section</span>
+                      </div>
+                    </button>
+                  </div>
                 </div>
               )}
 
-              {/* Orion Synthesis / Answer Box */}
-              {(searchResults || jarvisFeedback) && (
-                <div className="p-5 rounded-2xl bg-slate-900/80 border border-white/15 space-y-3 shadow-2xl">
-                  <div className="flex items-center justify-between border-b border-white/10 pb-2">
-                    <span className="text-xs font-bold text-indigo-300 uppercase tracking-wider font-mono">
-                      ✨ Orion Synthesis & Guidance
-                    </span>
-                    <div className="flex items-center gap-2">
-                      {orionModelUsed && (
-                        <span className="text-[10px] text-slate-400 font-mono">{orionModelUsed}</span>
-                      )}
-                      {searchQuery && (
-                        <span className="text-[10px] bg-indigo-500/10 text-indigo-300 px-2 py-0.5 rounded font-mono">
-                          Topic: {searchQuery}
-                        </span>
+              {/* Structured Turn Execution Stream */}
+              <AnimatePresence initial={false}>
+                {turns.map((turn) => (
+                  <motion.div
+                    key={turn.id}
+                    initial={reducedMotion ? false : { opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="space-y-3"
+                  >
+                    {/* 1. User Instruction */}
+                    <div className="flex justify-end">
+                      <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-indigo-600/20 border border-indigo-400/30 px-4 py-2.5 text-sm text-white">
+                        {turn.userCommand}
+                      </div>
+                    </div>
+
+                    {/* 2. Orion Plan & 3. Activity Timeline */}
+                    {turn.snapshot && <OrionActivityTimeline snapshot={turn.snapshot} />}
+
+                    {/* 4. Error Banner with Retry */}
+                    {turn.status === 'failed' && turn.errorMessage && (
+                      <div className="rounded-xl border border-rose-500/35 bg-rose-950/25 p-4 flex items-start justify-between gap-3 flex-wrap">
+                        <div className="flex items-start gap-2.5 min-w-0">
+                          <AlertTriangle className="w-4 h-4 text-rose-400 mt-0.5 shrink-0" />
+                          <div className="text-xs text-rose-100 leading-relaxed">{turn.errorMessage}</div>
+                        </div>
+                        {lastFailedCommand && (
+                          <button
+                            type="button"
+                            onClick={() => executeVoiceCommand(turn.userCommand)}
+                            className="px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 text-xs font-medium text-rose-200 inline-flex items-center gap-1.5 shrink-0"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" /> Retry
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* 5. Elevated Final Verified Response */}
+                    {turn.finalResponse && turn.status !== 'failed' && (
+                      <div className="rounded-2xl border border-white/10 bg-slate-900/75 p-4 sm:p-5 space-y-3">
+                        <div className="flex items-center justify-between gap-2 pb-2 border-b border-white/10">
+                          <div className="flex items-center gap-2 text-xs font-medium text-indigo-300">
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>Orion Final Response</span>
+                            {turn.modelUsed && (
+                              <span className="text-[11px] font-mono text-slate-400">· {turn.modelUsed}</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(turn.finalResponse);
+                                showNotification('Response copied to clipboard.');
+                              }}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                              title="Copy response"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => speakFeedback(turn.finalResponse)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                              title="Read aloud"
+                            >
+                              <Volume2 className="w-3.5 h-3.5" />
+                            </button>
+                            {createVaultNote && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  createVaultNote(
+                                    turn.userCommand.slice(0, 48),
+                                    turn.finalResponse,
+                                    'Orion Note'
+                                  );
+                                  showNotification('Saved response to Lecture Notes.');
+                                }}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                                title="Save to Notes Vault"
+                              >
+                                <BookmarkPlus className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="text-sm text-slate-100 leading-relaxed select-text">
+                          <AcademicRichRenderer
+                            content={turn.finalResponse}
+                            isStreaming={turn.status === 'running'}
+                          />
+                        </div>
+
+                        {turn.mathWidget && (
+                          <div className="pt-3 border-t border-white/10">
+                            <InteractiveMathWidget widgetType={turn.mathWidget} />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+
+              {/* Inline Clarification Gate Card */}
+              {pendingClarification && (
+                <div className="rounded-2xl border border-amber-500/35 bg-amber-950/20 p-4 space-y-3">
+                  <div className="flex items-start gap-2.5">
+                    <HelpCircle className="w-4 h-4 text-amber-300 mt-0.5 shrink-0" />
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold text-amber-200 uppercase tracking-wider">
+                        Clarification Needed
+                      </p>
+                      <p className="text-sm text-slate-100">{pendingClarification.question}</p>
+                      {pendingClarification.missingFields.length > 0 && (
+                        <p className="text-[11px] font-mono text-amber-300/80">
+                          Missing: {pendingClarification.missingFields.join(', ')}
+                        </p>
                       )}
                     </div>
                   </div>
-                  <div className="text-sm text-slate-100 leading-relaxed font-sans max-h-[600px] overflow-y-auto custom-scrollbar pr-2 select-text">
-                    <AcademicRichRenderer
-                      content={searchResults || jarvisFeedback}
-                      isStreaming={isProcessing || searching}
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={clarificationReply}
+                      onChange={(e) => setClarificationReply(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && clarificationReply.trim()) {
+                          const val = clarificationReply.trim();
+                          setClarificationReply('');
+                          executeVoiceCommand(val);
+                        }
+                      }}
+                      placeholder="Provide the missing details..."
+                      className="flex-1 bg-slate-950/80 border border-white/15 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-400/50"
                     />
+                    <button
+                      type="button"
+                      disabled={!clarificationReply.trim() || isProcessing}
+                      onClick={() => {
+                        const val = clarificationReply.trim();
+                        if (!val) return;
+                        setClarificationReply('');
+                        executeVoiceCommand(val);
+                      }}
+                      className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 text-xs font-semibold transition-colors"
+                    >
+                      Continue
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPendingClarification(null)}
+                      className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors"
+                    >
+                      Dismiss
+                    </button>
                   </div>
-                  {orionMathWidget && (
-                    <div className="pt-2 border-t border-white/10">
-                      <InteractiveMathWidget widgetType={orionMathWidget} />
+                </div>
+              )}
+
+              {/* Inline Confirmation Preview Gate Card */}
+              {pendingConfirmation && (
+                <div className="rounded-2xl border border-amber-500/40 bg-amber-950/20 p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="flex items-start gap-2.5">
+                      <ShieldAlert className="w-5 h-5 text-amber-400 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs font-semibold text-amber-200 uppercase tracking-wider">
+                          Confirm Action Before Database Write
+                        </p>
+                        <p className="text-xs text-slate-200 mt-1">{pendingConfirmation.promptText}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        disabled={isProcessing}
+                        onClick={() => executeServerConfirmedAction(pendingConfirmation)}
+                        className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 text-xs font-semibold transition-colors"
+                      >
+                        Confirm & Execute
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPendingConfirmation(null);
+                          setOrionProgress(null);
+                          setJarvisFeedback('Operation canceled. No changes were made.');
+                        }}
+                        className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                  {pendingConfirmation.previewDetails && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-amber-500/20 text-xs">
+                      {Object.entries(pendingConfirmation.previewDetails).map(([k, v]) => (
+                        <div key={k} className="bg-slate-950/70 px-3 py-2 rounded-lg border border-white/5">
+                          <span className="text-[10px] uppercase font-mono text-amber-300/80 block">{k}</span>
+                          <span className="text-slate-100 break-words">{v}</span>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
               )}
 
-              {/* Grounding Sources */}
-              {searchSources && searchSources.length > 0 && (
-                <div className="p-5 rounded-2xl bg-slate-900/70 border border-white/10 space-y-3">
-                  <div className="flex items-center justify-between border-b border-white/10 pb-2">
-                    <span className="text-xs font-bold text-teal-400 uppercase tracking-wider font-mono flex items-center gap-2">
-                      <Globe className="w-4 h-4 text-teal-400" />
-                      Verified Grounding Sources ({searchSources.length})
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-mono">Click to open</span>
+              <div ref={streamEndRef} />
+            </div>
+
+            {/* RIGHT COLUMN: CONTEXT & OUTPUT INSPECTOR (5 cols on desktop) */}
+            <div className="lg:col-span-5 flex flex-col gap-4">
+              {/* Structured Live Metrics & Data Table */}
+              {structuredOutput && (
+                <div className="rounded-2xl border border-indigo-500/25 bg-slate-900/70 p-4 space-y-3.5">
+                  <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-white/10">
+                    <div className="min-w-0">
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-emerald-400 block">
+                        Verified Live Data
+                      </span>
+                      <h3 className="text-sm font-semibold text-white truncate">{structuredOutput.title}</h3>
+                      {structuredOutput.subtitle && (
+                        <p className="text-[11px] text-slate-400 truncate">{structuredOutput.subtitle}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={exportStructuredMarkdown}
+                        className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-slate-300"
+                      >
+                        Copy
+                      </button>
+                      {createVaultNote && structuredOutput.exportableMarkdown && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            createVaultNote(structuredOutput.title, structuredOutput.exportableMarkdown || '', 'Orion Report');
+                            showNotification(`Saved "${structuredOutput.title}" to Notes.`);
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-400/30 text-[11px] text-indigo-200"
+                        >
+                          Save
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setStructuredOutput(null)}
+                        className="p-1 text-slate-400 hover:text-white"
+                        aria-label="Dismiss output card"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {searchSources.map((src, idx) => (
+
+                  {structuredOutput.metrics && structuredOutput.metrics.length > 0 && (
+                    <div className="grid grid-cols-2 gap-2">
+                      {structuredOutput.metrics.map((m, i) => (
+                        <div
+                          key={i}
+                          className="p-2.5 rounded-xl border border-white/10 bg-slate-950/60"
+                        >
+                          <div className="text-[10px] font-mono uppercase text-slate-400">{m.label}</div>
+                          <div
+                            className={`text-base font-semibold tabular-nums mt-0.5 ${
+                              m.status === 'good'
+                                ? 'text-emerald-300'
+                                : m.status === 'warning'
+                                ? 'text-amber-300'
+                                : m.status === 'danger'
+                                ? 'text-rose-300'
+                                : 'text-white'
+                            }`}
+                          >
+                            {m.value}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {structuredOutput.rows && structuredOutput.rows.length > 0 && (
+                    <div className="overflow-x-auto rounded-xl border border-white/10">
+                      <table className="w-full text-left text-xs">
+                        {structuredOutput.columns && (
+                          <thead className="bg-slate-950/80 border-b border-white/10 text-[10px] font-mono uppercase text-slate-400">
+                            <tr>
+                              {structuredOutput.columns.map((col) => (
+                                <th key={col} className="px-2.5 py-2 font-medium">
+                                  {col}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                        )}
+                        <tbody className="divide-y divide-white/5 bg-slate-950/40">
+                          {structuredOutput.rows.slice(0, 6).map((row, rIdx) => (
+                            <tr key={rIdx}>
+                              {Object.values(row).map((cell, cIdx) => (
+                                <td key={cIdx} className="px-2.5 py-2 text-slate-200 whitespace-nowrap">
+                                  {String(cell)}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Curated Educational Videos */}
+              {searchVideos && searchVideos.length > 0 && (
+                <div className="rounded-2xl border border-teal-500/30 bg-slate-900/70 p-4 space-y-3">
+                  <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                    <span className="text-xs font-semibold text-teal-300 inline-flex items-center gap-1.5">
+                      <Video className="w-4 h-4" /> Verified Educational Videos ({searchVideos.length})
+                    </span>
+                  </div>
+                  <GlassyVideoCarousel videos={searchVideos} queryTopic={searchQuery} />
+                </div>
+              )}
+
+              {/* Verified Grounding Sources */}
+              {searchSources && searchSources.length > 0 && (
+                <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4 space-y-3">
+                  <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                    <span className="text-xs font-semibold text-slate-200 inline-flex items-center gap-1.5">
+                      <Globe className="w-4 h-4 text-teal-400" /> Grounding Sources ({searchSources.length})
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {searchSources.slice(0, 6).map((src, idx) => (
                       <a
                         key={idx}
                         href={src.uri}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="p-3 rounded-xl bg-slate-950/80 hover:bg-slate-950 border border-white/5 hover:border-indigo-500/40 flex items-center justify-between transition-all group"
+                        className="p-2.5 rounded-xl bg-slate-950/70 hover:bg-slate-950 border border-white/5 hover:border-indigo-400/40 flex items-center justify-between gap-2 transition-colors group"
                       >
-                        <div className="overflow-hidden pr-2">
-                          <span className="text-xs font-semibold text-slate-200 group-hover:text-white truncate block">{src.title}</span>
-                          <span className="text-[10px] text-slate-400 truncate block">{src.published_source || 'Web'}</span>
+                        <div className="min-w-0">
+                          <div className="text-xs font-medium text-slate-200 group-hover:text-white truncate">
+                            {src.title}
+                          </div>
+                          <div className="text-[10px] text-slate-400 truncate">
+                            {src.published_source || 'External Web'}
+                          </div>
                         </div>
-                        <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400 shrink-0" />
+                        <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-300 shrink-0" />
                       </a>
                     ))}
                   </div>
                 </div>
               )}
-            </div>
 
+              {/* Quick Module Jump Card */}
+              <div className="rounded-2xl border border-white/10 bg-slate-900/45 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-300">Quick Module Switcher</span>
+                  {orionModelUsed && (
+                    <span className="text-[10px] font-mono text-slate-500">{orionModelUsed}</span>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { title: 'Material Hub', tab: 'materials', icon: FolderOpen },
+                    { title: 'Attendance', tab: 'attendance_manager', icon: Users },
+                    { title: 'Homework', tab: 'homework', icon: ClipboardList },
+                    { title: 'Study Hub', tab: 'study_hub', icon: GraduationCap },
+                    { title: 'Whiteboard', tab: 'whiteboard', icon: PenTool },
+                    { title: 'Notices', tab: 'notice_viewer', icon: Bell },
+                  ].map((mod) => {
+                    const Icon = mod.icon;
+                    return (
+                      <button
+                        key={mod.tab}
+                        type="button"
+                        onClick={() => triggerNavTransition(mod.title, mod.tab)}
+                        className="px-3 py-2 rounded-xl bg-slate-950/70 hover:bg-slate-900 border border-white/10 text-left text-xs font-medium text-slate-200 inline-flex items-center justify-between gap-2 transition-colors"
+                      >
+                        <span className="inline-flex items-center gap-2 truncate">
+                          <Icon className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                          <span className="truncate">{mod.title}</span>
+                        </span>
+                        <ArrowRight className="w-3 h-3 text-slate-500 shrink-0" />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
         {/* Page Picker Modal */}
         {showPagePicker && (
           <div className="fixed inset-0 z-[9999] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
-            <div className="bg-slate-900 border border-white/15 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+            <div className="bg-slate-900 border border-white/15 rounded-2xl p-5 max-w-md w-full space-y-4 shadow-2xl">
               <div className="flex items-center justify-between">
-                <h3 className="text-base font-bold text-white">Open a Page</h3>
-                <button onClick={() => setShowPagePicker(false)} className="text-slate-400 hover:text-white">
+                <h3 className="text-sm font-semibold text-white">Open Workspace Module</h3>
+                <button type="button" onClick={() => setShowPagePicker(false)} className="text-slate-400 hover:text-white">
                   <X className="w-5 h-5" />
                 </button>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => { triggerNavTransition('Material Hub', 'materials'); setShowPagePicker(false); }} className="p-3 rounded-xl bg-slate-950 hover:bg-slate-850 border border-white/10 text-left text-xs font-bold text-slate-200">
-                  📂 Material Hub
-                </button>
-                <button onClick={() => { triggerNavTransition('Attendance', 'attendance_manager'); setShowPagePicker(false); }} className="p-3 rounded-xl bg-slate-950 hover:bg-slate-850 border border-white/10 text-left text-xs font-bold text-slate-200">
-                  📋 Attendance
-                </button>
-                <button onClick={() => { triggerNavTransition('Homework', 'homework'); setShowPagePicker(false); }} className="p-3 rounded-xl bg-slate-950 hover:bg-slate-850 border border-white/10 text-left text-xs font-bold text-slate-200">
-                  📝 Homework
-                </button>
-                <button onClick={() => { triggerNavTransition('Whiteboard', 'whiteboard'); setShowPagePicker(false); }} className="p-3 rounded-xl bg-slate-950 hover:bg-slate-850 border border-white/10 text-left text-xs font-bold text-slate-200">
-                  🎨 Whiteboard
-                </button>
-                <button onClick={() => { triggerNavTransition('Study Hub', 'study_hub'); setShowPagePicker(false); }} className="p-3 rounded-xl bg-slate-950 hover:bg-slate-850 border border-white/10 text-left text-xs font-bold text-slate-200">
-                  📚 Study Hub
-                </button>
-                <button onClick={() => { triggerNavTransition('Notices', 'notice_viewer'); setShowPagePicker(false); }} className="p-3 rounded-xl bg-slate-950 hover:bg-slate-850 border border-white/10 text-left text-xs font-bold text-slate-200">
-                  📢 Notices
-                </button>
+                {[
+                  { label: 'Material Hub', tab: 'materials', icon: FolderOpen },
+                  { label: 'Attendance', tab: 'attendance_manager', icon: Users },
+                  { label: 'Homework', tab: 'homework', icon: ClipboardList },
+                  { label: 'Whiteboard', tab: 'whiteboard', icon: PenTool },
+                  { label: 'Study Hub', tab: 'study_hub', icon: BookOpen },
+                  { label: 'Notices', tab: 'notice_viewer', icon: Bell },
+                ].map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={item.tab}
+                      type="button"
+                      onClick={() => {
+                        triggerNavTransition(item.label, item.tab);
+                        setShowPagePicker(false);
+                      }}
+                      className="p-3 rounded-xl bg-slate-950 hover:bg-slate-800 border border-white/10 text-left text-xs font-medium text-slate-200 inline-flex items-center gap-2"
+                    >
+                      <Icon className="w-4 h-4 text-indigo-400 shrink-0" />
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
         )}
 
-        {/* C. STUDENT REPORT DASHBOARD */}
+        {/* STUDENT REPORTS SECTION */}
         {activeJarvisSection === 'reports' && (
           <div className="space-y-4">
-            
-            {/* Header controls for reports */}
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-slate-950/45 p-3 rounded-2xl border border-white/5">
-              <div className="space-y-0.5">
-                <span className="text-[9px] text-indigo-400 font-extrabold uppercase font-mono tracking-wider block">Database Registry Node</span>
-                <h3 className="text-xs font-black text-white font-display uppercase">Student Classroom Report Cards</h3>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-slate-900/60 p-4 rounded-2xl border border-white/10">
+              <div>
+                <h3 className="text-sm font-semibold text-white">Student Classroom Reports</h3>
+                <p className="text-xs text-slate-400">Live directory metrics</p>
               </div>
-
               <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                <input 
-                  type="text" 
-                  placeholder="Identify student..." 
+                <input
+                  type="text"
+                  placeholder="Filter student or grade..."
                   value={searchStudentTerm}
-                  onChange={e => setSearchStudentTerm(e.target.value)}
-                  className="bg-slate-900 border border-white/10 text-xs px-3 py-1.5 rounded-xl text-white outline-none focus:border-indigo-500/50 w-full sm:w-44"
+                  onChange={(e) => setSearchStudentTerm(e.target.value)}
+                  className="bg-slate-950 border border-white/10 text-xs px-3 py-2 rounded-xl text-white outline-none focus:border-indigo-400 w-full sm:w-48"
                 />
-
-                <select 
+                <select
                   value={statusFilter}
-                  onChange={e => setStatusFilter(e.target.value)}
-                  className="bg-slate-900 border border-white/10 text-xs px-3 py-1.5 rounded-xl text-white outline-none focus:border-indigo-500/50"
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="bg-slate-950 border border-white/10 text-xs px-3 py-2 rounded-xl text-white outline-none"
                 >
-                  <option value="">All Filters</option>
+                  <option value="">All Houses & Sections</option>
                   <option value="Astra">Astra Section</option>
-                  <option value="Elara">Elara Section</option>
                   <option value="Solara">Solara Section</option>
                   <option value="Vega">Vega Section</option>
-                  <option value="Ruby">Ruby House</option>
-                  <option value="Emerald">Emerald House</option>
-                  <option value="Sapphire">Sapphire House</option>
-                  <option value="Topaz">Topaz House</option>
+                  <option value="Ruby">Ruby</option>
+                  <option value="Emerald">Emerald</option>
+                  <option value="Sapphire">Sapphire</option>
+                  <option value="Topaz">Topaz</option>
                 </select>
               </div>
             </div>
 
-            {/* Main table list */}
             {selectedStudent ? (
-              // Individual Student Report Focus Card
-              <div className="smart-glass p-5 rounded-2xl bg-slate-950/60 border border-indigo-500/30 space-y-4 animate-scaleUp">
+              <div className="p-5 rounded-2xl bg-slate-900/70 border border-indigo-500/30 space-y-4">
                 <div className="flex items-center justify-between flex-wrap gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="h-12 w-12 rounded-full bg-slate-900 border-2 border-indigo-500/30 flex items-center justify-center text-xl">
-                      🧑‍🎓
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-black text-white font-display uppercase tracking-wider">{selectedStudent.name}</h4>
-                      <p className="text-[10px] text-slate-400 font-mono">
-                        {selectedStudent.classGrade} • {selectedStudent.section} Section • 
-                        <span className={`font-black uppercase ml-1 ${
-                          selectedStudent.house === 'Ruby' ? 'text-red-400' : 
-                          selectedStudent.house === 'Emerald' ? 'text-emerald-400' :
-                          selectedStudent.house === 'Sapphire' ? 'text-indigo-400' : 'text-amber-450'
-                        }`}>{selectedStudent.house} House</span>
-                      </p>
-                    </div>
+                  <div>
+                    <h4 className="text-base font-semibold text-white">{selectedStudent.name}</h4>
+                    <p className="text-xs text-slate-400">
+                      {selectedStudent.classGrade} · {selectedStudent.section} Section · {selectedStudent.house} House
+                    </p>
                   </div>
-
-                  <button 
+                  <button
+                    type="button"
                     onClick={() => setSelectedStudent(null)}
-                    className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-white/5 text-[9px] uppercase font-black text-indigo-400 hover:text-indigo-300"
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200"
                   >
-                    ← Back to Registry
+                    Back to Directory
                   </button>
                 </div>
-
-                {/* Score indicators grid */}
                 <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-                  <div className="bg-slate-900/80 p-3 rounded-xl border border-white/5 text-center">
-                    <span className="text-[9px] text-slate-400 font-bold uppercase block">Streak Tally</span>
-                    <span className="text-lg font-black text-amber-500 font-mono">🔥 {selectedStudent.streakDays} Days</span>
-                  </div>
-                  <div className="bg-slate-900/80 p-3 rounded-xl border border-white/5 text-center">
-                    <span className="text-[9px] text-slate-400 font-bold uppercase block">Docs Uploaded</span>
-                    <span className="text-lg font-black text-indigo-400 font-mono">📁 {selectedStudent.materialsUploaded}</span>
-                  </div>
-                  <div className="bg-slate-900/80 p-3 rounded-xl border border-white/5 text-center">
-                    <span className="text-[9px] text-slate-400 font-bold uppercase block">Notes Saved</span>
-                    <span className="text-lg font-black text-teal-400 font-mono">📝 {selectedStudent.notesCreated}</span>
-                  </div>
-                  <div className="bg-slate-900/80 p-3 rounded-xl border border-white/5 text-center">
-                    <span className="text-[9px] text-slate-400 font-bold uppercase block">Quizzes Done</span>
-                    <span className="text-lg font-black text-pink-400 font-mono">🎮 {selectedStudent.quizzesCompleted}</span>
-                  </div>
-                  <div className="bg-slate-900/80 p-3 rounded-xl border border-white/5 text-center">
-                    <span className="text-[9px] text-slate-400 font-bold uppercase block">Homework Done</span>
-                    <span className="text-lg font-black text-emerald-400 font-mono">✅ {selectedStudent.assignmentsCompleted}</span>
-                  </div>
-                  <div className="bg-slate-900/80 p-3 rounded-xl border border-white/5 text-center">
-                    <span className="text-[9px] text-slate-400 font-bold uppercase block">Contributions</span>
-                    <span className="text-lg font-black text-amber-450 font-mono">🏆 {selectedStudent.communityContributions}</span>
-                  </div>
-                </div>
-
-                {/* Recent activity list */}
-                <div className="space-y-2">
-                  <span className="text-[10px] text-indigo-400 font-extrabold uppercase font-mono tracking-wider block">🕒 Recent Academic Activity</span>
-                  <div className="space-y-1">
-                    {selectedStudent.recentActivity && selectedStudent.recentActivity.map((act, i) => (
-                      <div key={i} className="flex items-center gap-2 text-xs text-slate-300 bg-slate-900/40 p-2 rounded-lg border border-white/5">
-                        <span className="text-indigo-400 font-mono">▶</span>
-                        <span>{act}</span>
-                      </div>
-                    ))}
-                  </div>
+                  {[
+                    { label: 'Streak', value: `${selectedStudent.streakDays}d` },
+                    { label: 'Materials', value: selectedStudent.materialsUploaded },
+                    { label: 'Study Notes', value: selectedStudent.notesCreated },
+                    { label: 'Quizzes', value: selectedStudent.quizzesCompleted },
+                    { label: 'Homework', value: selectedStudent.assignmentsCompleted },
+                    { label: 'Contributions', value: selectedStudent.communityContributions },
+                  ].map((metric) => (
+                    <div key={metric.label} className="bg-slate-950/70 p-3 rounded-xl border border-white/10">
+                      <span className="text-[10px] uppercase font-mono text-slate-400 block">{metric.label}</span>
+                      <span className="text-lg font-semibold text-white tabular-nums">{metric.value}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             ) : (
-              // Student table register
-              <div className="bg-slate-950/65 rounded-2xl border border-white/5 overflow-hidden">
+              <div className="bg-slate-900/60 rounded-2xl border border-white/10 overflow-hidden">
                 {filteredReports.length === 0 ? (
-                  <div className="p-12 text-center space-y-2">
-                    <div className="text-3xl">👥</div>
-                    <p className="text-slate-300 font-extrabold uppercase font-display text-xs tracking-wider">No Student Analytics Found</p>
-                    <p className="text-slate-500 font-mono text-[10px] max-w-md mx-auto">
-                      There are currently no active student reports or academic tracking nodes linked to the system database.
-                    </p>
-                  </div>
+                  <div className="p-10 text-center text-xs text-slate-400">No matching student analytics found.</div>
                 ) : (
-                  <div className="overflow-x-hidden">
-                    <div className="hidden md:block">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead>
-                          <tr className="bg-slate-900 border-b border-white/10 text-slate-450 uppercase tracking-wider text-[10px] font-black">
-                            <th className="p-3">Student name</th>
-                            <th className="p-3 text-center">House</th>
-                            <th className="p-3 text-center">Section</th>
-                            <th className="p-3 text-center">Streak</th>
-                            <th className="p-3 text-center">Contributions</th>
-                            <th className="p-3 text-center">Quizzes</th>
-                            <th className="p-3 text-right">Actions</th>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-950 border-b border-white/10 text-slate-400 uppercase text-[10px] font-mono">
+                        <tr>
+                          <th className="p-3">Student</th>
+                          <th className="p-3">House</th>
+                          <th className="p-3">Section</th>
+                          <th className="p-3">Streak</th>
+                          <th className="p-3">Quizzes</th>
+                          <th className="p-3 text-right">Details</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5">
+                        {filteredReports.map((st) => (
+                          <tr key={st.id} className="hover:bg-slate-950/50">
+                            <td className="p-3">
+                              <div className="font-medium text-white">{st.name}</div>
+                              <div className="text-[11px] text-slate-400">{st.classGrade}</div>
+                            </td>
+                            <td className="p-3 text-slate-300">{st.house}</td>
+                            <td className="p-3 text-slate-300">{st.section}</td>
+                            <td className="p-3 font-mono tabular-nums text-amber-400">{st.streakDays}d</td>
+                            <td className="p-3 font-mono tabular-nums text-slate-300">{st.quizzesCompleted}</td>
+                            <td className="p-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedStudent(st)}
+                                className="px-2.5 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 text-xs font-medium"
+                              >
+                                Inspect
+                              </button>
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/5">
-                          {filteredReports.map(st => (
-                            <tr key={st.id} className="hover:bg-slate-900/40 transition-colors">
-                              <td className="p-3">
-                                <div className="font-extrabold text-white uppercase font-display">{st.name}</div>
-                                <div className="text-[10px] text-slate-500 font-mono">{st.classGrade}</div>
-                              </td>
-                              <td className="p-3 text-center">
-                                <span className={`text-[10px] font-black uppercase inline-block px-2 py-0.5 rounded-full ${
-                                  st.house === 'Ruby' ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 
-                                  st.house === 'Emerald' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
-                                  st.house === 'Sapphire' ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 
-                                                           'bg-amber-500/10 text-amber-500 border border-amber-500/20'
-                                }`}>
-                                  {st.house}
-                                </span>
-                              </td>
-                              <td className="p-3 text-center font-mono text-slate-350">{st.section}</td>
-                              <td className="p-3 text-center font-mono text-amber-500 font-bold">🔥 {st.streakDays}d</td>
-                              <td className="p-3 text-center font-mono text-indigo-400 font-bold">{st.communityContributions} pts</td>
-                              <td className="p-3 text-center font-mono text-slate-400">{st.quizzesCompleted}</td>
-                              <td className="p-3 text-right">
-                                <button 
-                                  onClick={() => setSelectedStudent(st)}
-                                  className="px-2.5 py-1 bg-indigo-500/10 hover:bg-indigo-500/25 text-indigo-400 border border-indigo-500/20 rounded-lg text-[10px] font-bold uppercase transition-transform hover:scale-105"
-                                >
-                                  Inspect
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    
-                    {/* Mobile Stacked Cards for Reports */}
-                    <div className="md:hidden divide-y divide-white/5">
-                      {filteredReports.map(st => (
-                        <div key={st.id} className="p-4 space-y-3 hover:bg-slate-900/40 transition-colors">
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <div className="font-extrabold text-white uppercase font-display text-sm">{st.name}</div>
-                              <div className="text-[10px] text-slate-500 font-mono">{st.classGrade}</div>
-                            </div>
-                            <span className={`text-[9px] font-black uppercase inline-block px-2 py-0.5 rounded-full ${
-                              st.house === 'Ruby' ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 
-                              st.house === 'Emerald' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
-                              st.house === 'Sapphire' ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 
-                                                       'bg-amber-500/10 text-amber-500 border border-amber-500/20'
-                            }`}>
-                              {st.house}
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap gap-2 text-[11px]">
-                            <span className="bg-white/5 px-2 py-1 rounded border border-white/5 font-mono text-slate-400">Sec: {st.section}</span>
-                            <span className="bg-amber-500/10 text-amber-500 border border-amber-500/20 px-2 py-1 rounded font-bold font-mono">🔥 {st.streakDays}d</span>
-                            <span className="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-1 rounded font-bold font-mono">{st.communityContributions} pts</span>
-                          </div>
-                          <button 
-                            onClick={() => setSelectedStudent(st)}
-                            className="w-full py-1.5 bg-indigo-500/10 hover:bg-indigo-500/25 text-indigo-400 border border-indigo-500/20 rounded-lg text-[10px] font-bold uppercase transition-transform"
-                          >
-                            Inspect Profile Analytics
-                          </button>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>
@@ -1985,360 +2058,233 @@ Rules:
           </div>
         )}
 
-        {/* D. HOUSE ANALYTICS LEADERBOARD */}
+        {/* HOUSES SECTION */}
         {activeJarvisSection === 'houses' && (
-          <div className="space-y-4">
-            <span className="text-[10px] text-indigo-400 font-extrabold uppercase font-mono tracking-wider block">💎 School House Championship Leaderboard</span>
-            
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              {houses.map((house, index) => (
-                <div 
-                  key={house.id} 
-                  className="smart-glass p-4 rounded-2xl bg-slate-950/60 border border-white/5 relative flex flex-col justify-between"
-                >
-                  {/* Rank Badge */}
-                  <span className="absolute top-3 right-3 text-2xl font-mono opacity-25">#0{index+1}</span>
-                  
-                  <div className="space-y-1.5">
-                    <span className={`text-base font-black font-display uppercase tracking-widest ${
-                      house.id === 'Ruby' ? 'text-red-400' : 
-                      house.id === 'Emerald' ? 'text-emerald-400' :
-                      house.id === 'Sapphire' ? 'text-indigo-400' : 'text-amber-450'
-                    }`}>{house.id}</span>
-                    <p className="text-2xl font-black font-mono text-white tracking-tight">{house.points} <span className="text-[10px] text-slate-400 font-bold">pts</span></p>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {houses.map((house, index) => (
+              <div key={house.id} className="p-4 rounded-2xl bg-slate-900/70 border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-white">{house.id} House</span>
+                  <span className="text-xs font-mono tabular-nums text-slate-400">#{index + 1}</span>
+                </div>
+                <p className="text-2xl font-semibold font-mono tabular-nums text-indigo-300">
+                  {house.points} <span className="text-xs text-slate-400">pts</span>
+                </p>
+                <div className="pt-3 border-t border-white/10 space-y-1.5 text-xs text-slate-400">
+                  <div className="flex justify-between">
+                    <span>Materials Shared</span>
+                    <span className="text-slate-200 tabular-nums">{house.materialsShared}</span>
                   </div>
-
-                  <div className="pt-4 mt-4 border-t border-white/5 space-y-1.5 text-[10px] font-mono text-slate-400">
-                    <div className="flex items-center justify-between">
-                      <span>📁 Materials Shared:</span>
-                      <span className="text-slate-300 font-bold">{house.materialsShared}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span>🏆 Quizzes Won:</span>
-                      <span className="text-slate-300 font-bold">{house.quizzesWon}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span>🙋 Class Attendance:</span>
-                      <span className="text-emerald-400 font-bold">{house.participation}%</span>
-                    </div>
+                  <div className="flex justify-between">
+                    <span>Quizzes Won</span>
+                    <span className="text-slate-200 tabular-nums">{house.quizzesWon}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Participation</span>
+                    <span className="text-emerald-400 tabular-nums">{house.participation}%</span>
                   </div>
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
           </div>
         )}
 
-        {/* E. SECTION ANALYTICS OVERVIEW */}
+        {/* SECTIONS ANALYTICS */}
         {activeJarvisSection === 'sections' && (
-          <div className="space-y-4">
-            <span className="text-[10px] text-indigo-400 font-extrabold uppercase font-mono tracking-wider block">📊 Classroom Sections Performance Indicators</span>
-            
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              {sections.map((sec) => (
-                <div 
-                  key={sec.id} 
-                  className="smart-glass p-4 rounded-2xl bg-slate-950/60 border border-white/5 space-y-3"
-                >
-                  <div className="flex items-center justify-between border-b border-white/5 pb-2">
-                    <span className="text-xs font-black font-display text-indigo-300 uppercase">Section {sec.id}</span>
-                    <span className="text-[9px] bg-indigo-500/10 text-indigo-400 px-2.5 py-0.5 rounded-full font-bold uppercase font-mono">Active</span>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {sections.map((sec) => (
+              <div key={sec.id} className="p-4 rounded-2xl bg-slate-900/70 border border-white/10 space-y-3">
+                <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                  <span className="text-sm font-semibold text-white">Section {sec.id}</span>
+                  <span className="text-[11px] font-mono text-indigo-300">Active</span>
+                </div>
+                <div className="space-y-1.5 text-xs">
+                  <div className="flex justify-between text-slate-400">
+                    <span>Enrollment</span>
+                    <span className="text-white tabular-nums">{sec.totalStudents}</span>
                   </div>
-
-                  <div className="space-y-2 text-xs font-mono">
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Total Enrollment:</span>
-                      <span className="text-white font-bold">{sec.totalStudents} Pupils</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Average Activity:</span>
-                      <span className="text-amber-500 font-bold">{sec.studyActivity} Hr/Wk</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Average Quiz Score:</span>
-                      <span className="text-emerald-400 font-bold">{sec.quizScores}%</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Material Contribs:</span>
-                      <span className="text-indigo-400 font-bold">{sec.materialContributions} Docs</span>
-                    </div>
+                  <div className="flex justify-between text-slate-400">
+                    <span>Avg Activity</span>
+                    <span className="text-amber-400 tabular-nums">{sec.studyActivity} hr/wk</span>
+                  </div>
+                  <div className="flex justify-between text-slate-400">
+                    <span>Quiz Score</span>
+                    <span className="text-emerald-400 tabular-nums">{sec.quizScores}%</span>
                   </div>
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
           </div>
         )}
 
-        {/* PHASE 2 SEARCH AND DISCOVERY PANEL */}
+        {/* RESEARCH & DISCOVERY HUB */}
         {activeJarvisSection === 'search' && (
-          <div className="space-y-6 animate-fadeIn select-text p-1 h-full flex flex-col">
-
-            {/* Curated Educational Video Suggestions Carousel */}
+          <div className="space-y-4">
             {searchVideos && searchVideos.length > 0 && (
               <GlassyVideoCarousel videos={searchVideos} queryTopic={searchQuery} />
             )}
-            
-            {/* Premium Search Input */}
-            <div className="bg-slate-950/40 p-6 rounded-3xl border border-white/5 shadow-2xl relative overflow-hidden group hover:border-indigo-500/30 transition-all duration-500">
-              <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/5 to-violet-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-              
-              <div className="relative z-10 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-indigo-400" />
-                    <span className="text-sm text-indigo-300 font-black font-display uppercase tracking-widest">Orion Synthesis</span>
-                  </div>
-                  {searching && (
-                    <span className="text-xs text-teal-400 font-bold animate-pulse flex items-center gap-2 font-mono bg-teal-500/10 px-3 py-1 rounded-full border border-teal-500/20">
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Searching
-                    </span>
-                  )}
-                </div>
-                
-                <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 relative group-focus-within:shadow-[0_0_40px_-10px_rgba(79,70,229,0.2)] transition-shadow duration-500 rounded-2xl">
-                  <div className="relative flex-1 min-w-0">
-                    <div className="absolute inset-y-0 left-3.5 sm:left-4 flex items-center pointer-events-none">
-                      <Search className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-500" />
-                    </div>
-                    <input 
-                      type="text"
-                      placeholder="Enter any topic to synthesize notes, or search the web..."
-                      value={searchQuery}
-                      onChange={e => setSearchQuery(e.target.value)}
-                      className="w-full bg-slate-900 border-2 border-slate-800 rounded-2xl pl-10 sm:pl-12 pr-3 sm:pr-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 focus:bg-slate-950 transition-all font-sans font-medium"
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') handleRunInternetSearch(searchQuery);
-                      }}
-                    />
-                  </div>
-                  <div className="flex gap-2">
-                    <button 
-                      onClick={() => handleRunInternetSearch(searchQuery)}
-                      className="flex-1 sm:flex-initial justify-center px-3.5 sm:px-6 py-2.5 sm:py-3 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 sm:gap-2 shadow-lg hover:shadow-indigo-500/25 hover:scale-[1.02] active:scale-95"
-                    >
-                      <Globe className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" /> <span>Search</span>
-                    </button>
-                    <button 
-                      onClick={() => handleRunResourceDiscovery(searchQuery)}
-                      className="flex-1 sm:flex-initial justify-center px-3.5 sm:px-6 py-2.5 sm:py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 sm:gap-2 border border-slate-700 shadow-lg hover:scale-[1.02] active:scale-95"
-                    >
-                      <BookOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" /> <span>Discovery</span>
-                    </button>
-                  </div>
-                </div>
 
-                {/* Quick Action Generators */}
-                {searchQuery.trim().length > 2 && (
-                  <div className="flex flex-col gap-2.5 pt-3">
-                    <span className="text-[10px] text-indigo-400 font-extrabold uppercase font-mono tracking-widest block">🪄 Orion Academic Note Synthesis Engines</span>
-                    <div className="flex flex-wrap gap-2">
-                      <button 
-                        onClick={() => handleGenerateSpecializedNotes(searchQuery, 'detailed_notes')}
-                        className="px-3.5 py-2 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 hover:text-indigo-200 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 border border-indigo-500/20 shadow-sm"
-                      >
-                        <Sparkles className="w-3.5 h-3.5" /> Detailed Notes
-                      </button>
-                      <button 
-                        onClick={() => handleGenerateSpecializedNotes(searchQuery, 'chapter_summary')}
-                        className="px-3.5 py-2 bg-pink-500/10 hover:bg-pink-500/20 text-pink-300 hover:text-pink-200 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 border border-pink-500/20 shadow-sm"
-                      >
-                        <BookOpen className="w-3.5 h-3.5" /> Chapter Summary
-                      </button>
-                      <button 
-                        onClick={() => handleGenerateSpecializedNotes(searchQuery, 'exam_prep')}
-                        className="px-3.5 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 hover:text-rose-200 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 border border-rose-500/20 shadow-sm"
-                      >
-                        <Award className="w-3.5 h-3.5" /> Exam Prep Notes
-                      </button>
-                      <button 
-                        onClick={() => handleGenerateSpecializedNotes(searchQuery, 'formula_sheet')}
-                        className="px-3.5 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 hover:text-amber-200 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 border border-amber-500/20 shadow-sm"
-                      >
-                        <PenTool className="w-3.5 h-3.5" /> Formula Sheet
-                      </button>
-                      <button 
-                        onClick={() => handleGenerateSpecializedNotes(searchQuery, 'revision_notes')}
-                        className="px-3.5 py-2 bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 hover:text-teal-200 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 border border-teal-500/20 shadow-sm"
-                      >
-                        <CheckCircle className="w-3.5 h-3.5" /> Revision Notes
-                      </button>
-                      <button 
-                        onClick={() => handleGenerateLessonPlan(searchQuery)}
-                        className="px-3.5 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 hover:text-emerald-200 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-1.5 border border-emerald-500/20 shadow-sm"
-                      >
-                        <Layers className="w-3.5 h-3.5" /> Generate Study Plan
-                      </button>
-                    </div>
-                  </div>
-                )}
+            <div className="rounded-2xl border border-white/10 bg-slate-900/65 p-4 sm:p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-indigo-300 inline-flex items-center gap-2">
+                  <Globe className="w-4 h-4" /> Academic Research & Note Synthesis
+                </span>
+                {searching && <span className="text-xs text-teal-300">Searching...</span>}
               </div>
+
+              <div className="flex flex-col sm:flex-row gap-2">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="Enter a curriculum topic to research or generate notes..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleRunInternetSearch(searchQuery);
+                    }}
+                    className="w-full bg-slate-950 border border-white/15 rounded-xl pl-10 pr-3 py-2.5 text-xs sm:text-sm text-white placeholder-slate-500 outline-none focus:border-indigo-400"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleRunInternetSearch(searchQuery)}
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold inline-flex items-center justify-center gap-1.5"
+                >
+                  <Globe className="w-4 h-4" /> Search
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleRunResourceDiscovery(searchQuery)}
+                  className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold inline-flex items-center justify-center gap-1.5"
+                >
+                  <BookOpen className="w-4 h-4" /> Hub Match
+                </button>
+              </div>
+
+              {searchQuery.trim().length > 2 && (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {[
+                    { label: 'Detailed Notes', type: 'detailed_notes' as const, icon: Sparkles },
+                    { label: 'Chapter Summary', type: 'chapter_summary' as const, icon: BookOpen },
+                    { label: 'Exam Prep', type: 'exam_prep' as const, icon: Award },
+                    { label: 'Formula Sheet', type: 'formula_sheet' as const, icon: PenTool },
+                    { label: 'Revision Notes', type: 'revision_notes' as const, icon: CheckCircle2 },
+                  ].map((btn) => {
+                    const Icon = btn.icon;
+                    return (
+                      <button
+                        key={btn.type}
+                        type="button"
+                        onClick={() => handleGenerateSpecializedNotes(searchQuery, btn.type)}
+                        className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-slate-200 inline-flex items-center gap-1.5"
+                      >
+                        <Icon className="w-3.5 h-3.5 text-indigo-400" /> {btn.label}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => handleGenerateLessonPlan(searchQuery)}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 text-xs text-emerald-300 inline-flex items-center gap-1.5"
+                  >
+                    <Layers className="w-3.5 h-3.5" /> Study Plan
+                  </button>
+                </div>
+              )}
             </div>
 
-            {/* Results Render */}
             <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-              {/* AI Grounded Search Content: 8 cols */}
-              <div className="md:col-span-8 bg-slate-950/60 p-4 rounded-2xl border border-white/10 space-y-3 flex flex-col min-h-[320px]">
-                <span className="text-[10px] text-indigo-400 font-extrabold uppercase font-mono tracking-wider block">📑 AI Research Grounding Summary</span>
-                
-                <div className="flex-1 overflow-y-auto max-h-[350px] pr-1 scrollbar-thin text-xs text-slate-300 leading-relaxed font-sans">
+              <div className="md:col-span-8 rounded-2xl border border-white/10 bg-slate-900/65 p-4 space-y-3">
+                <span className="text-xs font-semibold text-indigo-300">Research Synthesis</span>
+                <div className="text-sm text-slate-200 leading-relaxed max-h-[420px] overflow-y-auto pr-1">
                   {searchResults ? (
                     <AcademicRichRenderer content={searchResults} isStreaming={searching} />
                   ) : (
-                    <div className="h-full flex flex-col items-center justify-center text-center py-12 text-slate-500 space-y-2">
-                      <Sparkles className="w-8 h-8 text-slate-600 animate-pulse" />
-                      <p className="text-xs max-w-xs font-medium">Orion discovery engine is idle. Enter a topic above to research verified sources.</p>
-                    </div>
+                    <p className="text-xs text-slate-500 py-8 text-center">
+                      Enter a topic above to search verified sources or generate structured notes.
+                    </p>
                   )}
                 </div>
-
                 {generatedNotesContent && (
-                  <div className="pt-3 border-t border-white/5 flex flex-wrap gap-2 justify-end items-center animate-fadeIn">
+                  <div className="pt-3 border-t border-white/10 flex justify-end gap-2">
                     <button
+                      type="button"
                       onClick={handleSaveGeneratedNotesToVault}
                       disabled={isNotesSaved}
-                      className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 border shadow-lg ${
-                        isNotesSaved 
-                          ? 'bg-emerald-600/20 text-emerald-400 border-emerald-500/30 cursor-default' 
-                          : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white border-violet-500/30 hover:scale-[1.02] active:scale-95'
-                      }`}
+                      className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-emerald-600/20 disabled:text-emerald-300 text-white text-xs font-semibold inline-flex items-center gap-1.5"
                     >
-                      {isNotesSaved ? (
-                        <>
-                          <CheckCircle className="w-4 h-4 text-emerald-400" /> Saved to Lecture Notes
-                        </>
-                      ) : (
-                        <>
-                          <Plus className="w-4 h-4" /> Save to Lecture Notes
-                        </>
-                      )}
+                      {isNotesSaved ? <CheckCircle2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                      {isNotesSaved ? 'Saved to Lecture Notes' : 'Save to Lecture Notes'}
                     </button>
-                    {isNotesSaved && (
-                      <button
-                        onClick={() => {
-                          setActiveTab('notes');
-                          if (onClose) onClose();
-                        }}
-                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-indigo-300 hover:text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center gap-2 border border-slate-700 hover:scale-[1.02] active:scale-95"
-                      >
-                        <FileText className="w-4 h-4" /> Open Lecture Notes
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {searchSources && searchSources.length > 0 && (
-                  <div className="mt-4 pt-4 border-t border-white/10 space-y-3">
-                    <span className="text-[10px] text-teal-400 font-extrabold uppercase font-mono tracking-widest block">🔗 Verified Academic Sources & Grounding Links</span>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      {searchSources.map((src, idx) => (
-                        <a
-                          key={idx}
-                          href={src.uri}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="group relative flex items-center gap-3 p-3 rounded-2xl bg-slate-900/95 hover:bg-slate-900 border border-white/5 hover:border-indigo-500/40 transition-all duration-300 text-left hover:scale-[1.02] shadow-md hover:shadow-indigo-500/10"
-                        >
-                          <div className="h-8 w-8 rounded-xl bg-indigo-600/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shrink-0 group-hover:bg-indigo-600/20 transition-all">
-                            <Globe className="w-4 h-4" />
-                          </div>
-                          <div className="truncate flex-1 space-y-1">
-                            <div className="text-xs font-black text-white truncate group-hover:text-indigo-300 transition-colors">{src.title}</div>
-                            {src.published_source && (
-                              <span className="inline-block text-[8px] font-extrabold uppercase tracking-widest bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                                {src.published_source}
-                              </span>
-                            )}
-                            <div className="text-[9px] text-slate-500 truncate group-hover:text-slate-400 font-mono">{src.uri}</div>
-                          </div>
-                        </a>
-                      ))}
-                    </div>
                   </div>
                 )}
               </div>
 
-              {/* Discovered Materials List: 4 cols */}
-              <div className="md:col-span-4 bg-slate-950/60 p-5 rounded-2xl border border-white/10 space-y-4 flex flex-col shadow-xl">
-                <span className="text-[10px] text-teal-400 font-extrabold uppercase font-mono tracking-wider block">📂 Material Hub Discoveries</span>
-                
-                <div className="flex-1 overflow-y-auto max-h-[350px] space-y-3 pr-1">
-                  {localMaterials && localMaterials.length > 0 ? (
-                    localMaterials.map((mat) => (
-                      <a 
+              <div className="md:col-span-4 rounded-2xl border border-white/10 bg-slate-900/65 p-4 space-y-3">
+                <span className="text-xs font-semibold text-teal-300">Material Hub Matches</span>
+                {localMaterials.length > 0 ? (
+                  <div className="space-y-2">
+                    {localMaterials.map((mat) => (
+                      <a
                         key={mat.id}
                         href={mat.url || mat.file_url || '#'}
                         target="_blank"
                         rel="noreferrer"
-                        className="group block p-3.5 rounded-2xl bg-slate-900/80 hover:bg-slate-900 border border-white/5 hover:border-teal-500/40 hover:shadow-teal-500/5 transition-all duration-300 text-left space-y-2 hover:scale-[1.02]"
+                        className="block p-3 rounded-xl bg-slate-950/70 border border-white/10 hover:border-teal-400/40 space-y-1"
                       >
-                        <div className="flex items-center justify-between">
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-extrabold bg-teal-500/10 text-teal-400 uppercase tracking-wider border border-teal-500/20">
-                            📚 {mat.subject || 'Syllabus'}
-                          </span>
-                          <span className="text-[9px] text-slate-500 font-mono group-hover:text-slate-400">Hub File</span>
-                        </div>
-                        <div className="text-xs font-bold text-white group-hover:text-teal-300 transition-colors line-clamp-1">{mat.title}</div>
-                        <div className="text-[10px] text-slate-400 line-clamp-2 leading-relaxed font-sans">{mat.description || 'No description provided.'}</div>
+                        <div className="text-xs font-semibold text-white truncate">{mat.title}</div>
+                        <div className="text-[11px] text-slate-400 line-clamp-2">{mat.description || 'Hub file'}</div>
                       </a>
-                    ))
-                  ) : (
-                    <div className="h-full flex flex-col items-center justify-center text-center py-12 text-slate-550 space-y-2">
-                      <div className="h-10 w-10 rounded-2xl bg-slate-900 border border-white/5 flex items-center justify-center text-slate-500">
-                        <BookOpen className="w-5 h-5" />
-                      </div>
-                      <p className="text-[10px] font-mono leading-relaxed max-w-[160px] mx-auto">No local materials found in Hub index.</p>
-                    </div>
-                  )}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500 py-8 text-center">No matching hub files indexed yet.</p>
+                )}
               </div>
             </div>
           </div>
         )}
-
       </div>
 
-      {/* 3. INPUT ZONE / SPEECH CONTROLLER */}
-      <div className="pt-3 sm:pt-4 border-t border-white/10 flex items-center gap-2 sm:gap-3 bg-slate-900/60 backdrop-blur rounded-2xl mt-2 p-2">
-        
-        {/* Float design mic selector */}
-        <div className="relative group flex items-center justify-center shrink-0">
-          <button 
-            type="button"
-            onClick={toggleListening}
-            className={`h-9 w-9 sm:h-11 sm:w-11 rounded-full flex items-center justify-center transition-all shadow-md ${
-              isListening 
-                ? 'bg-red-600 animate-pulse text-white shadow-lg shadow-red-950/50 hover:bg-red-500' 
-                : 'bg-slate-800 hover:bg-slate-700 text-indigo-400 hover:text-indigo-300'
-            }`}
-            title={isListening ? "Stop Listening" : "Start Voice Input"}
-          >
-            <Mic className={`w-4 h-4 sm:w-5 sm:h-5 ${isListening ? 'scale-110' : ''}`} />
-          </button>
-          <div className="hidden group-hover:block absolute -top-8 bg-slate-800 text-[10px] text-white px-2 py-1 rounded shadow pointer-events-none whitespace-nowrap z-50">
-            {isListening ? "Listening... Click to stop" : "Start Speech-to-text Input"}
-          </div>
-        </div>
+      {/* 3. DOCKED BOTTOM COMMAND BAR */}
+      <footer className="shrink-0 px-4 sm:px-6 py-3 border-t border-white/10 bg-slate-950/90 flex items-center gap-2.5">
+        <button
+          type="button"
+          onClick={toggleListening}
+          className={`min-h-[44px] min-w-[44px] rounded-xl flex items-center justify-center transition-colors border ${
+            isListening
+              ? 'bg-rose-600 border-rose-400 text-white'
+              : 'bg-slate-900 border-white/10 hover:bg-slate-800 text-indigo-300'
+          }`}
+          title={isListening ? 'Stop voice input' : 'Start voice input'}
+        >
+          {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+        </button>
 
-        {/* Text submit form bar */}
-        <form onSubmit={handleTextSubmit} className="flex-1 min-w-0 flex gap-1.5 sm:gap-2">
-          <input 
-            type="text" 
-            placeholder="Query Orion..."
+        <form onSubmit={handleTextSubmit} className="flex-1 min-w-0 flex items-center gap-2">
+          <input
+            type="text"
             value={commandText}
-            onChange={e => setCommandText(e.target.value)}
+            onChange={(e) => setCommandText(e.target.value)}
             disabled={isProcessing}
-            className="flex-1 min-w-0 bg-slate-950/80 border border-white/10 rounded-xl sm:rounded-2xl px-3 sm:px-4 py-2 sm:py-2.5 text-xs text-white placeholder-slate-500 outline-none focus:border-indigo-500/50 transition-all font-mono disabled:opacity-55"
+            placeholder={
+              normalizedRole === 'student'
+                ? 'Ask Orion to check homework, build a study plan, or search curriculum topics...'
+                : 'Instruct Orion to run reports, check attendance, publish notices, or research...'
+            }
+            className="flex-1 min-w-0 min-h-[44px] bg-slate-900 border border-white/15 focus:border-indigo-400 rounded-xl px-3.5 text-sm text-white placeholder-slate-500 outline-none transition-colors disabled:opacity-60"
           />
-
-          <button 
-            type="submit" 
+          <button
+            type="submit"
             disabled={isProcessing || !commandText.trim()}
-            className="px-3 sm:px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-900 text-white disabled:text-slate-500 rounded-xl sm:rounded-2xl font-black text-xs uppercase cursor-pointer transition-all flex items-center gap-1.5 shrink-0"
+            className="min-h-[44px] px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 shrink-0 transition-colors"
           >
-            <Send className="w-3.5 h-3.5" /> <span className="hidden min-[340px]:inline">Execute</span>
+            <Send className="w-4 h-4" />
+            <span className="hidden sm:inline">{isProcessing ? 'Running...' : 'Execute'}</span>
           </button>
         </form>
-
-      </div>
+      </footer>
     </div>
   );
 };

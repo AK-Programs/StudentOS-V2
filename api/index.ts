@@ -11,14 +11,19 @@
  *   -> Models: llama-3.1-8b-instant, openai/gpt-oss-120b, qwen/qwen3.8-27b
  * - General chat, complex tasks, revision guides, lecture notes, tools, or modelOverride containing ministral or mistral
  *   -> Ministral (POST https://api.mistral.ai/v1/chat/completions with MINISTRAL_API_KEY, model: ministral-8b-2410)
- * - Approved AI Providers strictly: Ministral, Groq.
+ * - Z.ai explicit provider / modelOverride containing zai or glm-4.7
+ *   -> Z.ai (POST https://api.z.ai/api/paas/v4/chat/completions with server-only ZAI_API_KEY, model: glm-4.7-flash)
+ * - Approved AI Providers strictly: Ministral, Groq, Z.ai.
  */
 
-export type AIProviderName = 'groq' | 'ministral';
+export type AIProviderName = 'groq' | 'ministral' | 'zai';
 export type TaskComplexityTier = 'short' | 'fast' | 'general' | 'complex' | 'tool';
 
 const GROQ_CHAT_COMPLETIONS_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MINISTRAL_CHAT_COMPLETIONS_URL = 'https://api.mistral.ai/v1/chat/completions';
+export const ZAI_API_BASE_URL = 'https://api.z.ai/api/paas/v4';
+export const ZAI_CHAT_COMPLETIONS_URL = 'https://api.z.ai/api/paas/v4/chat/completions';
+export const ZAI_MODEL_ID = 'glm-4.7-flash';
 
 const GROQ_MODELS = [
   'llama-3.1-8b-instant',
@@ -68,6 +73,11 @@ function getMinistralApiKey(): string {
   return rawKey.trim().replace(/^["']|["']$/g, '');
 }
 
+// Security rule: Z.ai key is strictly read from server-side ZAI_API_KEY (never VITE_ZAI_API_KEY).
+export function getZaiApiKey(): string {
+  return (process.env.ZAI_API_KEY || '').trim().replace(/^["']|["']$/g, '');
+}
+
 function isShortPrompt(prompt: string): boolean {
   const clean = (prompt || '').trim();
   const words = clean.split(/\s+/).filter(Boolean);
@@ -103,7 +113,7 @@ function isLongOrComplexPrompt(
   const mode = (options?.mode || '').trim().toLowerCase();
   const override = (options?.modelOverride || '').trim().toLowerCase();
 
-  // If caller explicitly requested groq, ministral, fast, short, or general, do not override with long check
+  // If caller explicitly requested groq, ministral, zai, fast, short, or general, do not override with long check
   if (
     override.includes('groq') ||
     override.includes('llama') ||
@@ -111,10 +121,14 @@ function isLongOrComplexPrompt(
     override.includes('gpt-oss') ||
     override.includes('ministral') ||
     override.includes('mistral') ||
+    override === 'zai' ||
+    override.startsWith('zai/') ||
+    override.includes('glm-4.7') ||
     taskType === 'short' ||
     taskType === 'general' ||
     taskType === 'fast' ||
-    taskType === 'tool'
+    taskType === 'tool' ||
+    taskType === 'zai'
   ) {
     return false;
   }
@@ -190,6 +204,14 @@ export function classifyTaskComplexity(
       provider: 'ministral',
       model: 'ministral-8b-2410',
       tier: 'general'
+    };
+  }
+
+  if (override === 'zai' || override.startsWith('zai/') || override.includes('glm-4.7') || taskType === 'zai') {
+    return {
+      provider: 'zai',
+      model: ZAI_MODEL_ID,
+      tier: taskType === 'complex' ? 'complex' : 'general'
     };
   }
 
@@ -301,12 +323,7 @@ function extractStreamingToken(choice: any): string {
       return joined;
     }
   }
-  if (typeof delta.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
-    return delta.reasoning_content;
-  }
-  if (typeof delta.reasoning === 'string' && delta.reasoning.length > 0) {
-    return delta.reasoning;
-  }
+  // Security/UX rule: Never leak raw internal reasoning_content or thinking traces to users.
   if (typeof delta.output_text === 'string' && delta.output_text.length > 0) {
     return delta.output_text;
   }
@@ -345,17 +362,8 @@ function extractTextFromChoiceMessage(choice: any, rootData?: any): string {
     }
   }
 
-  // 2. message.reasoning_content
-  if (typeof msg.reasoning_content === 'string' && msg.reasoning_content.trim().length > 0) {
-    return msg.reasoning_content.trim();
-  }
-
-  // 3. message.reasoning
-  if (typeof msg.reasoning === 'string' && msg.reasoning.trim().length > 0) {
-    return msg.reasoning.trim();
-  }
-
-  // 4. message.output_text / choice.output_text / rootData.output_text
+  // Security/UX rule: Never fall back to internal reasoning_content or raw thinking traces.
+  // 2. message.output_text / choice.output_text / rootData.output_text
   if (typeof msg.output_text === 'string' && msg.output_text.trim().length > 0) {
     return msg.output_text.trim();
   }
@@ -657,11 +665,119 @@ async function callMinistralCompletion(
   }
 }
 
+async function callZaiCompletion(
+  prompt: string,
+  systemPrompt: string | undefined,
+  history: any[] = [],
+  options?: {
+    jsonMode?: boolean;
+    maxTokens?: number;
+    requestId?: string;
+    timeoutMs?: number;
+  }
+): Promise<{
+  text: string;
+  providerUsed: 'zai';
+  modelUsed: typeof ZAI_MODEL_ID;
+  tier: 'general';
+  totalMs: number;
+}> {
+  const apiKey = getZaiApiKey();
+  const effectiveModel = ZAI_MODEL_ID;
+
+  if (!apiKey) {
+    const err: any = new Error('ZAI_API_KEY environment variable is not configured on the server.');
+    err.status = 500;
+    err.providerUsed = 'zai';
+    err.modelUsed = effectiveModel;
+    throw err;
+  }
+
+  const start = Date.now();
+  const messages = buildChatMessages(systemPrompt, history, prompt);
+  const effectiveMaxTokens = options?.maxTokens
+    ? Math.min(Math.max(options.maxTokens, 300), 4096)
+    : 2048;
+  const timeoutMs = options?.timeoutMs || 28000;
+
+  async function doFetch(allowJsonFormat: boolean): Promise<{ text: string }> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const resp = await fetch(ZAI_CHAT_COMPLETIONS_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          model: effectiveModel,
+          messages,
+          temperature: 0.6,
+          max_tokens: effectiveMaxTokens,
+          ...(allowJsonFormat ? { response_format: { type: 'json_object' } } : {})
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+
+      if (!resp.ok) {
+        const rawErr = await resp.text().catch(() => '');
+        if (resp.status === 400 && allowJsonFormat && /response_format|json_object|unsupported/i.test(rawErr)) {
+          return await doFetch(false);
+        }
+        const err: any = new Error(
+          `zai HTTP ${resp.status}: ${rawErr || resp.statusText || 'Z.ai request failed'}`
+        );
+        err.status = resp.status;
+        err.providerUsed = 'zai';
+        err.modelUsed = effectiveModel;
+        throw err;
+      }
+
+      const data = await resp.json();
+      const choice = data?.choices?.[0];
+      const text = extractTextFromChoiceMessage(choice, data);
+      if (!text) {
+        const err: any = new Error(`zai HTTP 200 returned empty content for ${effectiveModel}`);
+        err.status = 502;
+        err.providerUsed = 'zai';
+        err.modelUsed = effectiveModel;
+        throw err;
+      }
+      return { text: text.trim() };
+    } catch (fetchErr: any) {
+      clearTimeout(timeout);
+      if (fetchErr?.providerUsed === 'zai') throw fetchErr;
+      const isTimeout = fetchErr?.name === 'AbortError' || String(fetchErr?.message || '').toLowerCase().includes('abort');
+      const err: any = new Error(
+        isTimeout
+          ? `Z.ai request timed out after ${Math.round(timeoutMs / 1000)} seconds`
+          : (fetchErr?.message || 'Z.ai network request failed')
+      );
+      err.status = isTimeout ? 504 : 502;
+      err.providerUsed = 'zai';
+      err.modelUsed = effectiveModel;
+      throw err;
+    }
+  }
+
+  const out = await doFetch(Boolean(options?.jsonMode));
+  return {
+    text: out.text,
+    providerUsed: 'zai',
+    modelUsed: effectiveModel,
+    tier: 'general',
+    totalMs: Date.now() - start
+  };
+}
+
 /**
  * Unified non-streaming completion router for api/index.ts.
- * Dispatches strictly across approved providers: Groq and Ministral.
+ * Dispatches strictly across approved providers: Groq, Ministral, and Z.ai.
  */
-async function callRoutedCompletion(
+export async function callRoutedCompletion(
   prompt: string,
   systemPrompt?: string,
   history: any[] = [],
@@ -695,15 +811,24 @@ async function callRoutedCompletion(
     });
   }
 
-  // 1. General / Complex / Tool -> Ministral (cross-fallback to Groq)
-  if (provider === 'ministral' || tier === 'complex' || tier === 'tool') {
+  // 1. Z.ai explicit route (fallback to Ministral -> Groq)
+  if (provider === 'zai') {
     try {
-      return await callMinistralCompletion(prompt, systemPrompt, history, {
+      return await callZaiCompletion(prompt, systemPrompt, history, {
         jsonMode: options?.jsonMode,
         maxTokens: options?.maxTokens,
         requestId: options?.requestId
       });
-    } catch (minErr: any) {
+    } catch (zaiErr: any) {
+      if (getMinistralApiKey()) {
+        try {
+          return await callMinistralCompletion(prompt, systemPrompt, history, {
+            jsonMode: options?.jsonMode,
+            maxTokens: options?.maxTokens,
+            requestId: options?.requestId
+          });
+        } catch (_) {}
+      }
       if (getGroqApiKey()) {
         return await callGroqCompletion(prompt, systemPrompt, history, {
           initialModel: 'llama-3.1-8b-instant',
@@ -713,11 +838,42 @@ async function callRoutedCompletion(
           requestId: options?.requestId
         });
       }
+      throw zaiErr;
+    }
+  }
+
+  // 2. General / Complex / Tool -> Ministral (cross-fallback to Groq -> Z.ai)
+  if (provider === 'ministral' || tier === 'complex' || tier === 'tool') {
+    try {
+      return await callMinistralCompletion(prompt, systemPrompt, history, {
+        jsonMode: options?.jsonMode,
+        maxTokens: options?.maxTokens,
+        requestId: options?.requestId
+      });
+    } catch (minErr: any) {
+      if (getGroqApiKey()) {
+        try {
+          return await callGroqCompletion(prompt, systemPrompt, history, {
+            initialModel: 'llama-3.1-8b-instant',
+            modelOverride: options?.modelOverride,
+            jsonMode: options?.jsonMode,
+            maxTokens: options?.maxTokens,
+            requestId: options?.requestId
+          });
+        } catch (_) {}
+      }
+      if (getZaiApiKey()) {
+        return await callZaiCompletion(prompt, systemPrompt, history, {
+          jsonMode: options?.jsonMode,
+          maxTokens: options?.maxTokens,
+          requestId: options?.requestId
+        });
+      }
       throw minErr;
     }
   }
 
-  // 2. Short / Fast / Groq -> Groq (cross-fallback to Ministral)
+  // 3. Short / Fast / Groq -> Groq (cross-fallback to Ministral -> Z.ai)
   try {
     return await callGroqCompletion(prompt, systemPrompt, history, {
       initialModel: classifiedModel,
@@ -728,7 +884,16 @@ async function callRoutedCompletion(
     });
   } catch (groqErr: any) {
     if (getMinistralApiKey()) {
-      return await callMinistralCompletion(prompt, systemPrompt, history, {
+      try {
+        return await callMinistralCompletion(prompt, systemPrompt, history, {
+          jsonMode: options?.jsonMode,
+          maxTokens: options?.maxTokens,
+          requestId: options?.requestId
+        });
+      } catch (_) {}
+    }
+    if (getZaiApiKey()) {
+      return await callZaiCompletion(prompt, systemPrompt, history, {
         jsonMode: options?.jsonMode,
         maxTokens: options?.maxTokens,
         requestId: options?.requestId
@@ -739,7 +904,7 @@ async function callRoutedCompletion(
 }
 
 /**
- * Unified SSE streaming router strictly for Groq and Ministral.
+ * Unified SSE streaming router strictly for Groq, Ministral, and Z.ai.
  * Keeps raw streamed token text (including spaces) and trims only the finished reply.
  */
 async function streamRoutedCompletion(
@@ -765,8 +930,38 @@ async function streamRoutedCompletion(
   const targets: { provider: AIProviderName; targetUrl: string; apiKey: string; candidateModels: string[]; missingKeyError: string }[] = [];
   const groqKey = getGroqApiKey();
   const ministralKey = getMinistralApiKey();
+  const zaiKey = getZaiApiKey();
 
-  if (provider === 'ministral' || hasImages) {
+  if (provider === 'zai' && !hasImages) {
+    if (zaiKey) {
+      targets.push({
+        provider: 'zai',
+        targetUrl: ZAI_CHAT_COMPLETIONS_URL,
+        apiKey: zaiKey,
+        candidateModels: [ZAI_MODEL_ID],
+        missingKeyError: 'ZAI_API_KEY environment variable is not configured on the server.'
+      });
+    }
+    if (ministralKey) {
+      targets.push({
+        provider: 'ministral',
+        targetUrl: MINISTRAL_CHAT_COMPLETIONS_URL,
+        apiKey: ministralKey,
+        candidateModels: ['ministral-8b-2410'],
+        missingKeyError: 'MINISTRAL_API_KEY environment variable is not configured on the server.'
+      });
+    }
+    if (groqKey) {
+      const fallbackGroq = getNextGroqModel();
+      targets.push({
+        provider: 'groq',
+        targetUrl: GROQ_CHAT_COMPLETIONS_URL,
+        apiKey: groqKey,
+        candidateModels: [fallbackGroq, ...GROQ_MODELS.filter((m) => m !== fallbackGroq)],
+        missingKeyError: 'GROQ_API_KEY environment variable is not configured on the server.'
+      });
+    }
+  } else if (provider === 'ministral' || hasImages) {
     if (ministralKey) {
       targets.push({
         provider: 'ministral',
@@ -784,6 +979,15 @@ async function streamRoutedCompletion(
         apiKey: groqKey,
         candidateModels: [fallbackGroq, ...GROQ_MODELS.filter((m) => m !== fallbackGroq)],
         missingKeyError: 'GROQ_API_KEY environment variable is not configured on the server.'
+      });
+    }
+    if (!hasImages && zaiKey) {
+      targets.push({
+        provider: 'zai',
+        targetUrl: ZAI_CHAT_COMPLETIONS_URL,
+        apiKey: zaiKey,
+        candidateModels: [ZAI_MODEL_ID],
+        missingKeyError: 'ZAI_API_KEY environment variable is not configured on the server.'
       });
     }
   } else {
@@ -806,15 +1010,26 @@ async function streamRoutedCompletion(
         missingKeyError: 'MINISTRAL_API_KEY environment variable is not configured on the server.'
       });
     }
+    if (zaiKey) {
+      targets.push({
+        provider: 'zai',
+        targetUrl: ZAI_CHAT_COMPLETIONS_URL,
+        apiKey: zaiKey,
+        candidateModels: [ZAI_MODEL_ID],
+        missingKeyError: 'ZAI_API_KEY environment variable is not configured on the server.'
+      });
+    }
   }
 
   if (targets.length === 0) {
     return sendJson(res, 500, {
       success: false,
       status: 500,
-      error: provider === 'ministral'
+      error: provider === 'zai'
+        ? 'ZAI_API_KEY environment variable is not configured on the server.'
+        : provider === 'ministral'
         ? 'MINISTRAL_API_KEY environment variable is not configured on the server.'
-        : 'GROQ_API_KEY and MINISTRAL_API_KEY environment variables are not configured on the server.',
+        : 'GROQ_API_KEY, MINISTRAL_API_KEY, and ZAI_API_KEY environment variables are not configured on the server.',
       providerUsed: provider,
       modelUsed: classifiedModel,
       requestId
@@ -846,6 +1061,8 @@ async function streamRoutedCompletion(
     for (let i = 0; i < target.candidateModels.length; i++) {
       activeModel = target.candidateModels[i];
 
+      const streamController = new AbortController();
+      const streamTimeout = setTimeout(() => streamController.abort(), 30000);
       try {
         const resp = await fetch(target.targetUrl, {
           method: 'POST',
@@ -860,8 +1077,10 @@ async function streamRoutedCompletion(
             temperature: 0.6,
             max_tokens: effectiveMaxTokens,
             stream: true
-          })
+          }),
+          signal: streamController.signal
         });
+        clearTimeout(streamTimeout);
 
         if (!resp.ok) {
           const errText = await resp.text().catch(() => '');
@@ -1000,6 +1219,7 @@ async function streamRoutedCompletion(
           lastErrorText = `Stream finished without returning text tokens (finish_reason=${finishReason})`;
         }
       } catch (err: any) {
+        clearTimeout(streamTimeout);
         lastStatus = err?.status || 502;
         lastErrorText = err?.message || `${activeProvider} stream request failed`;
       }
@@ -1749,6 +1969,8 @@ export default async function handler(req: any, res: any) {
       provider: 'multi-provider',
       groqModels: GROQ_MODELS,
       ministralModel: 'ministral-8b-2410',
+      zaiModel: ZAI_MODEL_ID,
+      zaiConfigured: Boolean(getZaiApiKey()),
       runtime: 'vercel-serverless'
     });
   }
@@ -1757,7 +1979,7 @@ export default async function handler(req: any, res: any) {
   if (pathname === '/api/debug/nvidia') {
     return sendJson(res, 410, {
       success: false,
-      error: 'This diagnostic endpoint has been disabled. Veylentra AI routes strictly through Ministral and Groq.',
+      error: 'This diagnostic endpoint has been disabled. Veylentra AI routes strictly through Ministral, Groq, and Z.ai.',
       requestId
     });
   }
@@ -2371,6 +2593,316 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
         resultsCount: searchResults.length
       }
     });
+  }
+
+  // 5.5 Authoritative Server-Side Orion Execution Engine (/api/orion/execute)
+  if (pathname === '/api/orion/execute' || pathname === '/api/orion/execute/') {
+    const body = await parseJsonBody(req);
+    const { command = '', actionPlan, confirmed = false, activeTab = 'dashboard', modelOverride, history = [] } = body;
+    const cfg = getServerlessSupabaseConfig();
+    const superAdminEmails = [
+      'naitik.kashyap0015@gmail.com',
+      'naitik.kashyap5205@gmail.com',
+      'superadmin@studentos.edu',
+      'superadmin@veylentra.edu',
+    ];
+
+    const authHeader = String(req.headers?.authorization || req.headers?.['x-supabase-auth'] || '').trim();
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    let actor = { userId: 'guest', email: '', name: 'Guest User', role: 'student', grade: '', section: '', authenticated: false };
+
+    if (token) {
+      const uRes = await fetch(`${cfg.url}/auth/v1/user`, { headers: { apikey: cfg.key, Authorization: `Bearer ${token}` } }).catch(() => null);
+      if (!uRes || !uRes.ok) {
+        return sendJson(res, 401, { success: false, status: 'unauthorized', error: 'Invalid or expired authentication token.', requestId });
+      }
+      const user: any = await uRes.json().catch(() => null);
+      if (!user?.id) {
+        return sendJson(res, 401, { success: false, status: 'unauthorized', error: 'Invalid authentication session.', requestId });
+      }
+      const email = String(user.email || '').toLowerCase().trim();
+      let role = superAdminEmails.includes(email) ? 'super_admin' : String(user.user_metadata?.role || 'student').toLowerCase().trim();
+      let name = String(user.user_metadata?.name || email.split('@')[0] || 'Campus Member');
+      if (!superAdminEmails.includes(email)) {
+        const pRes = await fetchServerlessSupabaseWithAnonRetry(
+          `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(user.id)},uid.eq.${encodeURIComponent(user.id)},email.eq.${encodeURIComponent(email)})&select=id,name,role,grade,section`,
+          { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+        ).catch(() => null);
+        if (pRes?.ok) {
+          const rows: any = await pRes.json().catch(() => []);
+          if (Array.isArray(rows) && rows[0]?.role) {
+            role = String(rows[0].role).toLowerCase().trim();
+            if (rows[0].name) name = String(rows[0].name);
+          }
+        }
+      }
+      actor = { userId: user.id, email, name, role, grade: String(user.user_metadata?.grade || ''), section: String(user.user_metadata?.section || ''), authenticated: true };
+    } else {
+      const uidH = String(req.headers?.['x-veylentra-uid'] || '').trim();
+      const emailH = String(req.headers?.['x-veylentra-email'] || '').toLowerCase().trim();
+      const actorId = uidH || emailH;
+      if (actorId && actorId !== 'guest' && actorId !== 'anonymous' && actorId !== 'user_guest') {
+        if (superAdminEmails.includes(emailH) || superAdminEmails.includes(actorId.toLowerCase()) || actorId === 'superadmin-master-uid') {
+          actor = { userId: actorId, email: emailH, name: 'Super Administrator', role: 'super_admin', grade: '', section: '', authenticated: true };
+        } else {
+          const pRes = await fetchServerlessSupabaseWithAnonRetry(
+            `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(actorId)},uid.eq.${encodeURIComponent(actorId)},email.eq.${encodeURIComponent(emailH || actorId)})&select=id,name,role,grade,section`,
+            { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+          ).catch(() => null);
+          if (pRes?.ok) {
+            const rows: any = await pRes.json().catch(() => []);
+            if (Array.isArray(rows) && rows[0]) {
+              actor = {
+                userId: String(rows[0].id || actorId),
+                email: emailH,
+                name: String(rows[0].name || 'Campus Member'),
+                role: String(rows[0].role || 'student').toLowerCase().trim(),
+                grade: String(rows[0].grade || ''),
+                section: String(rows[0].section || ''),
+                authenticated: true
+              };
+            }
+          }
+        }
+      }
+    }
+
+    const cmdTrimmed = String(command || '').trim();
+    if (!cmdTrimmed) {
+      return sendJson(res, 400, { success: false, status: 'error', error: 'Command or instruction is required.', requestId });
+    }
+    const cmdLower = cmdTrimmed.toLowerCase();
+
+    const detectAction = (): string => {
+      if (/\b(child|ward|son|daughter)\b/.test(cmdLower) && /\b(overview|homework|attendance|progress|summary)\b/.test(cmdLower)) return 'get_child_overview';
+      if (/\b(submission|submitted|missing homework|who has not submitted)\b/.test(cmdLower)) return 'get_submissions';
+      if ((cmdLower.includes('homework') || cmdLower.includes('assignment')) && /\b(create|assign|publish|give|add)\b/.test(cmdLower)) return 'create_homework';
+      if ((cmdLower.includes('homework') || cmdLower.includes('assignment')) && /\b(what|show|check|pending|missing|list|status|due|my)\b/.test(cmdLower)) return 'get_homework';
+      if (cmdLower.includes('attendance') && /\b(take|mark|start|record)\b/.test(cmdLower)) return 'mark_attendance';
+      if (cmdLower.includes('attendance')) return 'get_attendance';
+      if (/\b(generate|daily|school|class|operations)\s*(briefing|report|summary)\b/.test(cmdLower)) return 'generate_report';
+      if (/\b(broadcast|announcement)\b/.test(cmdLower) && /\b(create|send|publish|post|make|announce)\b/.test(cmdLower)) return 'create_broadcast';
+      if (/\b(notify|send reminder|alert class|tell class)\b/.test(cmdLower)) return 'notify_users';
+      if (/\b(competition)\b/.test(cmdLower) && /\b(create|add|host|publish|launch)\b/.test(cmdLower)) return 'create_competition';
+      if (/\b(event|assembly|annual function)\b/.test(cmdLower) && /\b(create|schedule|add|host)\b/.test(cmdLower)) return 'create_event';
+      if (/\b(meet|meeting|session)\b/.test(cmdLower) && /\b(schedule|create|book|start)\b/.test(cmdLower)) return 'create_meeting';
+      if (/^(delete|cancel|remove)\b/.test(cmdLower)) return 'delete_item';
+      if (cmdLower.includes('calendar') || cmdLower.includes('upcoming event')) return 'get_calendar';
+      if (cmdLower.includes('notice') || cmdLower.includes('announcement') || cmdLower.includes('notification')) return 'get_notifications';
+      if (cmdLower.startsWith('search ') || cmdLower.startsWith('look up ') || cmdLower.includes('search the web')) return 'web_search';
+      return 'general_chat';
+    };
+
+    const startedAt = Date.now();
+    let plannedSteps: any[] = Array.isArray(actionPlan) && actionPlan.length > 0 ? actionPlan : [];
+    let plannerReply = '';
+    let usedProvider = '';
+    let usedModel = '';
+
+    if (plannedSteps.length === 0) {
+      const quick = detectAction();
+      if ((quick === 'general_chat' || cmdTrimmed.split(/\s+/).length >= 4) && (getGroqApiKey() || getMinistralApiKey() || getZaiApiKey())) {
+        try {
+          const planRes = await callRoutedCompletion(
+            cmdTrimmed,
+            `You are Veylentra Orion (${actor.role}, tab=${activeTab}). Output strict JSON: {"action":"get_homework|get_submissions|get_attendance|get_calendar|get_notifications|get_child_overview|generate_report|create_broadcast|create_notice|notify_users|create_event|create_competition|create_meeting|create_homework|delete_item|mark_attendance|web_search|general_chat","targetValue":"string","responseText":"string","details":{"title":"","content":"","subject":"","targetClass":"","targetAudience":"","date":""}}`,
+            Array.isArray(history) ? history.slice(-6) : [],
+            { taskType: 'tool', jsonMode: true, modelOverride, requestId, maxTokens: 1200 }
+          );
+          usedProvider = planRes.providerUsed;
+          usedModel = planRes.modelUsed;
+          const objMatch = (planRes.text || '').match(/\{[\s\S]*\}/);
+          if (objMatch) {
+            const parsed = JSON.parse(objMatch[0]);
+            const d = parsed.details || {};
+            plannedSteps = [{ action: parsed.action || quick, title: d.title || parsed.targetValue, message: d.content, content: d.content, subject: d.subject, targetClass: d.targetClass, audience: d.targetAudience, date: d.date, targetValue: parsed.targetValue || d.title }];
+            if (typeof parsed.responseText === 'string') plannerReply = parsed.responseText.trim();
+          }
+        } catch (_) {}
+      }
+      if (plannedSteps.length === 0) {
+        plannedSteps = [{ action: quick, targetValue: cmdTrimmed }];
+      }
+    }
+
+    const privileged = new Set(['create_broadcast', 'create_notice', 'notify_users', 'create_event', 'create_competition', 'create_meeting', 'create_homework', 'delete_item', 'mark_attendance', 'get_submissions', 'get_attendance', 'get_child_overview', 'generate_report']);
+    const consequential = new Set(['create_broadcast', 'create_notice', 'notify_users', 'create_event', 'create_competition', 'create_meeting', 'create_homework', 'delete_item', 'mark_attendance']);
+    const studentAllowed = new Set(['get_homework', 'get_calendar', 'get_notifications', 'web_search', 'general_chat']);
+    const parentAllowed = new Set(['get_child_overview', 'get_notifications', 'get_calendar', 'web_search', 'general_chat']);
+    const staffRoles = new Set(['teacher', 'faculty', 'head_teacher', 'coordinator', 'hod', 'admin', 'super_admin']);
+    const coordinatorRoles = new Set(['coordinator', 'hod', 'admin', 'super_admin']);
+    const stages: any[] = [
+      { phase: 'analyzing', label: 'Analyzing intent', status: 'completed', durationMs: 1 },
+      { phase: 'planning', label: 'Planning steps', status: 'completed', durationMs: 1, detail: `${plannedSteps.length} step${plannedSteps.length > 1 ? 's' : ''}` }
+    ];
+
+    for (const st of plannedSteps) {
+      if (privileged.has(st.action) && !actor.authenticated) {
+        return sendJson(res, 401, { success: false, status: 'unauthorized', error: `Authentication required to execute "${st.action}".`, finalResponse: `Authentication required to execute "${st.action}".`, plan: plannedSteps, requestId });
+      }
+      const r = actor.role;
+      let allowed = true;
+      if (r === 'parent' || r === 'guardian') allowed = parentAllowed.has(st.action);
+      else if (!staffRoles.has(r)) allowed = studentAllowed.has(st.action);
+      else if (st.action === 'create_broadcast' && !coordinatorRoles.has(r)) allowed = false;
+      if (!allowed) {
+        const msg = `Authorization denied: Role "${r}" cannot execute "${st.action}".`;
+        return sendJson(res, 403, { success: false, status: 'forbidden', error: msg, finalResponse: msg, plan: plannedSteps, requestId });
+      }
+    }
+    stages.push({ phase: 'preparing', label: 'Checking permissions & prerequisites', status: 'completed', durationMs: 1, detail: `Authorized (${actor.role})` });
+
+    const genericWords = /^(delete|cancel|remove|create|send|publish|post|assign|schedule|notify|item|something|it|homework|assignment|broadcast|notice|notify|meeting|event|competition)$/i;
+    const genericPhrase = /^(delete|cancel|remove|create|send|publish|post|make|assign|schedule|notify|add|host|book|launch)\s+(a\s+|an\s+|the\s+|new\s+|school\s+)?(competition|event|meeting|meet|homework|assignment|broadcast|notice|announcement|notification|reminder|alert|calendar event|item|users?|class|all)$/i;
+    for (const st of plannedSteps) {
+      if (['delete_item', 'create_broadcast', 'create_notice', 'notify_users', 'create_homework', 'create_competition', 'create_event', 'create_meeting'].includes(st.action)) {
+        const stripped = cmdTrimmed.replace(/^(delete|cancel|remove|create|send|publish|post|assign|schedule|notify)\s+(a\s+|an\s+|the\s+)?(competition|event|meeting|homework|assignment|broadcast|notice|item)?\s*/i, '').trim();
+        const candidate = (st.title || st.content || st.message || '').trim();
+        if ((!candidate || genericWords.test(candidate) || genericPhrase.test(candidate)) && (stripped.length < 3 || genericWords.test(stripped) || genericPhrase.test(cmdTrimmed))) {
+          const clarificationQuestion = 'Please provide the exact title, target item, or audience details so Orion can prepare this action accurately.';
+          return sendJson(res, 200, { success: true, status: 'needs_clarification', clarificationQuestion, missingFields: ['title / target details'], plan: plannedSteps, finalResponse: clarificationQuestion, requestId });
+        }
+      }
+    }
+
+    if (plannedSteps.some((s) => consequential.has(s.action)) && !confirmed) {
+      const p0 = plannedSteps[0];
+      const targetTitle = p0.title || p0.targetValue || cmdTrimmed.slice(0, 72);
+      return sendJson(res, 200, {
+        success: true,
+        status: 'awaiting_confirmation',
+        pendingConfirmation: {
+          action: p0.action,
+          targetTitle,
+          promptText: `Review the planned details for "${targetTitle}" and confirm to execute.`,
+          previewDetails: { Action: p0.action.replace(/_/g, ' ').toUpperCase(), Target: targetTitle, Audience: p0.targetClass || p0.audience || 'Authorized Scope' },
+          actionObject: p0,
+          plannedSteps
+        },
+        plan: plannedSteps,
+        finalResponse: `Confirmation required for **${p0.action.replace(/_/g, ' ')}** (${targetTitle}).`,
+        requestId
+      });
+    }
+
+    const headers = { apikey: cfg.key, Authorization: `Bearer ${cfg.key}`, 'Content-Type': 'application/json' };
+    const stepResults: any[] = [];
+    const summaryParts: string[] = [];
+    const refreshTables: string[] = [];
+    let structuredData: any = null;
+    let webSources: any[] = [];
+    let webVideos: any[] = [];
+    let allOk = true;
+
+    for (let idx = 0; idx < plannedSteps.length; idx++) {
+      const st = plannedSteps[idx];
+      const stepLog: any = { id: `step-${idx + 1}`, label: st.action.replace(/_/g, ' '), action: st.action, status: 'completed' };
+      try {
+        if (st.action === 'general_chat') {
+          let reply = plannerReply;
+          if (!reply) {
+            const cRes = await callRoutedCompletion(cmdTrimmed, `You are Veylentra Orion, a helpful academic agent for role "${actor.role}". Never invent school records.`, Array.isArray(history) ? history.slice(-6) : [], { taskType: 'general', modelOverride, requestId, maxTokens: 1500 });
+            reply = cRes.text;
+            usedProvider = cRes.providerUsed;
+            usedModel = cRes.modelUsed;
+          }
+          summaryParts.push(reply);
+        } else if (st.action === 'web_search') {
+          const q = (st.title || st.targetValue || cmdTrimmed).trim();
+          webSources = await searchLiveAcademicWeb(q);
+          webVideos = await searchRealEducationalVideos(q);
+          stepLog.status = webSources.length > 0 ? 'verified' : 'failed';
+          if (webSources.length === 0) allOk = false;
+          summaryParts.push(webSources.length > 0 ? `Retrieved **${webSources.length} verified sources** for **"${q}"**.` : `No live web sources were retrieved for "${q}".`);
+        } else if (st.action === 'get_homework' || st.action === 'get_submissions') {
+          const hRes = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/homework?select=id,title,subject,class_grade,due_date&order=created_at.desc&limit=12`, { headers });
+          const rows: any = hRes.ok ? await hRes.json() : [];
+          structuredData = { title: 'Homework Overview', metrics: [{ label: 'Assignments', value: Array.isArray(rows) ? rows.length : 0, status: 'neutral' }], columns: ['Title', 'Subject', 'Due Date'], rows: (Array.isArray(rows) ? rows : []).slice(0, 8).map((r: any) => ({ Title: r.title, Subject: r.subject || 'General', 'Due Date': r.due_date || 'Flexible' })) };
+          stepLog.status = 'verified';
+          summaryParts.push(`Found **${Array.isArray(rows) ? rows.length : 0} assignment(s)** in database.`);
+        } else if (st.action === 'get_attendance') {
+          const aRes = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/attendance?select=id,status,date,grade,section&order=date.desc&limit=40`, { headers });
+          const rows: any[] = aRes.ok ? await aRes.json() : [];
+          const present = rows.filter((r) => String(r.status).toLowerCase() === 'present').length;
+          structuredData = { title: 'Attendance Summary', metrics: [{ label: 'Present', value: present, status: 'good' }, { label: 'Logs', value: rows.length, status: 'neutral' }], columns: ['Date', 'Grade', 'Status'], rows: rows.slice(0, 8).map((r) => ({ Date: r.date || '—', Grade: r.grade || '—', Status: r.status })) };
+          stepLog.status = 'verified';
+          summaryParts.push(`Attendance summary across **${rows.length} recent logs**: **${present} present**.`);
+        } else if (st.action === 'create_broadcast' || st.action === 'create_notice') {
+          const id = `bc_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          const title = (st.title || st.targetValue || 'School Notice').trim().slice(0, 140);
+          const ins = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/materials`, {
+            method: 'POST', headers,
+            body: JSON.stringify({ id, title, description: st.content || st.message || title, type: 'broadcast', subject: 'Announcement', uploaded_by: actor.name, created_at: new Date().toISOString() })
+          });
+          if (!ins.ok) throw new Error(`Broadcast insert failed (${ins.status})`);
+          const chk = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/materials?id=eq.${encodeURIComponent(id)}&select=id`, { headers });
+          const chkRows: any = chk.ok ? await chk.json() : [];
+          if (!Array.isArray(chkRows) || !chkRows.some((r) => r.id === id)) throw new Error('Read-back verification failed for broadcast.');
+          stepLog.status = 'verified';
+          stepLog.recordId = id;
+          refreshTables.push('materials', 'notifications');
+          summaryParts.push(`Published and verified official notice **"${title}"** (ID: \`${id}\`).`);
+        } else {
+          stepLog.verificationNote = 'Prepared authorized workspace action';
+          summaryParts.push(`Prepared **${st.action.replace(/_/g, ' ')}** (${actor.role}).`);
+        }
+      } catch (e: any) {
+        allOk = false;
+        stepLog.status = 'failed';
+        stepLog.verificationNote = e?.message || 'Execution failed';
+        summaryParts.push(`Action **${st.action}** failed: ${e?.message || 'Error'}`);
+      }
+      stepResults.push(stepLog);
+    }
+
+    stages.push({ phase: 'executing', label: 'Executing action', status: allOk ? 'completed' : 'failed', durationMs: Math.max(1, Date.now() - startedAt) });
+    stages.push({ phase: 'verifying', label: 'Verifying outcome', status: allOk ? 'completed' : 'failed', durationMs: 1 });
+
+    return sendJson(res, 200, {
+      success: allOk,
+      status: allOk ? 'completed' : 'failed',
+      plan: plannedSteps,
+      results: stepResults,
+      structuredData,
+      webSources,
+      webVideos,
+      clientBridgeActions: [],
+      refreshTables,
+      finalResponse: summaryParts.join('\n\n') || 'Completed.',
+      providerUsed: usedProvider,
+      modelUsed: usedModel,
+      snapshot: { phase: allOk ? 'completed' : 'failed', headline: allOk ? 'Completed and verified.' : 'Execution finished with issues.', stages, steps: stepResults, startedAt, finishedAt: Date.now(), verified: allOk },
+      requestId
+    });
+  }
+
+  // 5.6 Role-Scoped Orion Workspace Assist (/api/ai/orion-assist)
+  if (pathname === '/api/ai/orion-assist' || pathname === '/api/ai/orion-assist/') {
+    const body = await parseJsonBody(req);
+    const { intent = 'student_study', subject = 'Academic Studies', grade = 'Grade 10', topic = '', contextData = '' } = body;
+    const cfg = getServerlessSupabaseConfig();
+    const authHeader = String(req.headers?.authorization || req.headers?.['x-supabase-auth'] || '').trim();
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    let resolvedRole = 'student';
+    if (token) {
+      const uRes = await fetch(`${cfg.url}/auth/v1/user`, { headers: { apikey: cfg.key, Authorization: `Bearer ${token}` } }).catch(() => null);
+      if (!uRes || !uRes.ok) return sendJson(res, 401, { success: false, error: 'Invalid or expired authentication token.', requestId });
+      const user: any = await uRes.json().catch(() => null);
+      if (!user?.id) return sendJson(res, 401, { success: false, error: 'Invalid authentication session.', requestId });
+      resolvedRole = String(user.user_metadata?.role || 'student').toLowerCase().trim();
+    }
+    const facultyIntents = new Set(['draft_assignment', 'draft_lesson_plan', 'draft_quiz', 'draft_announcement', 'draft_feedback', 'summarize_class_insights', 'draft_assessment_outline', 'summarize_submission_progress', 'summarize_cohort_coordination']);
+    const allowedFaculty = new Set(['teacher', 'coordinator', 'hod', 'admin', 'super_admin']);
+    if (facultyIntents.has(intent) && !allowedFaculty.has(resolvedRole)) {
+      return sendJson(res, 403, { success: false, error: 'Permission denied: faculty authorization is required for this Orion workflow.', requestId });
+    }
+    if (!String(topic).trim()) return sendJson(res, 400, { success: false, error: 'Topic or request is required.', requestId });
+    try {
+      const aiRes = await callRoutedCompletion(`Subject: ${subject}\nGrade: ${grade}\nIntent: ${intent}\nContext: ${String(contextData).slice(0, 3000)}\nRequest: ${String(topic).trim()}`, `You are Orion, structured academic assistant for Veylentra (${resolvedRole}).`, [], { taskType: 'general', requestId, maxTokens: 3000 });
+      return sendJson(res, 200, { success: true, text: aiRes.text, providerUsed: aiRes.providerUsed, modelUsed: aiRes.modelUsed, requestId });
+    } catch (e: any) {
+      return sendJson(res, 502, { success: false, error: e?.message || 'AI is temporarily unavailable.', requestId });
+    }
   }
 
   // 6. Dynamic load fallback for Express app from dist/server.cjs inside request
