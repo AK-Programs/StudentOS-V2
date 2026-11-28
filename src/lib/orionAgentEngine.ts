@@ -587,11 +587,10 @@ export async function executeOrionViaServer(params: {
   };
 
   try {
-    const { data } = await supabase.auth.getSession();
-    const token = data?.session?.access_token;
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
+    const refreshed = await supabase.auth.refreshSession().catch(() => null);
+    const session = refreshed?.data?.session || (await supabase.auth.getSession()).data?.session;
+    const token = session?.access_token;
+    if (token) headers['Authorization'] = `Bearer ${token}`;
   } catch {
     // Session lookup optional for PIN/demo accounts
   }
