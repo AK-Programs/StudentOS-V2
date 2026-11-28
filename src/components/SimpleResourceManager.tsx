@@ -14,6 +14,7 @@ import { getSupabaseResources, saveSupabaseResource, deleteSupabaseResource } fr
 import { InAppDocumentViewer } from './InAppDocumentViewer';
 import { getFolders, Folder, createFolder, renameFolder, deleteFolder } from '../lib/supabaseFolders';
 import { SkeletonList } from './ui/Skeleton';
+import { MaterialIntelligencePanel } from './materials/MaterialIntelligencePanel';
 
 export default function SimpleResourceManager({ 
   type, title, emoji, currentUser, effectiveRole, showNotification, goBack 
@@ -128,13 +129,13 @@ export default function SimpleResourceManager({
         setFolders(prev => [saved, ...prev]);
         setNewFolderName('');
         setShowFolderModal(false);
-        showNotification('📁 Folder created and synced to Supabase!');
+        showNotification('ðŸ“ Folder created and synced to Supabase!');
       } else {
         throw new Error('Supabase did not return a valid folder ID.');
       }
     } catch (err: any) {
       console.error('[FOLDERS] Creation failed:', err);
-      showNotification(`⚠️ Failed to create folder: ${err.message || 'Database error'}`);
+      showNotification(`âš ï¸ Failed to create folder: ${err.message || 'Database error'}`);
     } finally {
       setIsCreatingFolder(false);
     }
@@ -145,11 +146,11 @@ export default function SimpleResourceManager({
     try {
       await renameFolder(renameFolderModal.id, renameInput.trim());
       setFolders(prev => prev.map(f => f.id === renameFolderModal.id ? { ...f, name: renameInput.trim() } : f));
-      showNotification('✓ Folder renamed');
+      showNotification('âœ“ Folder renamed');
       setRenameFolderModal(null);
       setRenameInput('');
     } catch (err: any) {
-      showNotification(`⚠️ Failed to rename folder: ${err.message || 'Error'}`);
+      showNotification(`âš ï¸ Failed to rename folder: ${err.message || 'Error'}`);
     }
   };
 
@@ -159,10 +160,10 @@ export default function SimpleResourceManager({
       await deleteFolder(folderId);
       setFolders(prev => prev.filter(f => f.id !== folderId));
       if (activeFolderId === folderId) setActiveFolderId(null);
-      showNotification('🗑️ Folder deleted');
+      showNotification('ðŸ—‘ï¸ Folder deleted');
       fetchItems();
     } catch (err: any) {
-      showNotification(`⚠️ Failed to delete folder: ${err.message || 'Error'}`);
+      showNotification(`âš ï¸ Failed to delete folder: ${err.message || 'Error'}`);
     }
   };
 
@@ -187,7 +188,7 @@ export default function SimpleResourceManager({
     if (targetFolderId) {
       const targetFolder = folders.find(f => f.id === targetFolderId);
       if (targetFolder && targetFolder.type !== 'materials') {
-        showNotification('⚠️ Material Hub items can only be moved into Material Hub folders.');
+        showNotification('âš ï¸ Material Hub items can only be moved into Material Hub folders.');
         setItemHoldMenu(null);
         setMoveItemModal(null);
         return;
@@ -198,15 +199,15 @@ export default function SimpleResourceManager({
       // 1. Update in Supabase
       const { error } = await supabase.from(tableName).update({ folder_id: targetFolderId }).eq('id', itemId);
       if (error && error.code !== '42P01') {
-        showNotification(`⚠️ Move error: ${error.message}`);
+        showNotification(`âš ï¸ Move error: ${error.message}`);
         return;
       }
 
       // 2. Update in local state
       setItems(prev => prev.map(item => item.id === itemId ? { ...item, folder_id: targetFolderId } : item));
-      showNotification(targetFolderId ? '📁 Item moved into folder' : '📂 Item moved to root');
+      showNotification(targetFolderId ? 'ðŸ“ Item moved into folder' : 'ðŸ“‚ Item moved to root');
     } catch (err: any) {
-      showNotification(`⚠️ Move failed: ${err.message}`);
+      showNotification(`âš ï¸ Move failed: ${err.message}`);
     } finally {
       setItemHoldMenu(null);
       setMoveItemModal(null);
@@ -294,8 +295,8 @@ export default function SimpleResourceManager({
           </button>
           <div>
             <div className="flex items-center gap-2 text-[11px] text-indigo-400 font-bold uppercase tracking-wider">
-              <span>{emoji || '📚'} Material Hub</span>
-              <span aria-hidden="true">·</span>
+              <span>{emoji || 'ðŸ“š'} Material Hub</span>
+              <span aria-hidden="true">Â·</span>
               <span>{items.length} {items.length === 1 ? 'file' : 'files'}</span>
             </div>
             <h3 className="text-lg sm:text-xl font-black text-white font-display tracking-tight leading-tight">
@@ -509,7 +510,7 @@ export default function SimpleResourceManager({
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <div className="flex items-center gap-2 text-indigo-300 font-bold text-xs">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>Study Companion Notes — {aiCompanionOutput.title}</span>
+                <span>Study Companion Notes â€” {aiCompanionOutput.title}</span>
               </div>
               <button
                 onClick={() => setAiCompanionOutput(null)}
@@ -564,19 +565,19 @@ export default function SimpleResourceManager({
                   </span>
                   {item.targetSection && item.targetSection !== 'All Sections' && (
                     <>
-                      <span aria-hidden="true">·</span>
+                      <span aria-hidden="true">Â·</span>
                       <span>Section {item.targetSection}</span>
                     </>
                   )}
                   {item.dueDate && (
                     <>
-                      <span aria-hidden="true">·</span>
+                      <span aria-hidden="true">Â·</span>
                       <span className="text-rose-400 font-medium flex items-center gap-1">
                         <Calendar className="w-2.5 h-2.5" /> Due {item.dueDate}
                       </span>
                     </>
                   )}
-                  <span aria-hidden="true">·</span>
+                  <span aria-hidden="true">Â·</span>
                   <span>By {item.author || 'Faculty'}</span>
                 </div>
 
@@ -597,7 +598,7 @@ export default function SimpleResourceManager({
                     className="inline-flex items-center gap-1.5 bg-slate-950/80 hover:bg-slate-900 px-2.5 py-1.5 rounded-lg border border-white/10 cursor-pointer transition-colors text-xs"
                   >
                     <span className="text-[11px] text-slate-200 font-medium truncate max-w-[200px]">{item.fileName || 'Document'}</span>
-                    <span className="text-[10px] text-indigo-400 font-bold ml-1">Open →</span>
+                    <span className="text-[10px] text-indigo-400 font-bold ml-1">Open â†’</span>
                   </div>
                 )}
               </div>
@@ -835,4 +836,6 @@ export default function SimpleResourceManager({
       )}
     </div>
   );
+        <MaterialIntelligencePanel currentUser={currentUser} materials={items.map((item) => ({ id: item.id, title: item.title, content: item.content }))} />
+
 }
