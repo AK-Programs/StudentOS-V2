@@ -5,10 +5,11 @@ import { ResourceCategory } from '../types';
 import { FileCheck, HelpCircle, Loader2, Upload, BookOpen, Calendar, FileText, Image as ImageIcon } from 'lucide-react';
 import { soundService } from '../lib/soundService';
 import { VeylentraIcon } from './ui/VeylentraIcon';
+import { AssignmentUpgradesPanel } from './assignments/AssignmentUpgradesPanel';
 
 export const AssignmentCenter: React.FC = () => {
   const [activeUploadType, setActiveUploadType] = useState<ResourceCategory>('assignment');
-  const [activeTab, setActiveTab] = useState<'upload' | 'qgen' | 'checker'>('upload');
+  const [activeTab, setActiveTab] = useState<'upload' | 'qgen' | 'checker' | 'upgrades'>('upload');
 
   // AI Question Generator State
   const [qSubject, setQSubject] = useState('Physics');
@@ -80,10 +81,11 @@ export const AssignmentCenter: React.FC = () => {
     { id: 'gallery', label: 'Photo Gallery', icon: <ImageIcon className="w-4 h-4" />, desc: 'Campus events & classroom highlights' }
   ];
 
-  const tabsConfig: Array<{ id: 'upload' | 'qgen' | 'checker'; label: string; icon: React.ReactNode }> = [
+  const tabsConfig: Array<{ id: 'upload' | 'qgen' | 'checker' | 'upgrades'; label: string; icon: React.ReactNode }> = [
     { id: 'upload', label: 'Upload Center', icon: <Upload className="w-3.5 h-3.5" /> },
     { id: 'qgen', label: 'Question Generator', icon: <HelpCircle className="w-3.5 h-3.5" /> },
-    { id: 'checker', label: 'Homework Checker', icon: <FileCheck className="w-3.5 h-3.5" /> }
+    { id: 'checker', label: 'Homework Checker', icon: <FileCheck className="w-3.5 h-3.5" /> },
+    { id: 'upgrades', label: 'AI Upgrades', icon: <BookOpen className="w-3.5 h-3.5" /> }
   ];
 
   return (
@@ -99,7 +101,7 @@ export const AssignmentCenter: React.FC = () => {
           <div className="space-y-1">
             <div className="flex items-center gap-2 text-xs text-blue-400 font-semibold">
               <span>Academic Resource Suite</span>
-              <span aria-hidden="true">·</span>
+              <span aria-hidden="true">Â·</span>
               <span className="text-slate-400">Faculty &amp; Student Tools</span>
             </div>
             <h2 className="text-xl sm:text-2xl font-bold font-display text-white tracking-tight">
@@ -327,6 +329,7 @@ export const AssignmentCenter: React.FC = () => {
           </div>
         </div>
       )}
+      {activeTab === 'upgrades' && <AssignmentUpgradesPanel />}
     </motion.div>
   );
 };
