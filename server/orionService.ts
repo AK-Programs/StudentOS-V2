@@ -1323,13 +1323,13 @@ Respond strictly in valid JSON with this exact schema:
           body: JSON.stringify({
             id: hwId,
             title,
-            description: act.content || act.message || cmdTrimmed,
+            content: act.content || act.message || cmdTrimmed,
             subject: act.subject || 'General Studies',
             class_grade: grade,
             class_section: section,
             due_date: act.date || new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0],
-            assigned_by: actor.name,
-            completed_list: [],
+            given_by: actor.name,
+            completed_list: '[]',
             created_at: new Date().toISOString(),
           }),
         });
