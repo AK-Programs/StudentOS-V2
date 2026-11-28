@@ -51,7 +51,7 @@ export function AssignmentUpgradesPanel({ currentUser }: { currentUser?: { uid?:
         )}
         className="px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs"
       >
-        {busy ? 'Working…' : 'Run'}
+        {busy ? 'Workingâ€¦' : 'Run'}
       </button>
       {error && <p className="text-xs text-rose-300">{error}</p>}
       {result && <pre className="whitespace-pre-wrap text-sm text-slate-100">{result}</pre>}
