@@ -47,8 +47,13 @@ import {
 } from '../lib/orionActionExecutor';
 import {
   OrionAgentProgressSnapshot,
+  OrionCompletionReport,
   executeOrionViaServer,
   runOrionAgentTask,
+  cancelOrionTaskViaServer,
+  retryOrionTaskViaServer,
+  buildOrionCompletionReportMarkdown,
+  buildOrionCompletionReportJson,
 } from '../lib/orionAgentEngine';
 import { OrionActivityTimeline } from './orion/OrionActivityTimeline';
 import { AcademicRichRenderer } from './ui/AcademicRichRenderer';
@@ -80,22 +85,21 @@ interface StudentOSJarvisProps {
 
 interface OrionExecutionTurn {
   id: string;
+  taskId?: string;
   userCommand: string;
   plannedSteps?: OrionAction[];
   snapshot?: OrionAgentProgressSnapshot | null;
   finalResponse: string;
-  status: 'running' | 'needs_clarification' | 'awaiting_confirmation' | 'completed' | 'failed';
+  status: 'running' | 'needs_clarification' | 'awaiting_confirmation' | 'completed' | 'cancelled' | 'failed';
   errorMessage?: string;
   providerUsed?: string;
   modelUsed?: string;
+  report?: OrionCompletionReport;
   mathWidget?: ReturnType<typeof detectMathInteractiveWidget>;
 }
 
 const getRoleGreeting = (role: string): string => {
   const norm = (role || 'student').toLowerCase().trim();
-  if (norm === 'parent' || norm === 'guardian') {
-    return 'Ephemeral session active. Ask about your verified linked ward, notices, or curriculum topics.';
-  }
   if (norm === 'student') {
     return 'Ephemeral session active. Check pending homework, build a study plan, or research curriculum topics.';
   }
@@ -192,8 +196,8 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
   const ephemeralTurnsRef = useRef<{ role: 'user' | 'assistant'; content: string }[]>([]);
   const lastEntityRef = useRef<{ type: string; title: string; id?: string } | null>(null);
   const streamEndRef = useRef<HTMLDivElement>(null);
+  const activeAbortRef = useRef<{ taskId: string; controller: AbortController } | null>(null);
 
-  const [linkedChildren, setLinkedChildren] = useState<any[]>([]);
   const [reports, setReports] = useState<StudentReport[]>([]);
   const [houses, setHouses] = useState<HouseAnalytics[]>([]);
   const [sections, setSections] = useState<SectionAnalytics[]>([]);
@@ -214,6 +218,10 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
   };
 
   const clearEphemeralSession = () => {
+    if (activeAbortRef.current) {
+      activeAbortRef.current.controller.abort();
+      activeAbortRef.current = null;
+    }
     ephemeralTurnsRef.current = [];
     lastEntityRef.current = null;
     setCommandText('');
@@ -237,6 +245,10 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
 
   useEffect(() => {
     return () => {
+      if (activeAbortRef.current) {
+        activeAbortRef.current.controller.abort();
+        activeAbortRef.current = null;
+      }
       ephemeralTurnsRef.current = [];
       lastEntityRef.current = null;
       if ('speechSynthesis' in window) {
@@ -321,17 +333,9 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     return () => clearTimeout(timer);
   }, [initialQuery]);
 
-  // Fetch linked children (Parent) and cohort directory (Staff)
+  // Fetch cohort directory (Staff only — Parents/Guardians strictly excluded)
   useEffect(() => {
-    if (!currentUser) return;
-    if ((normalizedRole === 'parent' || normalizedRole === 'guardian') && currentUser?.uid) {
-      fetch(`/api/parent/linked-children?parentUid=${encodeURIComponent(currentUser.uid)}`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((payload) => {
-          if (Array.isArray(payload?.children)) setLinkedChildren(payload.children);
-        })
-        .catch(() => {});
-    }
+    if (!currentUser || normalizedRole === 'parent' || normalizedRole === 'guardian') return;
 
     if (isStaffRole) {
       fetchAllSupabaseUsers()
@@ -429,13 +433,15 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
   const queryJarvisAIStream = async (
     command: string
   ): Promise<{ responseText: string; action: string; targetValue?: string; details?: any; error?: string }> => {
+    if (normalizedRole === 'parent' || normalizedRole === 'guardian') {
+      throw new Error('Orion Intelligence is not available for parent or guardian accounts.');
+    }
     const { contextString: ragContext } = await buildAuthorizedStudentOSContext(
       command,
       currentUser,
       normalizedRole,
       {
         activeTab,
-        linkedStudents: linkedChildren.length > 0 ? linkedChildren : undefined,
       }
     );
 
@@ -753,9 +759,83 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     userClass: currentUser?.className || currentUser?.grade,
     grade: currentUser?.grade,
     section: currentUser?.section,
-    linkedStudentIds: linkedChildren.map((c: any) => c?.uid || c?.id).filter(Boolean),
-    linkedStudents: linkedChildren,
   });
+
+  const downloadOrionReport = (report: OrionCompletionReport | undefined, format: 'markdown' | 'json') => {
+    if (!report) return;
+    const content =
+      format === 'json'
+        ? buildOrionCompletionReportJson(report)
+        : buildOrionCompletionReportMarkdown(report);
+    const ext = format === 'json' ? 'json' : 'md';
+    const mime = format === 'json' ? 'application/json' : 'text/markdown';
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${report.taskId || 'orion-report'}.${ext}`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showNotification(`Downloaded Orion task report (.${ext.toUpperCase()}).`);
+  };
+
+  const handleCancelOrionTurn = async (turnId: string, taskId?: string) => {
+    if (activeAbortRef.current && (!taskId || activeAbortRef.current.taskId === taskId)) {
+      activeAbortRef.current.controller.abort();
+      activeAbortRef.current = null;
+    }
+    if (taskId) {
+      void cancelOrionTaskViaServer(taskId, buildOrionUserContext());
+    }
+    setTurns((prev) =>
+      prev.map((t) =>
+        t.id === turnId
+          ? {
+              ...t,
+              status: 'cancelled',
+              finalResponse: 'Task cancelled by user.',
+              snapshot: t.snapshot
+                ? { ...t.snapshot, phase: 'cancelled', headline: 'Task cancelled.', finishedAt: Date.now() }
+                : t.snapshot,
+            }
+          : t
+      )
+    );
+    setIsProcessing(false);
+    showNotification('Orion task cancelled.');
+  };
+
+  const handleRetryOrionTurn = async (turn: OrionExecutionTurn) => {
+    if (turn.taskId) {
+      setIsProcessing(true);
+      try {
+        const res = await retryOrionTaskViaServer(turn.taskId, buildOrionUserContext());
+        if (res.snapshot) setOrionProgress(res.snapshot);
+        if (res.structuredData) setStructuredOutput(res.structuredData);
+        setTurns((prev) =>
+          prev.map((t) =>
+            t.id === turn.id
+              ? {
+                  ...t,
+                  taskId: res.taskId || t.taskId,
+                  status: res.success ? 'completed' : 'failed',
+                  snapshot: res.snapshot || t.snapshot,
+                  finalResponse: res.finalResponse || res.error || 'Retried.',
+                  report: res.report,
+                  providerUsed: res.providerUsed,
+                  modelUsed: res.modelUsed,
+                }
+              : t
+          )
+        );
+        setIsProcessing(false);
+        return;
+      } catch {
+        // fallback to re-running command
+      }
+    }
+    executeVoiceCommand(turn.userCommand);
+  };
 
   const applyNavigationTarget = (targetVal: string) => {
     const tabVal = targetVal.toLowerCase();
@@ -768,7 +848,6 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     else if (tabVal.includes('assignment')) triggerNavTransition('Assignments', 'assignments');
     else if (tabVal.includes('timetable') || tabVal.includes('schedule')) triggerNavTransition('Timetable', 'timetable_viewer');
     else if (tabVal.includes('notice') || tabVal.includes('announcement')) triggerNavTransition('Notices', 'notice_viewer');
-    else if (tabVal.includes('parent')) triggerNavTransition('Parental Portal', 'parent_portal');
     else if (tabVal.includes('dashboard')) triggerNavTransition('Dashboard', 'dashboard');
   };
 
@@ -776,25 +855,29 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     setIsProcessing(true);
     setPendingConfirmation(null);
     const turnId = `turn_${Date.now()}`;
+    const generatedTaskId = `orion_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const controller = new AbortController();
+    activeAbortRef.current = { taskId: generatedTaskId, controller };
     const userCtx = buildOrionUserContext();
 
     setTurns((prev) => [
       ...prev,
       {
         id: turnId,
+        taskId: generatedTaskId,
         userCommand: `Confirm: ${confirmPayload.action.replace(/_/g, ' ')} (${confirmPayload.targetValue || ''})`,
         plannedSteps: confirmPayload.plannedSteps,
         status: 'running',
         finalResponse: 'Executing confirmed action against server...',
         snapshot: {
-          phase: 'executing',
+          phase: 'running',
           headline: 'Executing confirmed action...',
           startedAt: Date.now(),
           verified: false,
           stages: [
             { phase: 'preparing', label: 'Confirmed by user', status: 'completed', durationMs: 1 },
-            { phase: 'executing', label: 'Executing action', status: 'active' },
-            { phase: 'verifying', label: 'Verifying outcome', status: 'pending' },
+            { phase: 'running', label: 'Running action', status: 'active' },
+            { phase: 'validating', label: 'Validating outcome', status: 'pending' },
           ],
           steps: (confirmPayload.plannedSteps || []).map((s, idx) => ({
             id: `step-${idx + 1}`,
@@ -815,8 +898,12 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
         modelOverride,
         history: ephemeralTurnsRef.current.slice(-6),
         userContext: userCtx,
+        taskId: generatedTaskId,
+        idempotencyKey: `confirm_${confirmPayload.action}_${confirmPayload.targetValue || 'default'}_${Date.now()}`,
+        signal: controller.signal,
       });
 
+      activeAbortRef.current = null;
       if (res.snapshot) setOrionProgress(res.snapshot);
       if (res.structuredData) setStructuredOutput(res.structuredData);
       if (res.modelUsed) setOrionModelUsed(res.modelUsed);
@@ -843,12 +930,14 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
           t.id === turnId
             ? {
                 ...t,
-                status: res.success ? 'completed' : 'failed',
+                taskId: res.taskId || generatedTaskId,
+                status: res.status === 'cancelled' ? 'cancelled' : res.success ? 'completed' : 'failed',
                 snapshot: res.snapshot || t.snapshot,
                 finalResponse: finalText,
                 errorMessage: res.success ? undefined : res.error || finalText,
-                modelUsed: res.modelUsed,
                 providerUsed: res.providerUsed,
+                modelUsed: res.modelUsed,
+                report: res.report,
               }
             : t
         )
@@ -862,11 +951,17 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
       speakFeedback(finalText.slice(0, 220));
       showNotification(res.success ? `Orion: ${confirmPayload.action} verified.` : `Orion: ${res.error || 'Action failed'}`);
     } catch (err: any) {
-      const msg = err?.message || 'Failed to execute confirmed action.';
+      activeAbortRef.current = null;
+      const isAbort = err?.name === 'AbortError';
+      const msg = isAbort ? 'Task cancelled by user.' : err?.message || 'Failed to execute confirmed action.';
       setTurns((prev) =>
-        prev.map((t) => (t.id === turnId ? { ...t, status: 'failed', finalResponse: msg, errorMessage: msg } : t))
+        prev.map((t) =>
+          t.id === turnId
+            ? { ...t, status: isAbort ? 'cancelled' : 'failed', finalResponse: msg, errorMessage: isAbort ? undefined : msg }
+            : t
+        )
       );
-      setLastFailedCommand(confirmPayload.originalCommand);
+      if (!isAbort) setLastFailedCommand(confirmPayload.originalCommand);
     } finally {
       setIsProcessing(false);
     }
@@ -949,8 +1044,12 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     }
 
     const turnId = `turn_${Date.now()}`;
+    const generatedTaskId = `orion_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const controller = new AbortController();
+    activeAbortRef.current = { taskId: generatedTaskId, controller };
+
     const initialSnapshot: OrionAgentProgressSnapshot = {
-      phase: 'analyzing',
+      phase: 'queued',
       headline: 'Analyzing request on server...',
       startedAt: Date.now(),
       verified: false,
@@ -958,7 +1057,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
         { phase: 'analyzing', label: 'Analyzing intent', status: 'active' },
         { phase: 'planning', label: 'Planning steps', status: 'pending' },
         { phase: 'preparing', label: 'Verifying RBAC', status: 'pending' },
-        { phase: 'executing', label: 'Executing', status: 'pending' },
+        { phase: 'running', label: 'Running', status: 'pending' },
       ],
       steps: [],
     };
@@ -968,6 +1067,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
       ...prev,
       {
         id: turnId,
+        taskId: generatedTaskId,
         userCommand: trimmedInput,
         status: 'running',
         snapshot: initialSnapshot,
@@ -985,8 +1085,12 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
         modelOverride,
         history: ephemeralTurnsRef.current.slice(-6),
         userContext: userCtx,
+        taskId: generatedTaskId,
+        idempotencyKey: `${turnId}_${trimmedInput.slice(0, 32)}`,
+        signal: controller.signal,
       });
 
+      activeAbortRef.current = null;
       if (serverRes.modelUsed) setOrionModelUsed(serverRes.modelUsed);
       if (serverRes.snapshot) setOrionProgress(serverRes.snapshot);
       if (serverRes.structuredData) setStructuredOutput(serverRes.structuredData);
@@ -1011,6 +1115,25 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
         };
       }
 
+      if (serverRes.status === 'cancelled') {
+        setTurns((prev) =>
+          prev.map((t) =>
+            t.id === turnId
+              ? {
+                  ...t,
+                  taskId: serverRes.taskId || generatedTaskId,
+                  status: 'cancelled',
+                  snapshot: serverRes.snapshot || t.snapshot,
+                  finalResponse: serverRes.finalResponse || 'Task cancelled.',
+                  report: serverRes.report,
+                }
+              : t
+          )
+        );
+        setIsProcessing(false);
+        return;
+      }
+
       // Clarification Needed
       if (serverRes.status === 'needs_clarification') {
         const q = serverRes.clarificationQuestion || 'Please provide additional details before Orion can proceed.';
@@ -1025,6 +1148,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
             t.id === turnId
               ? {
                   ...t,
+                  taskId: serverRes.taskId || generatedTaskId,
                   status: 'needs_clarification',
                   plannedSteps: serverRes.plan,
                   snapshot: serverRes.snapshot || t.snapshot,
@@ -1055,6 +1179,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
             t.id === turnId
               ? {
                   ...t,
+                  taskId: serverRes.taskId || generatedTaskId,
                   status: 'awaiting_confirmation',
                   plannedSteps: serverRes.plan,
                   snapshot: serverRes.snapshot || t.snapshot,
@@ -1077,11 +1202,13 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
             t.id === turnId
               ? {
                   ...t,
+                  taskId: serverRes.taskId || generatedTaskId,
                   status: 'failed',
                   plannedSteps: serverRes.plan,
                   snapshot: serverRes.snapshot || t.snapshot,
                   finalResponse: errText,
                   errorMessage: errText,
+                  report: serverRes.report,
                 }
               : t
           )
@@ -1145,12 +1272,14 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
           t.id === turnId
             ? {
                 ...t,
+                taskId: serverRes.taskId || generatedTaskId,
                 status: 'completed',
                 plannedSteps: serverRes.plan,
                 snapshot: serverRes.snapshot || t.snapshot,
                 finalResponse: finalAnswer,
                 providerUsed: serverRes.providerUsed,
                 modelUsed: serverRes.modelUsed,
+                report: serverRes.report,
                 mathWidget: detectedWidget,
               }
             : t
@@ -1165,28 +1294,30 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
 
       speakFeedback(finalAnswer.slice(0, 220));
     } catch (err: any) {
-      const msg = err?.message || 'Orion could not complete the request right now.';
-      setLastFailedCommand(trimmedInput);
+      activeAbortRef.current = null;
+      const isAbort = err?.name === 'AbortError';
+      const msg = isAbort ? 'Task cancelled by user.' : err?.message || 'Orion could not complete the request right now.';
+      if (!isAbort) setLastFailedCommand(trimmedInput);
       setJarvisFeedback(msg);
       setTurns((prev) =>
         prev.map((t) =>
           t.id === turnId
             ? {
                 ...t,
-                status: 'failed',
+                status: isAbort ? 'cancelled' : 'failed',
                 finalResponse: msg,
-                errorMessage: msg,
+                errorMessage: isAbort ? undefined : msg,
                 snapshot: {
-                  phase: 'failed',
-                  headline: 'Execution encountered an error.',
+                  phase: isAbort ? 'cancelled' : 'failed',
+                  headline: isAbort ? 'Task cancelled.' : 'Execution encountered an error.',
                   startedAt: Date.now(),
                   finishedAt: Date.now(),
                   verified: false,
                   stages: [
                     { phase: 'analyzing', label: 'Analyzing intent', status: 'completed', durationMs: 1 },
-                    { phase: 'executing', label: 'Server execution', status: 'failed', detail: msg },
+                    { phase: 'running', label: 'Server execution', status: 'failed', detail: msg },
                   ],
-                  steps: [{ id: 'step-1', label: 'Execute command', action: 'general_chat', status: 'failed', verificationNote: msg }],
+                  steps: [{ id: 'step-1', label: 'Execute command', action: 'general_chat', status: 'blocked', verificationNote: msg }],
                 },
               }
             : t
@@ -1233,6 +1364,33 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     navigator.clipboard.writeText(`${header}${metricsMd}\n\n${rowsMd}`.trim());
     showNotification('Copied structured summary to clipboard.');
   };
+
+  if (normalizedRole === 'parent' || normalizedRole === 'guardian') {
+    return (
+      <div className="flex flex-col h-full items-center justify-center p-6 bg-slate-950/95 text-slate-100">
+        <div className="max-w-md w-full rounded-2xl border border-rose-500/30 bg-slate-900/90 p-6 text-center space-y-4">
+          <div className="w-12 h-12 rounded-2xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center mx-auto">
+            <ShieldAlert className="w-6 h-6 text-rose-400" />
+          </div>
+          <div className="space-y-1.5">
+            <h3 className="text-base font-semibold text-white">403 · Orion Restricted</h3>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Orion Academic Agent is restricted to students, faculty, coordinators, and administrators. Parent and Guardian accounts can use the Parental Portal and Byte assistant instead.
+            </p>
+          </div>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white transition-colors"
+            >
+              Close
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-slate-950/90 text-slate-100">
@@ -1398,32 +1556,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {normalizedRole === 'parent' || normalizedRole === 'guardian' ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => handleQuickTouchAction('Show my linked child overview')}
-                          className="p-3.5 rounded-xl bg-slate-950/70 hover:bg-slate-900 border border-white/10 hover:border-indigo-400/40 text-left transition-colors flex items-start gap-3"
-                        >
-                          <Users className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
-                          <div>
-                            <span className="text-xs font-semibold text-white block">Linked Ward Overview</span>
-                            <span className="text-[11px] text-slate-400">Inspect attendance and progress</span>
-                          </div>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleQuickTouchAction('Show recent notices')}
-                          className="p-3.5 rounded-xl bg-slate-950/70 hover:bg-slate-900 border border-white/10 hover:border-indigo-400/40 text-left transition-colors flex items-start gap-3"
-                        >
-                          <Bell className="w-4 h-4 text-indigo-400 mt-0.5 shrink-0" />
-                          <div>
-                            <span className="text-xs font-semibold text-white block">School Notices</span>
-                            <span className="text-[11px] text-slate-400">Read latest official updates</span>
-                          </div>
-                        </button>
-                      </>
-                    ) : normalizedRole === 'student' ? (
+                    {normalizedRole === 'student' ? (
                       <>
                         <button
                           type="button"
@@ -1521,7 +1654,26 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
                     </div>
 
                     {/* 2. Orion Plan & 3. Activity Timeline */}
-                    {turn.snapshot && <OrionActivityTimeline snapshot={turn.snapshot} />}
+                    {turn.snapshot && (
+                      <OrionActivityTimeline
+                        snapshot={turn.snapshot}
+                        onCancel={
+                          turn.status === 'running'
+                            ? () => handleCancelOrionTurn(turn.id, turn.taskId)
+                            : undefined
+                        }
+                        onRetry={
+                          turn.status === 'failed' || turn.status === 'cancelled'
+                            ? () => handleRetryOrionTurn(turn)
+                            : undefined
+                        }
+                        onExportReport={
+                          turn.report
+                            ? (fmt) => downloadOrionReport(turn.report, fmt)
+                            : undefined
+                        }
+                      />
+                    )}
 
                     {/* 4. Error Banner with Retry */}
                     {turn.status === 'failed' && turn.errorMessage && (

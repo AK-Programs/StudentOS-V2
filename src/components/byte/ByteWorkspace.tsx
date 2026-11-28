@@ -189,7 +189,9 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
   showNotification
 }) => {
   const reduced = useReducedMotionPreference();
+  const rawRoleString = String(effectiveRole || currentUser?.role || '').trim().toLowerCase();
   const normalizedRole = normalizeByteRole(effectiveRole || currentUser?.role);
+  const isParentOrGuardian = normalizedRole === 'parent' || rawRoleString === 'parent' || rawRoleString === 'guardian';
   const roleProfile = ROLE_CAPABILITY_PROFILES[normalizedRole];
   const isSuperAdmin = currentUser?.role === 'super_admin' || effectiveRole === 'super_admin';
 
@@ -374,7 +376,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
   );
 
   return (
-    <div className="h-[calc(100dvh-130px)] flex rounded-3xl border border-white/10 bg-slate-950/90 shadow-xl relative w-full overflow-hidden">
+    <div className="h-[calc(100dvh-195px)] md:h-[calc(100dvh-130px)] flex rounded-3xl border border-white/10 bg-slate-950/90 shadow-xl relative w-full overflow-hidden">
       {/* Slide-out Mobile Session Drawer */}
       <AnimatePresence>
         {showAiHistoryDrawer && (
@@ -522,15 +524,17 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
               <span className="hidden md:inline">Teach Me Anything</span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => setIsJarvisActive(true)}
-              className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-sky-500/35 text-sky-300 hover:text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 min-h-[40px]"
-              title="Open Orion Ephemeral Action Agent"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-sky-400" />
-              <span className="hidden sm:inline">Orion Agent</span>
-            </button>
+            {!isParentOrGuardian && (
+              <button
+                type="button"
+                onClick={() => setIsJarvisActive(true)}
+                className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-sky-500/35 text-sky-300 hover:text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 min-h-[40px]"
+                title="Open Orion Ephemeral Action Agent"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+                <span className="hidden sm:inline">Orion Agent</span>
+              </button>
+            )}
 
             {/* Preferences Popover Anchor */}
             <div className="relative" ref={prefsRef}>

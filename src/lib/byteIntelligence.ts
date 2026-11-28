@@ -649,6 +649,30 @@ export async function buildRoleAwareByteContext(
     hasVeylentraData = true;
   }
 
+  if (
+    normalizedRole !== 'parent' &&
+    options.localSnapshot?.homeworkList &&
+    options.localSnapshot.homeworkList.length > 0
+  ) {
+    const scopedHw = options.localSnapshot.homeworkList.filter((h: any) => {
+      if (normalizedRole === 'admin' || normalizedRole === 'super_admin') return true;
+      const hwGrade = String(h.classGrade || h.class_grade || '').trim();
+      if (!hwGrade) return true;
+      if (normalizedRole === 'teacher' || normalizedRole === 'coordinator') {
+        return authorizedGrades.includes(hwGrade);
+      }
+      return hwGrade === userGrade;
+    });
+    if (scopedHw.length > 0) {
+      const hwLines = scopedHw.slice(0, 8).map(
+        (h: any) =>
+          `- [${sanitizeByteContextText(h.subject || 'General', 35)}] "${sanitizeByteContextText(h.title, 80)}" (${sanitizeByteContextText(h.classGrade || h.class_grade || userGrade, 20)}) | Due: ${sanitizeByteContextText(h.dueDate || h.due_date || 'Unspecified', 30)}`
+      );
+      sections.push(`Local Snapshot Homework (${scopedHw.length}):\n${hwLines.join('\n')}`);
+      hasVeylentraData = true;
+    }
+  }
+
   try {
     // =========================================================================
     // ROLE 1: PARENT — Strictly isolated to verified OTP-linked children ONLY
@@ -1063,3 +1087,13 @@ export async function buildRoleAwareByteContext(
 
   return finalResult;
 }
+
+export async function buildAuthorizedByteContext(
+  prompt: string,
+  currentUser: any,
+  effectiveRole: string,
+  options: BuildByteContextOptions = {}
+): Promise<BuiltByteContextResult> {
+  return buildRoleAwareByteContext(prompt, currentUser, effectiveRole, options);
+}
+

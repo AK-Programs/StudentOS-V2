@@ -220,7 +220,7 @@ export async function getAiBuddyChats(userId: string): Promise<AiBuddyThread[]> 
   const mergedMap = new Map<string, AiBuddyThread>();
   const localThreads = getLocalAiBuddyChats(userId);
   for (const t of localThreads) {
-    if (!t.userId || t.userId === userId) {
+    if (t && t.userId === userId) {
       mergedMap.set(t.id, { ...t, userId });
     }
   }
@@ -234,6 +234,9 @@ export async function getAiBuddyChats(userId: string): Promise<AiBuddyThread[]> 
 
     if (!error && data) {
       for (const item of data) {
+        if (!item || (item.user_id && String(item.user_id) !== String(userId))) {
+          continue;
+        }
         try {
           const parsedMsgs = typeof item.messages === 'string' ? JSON.parse(item.messages) : item.messages;
           const isWrapped = parsedMsgs && !Array.isArray(parsedMsgs) && parsedMsgs.messages;

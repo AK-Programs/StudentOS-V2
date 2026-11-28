@@ -16,6 +16,41 @@
  * - Approved AI Providers strictly: Ministral, Groq, Z.ai.
  */
 
+import {
+  buildCanonicalAiHealthPayload,
+  resolveCanonicalChatAccess,
+  isParentOrGuardianRole,
+} from '../server/canonicalAiHandlers';
+import {
+  cancelOrionTask,
+  getOrionTaskForActor,
+  listOrionTasksForActor,
+  retryOrionTask,
+  executeOrionServerRequest,
+} from '../server/orionService';
+import {
+  handleAskMaterialsRequest,
+  handleMaterialRecommendationsRequest,
+} from '../server/materialIntelligenceService';
+import {
+  handleNotebookIntelligence,
+  handleAiAssignmentBuilder,
+  listAssignmentDrafts,
+  saveAssignmentDraft,
+  publishAssignmentDraft,
+  listAssignmentSubmissions,
+  submitAssignmentWork,
+  gradeAssignmentSubmission,
+  handleNotebookCompletionReport,
+  handleAssignmentQualityAnalyze,
+  listGroupProjects,
+  createGroupProject,
+  upsertProjectGroup,
+  updateProjectMilestone,
+  submitGroupProject,
+  gradeGroupProject,
+} from '../server/assignmentIntelligenceService';
+
 export type AIProviderName = 'groq' | 'ministral' | 'zai';
 export type TaskComplexityTier = 'short' | 'fast' | 'general' | 'complex' | 'tool';
 
@@ -448,6 +483,7 @@ async function callGroqCompletion(
   }
 ): Promise<{
   text: string;
+  finishReason?: string;
   providerUsed: 'groq';
   modelUsed: string;
   tier: 'short';
@@ -528,9 +564,10 @@ async function callGroqCompletion(
       if (text) {
         return {
           text: text.trim(),
-          providerUsed: 'groq',
+          finishReason: String(choice?.finish_reason || 'stop').toLowerCase(),
+          providerUsed: 'groq' as const,
           modelUsed: candidateModel,
-          tier: 'short',
+          tier: 'short' as const,
           totalMs: Date.now() - start,
           retries
         };
@@ -569,6 +606,7 @@ async function callMinistralCompletion(
   }
 ): Promise<{
   text: string;
+  finishReason?: string;
   providerUsed: 'ministral';
   modelUsed: 'ministral-8b-2410';
   tier: 'general';
@@ -588,9 +626,9 @@ async function callMinistralCompletion(
   const start = Date.now();
   const messages = buildChatMessages(systemPrompt, history, prompt);
   const effectiveMaxTokens = options?.maxTokens
-    ? Math.min(Math.max(options.maxTokens, 300), 8192)
-    : 2048;
-  const timeoutMs = options?.timeoutMs || 25000;
+    ? Math.min(Math.max(options.maxTokens, 300), 16384)
+    : 4096;
+  const timeoutMs = options?.timeoutMs || 35000;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -643,6 +681,7 @@ async function callMinistralCompletion(
 
     return {
       text: text.trim(),
+      finishReason: String(choice?.finish_reason || 'stop').toLowerCase(),
       providerUsed: 'ministral',
       modelUsed: effectiveModel,
       tier: 'general',
@@ -674,9 +713,11 @@ async function callZaiCompletion(
     maxTokens?: number;
     requestId?: string;
     timeoutMs?: number;
+    reasoningMode?: boolean;
   }
 ): Promise<{
   text: string;
+  finishReason?: string;
   providerUsed: 'zai';
   modelUsed: typeof ZAI_MODEL_ID;
   tier: 'general';
@@ -696,14 +737,26 @@ async function callZaiCompletion(
   const start = Date.now();
   const messages = buildChatMessages(systemPrompt, history, prompt);
   const effectiveMaxTokens = options?.maxTokens
-    ? Math.min(Math.max(options.maxTokens, 300), 4096)
-    : 2048;
-  const timeoutMs = options?.timeoutMs || 28000;
+    ? Math.min(Math.max(options.maxTokens, 300), 16384)
+    : 4096;
+  const timeoutMs = options?.timeoutMs || 35000;
 
-  async function doFetch(allowJsonFormat: boolean): Promise<{ text: string }> {
+  async function doFetch(
+    allowJsonFormat: boolean,
+    includeThinkingToggle = !Boolean(options?.reasoningMode)
+  ): Promise<{ text: string; finishReason: string }> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      const requestBody: Record<string, any> = {
+        model: effectiveModel,
+        messages,
+        temperature: 0.6,
+        max_tokens: effectiveMaxTokens,
+        ...(allowJsonFormat ? { response_format: { type: 'json_object' } } : {}),
+        ...(includeThinkingToggle ? { thinking: { type: 'disabled' } } : {})
+      };
+
       const resp = await fetch(ZAI_CHAT_COMPLETIONS_URL, {
         method: 'POST',
         headers: {
@@ -711,13 +764,7 @@ async function callZaiCompletion(
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         },
-        body: JSON.stringify({
-          model: effectiveModel,
-          messages,
-          temperature: 0.6,
-          max_tokens: effectiveMaxTokens,
-          ...(allowJsonFormat ? { response_format: { type: 'json_object' } } : {})
-        }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal
       });
       clearTimeout(timeout);
@@ -725,7 +772,10 @@ async function callZaiCompletion(
       if (!resp.ok) {
         const rawErr = await resp.text().catch(() => '');
         if (resp.status === 400 && allowJsonFormat && /response_format|json_object|unsupported/i.test(rawErr)) {
-          return await doFetch(false);
+          return await doFetch(false, includeThinkingToggle);
+        }
+        if (resp.status === 400 && includeThinkingToggle && /thinking|unknown|unsupported/i.test(rawErr)) {
+          return await doFetch(allowJsonFormat, false);
         }
         const err: any = new Error(
           `zai HTTP ${resp.status}: ${rawErr || resp.statusText || 'Z.ai request failed'}`
@@ -746,7 +796,10 @@ async function callZaiCompletion(
         err.modelUsed = effectiveModel;
         throw err;
       }
-      return { text: text.trim() };
+      return {
+        text: text.trim(),
+        finishReason: String(choice?.finish_reason || 'stop').toLowerCase()
+      };
     } catch (fetchErr: any) {
       clearTimeout(timeout);
       if (fetchErr?.providerUsed === 'zai') throw fetchErr;
@@ -766,6 +819,7 @@ async function callZaiCompletion(
   const out = await doFetch(Boolean(options?.jsonMode));
   return {
     text: out.text,
+    finishReason: out.finishReason,
     providerUsed: 'zai',
     modelUsed: effectiveModel,
     tier: 'general',
@@ -790,10 +844,12 @@ export async function callRoutedCompletion(
     endpointName?: string;
     mode?: string;
     contextLength?: number;
+    reasoningMode?: boolean;
     images?: { name?: string; mimeType: string; data: string }[];
   }
 ): Promise<{
   text: string;
+  finishReason?: string;
   providerUsed: AIProviderName;
   modelUsed: string;
   tier: TaskComplexityTier;
@@ -817,7 +873,8 @@ export async function callRoutedCompletion(
       return await callZaiCompletion(prompt, systemPrompt, history, {
         jsonMode: options?.jsonMode,
         maxTokens: options?.maxTokens,
-        requestId: options?.requestId
+        requestId: options?.requestId,
+        reasoningMode: options?.reasoningMode
       });
     } catch (zaiErr: any) {
       if (getMinistralApiKey()) {
@@ -918,6 +975,8 @@ async function streamRoutedCompletion(
     maxTokens?: number;
     mode?: string;
     contextLength?: number;
+    reasoningMode?: boolean;
+    conversationId?: string;
     images?: { name?: string; mimeType: string; data: string }[];
     onUsageCommit?: () => Promise<any>;
   },
@@ -1045,42 +1104,85 @@ async function streamRoutedCompletion(
     res.flushHeaders();
   }
 
+  const disconnectAbortController = new AbortController();
+  res.on?.('close', () => {
+    if (!res.writableEnded) {
+      disconnectAbortController.abort();
+    }
+  });
+
   const start = Date.now();
   const messages = buildChatMessages(systemPrompt, history, prompt, options.images);
-  const effectiveMaxTokens = options.maxTokens
+  const requestedBudget = options.maxTokens
     ? Math.max(options.maxTokens, 300)
-    : (tier === 'fast' || tier === 'short' ? 1200 : 2048);
+    : (tier === 'fast' || tier === 'short' ? 2048 : 8192);
 
   let lastStatus = 500;
   let lastErrorText = `${provider} stream request failed`;
   let activeProvider: AIProviderName = targets[0].provider;
   let activeModel = targets[0].candidateModels[0];
+  let hasEmittedVisibleTokens = false;
 
   for (const target of targets) {
+    if (hasEmittedVisibleTokens || disconnectAbortController.signal.aborted) break;
     activeProvider = target.provider;
     for (let i = 0; i < target.candidateModels.length; i++) {
+      if (hasEmittedVisibleTokens || disconnectAbortController.signal.aborted) break;
       activeModel = target.candidateModels[i];
 
-      const streamController = new AbortController();
-      const streamTimeout = setTimeout(() => streamController.abort(), 30000);
-      try {
-        const resp = await fetch(target.targetUrl, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${target.apiKey}`,
-            'Content-Type': 'application/json',
-            'Accept': 'text/event-stream, application/json'
-          },
-          body: JSON.stringify({
+      const providerMaxCap = activeProvider === 'groq' ? 8192 : 16384;
+      const effectiveMaxTokens = Math.min(requestedBudget, providerMaxCap);
+
+      const attemptStreamFetch = async (includeThinkingToggle: boolean): Promise<Response> => {
+        const streamController = new AbortController();
+        const streamTimeout = setTimeout(() => streamController.abort(), 45000);
+        const onDisconnect = () => streamController.abort();
+        disconnectAbortController.signal.addEventListener('abort', onDisconnect, { once: true });
+
+        try {
+          const payload: Record<string, any> = {
             model: activeModel,
             messages,
             temperature: 0.6,
             max_tokens: effectiveMaxTokens,
-            stream: true
-          }),
-          signal: streamController.signal
-        });
-        clearTimeout(streamTimeout);
+            stream: true,
+            ...(activeProvider === 'zai' && includeThinkingToggle ? { thinking: { type: 'disabled' } } : {})
+          };
+          const resp = await fetch(target.targetUrl, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${target.apiKey}`,
+              'Content-Type': 'application/json',
+              'Accept': 'text/event-stream, application/json'
+            },
+            body: JSON.stringify(payload),
+            signal: streamController.signal
+          });
+          clearTimeout(streamTimeout);
+          disconnectAbortController.signal.removeEventListener('abort', onDisconnect);
+          return resp;
+        } catch (err) {
+          clearTimeout(streamTimeout);
+          disconnectAbortController.signal.removeEventListener('abort', onDisconnect);
+          throw err;
+        }
+      };
+
+      try {
+        let includeThinkingToggle = activeProvider === 'zai' && !Boolean(options.reasoningMode);
+        let resp = await attemptStreamFetch(includeThinkingToggle);
+
+        if (!resp.ok && resp.status === 400 && includeThinkingToggle) {
+          const errPeek = await resp.text().catch(() => '');
+          if (/thinking|unknown|unsupported/i.test(errPeek)) {
+            includeThinkingToggle = false;
+            resp = await attemptStreamFetch(false);
+          } else {
+            lastStatus = resp.status;
+            lastErrorText = errPeek || resp.statusText || `${activeProvider} stream failed`;
+            continue;
+          }
+        }
 
         if (!resp.ok) {
           const errText = await resp.text().catch(() => '');
@@ -1110,7 +1212,9 @@ async function streamRoutedCompletion(
           const data = await resp.json();
           const choice = data?.choices?.[0];
           const text = extractTextFromChoiceMessage(choice, data);
+          const finishReason = String(choice?.finish_reason || data?.finish_reason || 'stop').toLowerCase();
           if (text) {
+            hasEmittedVisibleTokens = true;
             const latency = Date.now() - start;
             res.write(`data: ${JSON.stringify({ type: 'token', token: text, firstTokenLatencyMs: latency })}\n\n`);
             const finishedReply = text.trim();
@@ -1122,26 +1226,34 @@ async function streamRoutedCompletion(
                 console.warn('[Vercel AI Quota] Commit warning:', uErr);
               }
             }
-            res.write(
-              `data: ${JSON.stringify({
-                type: 'done',
-                text: finishedReply,
-                requestId,
-                providerUsed: activeProvider,
-                modelUsed: activeModel,
-                telemetry: {
+            if (!res.writableEnded) {
+              res.write(
+                `data: ${JSON.stringify({
+                  type: 'done',
+                  text: finishedReply,
+                  reply: finishedReply,
+                  ...(options.conversationId ? { conversationId: options.conversationId } : {}),
+                  finishReason,
+                  truncated: finishReason === 'length',
                   requestId,
                   providerUsed: activeProvider,
                   modelUsed: activeModel,
-                  complexityTier: tier,
-                  firstTokenLatencyMs: latency,
-                  totalGenerationTimeMs: Date.now() - start,
-                  streamed: true
-                },
-                ...(committedUsage ? { usage: committedUsage } : {})
-              })}\n\n`
-            );
-            res.end();
+                  telemetry: {
+                    requestId,
+                    providerUsed: activeProvider,
+                    modelUsed: activeModel,
+                    complexityTier: tier,
+                    firstTokenLatencyMs: latency,
+                    totalGenerationTimeMs: Date.now() - start,
+                    streamed: true,
+                    finishReason,
+                    truncated: finishReason === 'length'
+                  },
+                  ...(committedUsage ? { usage: committedUsage } : {})
+                })}\n\n`
+              );
+              res.end();
+            }
             return;
           }
         }
@@ -1153,14 +1265,7 @@ async function streamRoutedCompletion(
         let firstTokenLatencyMs: number | null = null;
         let lastChoice: any = null;
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
+        const processLines = (lines: string[]) => {
           for (const rawLine of lines) {
             const line = rawLine.trim();
             if (!line || !line.startsWith('data:')) continue;
@@ -1174,15 +1279,39 @@ async function streamRoutedCompletion(
 
               const token = extractStreamingToken(choice);
               if (token.length > 0) {
+                hasEmittedVisibleTokens = true;
                 if (firstTokenLatencyMs === null) firstTokenLatencyMs = Date.now() - start;
                 fullText += token;
                 res.write(`data: ${JSON.stringify({ type: 'token', token, firstTokenLatencyMs })}\n\n`);
               }
             } catch {}
           }
+        };
+
+        while (true) {
+          if (disconnectAbortController.signal.aborted) {
+            await reader.cancel().catch(() => {});
+            return;
+          }
+
+          const { done, value } = await reader.read();
+          if (done) {
+            buffer += decoder.decode();
+            if (buffer.trim()) {
+              processLines(buffer.split('\n'));
+              buffer = '';
+            }
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          processLines(lines);
         }
 
         const finishedReply = fullText.trim();
+        const finishReason = String(lastChoice?.finish_reason || 'stop').toLowerCase();
         if (finishedReply.length > 0) {
           let committedUsage: any = undefined;
           if (options.onUsageCommit) {
@@ -1192,51 +1321,68 @@ async function streamRoutedCompletion(
               console.warn('[Vercel AI Quota] Stream commit warning:', uErr);
             }
           }
-          res.write(
-            `data: ${JSON.stringify({
-              type: 'done',
-              text: finishedReply,
-              requestId,
-              providerUsed: activeProvider,
-              modelUsed: activeModel,
-              telemetry: {
+          if (!res.writableEnded) {
+            res.write(
+              `data: ${JSON.stringify({
+                type: 'done',
+                text: finishedReply,
+                reply: finishedReply,
+                ...(options.conversationId ? { conversationId: options.conversationId } : {}),
+                finishReason,
+                truncated: finishReason === 'length',
                 requestId,
                 providerUsed: activeProvider,
                 modelUsed: activeModel,
-                complexityTier: tier,
-                firstTokenLatencyMs: firstTokenLatencyMs ?? (Date.now() - start),
-                totalGenerationTimeMs: Date.now() - start,
-                streamed: true
-              },
-              ...(committedUsage ? { usage: committedUsage } : {})
-            })}\n\n`
-          );
-          res.end();
+                telemetry: {
+                  requestId,
+                  providerUsed: activeProvider,
+                  modelUsed: activeModel,
+                  complexityTier: tier,
+                  firstTokenLatencyMs: firstTokenLatencyMs ?? (Date.now() - start),
+                  totalGenerationTimeMs: Date.now() - start,
+                  streamed: true,
+                  finishReason,
+                  truncated: finishReason === 'length'
+                },
+                ...(committedUsage ? { usage: committedUsage } : {})
+              })}\n\n`
+            );
+            res.end();
+          }
           return;
         } else {
-          const finishReason = lastChoice?.finish_reason || 'unknown';
           lastStatus = 502;
           lastErrorText = `Stream finished without returning text tokens (finish_reason=${finishReason})`;
         }
       } catch (err: any) {
-        clearTimeout(streamTimeout);
         lastStatus = err?.status || 502;
         lastErrorText = err?.message || `${activeProvider} stream request failed`;
+        // Never fall back to another provider if visible tokens already streamed
+        if (hasEmittedVisibleTokens || disconnectAbortController.signal.aborted) {
+          break;
+        }
       }
     }
   }
 
-  res.write(
-    `data: ${JSON.stringify({
-      type: 'error',
-      status: lastStatus,
-      error: `${activeProvider} HTTP ${lastStatus}: ${lastErrorText}`,
-      providerUsed: activeProvider,
-      modelUsed: activeModel,
-      requestId
-    })}\n\n`
-  );
-  res.end();
+  if (disconnectAbortController.signal.aborted) {
+    if (!res.writableEnded) res.end();
+    return;
+  }
+
+  if (!res.writableEnded) {
+    res.write(
+      `data: ${JSON.stringify({
+        type: 'error',
+        status: lastStatus,
+        error: `${activeProvider} HTTP ${lastStatus}: ${lastErrorText}`,
+        providerUsed: activeProvider,
+        modelUsed: activeModel,
+        requestId
+      })}\n\n`
+    );
+    res.end();
+  }
 }
 
 async function searchViaWikipediaApi(query: string): Promise<any[]> {
@@ -1961,18 +2107,23 @@ export default async function handler(req: any, res: any) {
   const pathname = url.split('?')[0];
   const requestId = 'req_' + Math.random().toString(36).substring(2, 10);
 
-  // 1. Health check
-  if (pathname === '/api/health' || pathname === '/api/health/') {
-    return sendJson(res, 200, {
-      status: 'ok',
-      time: new Date().toISOString(),
-      provider: 'multi-provider',
+  // 1. Health & AI Readiness checks
+  if (pathname === '/api/health' || pathname === '/api/health/' || pathname === '/api/ai/health' || pathname === '/api/ai/health/') {
+    const cfg = getServerlessSupabaseConfig();
+    const payload = buildCanonicalAiHealthPayload({
+      runtime: 'vercel-serverless',
+      groqConfigured: Boolean(getGroqApiKey()),
+      ministralConfigured: Boolean(getMinistralApiKey()),
+      zaiConfigured: Boolean(getZaiApiKey()),
       groqModels: GROQ_MODELS,
       ministralModel: 'ministral-8b-2410',
       zaiModel: ZAI_MODEL_ID,
-      zaiConfigured: Boolean(getZaiApiKey()),
-      runtime: 'vercel-serverless'
+      databaseStatus: {
+        configured: Boolean(cfg.url && cfg.key),
+        status: cfg.url && cfg.key ? 'connected' : 'unconfigured',
+      },
     });
+    return sendJson(res, pathname.includes('/ai/health') && !payload.ready ? 503 : 200, payload);
   }
 
   // 2. Disabled legacy diagnostic endpoint
@@ -2235,14 +2386,22 @@ Schema:
       return sendJson(res, 400, { error: 'Prompt is required', requestId });
     }
 
-    const headerUid = String(req.headers?.['x-veylentra-uid'] || '').trim();
-    const headerRole = String(req.headers?.['x-veylentra-role'] || '').trim();
-    const rawUserId = String(userId || '').trim();
-    const activeUserId =
-      rawUserId && rawUserId !== 'anonymous' && rawUserId !== 'guest' && rawUserId !== 'user_guest'
-        ? rawUserId
-        : headerUid || rawUserId || 'user_guest';
-    const activeRole = String(userRole || headerRole || 'student').toLowerCase().trim();
+    const cfg = getServerlessSupabaseConfig();
+    const chatAccess = await resolveCanonicalChatAccess({
+      headers: req.headers || {},
+      body,
+      cfg,
+    });
+    if (!chatAccess.ok) {
+      return sendJson(res, chatAccess.status, {
+        success: false,
+        error: chatAccess.error,
+        requestId,
+      });
+    }
+
+    const activeUserId = chatAccess.activeUserId;
+    const activeRole = chatAccess.activeRole;
 
     let usageBefore;
     try {
@@ -2302,9 +2461,8 @@ ${combinedContext}
 </studentos_authorized_context>`;
     }
 
-    const historyLengthChars = Array.isArray(history)
-      ? history.reduce((sum: number, item: any) => sum + (typeof item?.content === 'string' ? item.content.length : 0), 0)
-      : 0;
+    const sanitizedHist = chatAccess.sanitizedHistory;
+    const historyLengthChars = sanitizedHist.reduce((sum, item) => sum + item.content.length, 0);
     const effectiveContextLength = Math.max(
       Number(bodyContextLength) || 0,
       String(prompt).length + combinedContext.length + historyLengthChars
@@ -2320,7 +2478,7 @@ ${combinedContext}
       await streamRoutedCompletion(
         prompt,
         systemPrompt,
-        history,
+        sanitizedHist,
         {
           modelOverride,
           taskType,
@@ -2328,6 +2486,8 @@ ${combinedContext}
           maxTokens,
           mode,
           contextLength: effectiveContextLength,
+          reasoningMode: Boolean(body.reasoningMode),
+          conversationId: chatAccess.effectiveConversationId,
           images,
           onUsageCommit: async () => {
             await recordServerlessAiUsage(activeUserId, activeRole, persona || 'ai_buddy');
@@ -2339,12 +2499,12 @@ ${combinedContext}
       return;
     }
 
-    // Non-streaming completion across Groq and Ministral
+    // Non-streaming completion across Groq, Ministral, and Z.ai
     try {
       const result = await callRoutedCompletion(
         prompt,
         systemPrompt,
-        history,
+        sanitizedHist,
         {
           jsonMode: isJsonRequested,
           modelOverride,
@@ -2354,6 +2514,7 @@ ${combinedContext}
           maxTokens,
           mode,
           contextLength: effectiveContextLength,
+          reasoningMode: Boolean(body.reasoningMode),
           images
         }
       );
@@ -2370,9 +2531,14 @@ ${combinedContext}
         console.warn('[Vercel AI Quota] Record notice:', uErr);
       }
 
+      const cleanText = result.text.trim();
       return sendJson(res, 200, {
         success: true,
-        text: result.text.trim(),
+        text: cleanText,
+        reply: cleanText,
+        conversationId: chatAccess.effectiveConversationId,
+        finishReason: result.finishReason || 'stop',
+        truncated: result.finishReason === 'length',
         requestId,
         telemetry: {
           requestId,
@@ -2381,7 +2547,9 @@ ${combinedContext}
           complexityTier: result.tier,
           totalGenerationTimeMs: result.totalMs,
           retries: result.retries || 0,
-          streamed: false
+          streamed: false,
+          finishReason: result.finishReason || 'stop',
+          truncated: result.finishReason === 'length'
         },
         providerUsed: result.providerUsed,
         modelUsed: result.modelUsed,
@@ -2595,10 +2763,97 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
     });
   }
 
+  // 5.4 Ephemeral Orion Task Lifecycle Routes (/api/orion/tasks*)
+  if (pathname.startsWith('/api/orion/tasks')) {
+    const cfg = getServerlessSupabaseConfig();
+    const superAdminEmails = [
+      'naitik.kashyap0015@gmail.com',
+      'naitik.kashyap5205@gmail.com',
+      'superadmin@studentos.edu',
+      'superadmin@veylentra.edu',
+    ];
+    const authHeader = String(req.headers?.authorization || req.headers?.['x-supabase-auth'] || '').trim();
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    let actor = { userId: 'guest', email: '', name: 'Guest User', role: 'student', grade: '', section: '', authenticated: false };
+    if (token) {
+      const uRes = await fetch(`${cfg.url}/auth/v1/user`, { headers: { apikey: cfg.key, Authorization: `Bearer ${token}` } }).catch(() => null);
+      if (!uRes || !uRes.ok) {
+        return sendJson(res, 401, { success: false, status: 'unauthorized', error: 'Invalid or expired authentication token.', requestId });
+      }
+      const user: any = await uRes.json().catch(() => null);
+      if (!user?.id) {
+        return sendJson(res, 401, { success: false, status: 'unauthorized', error: 'Invalid authentication session.', requestId });
+      }
+      const email = String(user.email || '').toLowerCase().trim();
+      let role = superAdminEmails.includes(email) ? 'super_admin' : String(user.user_metadata?.role || 'student').toLowerCase().trim();
+      let name = String(user.user_metadata?.name || email.split('@')[0] || 'Campus Member');
+      if (!superAdminEmails.includes(email)) {
+        const pRes = await fetchServerlessSupabaseWithAnonRetry(
+          `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(user.id)},uid.eq.${encodeURIComponent(user.id)},email.eq.${encodeURIComponent(email)})&select=id,name,role`,
+          { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+        ).catch(() => null);
+        if (pRes?.ok) {
+          const rows: any = await pRes.json().catch(() => []);
+          if (Array.isArray(rows) && rows[0]?.role) {
+            role = String(rows[0].role).toLowerCase().trim();
+            if (rows[0].name) name = String(rows[0].name);
+          }
+        }
+      }
+      actor = { userId: user.id, email, name, role, grade: '', section: '', authenticated: true };
+    } else {
+      const uidH = String(req.headers?.['x-veylentra-uid'] || '').trim();
+      const emailH = String(req.headers?.['x-veylentra-email'] || '').toLowerCase().trim();
+      const actorId = uidH || emailH;
+      if (actorId && actorId !== 'guest' && actorId !== 'anonymous' && actorId !== 'user_guest') {
+        if (superAdminEmails.includes(emailH) || superAdminEmails.includes(actorId.toLowerCase()) || actorId === 'superadmin-master-uid') {
+          actor = { userId: actorId, email: emailH, name: 'Super Administrator', role: 'super_admin', grade: '', section: '', authenticated: true };
+        } else {
+          const pRes = await fetchServerlessSupabaseWithAnonRetry(
+            `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(actorId)},uid.eq.${encodeURIComponent(actorId)},email.eq.${encodeURIComponent(emailH || actorId)})&select=id,name,role`,
+            { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+          ).catch(() => null);
+          if (pRes?.ok) {
+            const rows: any = await pRes.json().catch(() => []);
+            if (Array.isArray(rows) && rows[0]) {
+              actor = { userId: String(rows[0].id || actorId), email: emailH, name: String(rows[0].name || 'Campus Member'), role: String(rows[0].role || 'student').toLowerCase().trim(), grade: '', section: '', authenticated: true };
+            }
+          }
+        }
+      }
+    }
+
+    const claimedRole = String(req.headers?.['x-veylentra-role'] || '').toLowerCase().trim();
+    if (isParentOrGuardianRole(actor.role) || (!actor.authenticated && isParentOrGuardianRole(claimedRole))) {
+      return sendJson(res, 403, { success: false, status: 'forbidden', error: 'Forbidden: Orion Academic Agent is unavailable for Parent and Guardian accounts.', requestId });
+    }
+
+    const cleanSub = pathname.replace(/^\/api\/orion\/tasks\/?/, '').replace(/\/$/, '');
+    if (!cleanSub && req.method === 'GET') {
+      const out = listOrionTasksForActor(actor);
+      return sendJson(res, out.httpStatus, { ...out.body, requestId });
+    }
+    const cancelMatch = cleanSub.match(/^([^/]+)\/cancel$/);
+    if (cancelMatch && req.method === 'POST') {
+      const out = cancelOrionTask(decodeURIComponent(cancelMatch[1]), actor);
+      return sendJson(res, out.httpStatus, { ...out.body, requestId });
+    }
+    const retryMatch = cleanSub.match(/^([^/]+)\/retry$/);
+    if (retryMatch && req.method === 'POST') {
+      const out = await retryOrionTask(decodeURIComponent(retryMatch[1]), actor, cfg);
+      return sendJson(res, out.httpStatus, { ...out.body, requestId });
+    }
+    if (cleanSub && !cleanSub.includes('/') && req.method === 'GET') {
+      const out = getOrionTaskForActor(decodeURIComponent(cleanSub), actor);
+      return sendJson(res, out.httpStatus, { ...out.body, requestId });
+    }
+    return sendJson(res, 404, { success: false, error: `Orion task route ${pathname} not found.`, requestId });
+  }
+
   // 5.5 Authoritative Server-Side Orion Execution Engine (/api/orion/execute)
   if (pathname === '/api/orion/execute' || pathname === '/api/orion/execute/') {
     const body = await parseJsonBody(req);
-    const { command = '', actionPlan, confirmed = false, activeTab = 'dashboard', modelOverride, history = [] } = body;
+    const { command = '', actionPlan, confirmed = false, activeTab = 'dashboard', modelOverride, history = [], taskId, idempotencyKey } = body;
     const cfg = getServerlessSupabaseConfig();
     const superAdminEmails = [
       'naitik.kashyap0015@gmail.com',
@@ -2667,213 +2922,26 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
       }
     }
 
-    const cmdTrimmed = String(command || '').trim();
-    if (!cmdTrimmed) {
-      return sendJson(res, 400, { success: false, status: 'error', error: 'Command or instruction is required.', requestId });
-    }
-    const cmdLower = cmdTrimmed.toLowerCase();
-
-    const detectAction = (): string => {
-      if (/\b(child|ward|son|daughter)\b/.test(cmdLower) && /\b(overview|homework|attendance|progress|summary)\b/.test(cmdLower)) return 'get_child_overview';
-      if (/\b(submission|submitted|missing homework|who has not submitted)\b/.test(cmdLower)) return 'get_submissions';
-      if ((cmdLower.includes('homework') || cmdLower.includes('assignment')) && /\b(create|assign|publish|give|add)\b/.test(cmdLower)) return 'create_homework';
-      if ((cmdLower.includes('homework') || cmdLower.includes('assignment')) && /\b(what|show|check|pending|missing|list|status|due|my)\b/.test(cmdLower)) return 'get_homework';
-      if (cmdLower.includes('attendance') && /\b(take|mark|start|record)\b/.test(cmdLower)) return 'mark_attendance';
-      if (cmdLower.includes('attendance')) return 'get_attendance';
-      if (/\b(generate|daily|school|class|operations)\s*(briefing|report|summary)\b/.test(cmdLower)) return 'generate_report';
-      if (/\b(broadcast|announcement)\b/.test(cmdLower) && /\b(create|send|publish|post|make|announce)\b/.test(cmdLower)) return 'create_broadcast';
-      if (/\b(notify|send reminder|alert class|tell class)\b/.test(cmdLower)) return 'notify_users';
-      if (/\b(competition)\b/.test(cmdLower) && /\b(create|add|host|publish|launch)\b/.test(cmdLower)) return 'create_competition';
-      if (/\b(event|assembly|annual function)\b/.test(cmdLower) && /\b(create|schedule|add|host)\b/.test(cmdLower)) return 'create_event';
-      if (/\b(meet|meeting|session)\b/.test(cmdLower) && /\b(schedule|create|book|start)\b/.test(cmdLower)) return 'create_meeting';
-      if (/^(delete|cancel|remove)\b/.test(cmdLower)) return 'delete_item';
-      if (cmdLower.includes('calendar') || cmdLower.includes('upcoming event')) return 'get_calendar';
-      if (cmdLower.includes('notice') || cmdLower.includes('announcement') || cmdLower.includes('notification')) return 'get_notifications';
-      if (cmdLower.startsWith('search ') || cmdLower.startsWith('look up ') || cmdLower.includes('search the web')) return 'web_search';
-      return 'general_chat';
-    };
-
-    const startedAt = Date.now();
-    let plannedSteps: any[] = Array.isArray(actionPlan) && actionPlan.length > 0 ? actionPlan : [];
-    let plannerReply = '';
-    let usedProvider = '';
-    let usedModel = '';
-
-    if (plannedSteps.length === 0) {
-      const quick = detectAction();
-      if ((quick === 'general_chat' || cmdTrimmed.split(/\s+/).length >= 4) && (getGroqApiKey() || getMinistralApiKey() || getZaiApiKey())) {
-        try {
-          const planRes = await callRoutedCompletion(
-            cmdTrimmed,
-            `You are Veylentra Orion (${actor.role}, tab=${activeTab}). Output strict JSON: {"action":"get_homework|get_submissions|get_attendance|get_calendar|get_notifications|get_child_overview|generate_report|create_broadcast|create_notice|notify_users|create_event|create_competition|create_meeting|create_homework|delete_item|mark_attendance|web_search|general_chat","targetValue":"string","responseText":"string","details":{"title":"","content":"","subject":"","targetClass":"","targetAudience":"","date":""}}`,
-            Array.isArray(history) ? history.slice(-6) : [],
-            { taskType: 'tool', jsonMode: true, modelOverride, requestId, maxTokens: 1200 }
-          );
-          usedProvider = planRes.providerUsed;
-          usedModel = planRes.modelUsed;
-          const objMatch = (planRes.text || '').match(/\{[\s\S]*\}/);
-          if (objMatch) {
-            const parsed = JSON.parse(objMatch[0]);
-            const d = parsed.details || {};
-            plannedSteps = [{ action: parsed.action || quick, title: d.title || parsed.targetValue, message: d.content, content: d.content, subject: d.subject, targetClass: d.targetClass, audience: d.targetAudience, date: d.date, targetValue: parsed.targetValue || d.title }];
-            if (typeof parsed.responseText === 'string') plannerReply = parsed.responseText.trim();
-          }
-        } catch (_) {}
-      }
-      if (plannedSteps.length === 0) {
-        plannedSteps = [{ action: quick, targetValue: cmdTrimmed }];
-      }
+    // Strict mandatory Parent/Guardian exclusion from Orion (HTTP 403 Forbidden) BEFORE any LLM call
+    const claimedRole = String(body.userRole || req.headers?.['x-veylentra-role'] || '').toLowerCase().trim();
+    if (isParentOrGuardianRole(actor.role) || (!actor.authenticated && isParentOrGuardianRole(claimedRole))) {
+      const msg = 'Forbidden: Orion Academic Agent is unavailable for Parent and Guardian accounts.';
+      return sendJson(res, 403, { success: false, status: 'forbidden', error: msg, finalResponse: msg, requestId });
     }
 
-    const privileged = new Set(['create_broadcast', 'create_notice', 'notify_users', 'create_event', 'create_competition', 'create_meeting', 'create_homework', 'delete_item', 'mark_attendance', 'get_submissions', 'get_attendance', 'get_child_overview', 'generate_report']);
-    const consequential = new Set(['create_broadcast', 'create_notice', 'notify_users', 'create_event', 'create_competition', 'create_meeting', 'create_homework', 'delete_item', 'mark_attendance']);
-    const studentAllowed = new Set(['get_homework', 'get_calendar', 'get_notifications', 'web_search', 'general_chat']);
-    const parentAllowed = new Set(['get_child_overview', 'get_notifications', 'get_calendar', 'web_search', 'general_chat']);
-    const staffRoles = new Set(['teacher', 'faculty', 'head_teacher', 'coordinator', 'hod', 'admin', 'super_admin']);
-    const coordinatorRoles = new Set(['coordinator', 'hod', 'admin', 'super_admin']);
-    const stages: any[] = [
-      { phase: 'analyzing', label: 'Analyzing intent', status: 'completed', durationMs: 1 },
-      { phase: 'planning', label: 'Planning steps', status: 'completed', durationMs: 1, detail: `${plannedSteps.length} step${plannedSteps.length > 1 ? 's' : ''}` }
-    ];
-
-    for (const st of plannedSteps) {
-      if (privileged.has(st.action) && !actor.authenticated) {
-        return sendJson(res, 401, { success: false, status: 'unauthorized', error: `Authentication required to execute "${st.action}".`, finalResponse: `Authentication required to execute "${st.action}".`, plan: plannedSteps, requestId });
-      }
-      const r = actor.role;
-      let allowed = true;
-      if (r === 'parent' || r === 'guardian') allowed = parentAllowed.has(st.action);
-      else if (!staffRoles.has(r)) allowed = studentAllowed.has(st.action);
-      else if (st.action === 'create_broadcast' && !coordinatorRoles.has(r)) allowed = false;
-      if (!allowed) {
-        const msg = `Authorization denied: Role "${r}" cannot execute "${st.action}".`;
-        return sendJson(res, 403, { success: false, status: 'forbidden', error: msg, finalResponse: msg, plan: plannedSteps, requestId });
-      }
-    }
-    stages.push({ phase: 'preparing', label: 'Checking permissions & prerequisites', status: 'completed', durationMs: 1, detail: `Authorized (${actor.role})` });
-
-    const genericWords = /^(delete|cancel|remove|create|send|publish|post|assign|schedule|notify|item|something|it|homework|assignment|broadcast|notice|notify|meeting|event|competition)$/i;
-    const genericPhrase = /^(delete|cancel|remove|create|send|publish|post|make|assign|schedule|notify|add|host|book|launch)\s+(a\s+|an\s+|the\s+|new\s+|school\s+)?(competition|event|meeting|meet|homework|assignment|broadcast|notice|announcement|notification|reminder|alert|calendar event|item|users?|class|all)$/i;
-    for (const st of plannedSteps) {
-      if (['delete_item', 'create_broadcast', 'create_notice', 'notify_users', 'create_homework', 'create_competition', 'create_event', 'create_meeting'].includes(st.action)) {
-        const stripped = cmdTrimmed.replace(/^(delete|cancel|remove|create|send|publish|post|assign|schedule|notify)\s+(a\s+|an\s+|the\s+)?(competition|event|meeting|homework|assignment|broadcast|notice|item)?\s*/i, '').trim();
-        const candidate = (st.title || st.content || st.message || '').trim();
-        if ((!candidate || genericWords.test(candidate) || genericPhrase.test(candidate)) && (stripped.length < 3 || genericWords.test(stripped) || genericPhrase.test(cmdTrimmed))) {
-          const clarificationQuestion = 'Please provide the exact title, target item, or audience details so Orion can prepare this action accurately.';
-          return sendJson(res, 200, { success: true, status: 'needs_clarification', clarificationQuestion, missingFields: ['title / target details'], plan: plannedSteps, finalResponse: clarificationQuestion, requestId });
-        }
-      }
-    }
-
-    if (plannedSteps.some((s) => consequential.has(s.action)) && !confirmed) {
-      const p0 = plannedSteps[0];
-      const targetTitle = p0.title || p0.targetValue || cmdTrimmed.slice(0, 72);
-      return sendJson(res, 200, {
-        success: true,
-        status: 'awaiting_confirmation',
-        pendingConfirmation: {
-          action: p0.action,
-          targetTitle,
-          promptText: `Review the planned details for "${targetTitle}" and confirm to execute.`,
-          previewDetails: { Action: p0.action.replace(/_/g, ' ').toUpperCase(), Target: targetTitle, Audience: p0.targetClass || p0.audience || 'Authorized Scope' },
-          actionObject: p0,
-          plannedSteps
-        },
-        plan: plannedSteps,
-        finalResponse: `Confirmation required for **${p0.action.replace(/_/g, ' ')}** (${targetTitle}).`,
-        requestId
-      });
-    }
-
-    const headers = { apikey: cfg.key, Authorization: `Bearer ${cfg.key}`, 'Content-Type': 'application/json' };
-    const stepResults: any[] = [];
-    const summaryParts: string[] = [];
-    const refreshTables: string[] = [];
-    let structuredData: any = null;
-    let webSources: any[] = [];
-    let webVideos: any[] = [];
-    let allOk = true;
-
-    for (let idx = 0; idx < plannedSteps.length; idx++) {
-      const st = plannedSteps[idx];
-      const stepLog: any = { id: `step-${idx + 1}`, label: st.action.replace(/_/g, ' '), action: st.action, status: 'completed' };
-      try {
-        if (st.action === 'general_chat') {
-          let reply = plannerReply;
-          if (!reply) {
-            const cRes = await callRoutedCompletion(cmdTrimmed, `You are Veylentra Orion, a helpful academic agent for role "${actor.role}". Never invent school records.`, Array.isArray(history) ? history.slice(-6) : [], { taskType: 'general', modelOverride, requestId, maxTokens: 1500 });
-            reply = cRes.text;
-            usedProvider = cRes.providerUsed;
-            usedModel = cRes.modelUsed;
-          }
-          summaryParts.push(reply);
-        } else if (st.action === 'web_search') {
-          const q = (st.title || st.targetValue || cmdTrimmed).trim();
-          webSources = await searchLiveAcademicWeb(q);
-          webVideos = await searchRealEducationalVideos(q);
-          stepLog.status = webSources.length > 0 ? 'verified' : 'failed';
-          if (webSources.length === 0) allOk = false;
-          summaryParts.push(webSources.length > 0 ? `Retrieved **${webSources.length} verified sources** for **"${q}"**.` : `No live web sources were retrieved for "${q}".`);
-        } else if (st.action === 'get_homework' || st.action === 'get_submissions') {
-          const hRes = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/homework?select=id,title,subject,class_grade,due_date&order=created_at.desc&limit=12`, { headers });
-          const rows: any = hRes.ok ? await hRes.json() : [];
-          structuredData = { title: 'Homework Overview', metrics: [{ label: 'Assignments', value: Array.isArray(rows) ? rows.length : 0, status: 'neutral' }], columns: ['Title', 'Subject', 'Due Date'], rows: (Array.isArray(rows) ? rows : []).slice(0, 8).map((r: any) => ({ Title: r.title, Subject: r.subject || 'General', 'Due Date': r.due_date || 'Flexible' })) };
-          stepLog.status = 'verified';
-          summaryParts.push(`Found **${Array.isArray(rows) ? rows.length : 0} assignment(s)** in database.`);
-        } else if (st.action === 'get_attendance') {
-          const aRes = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/attendance?select=id,status,date,grade,section&order=date.desc&limit=40`, { headers });
-          const rows: any[] = aRes.ok ? await aRes.json() : [];
-          const present = rows.filter((r) => String(r.status).toLowerCase() === 'present').length;
-          structuredData = { title: 'Attendance Summary', metrics: [{ label: 'Present', value: present, status: 'good' }, { label: 'Logs', value: rows.length, status: 'neutral' }], columns: ['Date', 'Grade', 'Status'], rows: rows.slice(0, 8).map((r) => ({ Date: r.date || '—', Grade: r.grade || '—', Status: r.status })) };
-          stepLog.status = 'verified';
-          summaryParts.push(`Attendance summary across **${rows.length} recent logs**: **${present} present**.`);
-        } else if (st.action === 'create_broadcast' || st.action === 'create_notice') {
-          const id = `bc_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-          const title = (st.title || st.targetValue || 'School Notice').trim().slice(0, 140);
-          const ins = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/materials`, {
-            method: 'POST', headers,
-            body: JSON.stringify({ id, title, description: st.content || st.message || title, type: 'broadcast', subject: 'Announcement', uploaded_by: actor.name, created_at: new Date().toISOString() })
-          });
-          if (!ins.ok) throw new Error(`Broadcast insert failed (${ins.status})`);
-          const chk = await fetchServerlessSupabaseWithAnonRetry(`${cfg.url}/rest/v1/materials?id=eq.${encodeURIComponent(id)}&select=id`, { headers });
-          const chkRows: any = chk.ok ? await chk.json() : [];
-          if (!Array.isArray(chkRows) || !chkRows.some((r) => r.id === id)) throw new Error('Read-back verification failed for broadcast.');
-          stepLog.status = 'verified';
-          stepLog.recordId = id;
-          refreshTables.push('materials', 'notifications');
-          summaryParts.push(`Published and verified official notice **"${title}"** (ID: \`${id}\`).`);
-        } else {
-          stepLog.verificationNote = 'Prepared authorized workspace action';
-          summaryParts.push(`Prepared **${st.action.replace(/_/g, ' ')}** (${actor.role}).`);
-        }
-      } catch (e: any) {
-        allOk = false;
-        stepLog.status = 'failed';
-        stepLog.verificationNote = e?.message || 'Execution failed';
-        summaryParts.push(`Action **${st.action}** failed: ${e?.message || 'Error'}`);
-      }
-      stepResults.push(stepLog);
-    }
-
-    stages.push({ phase: 'executing', label: 'Executing action', status: allOk ? 'completed' : 'failed', durationMs: Math.max(1, Date.now() - startedAt) });
-    stages.push({ phase: 'verifying', label: 'Verifying outcome', status: allOk ? 'completed' : 'failed', durationMs: 1 });
-
-    return sendJson(res, 200, {
-      success: allOk,
-      status: allOk ? 'completed' : 'failed',
-      plan: plannedSteps,
-      results: stepResults,
-      structuredData,
-      webSources,
-      webVideos,
-      clientBridgeActions: [],
-      refreshTables,
-      finalResponse: summaryParts.join('\n\n') || 'Completed.',
-      providerUsed: usedProvider,
-      modelUsed: usedModel,
-      snapshot: { phase: allOk ? 'completed' : 'failed', headline: allOk ? 'Completed and verified.' : 'Execution finished with issues.', stages, steps: stepResults, startedAt, finishedAt: Date.now(), verified: allOk },
-      requestId
+    const out = await executeOrionServerRequest({
+      cfg,
+      actor,
+      command: String(command || ''),
+      actionPlan: Array.isArray(actionPlan) ? actionPlan : undefined,
+      confirmed: Boolean(confirmed),
+      activeTab: typeof activeTab === 'string' ? activeTab : 'dashboard',
+      modelOverride: typeof modelOverride === 'string' ? modelOverride : undefined,
+      history: Array.isArray(history) ? history : [],
+      taskId: typeof taskId === 'string' ? taskId : undefined,
+      idempotencyKey: typeof idempotencyKey === 'string' ? idempotencyKey : undefined,
     });
+    return sendJson(res, out.httpStatus, { ...out.body, requestId });
   }
 
   // 5.6 Role-Scoped Orion Workspace Assist (/api/ai/orion-assist)
@@ -2883,7 +2951,9 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
     const cfg = getServerlessSupabaseConfig();
     const authHeader = String(req.headers?.authorization || req.headers?.['x-supabase-auth'] || '').trim();
     const token = authHeader.replace(/^Bearer\s+/i, '').trim();
-    let resolvedRole = 'student';
+    const headerRole = String(req.headers?.['x-veylentra-role'] || '').toLowerCase().trim();
+    const bodyRole = String(body.userRole || '').toLowerCase().trim();
+    let resolvedRole = headerRole || bodyRole || 'student';
     if (token) {
       const uRes = await fetch(`${cfg.url}/auth/v1/user`, { headers: { apikey: cfg.key, Authorization: `Bearer ${token}` } }).catch(() => null);
       if (!uRes || !uRes.ok) return sendJson(res, 401, { success: false, error: 'Invalid or expired authentication token.', requestId });
@@ -2891,8 +2961,11 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
       if (!user?.id) return sendJson(res, 401, { success: false, error: 'Invalid authentication session.', requestId });
       resolvedRole = String(user.user_metadata?.role || 'student').toLowerCase().trim();
     }
+    if (isParentOrGuardianRole(resolvedRole)) {
+      return sendJson(res, 403, { success: false, error: 'Forbidden: Orion Academic Agent is unavailable for Parent and Guardian accounts.', requestId });
+    }
     const facultyIntents = new Set(['draft_assignment', 'draft_lesson_plan', 'draft_quiz', 'draft_announcement', 'draft_feedback', 'summarize_class_insights', 'draft_assessment_outline', 'summarize_submission_progress', 'summarize_cohort_coordination']);
-    const allowedFaculty = new Set(['teacher', 'coordinator', 'hod', 'admin', 'super_admin']);
+    const allowedFaculty = new Set(['teacher', 'faculty', 'head_teacher', 'coordinator', 'hod', 'admin', 'super_admin']);
     if (facultyIntents.has(intent) && !allowedFaculty.has(resolvedRole)) {
       return sendJson(res, 403, { success: false, error: 'Permission denied: faculty authorization is required for this Orion workflow.', requestId });
     }
@@ -2902,6 +2975,164 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
       return sendJson(res, 200, { success: true, text: aiRes.text, providerUsed: aiRes.providerUsed, modelUsed: aiRes.modelUsed, requestId });
     } catch (e: any) {
       return sendJson(res, 502, { success: false, error: e?.message || 'AI is temporarily unavailable.', requestId });
+    }
+  }
+
+  // 5.7 Material Hub & Assignment Center Upgrade Routes
+  if (pathname.startsWith('/api/materials/') || pathname.startsWith('/api/assignments/')) {
+    const body = req.method === 'GET' ? {} : await parseJsonBody(req);
+    const cfg = getServerlessSupabaseConfig();
+    const authHeader = String(req.headers?.authorization || req.headers?.['x-supabase-auth'] || '').trim();
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    const superAdminEmails = [
+      'naitik.kashyap0015@gmail.com',
+      'naitik.kashyap5205@gmail.com',
+      'superadmin@studentos.edu',
+      'superadmin@veylentra.edu',
+    ];
+    let verifiedId = '';
+    let verifiedRole = '';
+    let verifiedName = '';
+    let verifiedEmail = '';
+    let verifiedGrade = '';
+    let verifiedSection = '';
+
+    if (token) {
+      const uRes = await fetch(`${cfg.url}/auth/v1/user`, { headers: { apikey: cfg.key, Authorization: `Bearer ${token}` } }).catch(() => null);
+      if (!uRes || !uRes.ok) {
+        return sendJson(res, 401, { success: false, error: 'Invalid or expired authentication token.', requestId });
+      }
+      const user: any = await uRes.json().catch(() => null);
+      if (!user?.id) {
+        return sendJson(res, 401, { success: false, error: 'Invalid authentication session.', requestId });
+      }
+      verifiedId = String(user.id);
+      verifiedEmail = String(user.email || '').toLowerCase().trim();
+      verifiedName = String(user.user_metadata?.name || verifiedEmail.split('@')[0] || 'Campus Member');
+      verifiedGrade = String(user.user_metadata?.grade || '');
+      verifiedSection = String(user.user_metadata?.section || '');
+      verifiedRole = superAdminEmails.includes(verifiedEmail)
+        ? 'super_admin'
+        : String(user.user_metadata?.role || 'student').toLowerCase().trim();
+      if (!superAdminEmails.includes(verifiedEmail)) {
+        const pRes = await fetchServerlessSupabaseWithAnonRetry(
+          `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(verifiedId)},uid.eq.${encodeURIComponent(verifiedId)},email.eq.${encodeURIComponent(verifiedEmail)})&select=role,name,grade,section`,
+          { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+        ).catch(() => null);
+        if (pRes?.ok) {
+          const rows: any = await pRes.json().catch(() => []);
+          if (Array.isArray(rows) && rows[0]) {
+            if (rows[0].role) verifiedRole = String(rows[0].role).toLowerCase().trim();
+            if (rows[0].name) verifiedName = String(rows[0].name);
+            if (rows[0].grade) verifiedGrade = String(rows[0].grade);
+            if (rows[0].section) verifiedSection = String(rows[0].section);
+          }
+        }
+      }
+    }
+
+    const bodyUserId = String(body?.userId || '').trim();
+    const headerUid = String(req.headers?.['x-veylentra-uid'] || '').trim();
+    if (verifiedId && bodyUserId && bodyUserId !== verifiedId && bodyUserId !== 'anonymous' && bodyUserId !== 'guest') {
+      return sendJson(res, 403, { success: false, error: 'Forbidden: User identity mismatch.', requestId });
+    }
+    if (verifiedId && headerUid && headerUid !== verifiedId && headerUid !== 'anonymous' && headerUid !== 'guest') {
+      return sendJson(res, 403, { success: false, error: 'Forbidden: Header identity mismatch.', requestId });
+    }
+
+    const actor = {
+      id: verifiedId || headerUid || bodyUserId || 'guest',
+      role: verifiedRole || String(req.headers?.['x-veylentra-role'] || body?.userRole || 'student').toLowerCase().trim(),
+      name: verifiedName || String(req.headers?.['x-veylentra-name'] || body?.userName || 'Campus Member'),
+      email: verifiedEmail || String(req.headers?.['x-veylentra-email'] || ''),
+      grade: verifiedGrade || String(req.headers?.['x-veylentra-grade'] || ''),
+      section: verifiedSection || String(req.headers?.['x-veylentra-section'] || ''),
+      authenticated: Boolean(verifiedId),
+    };
+
+    const cleanPath = pathname.replace(/\/+$/, '');
+    if (cleanPath === '/api/materials/ask' && req.method === 'POST') {
+      const out = await handleAskMaterialsRequest({ cfg, actor, body, requestId });
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
+    }
+    if (cleanPath === '/api/materials/recommendations' && req.method === 'POST') {
+      const out = await handleMaterialRecommendationsRequest({ cfg, actor, body, requestId });
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
+    }
+    if (cleanPath === '/api/assignments/notebook-intelligence' && req.method === 'POST') {
+      const out = await handleNotebookIntelligence({ cfg, actor, body, requestId });
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
+    }
+    if (cleanPath === '/api/assignments/ai-builder' && req.method === 'POST') {
+      const out = await handleAiAssignmentBuilder({ cfg, actor, body, requestId });
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
+    }
+    if (cleanPath === '/api/assignments/drafts' && req.method === 'GET') {
+      const out = await listAssignmentDrafts(cfg, actor);
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
+    }
+    if (cleanPath === '/api/assignments/drafts' && req.method === 'POST') {
+      const out = await saveAssignmentDraft(cfg, actor, body);
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
+    }
+    if (cleanPath.startsWith('/api/assignments/drafts/') && cleanPath.endsWith('/publish') && req.method === 'POST') {
+      const draftId = decodeURIComponent(cleanPath.slice('/api/assignments/drafts/'.length, -'/publish'.length));
+      const out = await publishAssignmentDraft(cfg, actor, draftId, body);
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
+    }
+    if (cleanPath === '/api/assignments/submissions' && req.method === 'GET') {
+      const urlObj = new URL(req.url || cleanPath, 'http://localhost');
+      const queryObj: Record<string, string> = {};
+      urlObj.searchParams.forEach((v, k) => {
+        queryObj[k] = v;
+      });
+      const out = await listAssignmentSubmissions(cfg, actor, queryObj);
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
+    }
+    if (cleanPath === '/api/assignments/submissions' && req.method === 'POST') {
+      const out = await submitAssignmentWork(cfg, actor, body);
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
+    }
+    if (cleanPath.startsWith('/api/assignments/submissions/') && cleanPath.endsWith('/grade') && req.method === 'PATCH') {
+      const subId = decodeURIComponent(cleanPath.slice('/api/assignments/submissions/'.length, -'/grade'.length));
+      const out = await gradeAssignmentSubmission(cfg, actor, subId, body);
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
+    }
+    if (cleanPath === '/api/assignments/notebook-completion-report' && req.method === 'POST') {
+      const out = await handleNotebookCompletionReport({ cfg, actor, body });
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
+    }
+    if (cleanPath === '/api/assignments/quality-analyze' && req.method === 'POST') {
+      const out = await handleAssignmentQualityAnalyze({ actor, body, requestId });
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
+    }
+    if (cleanPath === '/api/assignments/group-projects' && req.method === 'GET') {
+      const out = await listGroupProjects(cfg, actor);
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
+    }
+    if (cleanPath === '/api/assignments/group-projects' && req.method === 'POST') {
+      const out = await createGroupProject(cfg, actor, body);
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
+    }
+    if (cleanPath.startsWith('/api/assignments/group-projects/') && cleanPath.endsWith('/groups') && req.method === 'POST') {
+      const projId = decodeURIComponent(cleanPath.slice('/api/assignments/group-projects/'.length, -'/groups'.length));
+      const out = await upsertProjectGroup(cfg, actor, projId, body);
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
+    }
+    if (cleanPath.startsWith('/api/assignments/group-projects/') && cleanPath.endsWith('/milestones') && req.method === 'PATCH') {
+      const projId = decodeURIComponent(cleanPath.slice('/api/assignments/group-projects/'.length, -'/milestones'.length));
+      const out = await updateProjectMilestone(cfg, actor, projId, body);
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
+    }
+    if (cleanPath.startsWith('/api/assignments/group-projects/') && cleanPath.endsWith('/submit') && req.method === 'POST') {
+      const projId = decodeURIComponent(cleanPath.slice('/api/assignments/group-projects/'.length, -'/submit'.length));
+      const out = await submitGroupProject(cfg, actor, projId, body);
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
+    }
+    if (cleanPath.startsWith('/api/assignments/group-projects/') && cleanPath.endsWith('/grade') && req.method === 'PATCH') {
+      const projId = decodeURIComponent(cleanPath.slice('/api/assignments/group-projects/'.length, -'/grade'.length));
+      const out = await gradeGroupProject(cfg, actor, projId, body);
+      return sendJson(res, out.httpStatus, { ...out.payload, requestId });
     }
   }
 

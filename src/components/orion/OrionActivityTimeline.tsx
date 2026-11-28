@@ -10,12 +10,18 @@ import {
   Clock,
   ShieldCheck,
   HelpCircle,
+  Ban,
+  RefreshCw,
+  Download,
 } from 'lucide-react';
 import { OrionAgentProgressSnapshot } from '../../lib/orionAgentEngine';
 import { useReducedMotionPreference } from '../../lib/motionSystem';
 
 interface OrionActivityTimelineProps {
   snapshot: OrionAgentProgressSnapshot | null;
+  onCancel?: () => void;
+  onRetry?: () => void;
+  onExportReport?: (format: 'markdown' | 'json') => void;
 }
 
 function formatDurationMs(ms?: number): string {
@@ -24,16 +30,23 @@ function formatDurationMs(ms?: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-export const OrionActivityTimeline: React.FC<OrionActivityTimelineProps> = ({ snapshot }) => {
+export const OrionActivityTimeline: React.FC<OrionActivityTimelineProps> = ({
+  snapshot,
+  onCancel,
+  onRetry,
+  onExportReport,
+}) => {
   const [expanded, setExpanded] = useState(false);
   const reducedMotion = useReducedMotionPreference();
 
   if (!snapshot) return null;
 
   const isFailed = snapshot.phase === 'failed';
+  const isCancelled = snapshot.phase === 'cancelled';
   const isWaiting = snapshot.phase === 'awaiting_confirmation';
   const isClarifying = snapshot.phase === 'clarifying';
   const isDone = snapshot.phase === 'completed';
+  const isRunning = !isFailed && !isCancelled && !isWaiting && !isClarifying && !isDone;
 
   const totalDuration =
     snapshot.finishedAt !== undefined
@@ -42,13 +55,15 @@ export const OrionActivityTimeline: React.FC<OrionActivityTimelineProps> = ({ sn
 
   const surfaceTone = isFailed
     ? 'border-rose-500/30 bg-rose-950/20'
+    : isCancelled
+    ? 'border-slate-600/40 bg-slate-900/70'
     : isWaiting || isClarifying
     ? 'border-amber-500/30 bg-amber-950/15'
     : isDone
     ? 'border-emerald-500/25 bg-emerald-950/15'
     : 'border-indigo-500/30 bg-slate-950/75';
 
-  const autoShowSteps = isFailed || expanded;
+  const autoShowSteps = isFailed || isCancelled || expanded;
 
   return (
     <motion.div
@@ -64,6 +79,8 @@ export const OrionActivityTimeline: React.FC<OrionActivityTimelineProps> = ({ sn
         <div className="flex items-center gap-2.5 min-w-0">
           {isFailed ? (
             <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+          ) : isCancelled ? (
+            <Ban className="w-4 h-4 text-slate-400 shrink-0" />
           ) : isWaiting ? (
             <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
           ) : isClarifying ? (
@@ -88,12 +105,53 @@ export const OrionActivityTimeline: React.FC<OrionActivityTimelineProps> = ({ sn
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
           {totalDuration !== undefined && (
             <span className="text-[11px] font-mono tabular-nums text-slate-400 inline-flex items-center gap-1">
               <Clock className="w-3 h-3" />
               {formatDurationMs(totalDuration)}
             </span>
+          )}
+          {isRunning && onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="text-[11px] font-medium text-rose-200 hover:text-white px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 inline-flex items-center gap-1 transition-colors"
+            >
+              <Ban className="w-3 h-3" />
+              <span>Stop</span>
+            </button>
+          )}
+          {(isFailed || isCancelled) && onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="text-[11px] font-medium text-indigo-200 hover:text-white px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 inline-flex items-center gap-1 transition-colors"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>Retry</span>
+            </button>
+          )}
+          {isDone && onExportReport && (
+            <div className="inline-flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => onExportReport('markdown')}
+                className="text-[11px] font-medium text-emerald-200 hover:text-white px-2 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/25 inline-flex items-center gap-1 transition-colors"
+                title="Download completion report (.md)"
+              >
+                <Download className="w-3 h-3" />
+                <span>.MD</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onExportReport('json')}
+                className="text-[11px] font-medium text-slate-200 hover:text-white px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 inline-flex items-center gap-1 transition-colors"
+                title="Download completion report (.json)"
+              >
+                <span>.JSON</span>
+              </button>
+            </div>
           )}
           {snapshot.steps.length > 0 && (
             <button

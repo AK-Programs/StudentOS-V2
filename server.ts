@@ -7,8 +7,39 @@ import express from 'express';
 import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
-import { generateAICompletion, generateAICompletionWithTelemetry, streamAICompletion, classifyTaskComplexity, getGroqApiKey, getMinistralApiKey, getZaiApiKey, ZAI_MODEL_ID } from './server/aiClient';
-import { resolveVerifiedOrionActor, executeOrionServerRequest } from './server/orionService';
+import { generateAICompletion, generateAICompletionWithTelemetry, streamAICompletion, classifyTaskComplexity, groqModels, getGroqApiKey, getMinistralApiKey, getZaiApiKey, ZAI_MODEL_ID } from './server/aiClient';
+import {
+  resolveVerifiedOrionActor,
+  executeOrionServerRequest,
+  listOrionTasksForActor,
+  getOrionTaskForActor,
+  cancelOrionTask,
+  retryOrionTask,
+  isParentOrGuardianOrionRole,
+} from './server/orionService';
+import { buildCanonicalAiHealthPayload, resolveCanonicalChatAccess, isParentOrGuardianRole } from './server/canonicalAiHandlers';
+import {
+  handleAskMaterialsRequest,
+  handleMaterialRecommendationsRequest,
+} from './server/materialIntelligenceService';
+import {
+  handleNotebookIntelligence,
+  handleAiAssignmentBuilder,
+  listAssignmentDrafts,
+  saveAssignmentDraft,
+  publishAssignmentDraft,
+  listAssignmentSubmissions,
+  submitAssignmentWork,
+  gradeAssignmentSubmission,
+  handleNotebookCompletionReport,
+  handleAssignmentQualityAnalyze,
+  listGroupProjects,
+  createGroupProject,
+  upsertProjectGroup,
+  updateProjectMilestone,
+  submitGroupProject,
+  gradeGroupProject,
+} from './server/assignmentIntelligenceService';
 import { generateVoiceTTS, transcribeVoiceSTT } from './server/voiceService';
 import { synthesizeEdgeSpeech, VERIFIED_EDGE_VOICES, cleanTextForSpeech } from './server/edgeTtsService';
 import { getVerified3DModelsCatalog, getAllThreeDRequests, createThreeDRequest, updateThreeDRequestStatus } from './server/threeDModelService';
@@ -159,25 +190,12 @@ export async function getVerifiedUserFromRequest(req: express.Request): Promise<
     const supabase = createClient(url, key || '', { auth: { persistSession: false } });
     const { data: { user }, error } = await supabase.auth.getUser(token);
     if (!user || error) {
-      // Fallback to x-veylentra headers if JWT validation fails but headers are present
-      if (uidHeader || emailHeader) {
-        let role = roleHeader;
-        const email = emailHeader || `${uidHeader}@studentos.local`;
-        if (WHITELISTED_SUPER_ADMIN_EMAILS.includes(email) || role === 'super_admin' || uidHeader.includes('super')) {
-          role = 'super_admin';
-        }
-        return {
-          id: uidHeader || emailHeader,
-          email,
-          role,
-          user_metadata: { name: nameHeader, role },
-        };
-      }
+      // Security rule: when Bearer token is present and fails verification, NEVER fall back to headers.
       return null;
     }
 
-    let role = (user.user_metadata?.role || roleHeader || 'student').toLowerCase();
-    const userEmail = (user.email || emailHeader || '').toLowerCase().trim();
+    let role = (user.user_metadata?.role || 'student').toLowerCase();
+    const userEmail = (user.email || '').toLowerCase().trim();
 
     // Check whitelisted Super Admin emails
     if (userEmail && WHITELISTED_SUPER_ADMIN_EMAILS.includes(userEmail)) {
@@ -202,19 +220,7 @@ export async function getVerifiedUserFromRequest(req: express.Request): Promise<
       user_metadata: user.user_metadata
     };
   } catch (err) {
-    if (uidHeader || emailHeader) {
-      let role = roleHeader;
-      const email = emailHeader || `${uidHeader}@studentos.local`;
-      if (WHITELISTED_SUPER_ADMIN_EMAILS.includes(email) || role === 'super_admin') {
-        role = 'super_admin';
-      }
-      return {
-        id: uidHeader || emailHeader,
-        email,
-        role,
-        user_metadata: { name: nameHeader, role },
-      };
-    }
+    // Security rule: failed Bearer verification must never fall back to client-supplied headers.
     return null;
   }
 }
@@ -2404,14 +2410,54 @@ function sanitizeHistory(history: any[] = []): { role: 'user' | 'assistant'; con
 
 // API Routes
 app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    time: new Date(),
-    provider: 'multi-provider',
+  const cfg = getSupabaseServerConfig();
+  res.json(
+    buildCanonicalAiHealthPayload({
+      runtime: 'express',
+      groqConfigured: Boolean(getGroqApiKey()),
+      ministralConfigured: Boolean(getMinistralApiKey()),
+      zaiConfigured: Boolean(getZaiApiKey()),
+      groqModels,
+      ministralModel: 'ministral-8b-2410',
+      zaiModel: ZAI_MODEL_ID,
+      databaseStatus: {
+        configured: Boolean(cfg.url && cfg.key),
+        status: cfg.url && cfg.key ? 'connected' : 'unconfigured',
+      },
+    })
+  );
+});
+
+app.get('/api/ai/health', async (_req, res) => {
+  const cfg = getSupabaseServerConfig();
+  let dbReachable = false;
+  if (cfg.url && cfg.key && process.env.NODE_ENV !== 'test') {
+    try {
+      const r = await fetch(`${cfg.url}/rest/v1/user_profiles?select=id&limit=1`, {
+        headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` },
+      });
+      dbReachable = r.ok;
+    } catch {
+      dbReachable = false;
+    }
+  } else {
+    dbReachable = Boolean(cfg.url && cfg.key);
+  }
+  const payload = buildCanonicalAiHealthPayload({
+    runtime: 'express',
+    groqConfigured: Boolean(getGroqApiKey()),
+    ministralConfigured: Boolean(getMinistralApiKey()),
+    zaiConfigured: Boolean(getZaiApiKey()),
+    groqModels,
     ministralModel: 'ministral-8b-2410',
     zaiModel: ZAI_MODEL_ID,
-    zaiConfigured: Boolean(getZaiApiKey()),
+    databaseStatus: {
+      configured: Boolean(cfg.url && cfg.key),
+      reachable: dbReachable,
+      status: !cfg.url || !cfg.key ? 'unconfigured' : dbReachable ? 'connected' : 'unreachable',
+    },
   });
+  return res.status(payload.ready ? 200 : 503).json(payload);
 });
 
 // ========================================================================
@@ -3185,10 +3231,23 @@ app.post(['/api/ai/chat', '/api/ai/chat/stream'], async (req, res) => {
     return res.status(400).json({ error: 'Prompt is required' });
   }
 
-  // Enforce server-side rolling 24-hour limit including Supabase-backed Winter & Voucher bonus credits
-  const resolvedQuotaActor = await resolveAiQuotaActor(req, userId, userRole);
-  const activeUserId = resolvedQuotaActor.userId || 'user_guest';
-  const activeRole = resolvedQuotaActor.role || 'student';
+  const cfg = getSupabaseServerConfig();
+  const chatAccess = await resolveCanonicalChatAccess({
+    headers: req.headers as Record<string, any>,
+    body: req.body || {},
+    cfg,
+    verifyTokenFn: async () => getVerifiedUserFromRequest(req),
+  });
+  if (!chatAccess.ok) {
+    return res.status(chatAccess.status).json({
+      success: false,
+      error: chatAccess.error,
+      requestId,
+    });
+  }
+
+  const activeUserId = chatAccess.activeUserId;
+  const activeRole = chatAccess.activeRole;
 
   let usage;
   try {
@@ -3310,7 +3369,7 @@ ${combinedContext}
     systemInstruction += `\n\nDATA INTEGRITY RULE: Do NOT fabricate StudentOS school records (such as fake homework deadlines, fake attendance numbers, or fake student lists). Distinguish clearly between AI-generated study content and school database records.`;
   }
 
-  const sanitizedHist = sanitizeHistory(history || []);
+  const sanitizedHist = chatAccess.sanitizedHistory;
   const isJsonRequested =
     prompt.includes('raw JSON format') ||
     prompt.includes('MUST be raw JSON format') ||
@@ -3333,8 +3392,10 @@ ${combinedContext}
     }
 
     const abortController = new AbortController();
-    req.on('close', () => {
-      abortController.abort();
+    res.on('close', () => {
+      if (!res.writableEnded) {
+        abortController.abort();
+      }
     });
 
     try {
@@ -3460,6 +3521,10 @@ Do NOT fabricate current news, circulars, or live statistics. After stating that
                 `data: ${JSON.stringify({
                   type: 'done',
                   text: fullText,
+                  reply: fullText,
+                  conversationId: chatAccess.effectiveConversationId,
+                  finishReason: telemetry.finishReason || 'stop',
+                  truncated: Boolean(telemetry.truncated),
                   requestId,
                   providerUsed: telemetry.providerUsed,
                   modelUsed: telemetry.modelUsed,
@@ -3550,9 +3615,13 @@ ${searchRes.formattedContext}`;
         memoryWinterBonusFn: getUserWinterAiBonusCredits,
       });
 
-      return res.json({ 
+      return res.json({
         success: true,
         text,
+        reply: text,
+        conversationId: chatAccess.effectiveConversationId,
+        finishReason: telemetry.finishReason || 'stop',
+        truncated: Boolean(telemetry.truncated),
         requestId,
         providerUsed: telemetry.providerUsed,
         modelUsed: telemetry.modelUsed,
@@ -4841,6 +4910,21 @@ app.post('/api/orion/execute', async (req, res) => {
     });
   }
 
+  // Strict mandatory Parent/Guardian exclusion from Orion (HTTP 403 Forbidden)
+  const claimedRole = String(req.body?.userRole || req.headers['x-veylentra-role'] || '').toLowerCase().trim();
+  if (
+    isParentOrGuardianOrionRole(actorResult.actor.role) ||
+    (!actorResult.actor.authenticated && isParentOrGuardianOrionRole(claimedRole))
+  ) {
+    const reason = 'Forbidden: Orion Academic Agent is unavailable for Parent and Guardian accounts.';
+    return res.status(403).json({
+      success: false,
+      status: 'forbidden',
+      error: reason,
+      finalResponse: reason,
+    });
+  }
+
   const {
     command = '',
     actionPlan,
@@ -4848,7 +4932,17 @@ app.post('/api/orion/execute', async (req, res) => {
     activeTab = 'dashboard',
     modelOverride,
     history = [],
+    taskId,
+    idempotencyKey,
   } = req.body || {};
+
+  const abortController = new AbortController();
+  const onResClose = () => {
+    if (!res.writableEnded) {
+      abortController.abort();
+    }
+  };
+  res.on('close', onResClose);
 
   try {
     const result = await executeOrionServerRequest({
@@ -4861,9 +4955,14 @@ app.post('/api/orion/execute', async (req, res) => {
       modelOverride: typeof modelOverride === 'string' ? modelOverride : undefined,
       history: Array.isArray(history) ? history : [],
       dispatchPushFn: dispatchServerWebPush,
+      taskId: typeof taskId === 'string' ? taskId : undefined,
+      idempotencyKey: typeof idempotencyKey === 'string' ? idempotencyKey : undefined,
+      signal: abortController.signal,
     });
+    res.off('close', onResClose);
     return res.status(result.httpStatus).json(result.body);
   } catch (err: any) {
+    res.off('close', onResClose);
     console.error('[ORION EXECUTE ERROR]', err?.message || err);
     return res.status(502).json({
       success: false,
@@ -4872,6 +4971,91 @@ app.post('/api/orion/execute', async (req, res) => {
       finalResponse: err?.message || 'Orion could not complete that request due to a server error.',
     });
   }
+});
+
+// Ephemeral Orion Task Lifecycle Endpoints (List / Inspect / Cancel / Retry) — strict owner & parent-403 isolation
+app.get('/api/orion/tasks', async (req, res) => {
+  const cfg = getSupabaseServerConfig();
+  const actorResult = await resolveVerifiedOrionActor(req, cfg);
+  if ('error' in actorResult) {
+    return res.status(actorResult.status).json({ success: false, status: 'unauthorized', error: actorResult.error });
+  }
+  const claimedRole = String(req.headers['x-veylentra-role'] || '').toLowerCase().trim();
+  if (
+    isParentOrGuardianOrionRole(actorResult.actor.role) ||
+    (!actorResult.actor.authenticated && isParentOrGuardianOrionRole(claimedRole))
+  ) {
+    return res.status(403).json({
+      success: false,
+      status: 'forbidden',
+      error: 'Forbidden: Orion Academic Agent is unavailable for Parent and Guardian accounts.',
+    });
+  }
+  const result = listOrionTasksForActor(actorResult.actor);
+  return res.status(result.httpStatus).json(result.body);
+});
+
+app.get('/api/orion/tasks/:id', async (req, res) => {
+  const cfg = getSupabaseServerConfig();
+  const actorResult = await resolveVerifiedOrionActor(req, cfg);
+  if ('error' in actorResult) {
+    return res.status(actorResult.status).json({ success: false, status: 'unauthorized', error: actorResult.error });
+  }
+  const claimedRole = String(req.headers['x-veylentra-role'] || '').toLowerCase().trim();
+  if (
+    isParentOrGuardianOrionRole(actorResult.actor.role) ||
+    (!actorResult.actor.authenticated && isParentOrGuardianOrionRole(claimedRole))
+  ) {
+    return res.status(403).json({
+      success: false,
+      status: 'forbidden',
+      error: 'Forbidden: Orion Academic Agent is unavailable for Parent and Guardian accounts.',
+    });
+  }
+  const result = getOrionTaskForActor(req.params.id, actorResult.actor);
+  return res.status(result.httpStatus).json(result.body);
+});
+
+app.post('/api/orion/tasks/:id/cancel', async (req, res) => {
+  const cfg = getSupabaseServerConfig();
+  const actorResult = await resolveVerifiedOrionActor(req, cfg);
+  if ('error' in actorResult) {
+    return res.status(actorResult.status).json({ success: false, status: 'unauthorized', error: actorResult.error });
+  }
+  const claimedRole = String(req.body?.userRole || req.headers['x-veylentra-role'] || '').toLowerCase().trim();
+  if (
+    isParentOrGuardianOrionRole(actorResult.actor.role) ||
+    (!actorResult.actor.authenticated && isParentOrGuardianOrionRole(claimedRole))
+  ) {
+    return res.status(403).json({
+      success: false,
+      status: 'forbidden',
+      error: 'Forbidden: Orion Academic Agent is unavailable for Parent and Guardian accounts.',
+    });
+  }
+  const result = cancelOrionTask(req.params.id, actorResult.actor);
+  return res.status(result.httpStatus).json(result.body);
+});
+
+app.post('/api/orion/tasks/:id/retry', async (req, res) => {
+  const cfg = getSupabaseServerConfig();
+  const actorResult = await resolveVerifiedOrionActor(req, cfg);
+  if ('error' in actorResult) {
+    return res.status(actorResult.status).json({ success: false, status: 'unauthorized', error: actorResult.error });
+  }
+  const claimedRole = String(req.body?.userRole || req.headers['x-veylentra-role'] || '').toLowerCase().trim();
+  if (
+    isParentOrGuardianOrionRole(actorResult.actor.role) ||
+    (!actorResult.actor.authenticated && isParentOrGuardianOrionRole(claimedRole))
+  ) {
+    return res.status(403).json({
+      success: false,
+      status: 'forbidden',
+      error: 'Forbidden: Orion Academic Agent is unavailable for Parent and Guardian accounts.',
+    });
+  }
+  const result = await retryOrionTask(req.params.id, actorResult.actor, cfg, dispatchServerWebPush);
+  return res.status(result.httpStatus).json(result.body);
 });
 
 // Role-Scoped Orion Workspace Draft & Academic Assist Endpoint
@@ -4896,7 +5080,17 @@ app.post('/api/ai/orion-assist', async (req, res) => {
     });
   }
 
-  const resolvedRole = (verifiedUser?.role || 'student').toLowerCase().trim();
+  const headerRole = String(req.headers['x-veylentra-role'] || '').toLowerCase().trim();
+  const bodyRole = String((req.body || {}).userRole || '').toLowerCase().trim();
+  const resolvedRole = (verifiedUser?.role || headerRole || bodyRole || 'student').toLowerCase().trim();
+
+  if (isParentOrGuardianRole(resolvedRole)) {
+    return res.status(403).json({
+      success: false,
+      error: 'Forbidden: Orion Academic Agent is unavailable for Parent and Guardian accounts.'
+    });
+  }
+
   const facultyOnlyIntents = new Set([
     'draft_assignment',
     'draft_lesson_plan',
@@ -4908,7 +5102,7 @@ app.post('/api/ai/orion-assist', async (req, res) => {
     'summarize_submission_progress',
     'summarize_cohort_coordination'
   ]);
-  const allowedFacultyRoles = new Set(['teacher', 'coordinator', 'hod', 'admin', 'super_admin']);
+  const allowedFacultyRoles = new Set(['teacher', 'faculty', 'head_teacher', 'coordinator', 'hod', 'admin', 'super_admin']);
 
   if (facultyOnlyIntents.has(intent) && !allowedFacultyRoles.has(resolvedRole)) {
     return res.status(403).json({
@@ -5018,6 +5212,255 @@ User Request:
       error: err?.message || 'AI is temporarily unavailable. Please try again.'
     });
   }
+});
+
+// Helper: Resolve verified actor for Material Hub & Assignment Center routes
+async function resolveWorkspaceActor(req: express.Request) {
+  const authHeader = String(req.headers.authorization || req.headers['x-supabase-auth'] || '').trim();
+  const verifiedUser = await getVerifiedUserFromRequest(req);
+  if (authHeader && !verifiedUser) {
+    return { errorStatus: 401, error: 'Invalid or expired authentication token.' } as const;
+  }
+
+  const bodyUserId = String((req.body && req.body.userId) || '').trim();
+  const headerUid = String(req.headers['x-veylentra-uid'] || '').trim();
+  if (verifiedUser && bodyUserId && bodyUserId !== verifiedUser.id && bodyUserId !== 'anonymous' && bodyUserId !== 'guest') {
+    return { errorStatus: 403, error: 'Forbidden: User identity mismatch.' } as const;
+  }
+  if (verifiedUser && headerUid && headerUid !== verifiedUser.id && headerUid !== 'anonymous' && headerUid !== 'guest') {
+    return { errorStatus: 403, error: 'Forbidden: Header identity mismatch.' } as const;
+  }
+
+  const id = verifiedUser?.id || headerUid || bodyUserId || 'guest';
+  const role = String(
+    verifiedUser?.role ||
+      req.headers['x-veylentra-role'] ||
+      (req.body && req.body.userRole) ||
+      'student'
+  )
+    .toLowerCase()
+    .trim();
+  const name = String(
+    verifiedUser?.user_metadata?.name ||
+      req.headers['x-veylentra-name'] ||
+      (req.body && req.body.userName) ||
+      'Campus Member'
+  ).trim();
+
+  return {
+    actor: {
+      id,
+      role,
+      name,
+      email: verifiedUser?.email || String(req.headers['x-veylentra-email'] || '').trim() || undefined,
+      grade: String(verifiedUser?.user_metadata?.grade || req.headers['x-veylentra-grade'] || '').trim() || undefined,
+      section: String(verifiedUser?.user_metadata?.section || req.headers['x-veylentra-section'] || '').trim() || undefined,
+      authenticated: Boolean(verifiedUser),
+    },
+  } as const;
+}
+
+// ============================================================
+// Material Hub Intelligence Endpoints (Ask to Materials & Recommendations)
+// ============================================================
+
+app.post('/api/materials/ask', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await handleAskMaterialsRequest({
+    cfg: getSupabaseServerConfig(),
+    actor: resolved.actor,
+    body: req.body || {},
+  });
+  return res.status(out.httpStatus).json(out.payload);
+});
+
+app.post('/api/materials/recommendations', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await handleMaterialRecommendationsRequest({
+    cfg: getSupabaseServerConfig(),
+    actor: resolved.actor,
+    body: req.body || {},
+  });
+  return res.status(out.httpStatus).json(out.payload);
+});
+
+// ============================================================
+// Assignment Center Upgrade Endpoints (6 Workflows)
+// ============================================================
+
+app.post('/api/assignments/notebook-intelligence', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await handleNotebookIntelligence({
+    cfg: getSupabaseServerConfig(),
+    actor: resolved.actor,
+    body: req.body || {},
+  });
+  return res.status(out.httpStatus).json(out.payload);
+});
+
+app.post('/api/assignments/ai-builder', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await handleAiAssignmentBuilder({
+    cfg: getSupabaseServerConfig(),
+    actor: resolved.actor,
+    body: req.body || {},
+  });
+  return res.status(out.httpStatus).json(out.payload);
+});
+
+app.get('/api/assignments/drafts', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await listAssignmentDrafts(getSupabaseServerConfig(), resolved.actor);
+  return res.status(out.httpStatus).json(out.payload);
+});
+
+app.post('/api/assignments/drafts', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await saveAssignmentDraft(getSupabaseServerConfig(), resolved.actor, req.body || {});
+  return res.status(out.httpStatus).json(out.payload);
+});
+
+app.post('/api/assignments/drafts/:id/publish', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await publishAssignmentDraft(
+    getSupabaseServerConfig(),
+    resolved.actor,
+    req.params.id,
+    req.body || {}
+  );
+  return res.status(out.httpStatus).json(out.payload);
+});
+
+app.get('/api/assignments/submissions', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await listAssignmentSubmissions(getSupabaseServerConfig(), resolved.actor, req.query || {});
+  return res.status(out.httpStatus).json(out.payload);
+});
+
+app.post('/api/assignments/submissions', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await submitAssignmentWork(getSupabaseServerConfig(), resolved.actor, req.body || {});
+  return res.status(out.httpStatus).json(out.payload);
+});
+
+app.patch('/api/assignments/submissions/:id/grade', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await gradeAssignmentSubmission(
+    getSupabaseServerConfig(),
+    resolved.actor,
+    req.params.id,
+    req.body || {}
+  );
+  return res.status(out.httpStatus).json(out.payload);
+});
+
+app.post('/api/assignments/notebook-completion-report', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await handleNotebookCompletionReport({
+    cfg: getSupabaseServerConfig(),
+    actor: resolved.actor,
+    body: req.body || {},
+  });
+  return res.status(out.httpStatus).json(out.payload);
+});
+
+app.post('/api/assignments/quality-analyze', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await handleAssignmentQualityAnalyze({
+    actor: resolved.actor,
+    body: req.body || {},
+  });
+  return res.status(out.httpStatus).json(out.payload);
+});
+
+app.get('/api/assignments/group-projects', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await listGroupProjects(getSupabaseServerConfig(), resolved.actor);
+  return res.status(out.httpStatus).json(out.payload);
+});
+
+app.post('/api/assignments/group-projects', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await createGroupProject(getSupabaseServerConfig(), resolved.actor, req.body || {});
+  return res.status(out.httpStatus).json(out.payload);
+});
+
+app.post('/api/assignments/group-projects/:id/groups', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await upsertProjectGroup(getSupabaseServerConfig(), resolved.actor, req.params.id, req.body || {});
+  return res.status(out.httpStatus).json(out.payload);
+});
+
+app.patch('/api/assignments/group-projects/:id/milestones', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await updateProjectMilestone(getSupabaseServerConfig(), resolved.actor, req.params.id, req.body || {});
+  return res.status(out.httpStatus).json(out.payload);
+});
+
+app.post('/api/assignments/group-projects/:id/submit', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await submitGroupProject(getSupabaseServerConfig(), resolved.actor, req.params.id, req.body || {});
+  return res.status(out.httpStatus).json(out.payload);
+});
+
+app.patch('/api/assignments/group-projects/:id/grade', async (req, res) => {
+  const resolved = await resolveWorkspaceActor(req);
+  if ('errorStatus' in resolved) {
+    return res.status(resolved.errorStatus).json({ success: false, error: resolved.error });
+  }
+  const out = await gradeGroupProject(getSupabaseServerConfig(), resolved.actor, req.params.id, req.body || {});
+  return res.status(out.httpStatus).json(out.payload);
 });
 
 // ============================================================
@@ -5578,13 +6021,24 @@ const getSupabaseAdmin = () => {
   });
 };
 
+let ephemeralSigningSecret: string | null = null;
 const getResetSecret = (): string => {
-  return (
+  const configured = (
     process.env.RESET_SECRET ||
+    process.env.SESSION_SECRET ||
+    process.env.VEYLENTRA_SIGNING_SECRET ||
     process.env.RESEND_API_KEY ||
     process.env.VITE_RESEND_API_KEY ||
-    'studentos-fallback-crypto-reset-secret-key-2026'
+    ''
   ).trim();
+  if (configured) return configured;
+  if (!ephemeralSigningSecret) {
+    ephemeralSigningSecret = crypto.randomBytes(32).toString('hex');
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[Security Warning] RESET_SECRET/SESSION_SECRET is not set in production; using ephemeral process secret.');
+    }
+  }
+  return ephemeralSigningSecret;
 };
 
 interface ResetTokenPayload {
@@ -6404,93 +6858,76 @@ async function resolveFeatureAndWinterActor(req: express.Request): Promise<{
 
   if (hasBearer) {
     verified = await getVerifiedUserFromRequest(req);
-    if (verified) {
-      verifiedJwtToken = bearerToken;
+    if (!verified) {
+      // Security rule: reject unverified Bearer tokens cleanly; never decode unverified payloads or fall back to headers.
+      return null;
+    }
+    verifiedJwtToken = bearerToken;
+
+    let name = String(verified.user_metadata?.name || req.headers['x-veylentra-name'] || verified.email || 'Member');
+    let grade = String(req.headers['x-veylentra-grade'] || '');
+    let section = String(req.headers['x-veylentra-section'] || '');
+    let resolvedRole = String(verified.role || 'student').toLowerCase();
+
+    const userEmail = (verified.email || '').toLowerCase().trim();
+    if (WHITELISTED_SUPER_ADMIN_EMAILS.includes(userEmail)) {
+      resolvedRole = 'super_admin';
+    }
+
+    const jwtCacheKey = `${verified.id}|${userEmail}`;
+    const cachedJwt = process.env.NODE_ENV !== 'test' ? actorProfileCache.get(jwtCacheKey) : undefined;
+    if (cachedJwt && cachedJwt.expiresAt > Date.now()) {
+      name = cachedJwt.name || name;
+      grade = cachedJwt.grade || grade;
+      section = cachedJwt.section || section;
+      if (cachedJwt.role === 'super_admin' || WHITELISTED_SUPER_ADMIN_EMAILS.includes(userEmail)) {
+        resolvedRole = 'super_admin';
+      }
     } else {
       try {
-        const parts = bearerToken.split('.');
-        if (parts.length === 3) {
-          const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf-8'));
-          const tokenEmail = (payload.email || payload.user_metadata?.email || '').toLowerCase().trim();
-          if (tokenEmail && WHITELISTED_SUPER_ADMIN_EMAILS.includes(tokenEmail)) {
-            verified = {
-              id: payload.sub || payload.id || 'super-admin-sub',
-              name: payload.user_metadata?.name || 'Super Admin',
-              email: tokenEmail,
-              role: 'super_admin',
-              user_metadata: payload.user_metadata,
-            };
+        const cfg = getSupabaseServerConfig();
+        if (cfg.url && cfg.key) {
+          const profRes = await fetch(
+            `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(verified.id)},uid.eq.${encodeURIComponent(verified.id)},email.eq.${encodeURIComponent(userEmail || verified.id)})&select=name,role,grade,section`,
+            { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+          );
+          if (profRes.ok) {
+            const rows = await profRes.json();
+            if (Array.isArray(rows) && rows[0]) {
+              name = String(rows[0].name || name);
+              grade = String(rows[0].grade || grade);
+              section = String(rows[0].section || section);
+              if (rows[0].role) {
+                const dbRole = String(rows[0].role).toLowerCase();
+                if (dbRole === 'super_admin' || WHITELISTED_SUPER_ADMIN_EMAILS.includes(userEmail)) {
+                  resolvedRole = 'super_admin';
+                }
+              }
+              if (process.env.NODE_ENV !== 'test') {
+                actorProfileCache.set(jwtCacheKey, {
+                  role: resolvedRole,
+                  name,
+                  grade,
+                  section,
+                  expiresAt: Date.now() + 60_000,
+                });
+              }
+            }
           }
         }
       } catch (_) {}
     }
 
-    if (verified) {
-      let name = String(verified.user_metadata?.name || req.headers['x-veylentra-name'] || verified.email || 'Member');
-      let grade = String(req.headers['x-veylentra-grade'] || '');
-      let section = String(req.headers['x-veylentra-section'] || '');
-      let resolvedRole = String(verified.role || 'student').toLowerCase();
-
-      const userEmail = (verified.email || '').toLowerCase().trim();
-      if (WHITELISTED_SUPER_ADMIN_EMAILS.includes(userEmail)) {
-        resolvedRole = 'super_admin';
-      }
-
-      const jwtCacheKey = `${verified.id}|${userEmail}`;
-      const cachedJwt = process.env.NODE_ENV !== 'test' ? actorProfileCache.get(jwtCacheKey) : undefined;
-      if (cachedJwt && cachedJwt.expiresAt > Date.now()) {
-        name = cachedJwt.name || name;
-        grade = cachedJwt.grade || grade;
-        section = cachedJwt.section || section;
-        if (cachedJwt.role === 'super_admin' || WHITELISTED_SUPER_ADMIN_EMAILS.includes(userEmail)) {
-          resolvedRole = 'super_admin';
-        }
-      } else {
-        try {
-          const cfg = getSupabaseServerConfig();
-          if (cfg.url && cfg.key) {
-            const profRes = await fetch(
-              `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(verified.id)},uid.eq.${encodeURIComponent(verified.id)},email.eq.${encodeURIComponent(userEmail || verified.id)})&select=name,role,grade,section`,
-              { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
-            );
-            if (profRes.ok) {
-              const rows = await profRes.json();
-              if (Array.isArray(rows) && rows[0]) {
-                name = String(rows[0].name || name);
-                grade = String(rows[0].grade || grade);
-                section = String(rows[0].section || section);
-                if (rows[0].role) {
-                  const dbRole = String(rows[0].role).toLowerCase();
-                  if (dbRole === 'super_admin' || WHITELISTED_SUPER_ADMIN_EMAILS.includes(userEmail)) {
-                    resolvedRole = 'super_admin';
-                  }
-                }
-                if (process.env.NODE_ENV !== 'test') {
-                  actorProfileCache.set(jwtCacheKey, {
-                    role: resolvedRole,
-                    name,
-                    grade,
-                    section,
-                    expiresAt: Date.now() + 60_000,
-                  });
-                }
-              }
-            }
-          }
-        } catch (_) {}
-      }
-
-      return {
-        id: verified.id,
-        name,
-        email: verified.email,
-        role: resolvedRole,
-        grade,
-        section,
-        isVerifiedJwt: true,
-        authToken: verifiedJwtToken,
-      };
-    }
+    return {
+      id: verified.id,
+      name,
+      email: verified.email,
+      role: resolvedRole,
+      grade,
+      section,
+      isVerifiedJwt: true,
+      authToken: verifiedJwtToken,
+    };
   }
 
   const uidHeader = String(req.headers['x-veylentra-uid'] || '').trim();

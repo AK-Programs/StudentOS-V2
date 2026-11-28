@@ -70,8 +70,11 @@ export const ByteOrionAssistantModal: React.FC<ByteOrionAssistantModalProps> = (
   showNotification
 }) => {
   const userId = currentUser?.uid || currentUser?.email || 'guest';
+  const normRole = String(effectiveRole || currentUser?.role || 'student').toLowerCase().trim();
+  const isParentOrGuardian = normRole === 'parent' || normRole === 'guardian';
+  const safeInitialMode: 'select' | 'byte' | 'orion' = isParentOrGuardian ? 'byte' : initialMode;
 
-  const [mode, setMode] = useState<'select' | 'byte' | 'orion'>(initialMode);
+  const [mode, setMode] = useState<'select' | 'byte' | 'orion'>(safeInitialMode);
   const [isListening, setIsListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(true);
   const [permissionDenied, setPermissionDenied] = useState(false);
@@ -93,7 +96,7 @@ export const ByteOrionAssistantModal: React.FC<ByteOrionAssistantModalProps> = (
   const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
-    setMode(initialMode);
+    setMode(isParentOrGuardian ? 'byte' : initialMode);
     setByteQueryInput('');
     setByteLocalSummary(null);
     setOrionInput('');
@@ -101,7 +104,7 @@ export const ByteOrionAssistantModal: React.FC<ByteOrionAssistantModalProps> = (
     setOrionResponse(null);
     setOrionProviderMeta(null);
     setPermissionDenied(false);
-  }, [initialMode, isOpen]);
+  }, [initialMode, isOpen, isParentOrGuardian]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -230,6 +233,7 @@ export const ByteOrionAssistantModal: React.FC<ByteOrionAssistantModalProps> = (
   };
 
   const handleSendOrionPrompt = async () => {
+    if (isParentOrGuardian) return;
     const promptToSend = orionInput.trim();
     if (!promptToSend) return;
 
@@ -360,7 +364,7 @@ export const ByteOrionAssistantModal: React.FC<ByteOrionAssistantModalProps> = (
           </div>
 
           <div className="flex items-center gap-1.5">
-            {mode !== 'select' && (
+            {mode !== 'select' && !isParentOrGuardian && (
               <button
                 type="button"
                 onClick={() => {
@@ -389,9 +393,9 @@ export const ByteOrionAssistantModal: React.FC<ByteOrionAssistantModalProps> = (
         {/* Body */}
         <div className="p-5 overflow-y-auto space-y-4 flex-1">
           {/* =================================================================
-              1. MODE SELECTOR
+              1. MODE SELECTOR (hidden for Parent / Guardian)
           ================================================================== */}
-          {mode === 'select' && (
+          {mode === 'select' && !isParentOrGuardian && (
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <button
@@ -645,9 +649,9 @@ export const ByteOrionAssistantModal: React.FC<ByteOrionAssistantModalProps> = (
           )}
 
           {/* =================================================================
-              3. ORION AI VIEW
+              3. ORION AI VIEW (Forbidden for Parent / Guardian)
           ================================================================== */}
-          {mode === 'orion' && (
+          {mode === 'orion' && !isParentOrGuardian && (
             <div className="space-y-4">
               {/* Voice Input Controls */}
               <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-3">

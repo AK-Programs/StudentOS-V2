@@ -4,6 +4,7 @@ import { persistDeckToSupabase, persistCardsBatchToSupabase } from './flashcardS
 import { Flashcard, FlashcardDeck } from '../types';
 import {
   buildRoleAwareByteContext,
+  clearByteContextCache,
   doesPromptNeedRoleContext,
   BuildByteContextOptions
 } from './byteIntelligence';
@@ -54,6 +55,11 @@ if (typeof window !== 'undefined') {
   window.addEventListener('studentos-db-update', () => {
     userContextCache.clear();
   });
+}
+
+export function clearStudentOSContextCache(): void {
+  userContextCache.clear();
+  clearByteContextCache();
 }
 
 /**
@@ -119,7 +125,7 @@ export async function buildAuthorizedStudentOSContext(
 export async function streamStudentOSAI(
   payload: {
     prompt: string;
-    history?: { role: string; content: string }[];
+    history?: { role: string; content: string; userId?: string }[];
     persona?: string;
     level?: string;
     subject?: string;
@@ -128,6 +134,9 @@ export async function streamStudentOSAI(
     ragContext?: string;
     userId?: string;
     userRole?: string;
+    conversationId?: string;
+    threadId?: string;
+    reasoningMode?: boolean;
     activeTab?: string;
     intentType?: string;
     modelOverride?: string;
@@ -153,29 +162,54 @@ export async function streamStudentOSAI(
     onToken: (delta: string, accumulatedText: string, firstTokenMs: number) => void;
     onDone?: (result: {
       text: string;
+      model?: string;
       usage?: any;
       telemetry: AIStreamTelemetry;
       webSearchUsed?: boolean;
       webSources?: WebSearchSourceInfo[];
+      finishReason?: string;
+      truncated?: boolean;
     }) => void;
   },
   abortSignal?: AbortSignal
 ): Promise<{
   text: string;
+  model?: string;
   usage?: any;
   telemetry: AIStreamTelemetry;
   webSearchUsed?: boolean;
   webSources?: WebSearchSourceInfo[];
+  finishReason?: string;
+  truncated?: boolean;
 }> {
   const requestStart = Date.now();
   const dataRetrievalLatencyMs = payload.dataRetrievalLatencyMs || 0;
 
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Accept': 'text/event-stream, application/json'
+  };
+
+  if (payload.userId) {
+    headers['x-veylentra-uid'] = payload.userId;
+  }
+  if (payload.userRole) {
+    headers['x-veylentra-role'] = payload.userRole;
+  }
+
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData?.session?.access_token;
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
+    }
+  } catch {
+    // Non-fatal: fallback to UID headers if demo login has no Supabase JWT
+  }
+
   const res = await fetch('/api/ai/chat', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'text/event-stream, application/json'
-    },
+    headers,
     body: JSON.stringify({
       ...payload,
       stream: true
@@ -222,6 +256,66 @@ export async function streamStudentOSAI(
     let usageData: any = undefined;
     let webSearchUsed = false;
     let webSources: WebSearchSourceInfo[] = [];
+    let finishReason: string | undefined = undefined;
+    let truncated = false;
+
+    const processSseLine = (rawLine: string) => {
+      const line = rawLine.trim();
+      if (!line || !line.startsWith('data:')) return;
+      const jsonStr = line.slice(5).trim();
+      if (!jsonStr || jsonStr === '[DONE]') return;
+
+      let eventObj: any;
+      try {
+        eventObj = JSON.parse(jsonStr);
+      } catch {
+        return;
+      }
+
+      if (eventObj.type === 'status') {
+        if (Array.isArray(eventObj.sources)) {
+          webSearchUsed = true;
+          webSources = eventObj.sources;
+        }
+        callbacks.onStatus?.({
+          phase: eventObj.phase || 'generating',
+          message: eventObj.message || 'Generating answer…',
+          query: eventObj.query,
+          sources: eventObj.sources
+        });
+      } else if (eventObj.type === 'meta') {
+        modelUsed = eventObj.model || modelUsed;
+        complexityTier = eventObj.tier || complexityTier;
+        requestId = eventObj.requestId || requestId;
+        if (eventObj.webSearchUsed) webSearchUsed = true;
+        if (Array.isArray(eventObj.webSources) && eventObj.webSources.length > 0) {
+          webSources = eventObj.webSources;
+        }
+        callbacks.onMeta?.({ model: modelUsed, tier: complexityTier, requestId, webSearchUsed, webSources });
+      } else if (eventObj.type === 'token' && eventObj.token) {
+        if (firstTokenMs === null) {
+          firstTokenMs = eventObj.firstTokenLatencyMs ?? (Date.now() - requestStart);
+        }
+        accumulated += eventObj.token;
+        callbacks.onToken(eventObj.token, accumulated, firstTokenMs);
+      } else if (eventObj.type === 'done') {
+        if (eventObj.text && !accumulated) {
+          accumulated = eventObj.text;
+        }
+        if (eventObj.usage) usageData = eventObj.usage;
+        if (eventObj.telemetry?.modelUsed) modelUsed = eventObj.telemetry.modelUsed;
+        if (eventObj.modelUsed) modelUsed = eventObj.modelUsed;
+        if (eventObj.telemetry?.complexityTier) complexityTier = eventObj.telemetry.complexityTier;
+        if (eventObj.webSearchUsed) webSearchUsed = true;
+        if (Array.isArray(eventObj.webSources) && eventObj.webSources.length > 0) {
+          webSources = eventObj.webSources;
+        }
+        if (eventObj.finishReason) finishReason = eventObj.finishReason;
+        if (typeof eventObj.truncated === 'boolean') truncated = eventObj.truncated;
+      } else if (eventObj.type === 'error') {
+        throw new Error(eventObj.details || eventObj.error || 'AI streaming failed.');
+      }
+    };
 
     while (true) {
       if (abortSignal?.aborted) {
@@ -230,65 +324,23 @@ export async function streamStudentOSAI(
       }
 
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        buffer += decoder.decode();
+        if (buffer.trim()) {
+          for (const rem of buffer.split('\n')) {
+            processSseLine(rem);
+          }
+          buffer = '';
+        }
+        break;
+      }
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop() || '';
 
       for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line || !line.startsWith('data:')) continue;
-        const jsonStr = line.slice(5).trim();
-        if (!jsonStr || jsonStr === '[DONE]') continue;
-
-        let eventObj: any;
-        try {
-          eventObj = JSON.parse(jsonStr);
-        } catch {
-          continue;
-        }
-
-        if (eventObj.type === 'status') {
-          if (Array.isArray(eventObj.sources)) {
-            webSearchUsed = true;
-            webSources = eventObj.sources;
-          }
-          callbacks.onStatus?.({
-            phase: eventObj.phase || 'generating',
-            message: eventObj.message || 'Generating answer…',
-            query: eventObj.query,
-            sources: eventObj.sources
-          });
-        } else if (eventObj.type === 'meta') {
-          modelUsed = eventObj.model || modelUsed;
-          complexityTier = eventObj.tier || complexityTier;
-          requestId = eventObj.requestId || requestId;
-          if (eventObj.webSearchUsed) webSearchUsed = true;
-          if (Array.isArray(eventObj.webSources) && eventObj.webSources.length > 0) {
-            webSources = eventObj.webSources;
-          }
-          callbacks.onMeta?.({ model: modelUsed, tier: complexityTier, requestId, webSearchUsed, webSources });
-        } else if (eventObj.type === 'token' && eventObj.token) {
-          if (firstTokenMs === null) {
-            firstTokenMs = eventObj.firstTokenLatencyMs ?? (Date.now() - requestStart);
-          }
-          accumulated += eventObj.token;
-          callbacks.onToken(eventObj.token, accumulated, firstTokenMs);
-        } else if (eventObj.type === 'done') {
-          if (eventObj.text && !accumulated) {
-            accumulated = eventObj.text;
-          }
-          if (eventObj.usage) usageData = eventObj.usage;
-          if (eventObj.telemetry?.modelUsed) modelUsed = eventObj.telemetry.modelUsed;
-          if (eventObj.telemetry?.complexityTier) complexityTier = eventObj.telemetry.complexityTier;
-          if (eventObj.webSearchUsed) webSearchUsed = true;
-          if (Array.isArray(eventObj.webSources) && eventObj.webSources.length > 0) {
-            webSources = eventObj.webSources;
-          }
-        } else if (eventObj.type === 'error') {
-          throw new Error(eventObj.details || eventObj.error || 'AI streaming failed.');
-        }
+        processSseLine(rawLine);
       }
     }
 
@@ -305,7 +357,16 @@ export async function streamStudentOSAI(
       webSources
     };
 
-    const finalResult = { text: accumulated.trim(), usage: usageData, telemetry, webSearchUsed, webSources };
+    const finalResult = {
+      text: accumulated.trim(),
+      model: modelUsed,
+      usage: usageData,
+      telemetry,
+      webSearchUsed,
+      webSources,
+      finishReason,
+      truncated: Boolean(truncated || finishReason === 'length')
+    };
     callbacks.onDone?.(finalResult);
     return finalResult;
   }
@@ -322,15 +383,16 @@ export async function streamStudentOSAI(
     throw new Error(parsedRes.error);
   }
 
-  const text = parsedRes.text || '';
+  const text = parsedRes.text || parsedRes.reply || '';
   const elapsed = Date.now() - requestStart;
   if (text) {
     callbacks.onToken(text, text, elapsed);
   }
 
+  const modelUsed = parsedRes.telemetry?.modelUsed || parsedRes.modelUsed || 'ministral-8b-2410';
   const telemetry: AIStreamTelemetry = {
     requestId: parsedRes.requestId,
-    modelUsed: parsedRes.telemetry?.modelUsed || 'ministral-8b-2410',
+    modelUsed,
     complexityTier: parsedRes.telemetry?.complexityTier || 'general',
     requestStart,
     firstTokenLatencyMs: elapsed,
@@ -343,10 +405,13 @@ export async function streamStudentOSAI(
 
   const finalResult = {
     text,
+    model: modelUsed,
     usage: parsedRes.usage,
     telemetry,
     webSearchUsed: Boolean(parsedRes.webSearchUsed),
-    webSources: parsedRes.webSources || []
+    webSources: parsedRes.webSources || [],
+    finishReason: parsedRes.finishReason,
+    truncated: Boolean(parsedRes.truncated || parsedRes.finishReason === 'length')
   };
   callbacks.onDone?.(finalResult);
   return finalResult;
@@ -957,7 +1022,7 @@ export const InteractiveMathWidget: React.FC<{ widgetType: MathVisualTopic }> = 
 export async function streamAIChatClient(
   payload: {
     prompt: string;
-    history?: { role: string; content: string }[];
+    history?: { role: string; content: string; userId?: string }[];
     persona?: string;
     level?: string;
     subject?: string;
@@ -965,6 +1030,9 @@ export async function streamAIChatClient(
     ragContext?: string;
     userId?: string;
     userRole?: string;
+    conversationId?: string;
+    threadId?: string;
+    reasoningMode?: boolean;
     activeTab?: string;
     intentType?: string;
     modelOverride?: string;
@@ -993,6 +1061,8 @@ export async function streamAIChatClient(
       usage?: any;
       webSearchUsed?: boolean;
       webSources?: WebSearchSourceInfo[];
+      finishReason?: string;
+      truncated?: boolean;
     }) => void;
   }
 ): Promise<{
@@ -1002,6 +1072,8 @@ export async function streamAIChatClient(
   telemetry: AIStreamTelemetry;
   webSearchUsed?: boolean;
   webSources?: WebSearchSourceInfo[];
+  finishReason?: string;
+  truncated?: boolean;
 }> {
   const result = await streamStudentOSAI(
     payload,
@@ -1011,11 +1083,13 @@ export async function streamAIChatClient(
       onToken: (delta, fullText) => options.onToken(delta, fullText),
       onDone: (res) =>
         options.onDone?.({
-          model: res.telemetry.modelUsed,
+          model: res.telemetry.modelUsed || res.model || 'ministral-8b-2410',
           text: res.text,
           usage: res.usage,
           webSearchUsed: res.webSearchUsed,
-          webSources: res.webSources
+          webSources: res.webSources,
+          finishReason: res.finishReason,
+          truncated: res.truncated
         })
     },
     options.signal
@@ -1023,11 +1097,13 @@ export async function streamAIChatClient(
 
   return {
     text: result.text,
-    model: result.telemetry.modelUsed,
+    model: result.telemetry.modelUsed || result.model || 'ministral-8b-2410',
     usage: result.usage,
     telemetry: result.telemetry,
     webSearchUsed: result.webSearchUsed,
-    webSources: result.webSources
+    webSources: result.webSources,
+    finishReason: result.finishReason,
+    truncated: result.truncated
   };
 }
 

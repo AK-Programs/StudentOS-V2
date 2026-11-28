@@ -272,11 +272,21 @@ async function runTests() {
     const capturedProviderRequests: Array<{ prompt: string; history: any[] }> = [];
 
     globalThis.fetch = (async (input: any, init: any) => {
-      const url = String(input);
+      const url = typeof input === 'string' ? input : String(input?.url || input);
+      if (url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost')) {
+        return prevFetch(input, init);
+      }
+
+      const readHeader = (name: string): string => {
+        const h = init?.headers || input?.headers;
+        if (!h) return '';
+        if (typeof h.get === 'function') return String(h.get(name) || '');
+        return String(h[name] || h[name.toLowerCase()] || h[name.toUpperCase()] || '');
+      };
 
       // Mock Supabase Auth verification
       if (url.includes('/auth/v1/user')) {
-        const authHeader = String(init?.headers?.Authorization || init?.headers?.authorization || '');
+        const authHeader = readHeader('Authorization');
         if (authHeader === 'Bearer token-super') {
           return new Response(
             JSON.stringify({

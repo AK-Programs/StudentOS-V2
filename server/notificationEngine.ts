@@ -16,7 +16,7 @@ import {
   supabaseFetchWithAnonRetry,
   getFeatureAndWinterSupabaseKey,
   WORKING_ANON_KEY,
-} from './supabaseKeyManager';
+} from './supabaseKeyManager.js';
 
 export type NotificationPriority = 'urgent' | 'high' | 'normal' | 'low';
 
@@ -193,11 +193,15 @@ export function isNotificationEligibleForUser(
     const ts = String(notif.targetSection || '').toLowerCase().trim();
     if (tg && tg !== 'all' && tg !== 'all grades') {
       const ug = String(user.grade || '').toLowerCase().trim();
-      if (ug && ug !== tg) return false;
+      const ntg = tg.replace(/[^a-z0-9]/g, '').replace(/grade|class|std/g, '');
+      const nug = ug.replace(/[^a-z0-9]/g, '').replace(/grade|class|std/g, '');
+      if (ug && tg && ug !== tg && nug !== ntg) return false;
     }
     if (ts && ts !== 'all' && ts !== 'all sections') {
       const us = String(user.section || '').toLowerCase().trim();
-      if (us && us !== ts) return false;
+      const nts = ts.replace(/[^a-z0-9]/g, '').replace(/section/g, '');
+      const nus = us.replace(/[^a-z0-9]/g, '').replace(/section/g, '');
+      if (us && ts && us !== ts && nus !== nts) return false;
     }
   }
 
@@ -488,13 +492,16 @@ export function registerNotificationRoutes(
   app.get('/api/notifications/list', async (req, res) => {
     try {
       const actor = await deps.getVerifiedUserFromRequest(req);
-      const userId = String(actor?.id || req.query.userId || '').trim();
-      const role = String(actor?.role || req.query.role || 'student').toLowerCase().trim();
-      const grade = String(actor?.grade || req.query.grade || '');
-      const section = String(actor?.section || req.query.section || '');
+      if (!actor || !actor.id) {
+        return res.status(401).json({ success: false, error: 'Authentication required.' });
+      }
+      const userId = String(actor.id).trim();
+      const role = String(actor.role || 'student').toLowerCase().trim();
+      const grade = String(actor.grade || '');
+      const section = String(actor.section || '');
 
       if (!userId) {
-        return res.status(400).json({ success: false, error: 'userId is required' });
+        return res.status(401).json({ success: false, error: 'Authentication required.' });
       }
 
       const cfg = deps.getSupabaseServerConfig();
@@ -548,14 +555,16 @@ export function registerNotificationRoutes(
   app.post('/api/notifications/state', async (req, res) => {
     try {
       const actor = await deps.getVerifiedUserFromRequest(req);
-      const { userId: bodyUserId, notificationIds, action } = req.body || {};
-      const userId = String(actor?.id || bodyUserId || '').trim();
-      if (!userId) {
-        return res.status(400).json({ success: false, error: 'userId is required' });
+      if (!actor || !actor.id) {
+        return res.status(401).json({ success: false, error: 'Authentication required.' });
       }
-      if (actor && bodyUserId && actor.id !== bodyUserId && !['admin', 'super_admin'].includes(actor.role)) {
+      const { userId: bodyUserId, notificationIds, action } = req.body || {};
+      if (bodyUserId && actor.id !== bodyUserId && !['admin', 'super_admin'].includes(actor.role)) {
         return res.status(403).json({ success: false, error: 'Forbidden' });
       }
+      const userId = String(
+        bodyUserId && ['admin', 'super_admin'].includes(actor.role) ? bodyUserId : actor.id
+      ).trim();
 
       const validActions = ['delivered', 'popup_presented', 'read', 'dismissed', 'acknowledged'];
       if (!validActions.includes(String(action))) {
@@ -579,7 +588,10 @@ export function registerNotificationRoutes(
   app.post('/api/notifications/broadcast', async (req, res) => {
     try {
       const actor = await deps.getVerifiedUserFromRequest(req);
-      const actorRole = String(actor?.role || req.body?.senderRole || '').toLowerCase();
+      if (!actor || !actor.id) {
+        return res.status(401).json({ success: false, error: 'Authentication required.' });
+      }
+      const actorRole = String(actor.role || '').toLowerCase();
       if (!['teacher', 'coordinator', 'admin', 'super_admin'].includes(actorRole)) {
         return res.status(403).json({ success: false, error: 'Only faculty or administrators can send broadcasts.' });
       }

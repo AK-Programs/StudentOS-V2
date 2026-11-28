@@ -1,14 +1,63 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { AssignmentUploadForm } from './AssignmentUploadForm';
-import { ResourceCategory } from '../types';
-import { FileCheck, HelpCircle, Loader2, Upload, BookOpen, Calendar, FileText, Image as ImageIcon } from 'lucide-react';
+import { Homework, ResourceCategory, UserProfile, VaultNote } from '../types';
+import {
+  FileCheck,
+  HelpCircle,
+  Loader2,
+  Upload,
+  BookOpen,
+  Calendar,
+  FileText,
+  Image as ImageIcon,
+  BookOpenCheck,
+  FilePlus2,
+  ClipboardCheck,
+  BarChart3,
+  ShieldCheck,
+  FolderKanban,
+} from 'lucide-react';
 import { soundService } from '../lib/soundService';
 import { VeylentraIcon } from './ui/VeylentraIcon';
+import { NotebookIntelligencePanel } from './assignments/NotebookIntelligencePanel';
+import { AiAssignmentBuilderPanel } from './assignments/AiAssignmentBuilderPanel';
+import { SubmissionsTrackerPanel } from './assignments/SubmissionsTrackerPanel';
+import { NotebookCompletionReportPanel } from './assignments/NotebookCompletionReportPanel';
+import { AssignmentQualityPanel } from './assignments/AssignmentQualityPanel';
+import { GroupProjectsPanel } from './assignments/GroupProjectsPanel';
 
-export const AssignmentCenter: React.FC = () => {
+type AssignmentCenterTab =
+  | 'upload'
+  | 'qgen'
+  | 'checker'
+  | 'notebook'
+  | 'builder'
+  | 'submissions'
+  | 'reports'
+  | 'quality'
+  | 'projects';
+
+export interface AssignmentCenterProps {
+  currentUser?: UserProfile | null;
+  effectiveRole?: string;
+  notes?: VaultNote[];
+  homeworkList?: Homework[];
+  onAssignmentPublished?: () => void;
+}
+
+export const AssignmentCenter: React.FC<AssignmentCenterProps> = ({
+  currentUser = null,
+  effectiveRole = 'teacher',
+  notes = [],
+  homeworkList = [],
+  onAssignmentPublished,
+}) => {
+  const isFaculty = ['teacher', 'faculty', 'head_teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes(
+    effectiveRole
+  );
   const [activeUploadType, setActiveUploadType] = useState<ResourceCategory>('assignment');
-  const [activeTab, setActiveTab] = useState<'upload' | 'qgen' | 'checker'>('upload');
+  const [activeTab, setActiveTab] = useState<AssignmentCenterTab>(isFaculty ? 'upload' : 'notebook');
 
   // AI Question Generator State
   const [qSubject, setQSubject] = useState('Physics');
@@ -80,11 +129,19 @@ export const AssignmentCenter: React.FC = () => {
     { id: 'gallery', label: 'Photo Gallery', icon: <ImageIcon className="w-4 h-4" />, desc: 'Campus events & classroom highlights' }
   ];
 
-  const tabsConfig: Array<{ id: 'upload' | 'qgen' | 'checker'; label: string; icon: React.ReactNode }> = [
-    { id: 'upload', label: 'Upload Center', icon: <Upload className="w-3.5 h-3.5" /> },
-    { id: 'qgen', label: 'Question Generator', icon: <HelpCircle className="w-3.5 h-3.5" /> },
-    { id: 'checker', label: 'Homework Checker', icon: <FileCheck className="w-3.5 h-3.5" /> }
+  const tabsConfig: Array<{ id: AssignmentCenterTab; label: string; icon: React.ReactNode; facultyOnly?: boolean }> = [
+    { id: 'upload', label: 'Upload Center', icon: <Upload className="w-3.5 h-3.5" />, facultyOnly: true },
+    { id: 'qgen', label: 'Question Generator', icon: <HelpCircle className="w-3.5 h-3.5" />, facultyOnly: true },
+    { id: 'checker', label: 'Homework Checker', icon: <FileCheck className="w-3.5 h-3.5" />, facultyOnly: true },
+    { id: 'builder', label: 'AI Assignment Builder', icon: <FilePlus2 className="w-3.5 h-3.5" />, facultyOnly: true },
+    { id: 'submissions', label: 'Submissions', icon: <ClipboardCheck className="w-3.5 h-3.5" /> },
+    { id: 'notebook', label: 'Notebook Intelligence', icon: <BookOpenCheck className="w-3.5 h-3.5" /> },
+    { id: 'reports', label: 'Completion Reports', icon: <BarChart3 className="w-3.5 h-3.5" /> },
+    { id: 'quality', label: 'Quality Analyzer', icon: <ShieldCheck className="w-3.5 h-3.5" /> },
+    { id: 'projects', label: 'Group Projects', icon: <FolderKanban className="w-3.5 h-3.5" /> },
   ];
+
+  const visibleTabs = tabsConfig.filter((t) => !t.facultyOnly || isFaculty);
 
   return (
     <motion.div
@@ -93,26 +150,28 @@ export const AssignmentCenter: React.FC = () => {
       transition={{ duration: 0.2 }}
       className="space-y-6"
     >
-      <div className="bento-card rounded-2xl p-5 sm:p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-start gap-3">
-          <VeylentraIcon name="homework" size="lg" />
-          <div className="space-y-1">
-            <div className="flex items-center gap-2 text-xs text-blue-400 font-semibold">
-              <span>Academic Resource Suite</span>
-              <span aria-hidden="true">·</span>
-              <span className="text-slate-400">Faculty &amp; Student Tools</span>
+      <div className="bento-card rounded-2xl p-5 sm:p-6 space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <VeylentraIcon name="homework" size="lg" />
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-xs text-blue-400 font-semibold">
+                <span>Academic Resource Suite</span>
+                <span aria-hidden="true">·</span>
+                <span className="text-slate-400">Faculty &amp; Student Tools</span>
+              </div>
+              <h2 className="text-xl sm:text-2xl font-bold font-display text-white tracking-tight">
+                Resource &amp; Assessment Center
+              </h2>
+              <p className="text-xs text-slate-400">
+                Publish class resources, analyze notebooks, track submissions, audit assignment quality, and collaborate on group projects.
+              </p>
             </div>
-            <h2 className="text-xl sm:text-2xl font-bold font-display text-white tracking-tight">
-              Resource &amp; Assessment Center
-            </h2>
-            <p className="text-xs text-slate-400">
-              Publish class resources, generate structured exam papers, and evaluate submissions.
-            </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 bg-slate-950/80 p-1 rounded-xl border border-white/10">
-          {tabsConfig.map(t => (
+        <div className="flex flex-wrap items-center gap-1.5 bg-slate-950/80 p-1.5 rounded-xl border border-white/10">
+          {visibleTabs.map(t => (
             <button
               key={t.id}
               type="button"
@@ -120,7 +179,7 @@ export const AssignmentCenter: React.FC = () => {
                 soundService.playButtonClick();
                 setActiveTab(t.id);
               }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
                 activeTab === t.id
                   ? 'bg-blue-600 text-white'
                   : 'text-slate-400 hover:text-white'
@@ -326,6 +385,53 @@ export const AssignmentCenter: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {activeTab === 'notebook' && (
+        <NotebookIntelligencePanel
+          currentUser={currentUser}
+          effectiveRole={effectiveRole}
+          notes={notes}
+        />
+      )}
+
+      {activeTab === 'builder' && (
+        <AiAssignmentBuilderPanel
+          currentUser={currentUser}
+          effectiveRole={effectiveRole}
+          onPublished={onAssignmentPublished}
+        />
+      )}
+
+      {activeTab === 'submissions' && (
+        <SubmissionsTrackerPanel
+          currentUser={currentUser}
+          effectiveRole={effectiveRole}
+          homeworkList={homeworkList}
+        />
+      )}
+
+      {activeTab === 'reports' && (
+        <NotebookCompletionReportPanel
+          currentUser={currentUser}
+          effectiveRole={effectiveRole}
+          notes={notes}
+        />
+      )}
+
+      {activeTab === 'quality' && (
+        <AssignmentQualityPanel
+          currentUser={currentUser}
+          effectiveRole={effectiveRole}
+          homeworkList={homeworkList}
+        />
+      )}
+
+      {activeTab === 'projects' && (
+        <GroupProjectsPanel
+          currentUser={currentUser}
+          effectiveRole={effectiveRole}
+        />
       )}
     </motion.div>
   );

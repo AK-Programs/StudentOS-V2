@@ -11,6 +11,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'motion/react';
+import { extractApiErrorMessage, getServerAuthHeaders } from '../lib/clientSession';
 import {
   ResponsiveContainer,
   BarChart,
@@ -663,14 +664,10 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
     setOrionError(null);
     setOrionInlineAnswer(null);
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
+      const headers = await getServerAuthHeaders();
       const resp = await fetch('/api/ai/orion-assist', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
-        },
+        headers,
         body: JSON.stringify({
           userId,
           userRole: 'student',
@@ -681,9 +678,9 @@ export const StudentExperienceWorkspace: React.FC<StudentExperienceWorkspaceProp
           contextData
         })
       });
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({}));
       if (!resp.ok || !data.success || !data.text) {
-        throw new Error(data.error || 'Orion is temporarily unavailable.');
+        throw new Error(extractApiErrorMessage(data, `Orion returned status ${resp.status}`));
       }
       setOrionInlineAnswer({
         title: `${subject}: ${topic}`,

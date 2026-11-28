@@ -274,10 +274,37 @@ async function runTests() {
   // 3. Orion RBAC, Agent Execution Engine, & Post-Write Verification Tests
   // =========================================================================
   {
-    // RBAC across all 6 roles
-    assert.equal(validateActionPermission('get_child_overview', 'parent').allowed, true);
-    assert.equal(validateActionPermission('create_broadcast', 'parent').allowed, false);
-    assert.equal(validateActionPermission('delete_item', 'parent').allowed, false);
+    // RBAC across all roles — Parent & Guardian are strictly excluded from ALL Orion actions
+    for (const blockedRole of ['parent', 'guardian']) {
+      for (const actionName of [
+        'get_child_overview',
+        'general_chat',
+        'web_search',
+        'create_broadcast',
+        'delete_item',
+      ] as const) {
+        assert.equal(
+          validateActionPermission(actionName, blockedRole).allowed,
+          false,
+          `${blockedRole} must be denied ${actionName}`
+        );
+      }
+
+      const forbiddenOverviewRes = await executeGetChildOverview(
+        { action: 'get_child_overview' },
+        { userId: `${blockedRole}-1`, userRole: blockedRole, linkedStudentIds: ['stu-1'], linkedStudents: [] }
+      );
+      assert.equal(forbiddenOverviewRes.success, false);
+      assert.equal(forbiddenOverviewRes.error, 'FORBIDDEN_PARENT_ROLE');
+
+      const blockedOrionTask = await runOrionAgentTask({
+        rawCommand: 'Check my schedule',
+        actions: [{ action: 'general_chat' }],
+        userContext: { userId: `${blockedRole}-1`, userRole: blockedRole },
+      });
+      assert.equal(blockedOrionTask.snapshot.phase, 'failed');
+      assert.equal(blockedOrionTask.snapshot.verified, false);
+    }
 
     assert.equal(validateActionPermission('create_study_plan', 'student').allowed, true);
     assert.equal(validateActionPermission('get_attendance', 'student').allowed, false);
@@ -289,14 +316,6 @@ async function runTests() {
     assert.equal(validateActionPermission('create_broadcast', 'hod').allowed, true);
     assert.equal(validateActionPermission('create_broadcast', 'admin').allowed, true);
     assert.equal(validateActionPermission('create_broadcast', 'super_admin').allowed, true);
-
-    // Parent unlinked child overview isolation
-    const unlinkedChildRes = await executeGetChildOverview(
-      { action: 'get_child_overview' },
-      { userId: 'parent-1', userRole: 'parent', linkedStudentIds: [], linkedStudents: [] }
-    );
-    assert.equal(unlinkedChildRes.success, false);
-    assert.equal(unlinkedChildRes.error, 'NO_LINKED_CHILDREN');
 
     // Agent engine: RBAC failure blocks execution at preparing stage
     const snapshotsBlocked: OrionAgentProgressSnapshot[] = [];

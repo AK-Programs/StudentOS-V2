@@ -45,6 +45,8 @@ export interface AIPerformanceTelemetry {
   retries: number;
   fallbackTriggered: boolean;
   streamed: boolean;
+  finishReason?: string;
+  truncated?: boolean;
 }
 
 export interface AICompletionOptions {
@@ -479,8 +481,9 @@ export async function generateAICompletionWithTelemetry(
     m: string,
     currentMessages: any[],
     budget: number,
-    allowJsonFormat = jsonMode
-  ) {
+    allowJsonFormat = jsonMode,
+    includeZaiThinkingToggle = p === 'zai' && !Boolean(options.reasoningMode)
+  ): Promise<{ text: string; finishReason: string; provider: AIProviderName; model: string }> {
     const { apiUrl, apiKey } = getProviderEndpointAndKey(p);
     if (!apiKey) {
       const envName = p === 'zai' ? 'ZAI_API_KEY' : p === 'ministral' ? 'MINISTRAL_API_KEY' : 'GROQ_API_KEY';
@@ -491,12 +494,25 @@ export async function generateAICompletionWithTelemetry(
       throw err;
     }
 
-    // Clamp single-request token budget cleanly for OpenAI-compatible endpoints
-    const clampedBudget = p === 'ministral' ? Math.min(budget, 8192) : Math.min(budget, 4096);
+    // Realistic per-provider token budgets
+    const clampedBudget = p === 'ministral'
+      ? Math.min(budget, 16384)
+      : p === 'zai'
+      ? Math.min(budget, 16384)
+      : Math.min(budget, 8192);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 28000);
+    const timeout = setTimeout(() => controller.abort(), 35000);
 
     try {
+      const requestBody: Record<string, any> = {
+        model: m,
+        messages: currentMessages,
+        temperature,
+        max_tokens: clampedBudget,
+        ...(allowJsonFormat ? { response_format: { type: 'json_object' } } : {}),
+        ...(p === 'zai' && includeZaiThinkingToggle ? { thinking: { type: 'disabled' } } : {})
+      };
+
       const resp = await fetch(apiUrl, {
         method: 'POST',
         headers: {
@@ -504,13 +520,7 @@ export async function generateAICompletionWithTelemetry(
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         },
-        body: JSON.stringify({
-          model: m,
-          messages: currentMessages,
-          temperature,
-          max_tokens: clampedBudget,
-          ...(allowJsonFormat ? { response_format: { type: 'json_object' } } : {})
-        }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal
       });
 
@@ -520,7 +530,11 @@ export async function generateAICompletionWithTelemetry(
         const errBody = await resp.text().catch(() => '');
         // Some models/endpoints reject response_format: json_object with HTTP 400; retry cleanly without it once
         if (resp.status === 400 && allowJsonFormat && /response_format|json_object|unsupported/i.test(errBody)) {
-          return await callApprovedProvider(p, m, currentMessages, budget, false);
+          return await callApprovedProvider(p, m, currentMessages, budget, false, includeZaiThinkingToggle);
+        }
+        // Retry without thinking toggle if upstream endpoint rejects the thinking parameter
+        if (resp.status === 400 && includeZaiThinkingToggle && /thinking|unknown|unsupported/i.test(errBody)) {
+          return await callApprovedProvider(p, m, currentMessages, budget, allowJsonFormat, false);
         }
         const err: any = new Error(`${p} HTTP ${resp.status}: ${errBody || resp.statusText}`);
         err.status = resp.status;
@@ -660,7 +674,9 @@ export async function generateAICompletionWithTelemetry(
       totalGenerationTimeMs: Date.now() - requestStart,
       retries,
       fallbackTriggered: activeProvider !== provider,
-      streamed: false
+      streamed: false,
+      finishReason: lastFinishReason,
+      truncated: lastFinishReason === 'length',
     };
 
     if (continuationCount > 0) {
@@ -729,17 +745,24 @@ export async function streamAICompletion(
   const effectiveMaxTokens = maxTokens
     ? Math.max(maxTokens, 300)
     : routing.tier === 'short' || routing.tier === 'fast'
-    ? 1200
-    : 4096;
+    ? 2048
+    : 8192;
 
   console.log(
     `[AI_STREAM_ROUTER] tier=${routing.tier} provider=${activeProvider} model=${activeModel} requestId=${requestId}`
   );
 
+  let hasEmittedVisibleTokens = false;
+  const emitVisibleToken = (token: string, latency: number) => {
+    hasEmittedVisibleTokens = true;
+    callbacks.onToken(token, latency);
+  };
+
   async function tryStreamOnce(
     p: AIProviderName,
     m: string,
-    customMaxTokens?: number
+    customMaxTokens?: number,
+    includeZaiThinkingToggle = p === 'zai' && !Boolean(options.reasoningMode)
   ): Promise<{ fullText: string; firstTokenLatencyMs: number | null; finishReason?: string }> {
     const { apiUrl: targetUrl, apiKey } = getProviderEndpointAndKey(p);
 
@@ -759,22 +782,29 @@ export async function streamAICompletion(
     };
 
     const requestController = new AbortController();
-    const timeoutId = setTimeout(() => requestController.abort(), 30000);
+    const timeoutId = setTimeout(() => requestController.abort(), 45000);
     const onExternalAbort = () => requestController.abort();
     abortSignal?.addEventListener('abort', onExternalAbort, { once: true });
+
+    const requestedBudget = customMaxTokens || effectiveMaxTokens;
+    const providerMaxCap = p === 'groq' ? 8192 : 16384;
+    const finalBudget = Math.min(Math.max(requestedBudget, 300), providerMaxCap);
+
+    const requestPayload: Record<string, any> = {
+      model: m,
+      messages,
+      temperature,
+      max_tokens: finalBudget,
+      stream: true,
+      ...(p === 'zai' && includeZaiThinkingToggle ? { thinking: { type: 'disabled' } } : {})
+    };
 
     let response: Response;
     try {
       response = await fetch(targetUrl, {
         method: 'POST',
         headers,
-        body: JSON.stringify({
-          model: m,
-          messages,
-          temperature,
-          max_tokens: customMaxTokens || effectiveMaxTokens,
-          stream: true
-        }),
+        body: JSON.stringify(requestPayload),
         signal: requestController.signal
       });
     } catch (fetchErr: any) {
@@ -782,7 +812,7 @@ export async function streamAICompletion(
       abortSignal?.removeEventListener('abort', onExternalAbort);
       const err: any = new Error(
         fetchErr?.name === 'AbortError'
-          ? `${p} stream request timed out after 30 seconds.`
+          ? `${p} stream request timed out.`
           : (fetchErr?.message || `${p} stream request failed`)
       );
       err.status = fetchErr?.name === 'AbortError' ? 504 : 502;
@@ -795,6 +825,9 @@ export async function streamAICompletion(
 
     if (!response.ok || !response.body) {
       const errBody = await response.text().catch(() => '');
+      if (response.status === 400 && includeZaiThinkingToggle && /thinking|unknown|unsupported/i.test(errBody)) {
+        return await tryStreamOnce(p, m, customMaxTokens, false);
+      }
       const err: any = new Error(`${p} HTTP ${response.status}: ${errBody || response.statusText || 'Stream request failed'}`);
       err.status = response.status;
       err.providerUsed = p;
@@ -811,10 +844,10 @@ export async function streamAICompletion(
       const data = await response.json();
       const choice = data.choices?.[0];
       const text = extractTextFromChoice(choice, data);
-      const finishReason = String(choice?.finish_reason || data?.finish_reason || '').toLowerCase();
+      const finishReason = String(choice?.finish_reason || data?.finish_reason || 'stop').toLowerCase();
       if (!text) return { fullText: '', firstTokenLatencyMs: null, finishReason };
       const firstTokenLatencyMs = Date.now() - requestStart;
-      callbacks.onToken(text, firstTokenLatencyMs);
+      emitVisibleToken(text, firstTokenLatencyMs);
       return { fullText: text, firstTokenLatencyMs, finishReason };
     }
 
@@ -825,19 +858,7 @@ export async function streamAICompletion(
     let firstTokenLatencyMs: number | null = null;
     let lastChoice: any = null;
 
-    while (true) {
-      if (abortSignal?.aborted) {
-        await reader.cancel().catch(() => {});
-        break;
-      }
-
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
+    const processSseLines = (lines: string[]) => {
       for (const rawLine of lines) {
         const line = rawLine.trim();
         if (!line || !line.startsWith('data:')) continue;
@@ -855,13 +876,35 @@ export async function streamAICompletion(
               firstTokenLatencyMs = Date.now() - requestStart;
             }
             fullText += token;
-            callbacks.onToken(token, firstTokenLatencyMs);
+            emitVisibleToken(token, firstTokenLatencyMs);
           }
         } catch {}
       }
+    };
+
+    while (true) {
+      if (abortSignal?.aborted) {
+        await reader.cancel().catch(() => {});
+        break;
+      }
+
+      const { done, value } = await reader.read();
+      if (done) {
+        buffer += decoder.decode();
+        if (buffer.trim()) {
+          processSseLines(buffer.split('\n'));
+          buffer = '';
+        }
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      processSseLines(lines);
     }
 
-    const finishReason = String(lastChoice?.finish_reason || '').toLowerCase();
+    const finishReason = String(lastChoice?.finish_reason || 'stop').toLowerCase();
     return { fullText, firstTokenLatencyMs, finishReason };
   }
 
@@ -914,8 +957,16 @@ export async function streamAICompletion(
         streamResult = attempt;
         break;
       }
+      if (hasEmittedVisibleTokens) {
+        streamResult = attempt;
+        break;
+      }
     } catch (err: any) {
       lastStreamErr = err;
+      // Never switch provider after visible tokens have already streamed to the client
+      if (hasEmittedVisibleTokens || abortSignal?.aborted) {
+        throw err;
+      }
       console.warn(`[AI_STREAM_ROUTER] ${candidate.p} (${candidate.m}) fallback notice:`, err?.message || err);
     }
   }
@@ -930,6 +981,7 @@ export async function streamAICompletion(
   }
 
   const finishedReply = streamResult.fullText.trim();
+  const finalFinishReason = streamResult.finishReason || 'stop';
 
   const telemetry: AIPerformanceTelemetry = {
     requestId,
@@ -941,7 +993,9 @@ export async function streamAICompletion(
     totalGenerationTimeMs: Date.now() - requestStart,
     retries,
     fallbackTriggered: finalProvider !== activeProvider,
-    streamed: true
+    streamed: true,
+    finishReason: finalFinishReason,
+    truncated: finalFinishReason === 'length',
   };
 
   callbacks.onComplete?.(finishedReply, telemetry);

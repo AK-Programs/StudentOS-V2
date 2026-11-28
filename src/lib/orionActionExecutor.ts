@@ -198,22 +198,12 @@ export function validateActionPermission(
     isCoordinator ||
     isAdmin;
 
-  const parentAllowedActions: OrionActionType[] = [
-    'get_child_overview',
-    'show_pending_assignments',
-    'show_timetable',
-    'show_announcements',
-    'navigate_tab',
-    'general_chat',
-    'add_study_planner',
-    'create_study_plan',
-    'create_note',
-    'add_task',
-    'complete_task',
-    'delete_task',
-    'web_search',
-    'search_internet'
-  ];
+  if (normRole === 'parent' || normRole === 'guardian') {
+    return {
+      allowed: false,
+      reason: 'Authorization denied: Orion Academic Agent is restricted to students, faculty, coordinators, and administrators.',
+    };
+  }
 
   // Student permissions whitelist (Orion staff/admin operations are restricted)
   const studentAllowedActions: OrionActionType[] = [
@@ -241,16 +231,6 @@ export function validateActionPermission(
     'delete_broadcast',
     'notify_all'
   ];
-
-  if (normRole === 'parent' || normRole === 'guardian') {
-    if (parentAllowedActions.includes(action)) {
-      return { allowed: true };
-    }
-    return {
-      allowed: false,
-      reason: `🔒 Authorization Denied: Parent accounts can inspect their verified linked child overview, timetable, and notices, or search study topics. Action "${action}" requires school Staff or Administrator credentials.`
-    };
-  }
 
   if (!isStaff) {
     if (studentAllowedActions.includes(action)) {
@@ -1990,7 +1970,24 @@ export async function executeGenerateAcademicReport(
  * 21. Linked Child Overview Tool for Parents (strict OTP-link isolation)
  */
 export async function executeGetChildOverview(
-  actionObj: OrionAction,
+  _actionObj: OrionAction,
+  _user: OrionUserContext
+): Promise<OrionExecutionResult> {
+  return {
+    success: false,
+    action: 'get_child_overview',
+    message: 'Authorization denied: Orion Academic Agent is unavailable for Parent and Guardian accounts.',
+    summaryText: 'Authorization denied: Orion Academic Agent is unavailable for Parent and Guardian accounts.',
+    error: 'FORBIDDEN_PARENT_ROLE'
+  };
+}
+
+function _unusedPlaceholderCheck() {
+  return null;
+}
+
+export async function _legacyChildOverviewDisabled(
+  _actionObj: OrionAction,
   user: OrionUserContext
 ): Promise<OrionExecutionResult> {
   const linkedStudents = Array.isArray(user.linkedStudents) ? user.linkedStudents : [];
@@ -2006,10 +2003,9 @@ export async function executeGetChildOverview(
     return {
       success: false,
       action: 'get_child_overview',
-      message: 'No linked child records available on this session.',
-      summaryText:
-        '🔒 **Parent Account Isolation:** No verified linked ward was found for this session. Please complete OTP linking in the **Parental Portal** before requesting child attendance or homework records.',
-      error: 'NO_LINKED_CHILDREN'
+      message: 'Forbidden.',
+      summaryText: 'Orion Academic Agent is unavailable for Parent and Guardian accounts.',
+      error: 'FORBIDDEN_PARENT_ROLE'
     };
   }
 

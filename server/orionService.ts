@@ -8,7 +8,7 @@
  * - Zero database or disk persistence of Orion chat history (strictly ephemeral)
  */
 
-import express from 'express';
+import type express from 'express';
 import {
   generateAICompletionWithTelemetry,
   getGroqApiKey,
@@ -197,21 +197,10 @@ const DESTRUCTIVE_ACTION_SET = new Set<OrionServerActionType>([
   'delete_item',
 ]);
 
-const PARENT_ALLOWED = new Set<OrionServerActionType>([
-  'get_child_overview',
-  'get_notifications',
-  'get_calendar',
-  'navigate_tab',
-  'general_chat',
-  'add_study_planner',
-  'create_study_plan',
-  'create_note',
-  'add_task',
-  'complete_task',
-  'delete_task',
-  'web_search',
-  'search_internet',
-]);
+export function isParentOrGuardianOrionRole(role?: string): boolean {
+  const norm = String(role || '').toLowerCase().trim();
+  return norm === 'parent' || norm === 'guardian';
+}
 
 const STUDENT_ALLOWED = new Set<OrionServerActionType>([
   'register_competition',
@@ -244,6 +233,14 @@ export function validateOrionRolePermission(
   role: string
 ): { allowed: boolean; reason?: string } {
   const normRole = (role || 'student').toLowerCase().trim();
+
+  if (isParentOrGuardianOrionRole(normRole)) {
+    return {
+      allowed: false,
+      reason: 'Authorization denied: Orion Academic Agent is restricted to students, faculty, coordinators, and administrators.',
+    };
+  }
+
   const isAdmin = normRole === 'super_admin' || normRole === 'admin';
   const isCoordinator = normRole === 'coordinator' || normRole === 'hod' || isAdmin;
   const isStaff =
@@ -252,14 +249,6 @@ export function validateOrionRolePermission(
     normRole === 'head_teacher' ||
     isCoordinator ||
     isAdmin;
-
-  if (normRole === 'parent' || normRole === 'guardian') {
-    if (PARENT_ALLOWED.has(action)) return { allowed: true };
-    return {
-      allowed: false,
-      reason: `Authorization denied: Parent accounts cannot run "${action}". Parent accounts can inspect their verified linked ward overview, notices, calendar, and study tools.`,
-    };
-  }
 
   if (!isStaff) {
     if (STUDENT_ALLOWED.has(action)) return { allowed: true };
@@ -277,6 +266,260 @@ export function validateOrionRolePermission(
   }
 
   return { allowed: true };
+}
+
+export type OrionTaskLifecycleState =
+  | 'queued'
+  | 'planning'
+  | 'awaiting_confirmation'
+  | 'running'
+  | 'validating'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface OrionCompletionReport {
+  taskId: string;
+  generatedAt: string;
+  actorRole: string;
+  command: string;
+  status: string;
+  verified: boolean;
+  providerUsed?: string;
+  modelUsed?: string;
+  durationMs: number;
+  stages: any[];
+  steps: any[];
+  summary: string;
+  markdown: string;
+}
+
+export interface OrionTaskRecord {
+  taskId: string;
+  actorUserId: string;
+  actorRole: string;
+  command: string;
+  actionPlan?: OrionActionStep[];
+  confirmed: boolean;
+  activeTab: string;
+  modelOverride?: string;
+  history: { role: 'user' | 'assistant'; content: string }[];
+  idempotencyKey?: string;
+  status: OrionTaskLifecycleState;
+  createdAt: number;
+  updatedAt: number;
+  finishedAt?: number;
+  lastResponse?: Record<string, any>;
+  report?: OrionCompletionReport;
+}
+
+const MAX_EPHEMERAL_TASKS = 200;
+const orionTaskStore = new Map<string, OrionTaskRecord>();
+const orionAbortRegistry = new Map<string, AbortController>();
+const orionIdempotencyIndex = new Map<string, string>();
+
+function storeEphemeralOrionTask(record: OrionTaskRecord) {
+  if (!orionTaskStore.has(record.taskId) && orionTaskStore.size >= MAX_EPHEMERAL_TASKS) {
+    const oldestKey = orionTaskStore.keys().next().value;
+    if (oldestKey) {
+      orionTaskStore.delete(oldestKey);
+      orionAbortRegistry.delete(oldestKey);
+    }
+  }
+  orionTaskStore.set(record.taskId, record);
+}
+
+export function buildOrionCompletionReport(params: {
+  taskId: string;
+  actorRole: string;
+  command: string;
+  status: string;
+  verified: boolean;
+  providerUsed?: string;
+  modelUsed?: string;
+  startedAt: number;
+  finishedAt: number;
+  stages: any[];
+  steps: any[];
+  summary: string;
+}): OrionCompletionReport {
+  const generatedAt = new Date(params.finishedAt).toISOString();
+  const durationMs = Math.max(1, params.finishedAt - params.startedAt);
+  const stageLines = params.stages
+    .map((s) => `- **${s.label}** (${s.status}${s.durationMs !== undefined ? `, ${s.durationMs}ms` : ''})${s.detail ? `: ${s.detail}` : ''}`)
+    .join('\n');
+  const stepLines = params.steps
+    .map((st, idx) => `${idx + 1}. **${st.label}** [\`${st.status}\`]${st.verificationNote ? ` — ${st.verificationNote}` : ''}${st.recordId ? ` (ID: \`${st.recordId}\`)` : ''}`)
+    .join('\n');
+
+  const markdown = [
+    `# Orion Task Completion Report`,
+    `- **Task ID:** \`${params.taskId}\``,
+    `- **Role Scope:** ${params.actorRole}`,
+    `- **Status:** ${params.status}${params.verified ? ' (Verified)' : ''}`,
+    `- **Generated:** ${generatedAt}`,
+    `- **Duration:** ${durationMs}ms`,
+    params.providerUsed ? `- **AI Provider / Model:** ${params.providerUsed}${params.modelUsed ? ` / ${params.modelUsed}` : ''}` : '',
+    `\n## Instruction\n${params.command}`,
+    stageLines ? `\n## Lifecycle Stages\n${stageLines}` : '',
+    stepLines ? `\n## Executed Steps\n${stepLines}` : '',
+    `\n## Outcome Summary\n${params.summary}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return {
+    taskId: params.taskId,
+    generatedAt,
+    actorRole: params.actorRole,
+    command: params.command,
+    status: params.status,
+    verified: params.verified,
+    providerUsed: params.providerUsed,
+    modelUsed: params.modelUsed,
+    durationMs,
+    stages: params.stages,
+    steps: params.steps,
+    summary: params.summary,
+    markdown,
+  };
+}
+
+export function listOrionTasksForActor(actor: VerifiedOrionActor): { httpStatus: number; body: Record<string, any> } {
+  if (isParentOrGuardianOrionRole(actor.role)) {
+    return {
+      httpStatus: 403,
+      body: {
+        success: false,
+        status: 'forbidden',
+        error: 'Forbidden: Orion Academic Agent is unavailable for Parent and Guardian accounts.',
+      },
+    };
+  }
+  const tasks = Array.from(orionTaskStore.values())
+    .filter((t) => t.actorUserId === actor.userId)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 25)
+    .map((t) => ({
+      taskId: t.taskId,
+      command: t.command,
+      status: t.status,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
+      finishedAt: t.finishedAt,
+      report: t.report,
+    }));
+  return { httpStatus: 200, body: { success: true, tasks } };
+}
+
+export function getOrionTaskForActor(taskId: string, actor: VerifiedOrionActor): { httpStatus: number; body: Record<string, any> } {
+  if (isParentOrGuardianOrionRole(actor.role)) {
+    return {
+      httpStatus: 403,
+      body: {
+        success: false,
+        status: 'forbidden',
+        error: 'Forbidden: Orion Academic Agent is unavailable for Parent and Guardian accounts.',
+      },
+    };
+  }
+  const task = orionTaskStore.get(String(taskId || '').trim());
+  if (!task) {
+    return { httpStatus: 404, body: { success: false, error: 'Orion task not found.' } };
+  }
+  if (task.actorUserId !== actor.userId) {
+    return { httpStatus: 403, body: { success: false, status: 'forbidden', error: 'Forbidden: cannot access another user\'s Orion task.' } };
+  }
+  return {
+    httpStatus: 200,
+    body: {
+      success: true,
+      taskId: task.taskId,
+      status: task.status,
+      command: task.command,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+      finishedAt: task.finishedAt,
+      report: task.report,
+      snapshot: task.lastResponse?.snapshot,
+    },
+  };
+}
+
+export function cancelOrionTask(taskId: string, actor: VerifiedOrionActor): { httpStatus: number; body: Record<string, any> } {
+  if (isParentOrGuardianOrionRole(actor.role)) {
+    return {
+      httpStatus: 403,
+      body: {
+        success: false,
+        status: 'forbidden',
+        error: 'Forbidden: Orion Academic Agent is unavailable for Parent and Guardian accounts.',
+      },
+    };
+  }
+  const cleanId = String(taskId || '').trim();
+  const task = orionTaskStore.get(cleanId);
+  if (!task) {
+    return { httpStatus: 404, body: { success: false, error: 'Orion task not found.' } };
+  }
+  if (task.actorUserId !== actor.userId) {
+    return { httpStatus: 403, body: { success: false, status: 'forbidden', error: 'Forbidden: cannot cancel another user\'s Orion task.' } };
+  }
+  const ctrl = orionAbortRegistry.get(cleanId);
+  if (ctrl && !ctrl.signal.aborted) {
+    ctrl.abort();
+  }
+  const now = Date.now();
+  if (task.status !== 'completed' && task.status !== 'failed') {
+    task.status = 'cancelled';
+    task.updatedAt = now;
+    task.finishedAt = now;
+  }
+  return {
+    httpStatus: 200,
+    body: {
+      success: true,
+      taskId: task.taskId,
+      status: task.status,
+      message: 'Orion task cancelled.',
+    },
+  };
+}
+
+export async function retryOrionTask(
+  taskId: string,
+  actor: VerifiedOrionActor,
+  cfg: SupabaseCfg,
+  dispatchPushFn?: (payload: any) => Promise<any>
+): Promise<{ httpStatus: number; body: Record<string, any> }> {
+  if (isParentOrGuardianOrionRole(actor.role)) {
+    return {
+      httpStatus: 403,
+      body: {
+        success: false,
+        status: 'forbidden',
+        error: 'Forbidden: Orion Academic Agent is unavailable for Parent and Guardian accounts.',
+      },
+    };
+  }
+  const task = orionTaskStore.get(String(taskId || '').trim());
+  if (!task) {
+    return { httpStatus: 404, body: { success: false, error: 'Orion task not found.' } };
+  }
+  if (task.actorUserId !== actor.userId) {
+    return { httpStatus: 403, body: { success: false, status: 'forbidden', error: 'Forbidden: cannot retry another user\'s Orion task.' } };
+  }
+  return executeOrionServerRequest({
+    cfg,
+    actor,
+    command: task.command,
+    actionPlan: task.actionPlan,
+    confirmed: task.confirmed,
+    activeTab: task.activeTab,
+    modelOverride: task.modelOverride,
+    history: task.history,
+    dispatchPushFn,
+  });
 }
 
 /**
@@ -671,11 +914,40 @@ export async function executeOrionServerRequest(params: {
   modelOverride?: string;
   history?: { role: 'user' | 'assistant'; content: string }[];
   dispatchPushFn?: (payload: any) => Promise<any>;
+  taskId?: string;
+  idempotencyKey?: string;
+  signal?: AbortSignal;
 }): Promise<{ httpStatus: number; body: Record<string, any> }> {
-  const { cfg, actor, command, actionPlan, confirmed = false, activeTab = 'dashboard', modelOverride, history = [], dispatchPushFn } = params;
+  const {
+    cfg,
+    actor,
+    command,
+    actionPlan,
+    confirmed = false,
+    activeTab = 'dashboard',
+    modelOverride,
+    history = [],
+    dispatchPushFn,
+    idempotencyKey,
+    signal,
+  } = params;
   const startedAt = Date.now();
   const cmdTrimmed = String(command || '').trim();
   const cmdLower = cmdTrimmed.toLowerCase();
+
+  // MANDATORY STRICT PARENT / GUARDIAN EXCLUSION (HTTP 403 Forbidden)
+  if (isParentOrGuardianOrionRole(actor.role)) {
+    const reason = 'Forbidden: Orion Academic Agent is unavailable for Parent and Guardian accounts.';
+    return {
+      httpStatus: 403,
+      body: {
+        success: false,
+        status: 'forbidden',
+        error: reason,
+        finalResponse: reason,
+      },
+    };
+  }
 
   if (!cmdTrimmed) {
     return {
@@ -687,6 +959,107 @@ export async function executeOrionServerRequest(params: {
       },
     };
   }
+
+  const cleanIdempotency = typeof idempotencyKey === 'string' ? idempotencyKey.trim() : '';
+  if (cleanIdempotency) {
+    const existingId = orionIdempotencyIndex.get(`${actor.userId}:${cleanIdempotency}`);
+    if (existingId) {
+      const existingTask = orionTaskStore.get(existingId);
+      if (existingTask && existingTask.actorUserId === actor.userId && existingTask.lastResponse) {
+        return {
+          httpStatus: 200,
+          body: {
+            ...existingTask.lastResponse,
+            deduplicated: true,
+          },
+        };
+      }
+    }
+  }
+
+  const taskId = (typeof params.taskId === 'string' && params.taskId.trim())
+    ? params.taskId.trim()
+    : `orion_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  const taskController = new AbortController();
+  orionAbortRegistry.set(taskId, taskController);
+  if (signal) {
+    if (signal.aborted) taskController.abort();
+    else signal.addEventListener('abort', () => taskController.abort(), { once: true });
+  }
+
+  const taskRecord: OrionTaskRecord = {
+    taskId,
+    actorUserId: actor.userId,
+    actorRole: actor.role,
+    command: cmdTrimmed,
+    actionPlan,
+    confirmed,
+    activeTab,
+    modelOverride,
+    history: history.slice(-6),
+    idempotencyKey: cleanIdempotency || undefined,
+    status: 'queued',
+    createdAt: startedAt,
+    updatedAt: startedAt,
+  };
+  storeEphemeralOrionTask(taskRecord);
+  if (cleanIdempotency) {
+    orionIdempotencyIndex.set(`${actor.userId}:${cleanIdempotency}`, taskId);
+  }
+
+  const buildCancelledResult = (stages: any[], plannedSteps: OrionActionStep[], stepResults: any[] = []) => {
+    const now = Date.now();
+    taskRecord.status = 'cancelled';
+    taskRecord.updatedAt = now;
+    taskRecord.finishedAt = now;
+    const summary = 'Orion task cancelled by user.';
+    const snapshot = {
+      phase: 'cancelled',
+      headline: 'Task cancelled.',
+      stages,
+      steps: stepResults.length > 0
+        ? stepResults
+        : plannedSteps.map((s, idx) => ({
+            id: `step-${idx + 1}`,
+            label: s.action.replace(/_/g, ' '),
+            action: s.action,
+            status: 'blocked',
+            detail: 'Cancelled before completion',
+          })),
+      startedAt,
+      finishedAt: now,
+      verified: false,
+    };
+    const report = buildOrionCompletionReport({
+      taskId,
+      actorRole: actor.role,
+      command: cmdTrimmed,
+      status: 'cancelled',
+      verified: false,
+      startedAt,
+      finishedAt: now,
+      stages,
+      steps: snapshot.steps,
+      summary,
+    });
+    taskRecord.report = report;
+    const body = {
+      success: false,
+      status: 'cancelled',
+      taskId,
+      plan: plannedSteps,
+      results: stepResults,
+      finalResponse: summary,
+      report,
+      snapshot,
+    };
+    taskRecord.lastResponse = body;
+    return { httpStatus: 200, body };
+  };
+
+  taskRecord.status = 'planning';
+  taskRecord.updatedAt = Date.now();
 
   // Stage 1: Analyze & Plan
   let plannedSteps: OrionActionStep[] = Array.isArray(actionPlan) && actionPlan.length > 0 ? actionPlan : [];
@@ -923,47 +1296,62 @@ Respond strictly in valid JSON with this exact schema:
       : `Review the planned details for "${targetTitle}" and confirm to execute.`;
 
     stages.push({
-      phase: 'executing',
-      label: 'Executing action',
-      status: 'completed',
+      phase: 'awaiting_confirmation',
+      label: 'Awaiting user confirmation',
+      status: 'active',
       detail: 'Awaiting explicit confirmation',
     });
 
-    return {
-      httpStatus: 200,
-      body: {
-        success: true,
-        status: 'awaiting_confirmation',
-        pendingConfirmation: {
-          action: primary.action,
-          targetTitle,
-          promptText,
-          previewDetails,
-          actionObject: primary,
-          plannedSteps,
-        },
-        plan: plannedSteps,
-        finalResponse: `Confirmation required before making changes.\n\n- **Action:** ${primary.action.replace(/_/g, ' ')}\n- **Target:** ${targetTitle}\n- **Audience:** ${previewDetails.Audience}`,
-        providerUsed,
-        modelUsed,
-        snapshot: {
-          phase: 'awaiting_confirmation',
-          headline: 'Confirmation required before making changes.',
-          stages,
-          steps: plannedSteps.map((s, idx) => ({
-            id: `step-${idx + 1}`,
-            label: s.action.replace(/_/g, ' '),
-            action: s.action,
-            status: 'pending',
-            detail: 'Waiting for confirmation',
-          })),
-          startedAt,
-          finishedAt: Date.now(),
-          verified: false,
-        },
+    taskRecord.status = 'awaiting_confirmation';
+    taskRecord.updatedAt = Date.now();
+    taskRecord.actionPlan = plannedSteps;
+
+    const awaitBody = {
+      success: true,
+      status: 'awaiting_confirmation',
+      taskId,
+      pendingConfirmation: {
+        action: primary.action,
+        targetTitle,
+        promptText,
+        previewDetails,
+        actionObject: primary,
+        plannedSteps,
+      },
+      plan: plannedSteps,
+      finalResponse: `Confirmation required before making changes.\n\n- **Action:** ${primary.action.replace(/_/g, ' ')}\n- **Target:** ${targetTitle}\n- **Audience:** ${previewDetails.Audience}`,
+      providerUsed,
+      modelUsed,
+      snapshot: {
+        phase: 'awaiting_confirmation',
+        headline: 'Confirmation required before making changes.',
+        stages,
+        steps: plannedSteps.map((s, idx) => ({
+          id: `step-${idx + 1}`,
+          label: s.action.replace(/_/g, ' '),
+          action: s.action,
+          status: 'pending',
+          detail: 'Waiting for confirmation',
+        })),
+        startedAt,
+        finishedAt: Date.now(),
+        verified: false,
       },
     };
+    taskRecord.lastResponse = awaitBody;
+    return {
+      httpStatus: 200,
+      body: awaitBody,
+    };
   }
+
+  if (taskController.signal.aborted) {
+    return buildCancelledResult(stages, plannedSteps);
+  }
+
+  taskRecord.status = 'running';
+  taskRecord.updatedAt = Date.now();
+  taskRecord.actionPlan = plannedSteps;
 
   // Stage 5: Real Execution & Read-Back Verification
   const execStart = Date.now();
@@ -978,6 +1366,9 @@ Respond strictly in valid JSON with this exact schema:
   let allVerified = true;
 
   for (let i = 0; i < plannedSteps.length; i++) {
+    if (taskController.signal.aborted) {
+      return buildCancelledResult(stages, plannedSteps, stepResults);
+    }
     const act = plannedSteps[i];
     const stepLog: any = {
       id: `step-${i + 1}`,
@@ -1200,30 +1591,11 @@ Respond strictly in valid JSON with this exact schema:
                 .join(', ')}.`
         );
       } else if (act.action === 'get_child_overview') {
-        const linksRes = await fetchJsonSafe(
-          `${cfg.url}/rest/v1/parent_student_links?parent_uid=eq.${encodeURIComponent(actor.userId)}&status=eq.verified&select=student_uid`,
-          { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
-        );
-        const childIds = Array.isArray(linksRes.data)
-          ? linksRes.data.map((r: any) => String(r.student_uid)).filter(Boolean)
-          : [];
-        if (childIds.length === 0) {
-          stepLog.status = 'failed';
-          stepLog.verificationNote = 'NO_LINKED_CHILDREN';
-          allSucceeded = false;
-          allVerified = false;
-          summaryParts.push('No verified linked child was found on your Parent account. Please open Parental Portal to link your child via OTP verification first.');
-        } else {
-          const attRes = await fetchJsonSafe(
-            `${cfg.url}/rest/v1/attendance?user_id=in.(${childIds.map(encodeURIComponent).join(',')})&select=user_id,status,date&order=date.desc&limit=20`,
-            { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
-          );
-          const attRows: any[] = attRes.ok && Array.isArray(attRes.data) ? attRes.data : [];
-          const presentCount = attRows.filter((a) => String(a.status).toLowerCase() === 'present').length;
-          stepLog.status = 'verified';
-          stepLog.verificationNote = `Verified data strictly for ${childIds.length} linked ward(s)`;
-          summaryParts.push(`Verified overview for **${childIds.length} linked ward${childIds.length > 1 ? 's' : ''}**: ${presentCount}/${attRows.length} recent attendance days marked Present.`);
-        }
+        allSucceeded = false;
+        allVerified = false;
+        stepLog.status = 'failed';
+        stepLog.verificationNote = 'FORBIDDEN_PARENT_ORION_ACTION';
+        summaryParts.push('Authorization denied: Parent and Guardian features are disabled in Orion Academic Agent.');
       } else if (act.action === 'create_broadcast' || act.action === 'create_notice') {
         const title = (act.title || act.targetValue || 'School Notice').trim().slice(0, 140);
         const bodyText = (act.content || act.message || title).trim();
@@ -1544,10 +1916,17 @@ Respond strictly in valid JSON with this exact schema:
     stepResults.push(stepLog);
   }
 
+  if (taskController.signal.aborted) {
+    return buildCancelledResult(stages, plannedSteps, stepResults);
+  }
+
+  taskRecord.status = 'validating';
+  taskRecord.updatedAt = Date.now();
+
   const execDurationMs = Math.max(1, Date.now() - execStart);
   stages.push({
-    phase: 'executing',
-    label: 'Executing action',
+    phase: 'running',
+    label: 'Running action',
     status: allSucceeded ? 'completed' : 'failed',
     durationMs: execDurationMs,
   });
@@ -1555,44 +1934,71 @@ Respond strictly in valid JSON with this exact schema:
   const needsVerifyStage = plannedSteps.some((s) => s.action !== 'general_chat' && s.action !== 'navigate_tab');
   if (needsVerifyStage) {
     stages.push({
-      phase: 'verifying',
-      label: 'Verifying outcome',
+      phase: 'validating',
+      label: 'Validating outcome',
       status: allVerified ? 'completed' : 'failed',
       durationMs: 1,
       detail: allVerified ? 'All outcomes verified' : 'One or more steps reported issues',
     });
   }
 
+  const finishedAt = Date.now();
   const finalResponse = summaryParts.filter(Boolean).join('\n\n') || 'Task processed.';
   const finalPhase = !allSucceeded || !allVerified ? 'failed' : 'completed';
 
+  const report = buildOrionCompletionReport({
+    taskId,
+    actorRole: actor.role,
+    command: cmdTrimmed,
+    status: finalPhase,
+    verified: allVerified,
+    providerUsed,
+    modelUsed,
+    startedAt,
+    finishedAt,
+    stages,
+    steps: stepResults,
+    summary: finalResponse,
+  });
+
+  const finalBody = {
+    success: allSucceeded && allVerified,
+    status: finalPhase,
+    taskId,
+    plan: plannedSteps,
+    results: stepResults,
+    structuredData,
+    webSources,
+    webVideos,
+    clientBridgeActions,
+    refreshTables: Array.from(refreshTables),
+    finalResponse,
+    providerUsed,
+    modelUsed,
+    report,
+    snapshot: {
+      phase: finalPhase,
+      headline:
+        finalPhase === 'completed'
+          ? 'Completed and verified.'
+          : 'Execution finished with warnings or errors.',
+      stages,
+      steps: stepResults,
+      startedAt,
+      finishedAt,
+      verified: allVerified,
+    },
+  };
+
+  taskRecord.status = finalPhase;
+  taskRecord.updatedAt = finishedAt;
+  taskRecord.finishedAt = finishedAt;
+  taskRecord.report = report;
+  taskRecord.lastResponse = finalBody;
+  orionAbortRegistry.delete(taskId);
+
   return {
     httpStatus: 200,
-    body: {
-      success: allSucceeded && allVerified,
-      status: finalPhase,
-      plan: plannedSteps,
-      results: stepResults,
-      structuredData,
-      webSources,
-      webVideos,
-      clientBridgeActions,
-      refreshTables: Array.from(refreshTables),
-      finalResponse,
-      providerUsed,
-      modelUsed,
-      snapshot: {
-        phase: finalPhase,
-        headline:
-          finalPhase === 'completed'
-            ? 'Completed and verified.'
-            : 'Execution finished with warnings or errors.',
-        stages,
-        steps: stepResults,
-        startedAt,
-        finishedAt: Date.now(),
-        verified: allVerified,
-      },
-    },
+    body: finalBody,
   };
 }

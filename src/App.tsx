@@ -84,6 +84,7 @@ import SimpleResourceManager from './components/SimpleResourceManager';
 import { BlogsPortal } from './components/BlogsPortal';
 import { APP_VERSION } from './config/version';
 import { AssignmentCenter } from './components/AssignmentCenter';
+import { MaterialIntelligencePanel } from './components/materials/MaterialIntelligencePanel';
 import StudentMarksCenter from './components/StudentMarksCenter';
 import CoordinatorModule from './components/CoordinatorModule';
 import { SportsActivitiesPortal } from './components/SportsActivitiesPortal';
@@ -1631,6 +1632,9 @@ export default function App() {
     setAiActiveModelLabel('');
     setAiGroundedInData(false);
     setSelectedTopicForTutor(null);
+    setIsJarvisActive(false);
+    setIsByteOrionModalOpen(false);
+    setOrionInitialQuery('');
     clearByteContextCache();
     clearStudentOSContextCache();
     purgeLegacyUnscopedAiStorage();
@@ -1651,6 +1655,14 @@ export default function App() {
       }
     }
   }, [currentUser?.uid]);
+
+  useEffect(() => {
+    const normRole = String(effectiveRole || currentUser?.role || '').toLowerCase().trim();
+    if (normRole === 'parent' || normRole === 'guardian') {
+      setIsJarvisActive(false);
+      setByteOrionModalMode('byte');
+    }
+  }, [effectiveRole, currentUser?.role]);
 
   // AI Quota & Limits State
   const [aiUsageState, setAiUsageState] = useState<AIUsageState>(() => 
@@ -8605,8 +8617,8 @@ CRITICAL WEB GROUNDING DIRECTIVE:
 
                 return (
                   <>
-                    {/* ORION COPILOT BUTTON — GLOBAL FOR ALL ROLES */}
-                    {matchesFilter('Orion AI Copilot Assistant', 'orion ai copilot voice assistant 3d') && (
+                    {/* ORION COPILOT BUTTON — STRICTLY EXCLUDED FOR PARENT/GUARDIAN */}
+                    {(effectiveRole as string) !== 'parent' && (effectiveRole as string) !== 'guardian' && matchesFilter('Orion AI Copilot Assistant', 'orion ai copilot voice assistant 3d') && (
                       <div className="pb-1.5">
                         <button
                           type="button"
@@ -9510,21 +9522,23 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                       </div>
                     </div>
 
-                    <div 
-                      onClick={() => {
-                        setOrionInitialQuery('');
-                        setIsJarvisActive(true);
-                      }}
-                      className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-cyan-500/50 flex flex-col items-center justify-center text-center gap-4 relative overflow-hidden h-full"
-                    >
-                      <div className="w-16 h-16 sm:w-20 sm:h-20 bg-cyan-500/10 text-cyan-400 flex items-center justify-center rounded-2xl border border-cyan-500/20 group-hover:scale-105 transition-transform relative z-10">
-                        <VeylentraIcon name="orion" size="xl" />
+                    {effectiveRole !== 'parent' && (effectiveRole as string) !== 'guardian' && (
+                      <div 
+                        onClick={() => {
+                          setOrionInitialQuery('');
+                          setIsJarvisActive(true);
+                        }}
+                        className="group cursor-pointer bg-slate-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-5 sm:p-8 hover:bg-slate-800 transition-all hover:border-cyan-500/50 flex flex-col items-center justify-center text-center gap-4 relative overflow-hidden h-full"
+                      >
+                        <div className="w-16 h-16 sm:w-20 sm:h-20 bg-cyan-500/10 text-cyan-400 flex items-center justify-center rounded-2xl border border-cyan-500/20 group-hover:scale-105 transition-transform relative z-10">
+                          <VeylentraIcon name="orion" size="xl" />
+                        </div>
+                        <div className="relative z-10">
+                          <h3 className="text-lg sm:text-xl font-black text-white tracking-tight mb-2 uppercase">Orion Copilot</h3>
+                          <p className="text-xs text-slate-500 max-w-[200px] mx-auto leading-relaxed">Activate the voice-command smart classroom AI assistant.</p>
+                        </div>
                       </div>
-                      <div className="relative z-10">
-                        <h3 className="text-lg sm:text-xl font-black text-white tracking-tight mb-2 uppercase">Orion Copilot</h3>
-                        <p className="text-xs text-slate-500 max-w-[200px] mx-auto leading-relaxed">Activate the voice-command smart classroom AI assistant.</p>
-                      </div>
-                    </div>
+                    )}
 
                     <div 
                       onClick={() => handleTabSelect('notes')}
@@ -11637,9 +11651,14 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                     ))}
                   </div>
 
-                  {['teacher', 'coordinator', 'admin', 'super_admin'].includes(effectiveRole || '') && (
+                  {(effectiveRole as string) !== 'parent' && (effectiveRole as string) !== 'guardian' && (
                     <div className="pt-2">
-                      <AssignmentCenter />
+                      <AssignmentCenter
+                        currentUser={currentUser}
+                        effectiveRole={effectiveRole}
+                        notes={vaultNotes}
+                        homeworkList={homeworkList}
+                      />
                     </div>
                   )}
                 </motion.div>
@@ -12256,6 +12275,16 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                       </div>
                     </div>
                   </div>
+
+                  <MaterialIntelligencePanel
+                    currentUser={currentUser}
+                    effectiveRole={effectiveRole || 'student'}
+                    materials={materials}
+                    onSelectMaterial={(mat) => {
+                      setPreviewMaterial(mat);
+                      incrementViewsMaterial(mat);
+                    }}
+                  />
 
                   {/* Main Grid Content Area */}
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -14308,7 +14337,11 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
                         }
                   }
                   onNavigateToTab={handleTabSelect}
-                  onTriggerOrionAction={() => setIsJarvisActive(true)}
+                  onTriggerOrionAction={() => {
+                    if (effectiveRole !== 'parent' && (effectiveRole as string) !== 'guardian') {
+                      setIsJarvisActive(true);
+                    }
+                  }}
                 />
               )}
 
@@ -14477,8 +14510,8 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
               </nav>
             )}
 
-            {/* Orion (Jarvis) Drawer Overlay */}
-            {isJarvisActive && (
+            {/* Orion (Jarvis) Drawer Overlay — Strictly blocked for Parent/Guardian */}
+            {isJarvisActive && effectiveRole !== 'parent' && (effectiveRole as string) !== 'guardian' && (
               <>
                 {/* Backdrop */}
                 <div 
@@ -14981,7 +15014,8 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
           dueCardsCount={dueCardsCount}
           onNavigateTab={handleTabSelect}
           onOpenByteOrionModal={(mode) => {
-            setByteOrionModalMode(mode || 'select');
+            const isPar = effectiveRole === 'parent' || (effectiveRole as string) === 'guardian';
+            setByteOrionModalMode(isPar ? 'byte' : (mode || 'select'));
             setIsByteOrionModalOpen(true);
           }}
         />
@@ -14992,11 +15026,12 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
         <ByteOrionAssistantModal
           isOpen={isByteOrionModalOpen}
           onClose={() => setIsByteOrionModalOpen(false)}
-          initialMode={byteOrionModalMode}
+          initialMode={effectiveRole === 'parent' || (effectiveRole as string) === 'guardian' ? 'byte' : byteOrionModalMode}
           currentUser={currentUser}
           effectiveRole={effectiveRole}
           onNavigateTab={handleTabSelect}
           onOpenOrionFull={(query) => {
+            if (effectiveRole === 'parent' || (effectiveRole as string) === 'guardian') return;
             setOrionInitialQuery(query || '');
             setIsJarvisActive(true);
           }}
