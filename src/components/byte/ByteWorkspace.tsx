@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Byte AI Workspace — Complete Architectural Studio Redesign
+ * Byte AI Workspace â€” Complete Architectural Studio Redesign
  * - Collapsible desktop left session rail (with long-press context menu hooks preserved) + mobile drawer
  * - Clean 3-zone header + Preferences popover (Persona, Learning Mode, Deep Reasoning, Web Grounding, Super Admin Z.ai Provider selector)
  * - Editorial max-w-3xl dialogue stream with streaming-safe AcademicRichRenderer, inline Error + Retry, math widgets & flashcards
@@ -466,9 +466,9 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
       )}
 
       {/* Main Studio Column */}
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
         {/* Clean 3-Zone Top Header */}
-        <header className="flex h-12 max-h-12 shrink-0 items-center justify-between gap-2 overflow-hidden border-b border-white/10 bg-slate-950 px-3 flex-nowrap">
+        <header className="relative z-30 flex h-12 max-h-12 shrink-0 items-center justify-between gap-2 overflow-visible border-b border-white/10 bg-slate-950 px-3 flex-nowrap">
           {/* Zone 1: Identity & Rail Toggle */}
           <div className="flex items-center gap-2.5 min-w-0">
             <button
@@ -500,7 +500,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
               </div>
               <p className="text-[11px] text-slate-400 truncate flex items-center gap-1.5">
                 <span>{BYTE_STATE_LABELS[assistantState]}</span>
-                <span aria-hidden="true">·</span>
+                <span aria-hidden="true">Â·</span>
                 <span className="truncate">{activePersonaObj?.name}</span>
               </p>
             </div>
@@ -534,7 +534,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                     animate={reduced ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
                     exit={reduced ? { opacity: 0 } : { opacity: 0, y: 4, scale: 0.98 }}
                     transition={{ duration: reduced ? 0 : 0.16, ease: MOTION_EASE.easeOutExpo }}
-                    className="absolute right-0 mt-2 w-80 max-w-[90vw] rounded-2xl border border-white/15 bg-slate-950/98 shadow-2xl p-4 z-40 space-y-4 backdrop-blur-xl"
+                    className="absolute right-0 top-12 mt-1 w-80 max-w-[92vw] max-h-[70dvh] overflow-y-auto rounded-2xl border border-white/15 bg-slate-950 shadow-2xl p-4 z-50 space-y-4"
                   >
                     <div className="flex gap-2">
                       <button type="button" onClick={() => { setShowTeachTopicBar((v) => !v); setShowPrefsPopover(false); }} className="flex-1 px-2 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white">Teach</button>
@@ -715,15 +715,15 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
           <div className="max-w-3xl mx-auto flex items-center justify-between gap-3 text-[11px] text-slate-400 flex-wrap">
             <div className="flex items-center gap-2 min-w-0 flex-wrap">
               <span>Mode: {activeModeObj.label}</span>
-              <span aria-hidden="true">·</span>
+              <span aria-hidden="true">Â·</span>
               <span>Reasoning: {aiReasoningMode ? 'Deep' : 'Standard'}</span>
-              <span aria-hidden="true">·</span>
+              <span aria-hidden="true">Â·</span>
               <span>
                 Web: {aiWebSearchMode === 'force' ? 'Always' : aiWebSearchMode === 'off' ? 'Off' : 'Auto'}
               </span>
               {isSuperAdmin && (
                 <>
-                  <span aria-hidden="true">·</span>
+                  <span aria-hidden="true">Â·</span>
                   <span className="text-indigo-300">
                     Router: {PROVIDER_DISPLAY[aiModelOverride || 'auto'] || aiModelOverride}
                   </span>
@@ -803,7 +803,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                     <span className="inline-flex items-center gap-1 text-emerald-300">
                       <ShieldCheck className="w-3.5 h-3.5" /> {roleProfile.displayLabel} Scope
                     </span>
-                    <span aria-hidden="true">·</span>
+                    <span aria-hidden="true">Â·</span>
                     <span>LaTeX Math &amp; Chemistry Ready</span>
                   </div>
                 </div>
@@ -928,13 +928,13 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                       )}
                       {isLatestAssistant && aiGroundedInData && (
                         <>
-                          {m.webSearchUsed && <span aria-hidden="true">·</span>}
+                          {m.webSearchUsed && <span aria-hidden="true">Â·</span>}
                           <span className="text-emerald-300">Veylentra Context</span>
                         </>
                       )}
                       {isLatestAssistant && aiActiveModelLabel && (
                         <>
-                          {(m.webSearchUsed || aiGroundedInData) && <span aria-hidden="true">·</span>}
+                          {(m.webSearchUsed || aiGroundedInData) && <span aria-hidden="true">Â·</span>}
                           <span>{aiActiveModelLabel.split('/').pop()}</span>
                         </>
                       )}
@@ -1022,7 +1022,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                               </div>
                               <div className="text-[11px] font-mono text-slate-400 truncate">
                                 {src.domain}
-                                {src.sourceType === 'academic' ? ' · Academic' : ''}
+                                {src.sourceType === 'academic' ? ' Â· Academic' : ''}
                               </div>
                             </div>
                           </a>
@@ -1150,8 +1150,8 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                     <span className="text-xs text-slate-400 truncate block">
                       {aiStatusMessage ||
                         (aiReasoningMode
-                          ? 'Synthesizing multi-step analysis…'
-                          : 'Processing request and Veylentra scope…')}
+                          ? 'Synthesizing multi-step analysisâ€¦'
+                          : 'Processing request and Veylentra scopeâ€¦')}
                     </span>
                   </div>
                 </div>
@@ -1169,7 +1169,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
         </div>
 
         {/* Ergonomic Docked Bottom Composer */}
-        <div className="shrink-0 border-t border-white/10 bg-slate-950/75 px-4 sm:px-6 py-3">
+        <div className="shrink-0 border-t border-white/10 bg-slate-950 px-4 sm:px-6 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <div className="max-w-3xl mx-auto w-full space-y-2">
             {attachedFiles && attachedFiles.length > 0 && (
               <div className="flex flex-wrap gap-2 p-2 bg-slate-900/80 rounded-xl border border-white/10 max-h-[88px] overflow-y-auto">
@@ -1255,10 +1255,10 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                 }}
                 placeholder={
                   aiUsageState.remaining <= 0
-                    ? 'Daily quota exhausted — boost to unlock more queries.'
+                    ? 'Daily quota exhausted â€” boost to unlock more queries.'
                     : attachedFiles && attachedFiles.length > 0
                       ? `Ask Byte about ${attachedFiles.map((f) => f.name).join(', ')}...`
-                      : `Ask Byte (${roleProfile.displayLabel} Assistant) — Shift+Enter for new line...`
+                      : `Ask Byte (${roleProfile.displayLabel} Assistant) â€” Shift+Enter for new line...`
                 }
                 disabled={aiLoading || aiUsageState.remaining <= 0}
                 className={`flex-1 bg-transparent px-2.5 py-2.5 text-sm leading-relaxed resize-none max-h-36 focus:outline-none text-white placeholder-slate-500 ${
