@@ -1,4 +1,3 @@
-import { extractApiErrorMessage, getServerAuthHeaders } from './clientSession';
 import { supabase } from './supabase';
 
 export interface SecurityStatus {
@@ -62,15 +61,14 @@ export async function getSecurityStatus(): Promise<SecurityStatus> {
 
 export async function lockWorkspace(params?: { userId?: string; userName?: string }): Promise<{ success: boolean; isLocked?: boolean; error?: string }> {
   try {
-    const headers = await getServerAuthHeaders();
     const res = await fetch('/api/security/lock', {
       method: 'POST',
-      headers,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params || {})
     });
     const data = await res.json();
     if (!res.ok || !data.success) {
-      return { success: false, error: extractApiErrorMessage(data, 'Failed to lock workspace') };
+      return { success: false, error: data.error || 'Failed to lock workspace' };
     }
     return { success: true, isLocked: true };
   } catch (err: any) {
@@ -90,7 +88,7 @@ export async function unlockWorkspace(pin: string): Promise<{ success: boolean; 
     if (!res.ok || !data.success) {
       return {
         success: false,
-        error: extractApiErrorMessage(data, 'Incorrect security PIN.'),
+        error: data.error || 'Incorrect security PIN.',
         isRateLimited: Boolean(data.isRateLimited),
         retryAfterSeconds: data.retryAfterSeconds || 0
       };
@@ -104,17 +102,16 @@ export async function unlockWorkspace(pin: string): Promise<{ success: boolean; 
 
 export async function setWorkspacePin(newPin: string, currentPin?: string, userId?: string): Promise<{ success: boolean; error?: string; isRateLimited?: boolean; retryAfterSeconds?: number }> {
   try {
-    const headers = await getServerAuthHeaders();
     const res = await fetch('/api/security/set-pin', {
       method: 'POST',
-      headers,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pin: newPin, currentPin, userId })
     });
     const data = await res.json();
     if (!res.ok || !data.success) {
       return {
         success: false,
-        error: extractApiErrorMessage(data, 'Failed to save security PIN.'),
+        error: data.error || 'Failed to save security PIN.',
         isRateLimited: Boolean(data.isRateLimited),
         retryAfterSeconds: data.retryAfterSeconds || 0
       };

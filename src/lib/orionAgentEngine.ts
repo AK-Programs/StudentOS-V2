@@ -1,5 +1,4 @@
 import { supabase } from './supabase';
-import { extractApiErrorMessage, getServerAuthHeaders } from './clientSession';
 import {
   OrionAction,
   OrionActionType,
@@ -10,13 +9,11 @@ import {
   executeOrionActionPipeline,
   isConsequentialAction,
   validateActionPermission,
-  validateOrionActionParameters,
 } from './orionActionExecutor';
 
 export type OrionProgressPhase =
   | 'analyzing'
   | 'planning'
-  | 'clarifying'
   | 'preparing'
   | 'executing'
   | 'verifying'
@@ -338,22 +335,9 @@ export async function runOrionAgentTask({
 
   const role = (userContext.userRole || userContext.role || 'student').toLowerCase().trim();
   const deniedSteps: { index: number; reason: string }[] = [];
-  const missingParamErrors: { index: number; prompt: string; missingFields: string[] }[] = [];
 
   for (let i = 0; i < safeActions.length; i++) {
     const act = safeActions[i];
-    const paramCheck = validateOrionActionParameters(act, rawCommand);
-    if (!paramCheck.valid && paramCheck.clarificationPrompt) {
-      steps[i].status = 'blocked';
-      steps[i].detail = `Missing: ${paramCheck.missingFields.join(', ')}`;
-      missingParamErrors.push({
-        index: i,
-        prompt: paramCheck.clarificationPrompt,
-        missingFields: paramCheck.missingFields,
-      });
-      continue;
-    }
-
     const perm = validateActionPermission(act.action, role);
     if (!perm.allowed) {
       steps[i].status = 'blocked';
@@ -373,28 +357,6 @@ export async function runOrionAgentTask({
         deniedSteps.push({ index: i, reason: msg });
       }
     }
-  }
-
-  if (missingParamErrors.length > 0) {
-    setStageStatus('preparing', 'failed', Math.max(1, Date.now() - prepStart), 'Needs clarification');
-    snapshot.phase = 'clarifying';
-    snapshot.headline = 'Additional details needed before executing.';
-    snapshot.finishedAt = Date.now();
-    snapshot.verified = false;
-    emit();
-
-    return {
-      results: missingParamErrors.map((m) => ({
-        success: false,
-        action: safeActions[m.index].action,
-        message: 'Needs clarification',
-        summaryText: m.prompt,
-        error: 'NEEDS_CLARIFICATION',
-      })),
-      combinedSummary: missingParamErrors[0].prompt,
-      structuredCards: [],
-      snapshot: cloneSnapshot(snapshot),
-    };
   }
 
   if (deniedSteps.length > 0) {
@@ -544,105 +506,5 @@ export async function runOrionAgentTask({
     structuredCards: pipelineRes.structuredCards,
     structuredData: pipelineRes.structuredData,
     snapshot: cloneSnapshot(snapshot),
-  };
-}
-
-export interface ServerOrionExecuteResponse {
-  success: boolean;
-  status: 'needs_clarification' | 'awaiting_confirmation' | 'completed' | 'forbidden' | 'unauthorized' | 'failed' | 'error';
-  clarificationQuestion?: string;
-  missingFields?: string[];
-  pendingConfirmation?: {
-    action: string;
-    targetTitle: string;
-    promptText: string;
-    previewDetails?: Record<string, string>;
-    actionObject?: OrionAction;
-    plannedSteps?: OrionAction[];
-  };
-  plan?: OrionAction[];
-  results?: any[];
-  structuredData?: StructuredOrionPayload;
-  webSources?: any[];
-  webVideos?: any[];
-  clientBridgeActions?: OrionAction[];
-  refreshTables?: string[];
-  finalResponse?: string;
-  providerUsed?: string;
-  modelUsed?: string;
-  snapshot?: OrionAgentProgressSnapshot;
-  error?: string | { code?: string; message?: string; requestId?: string };
-  message?: string;
-  requestId?: string;
-  deduplicated?: boolean;
-}
-
-export async function executeOrionViaServer(params: {
-  command: string;
-  actionPlan?: OrionAction[];
-  confirmed?: boolean;
-  activeTab?: string;
-  modelOverride?: string;
-  history?: { role: 'user' | 'assistant'; content: string }[];
-  userContext?: OrionUserContext;
-  idempotencyKey?: string;
-}): Promise<ServerOrionExecuteResponse> {
-  const headers = await getServerAuthHeaders();
-
-  const resp = await fetch('/api/orion/execute', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      command: params.command,
-      actionPlan: params.actionPlan,
-      confirmed: Boolean(params.confirmed),
-      activeTab: params.activeTab || 'dashboard',
-      modelOverride: params.modelOverride || undefined,
-      idempotencyKey: params.idempotencyKey || undefined,
-      history: (params.history || []).slice(-6),
-    }),
-  });
-
-  const contentType = String(resp.headers?.get?.('content-type') || '').toLowerCase();
-  const rawText = await resp.text().catch(() => '');
-  let payload: any = null;
-  if (rawText.trim()) {
-    try {
-      payload = JSON.parse(rawText);
-    } catch {
-      payload = null;
-    }
-  }
-
-  if (!payload || typeof payload !== 'object') {
-    const cleanText = rawText
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 220);
-    const kindHint = contentType.includes('html') ? 'HTML error page' : contentType || 'non-JSON response';
-    throw new Error(
-      cleanText
-        ? `Orion execution failed (HTTP ${resp.status}, ${kindHint}): ${cleanText}`
-        : `Orion execution failed (HTTP ${resp.status}, ${kindHint}).`
-    );
-  }
-
-  const reqId = typeof payload.requestId === 'string' && payload.requestId ? payload.requestId : undefined;
-  if (!resp.ok) {
-    const errMsg = extractApiErrorMessage(payload, `Orion execution failed with HTTP ${resp.status}.`);
-    // For structured policy/execution gates (401/403/failed JSON from backend), allow caller to render clear status + message,
-    // while throwing clear Errors carrying status/requestId for transport/provider failures (5xx).
-    if (resp.status >= 500 || (resp.status !== 401 && resp.status !== 403 && !payload.status)) {
-      const serverErr: any = new Error(reqId ? `${errMsg} (Ref: ${reqId})` : errMsg);
-      serverErr.status = resp.status;
-      serverErr.requestId = reqId;
-      throw serverErr;
-    }
-  }
-
-  return {
-    ...(payload as ServerOrionExecuteResponse),
-    requestId: reqId,
   };
 }

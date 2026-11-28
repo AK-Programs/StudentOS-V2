@@ -3,15 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Byte Assistant Visual State Indicator
- * - Grounded in VeylentraIcon geometric identity for ready/input/generating states
  * - Driven strictly by real assistant execution states
  * - GPU-composited transforms (transform, opacity) & full prefers-reduced-motion compliance
  */
 
 import React from 'react';
 import { motion } from 'motion/react';
-import { AlertCircle, Check, Cpu, Globe, PenLine } from 'lucide-react';
-import { VeylentraIcon } from '../ui/VeylentraIcon';
+import { Sparkles, Check, AlertCircle, Cpu, PenLine, Zap } from 'lucide-react';
 import { useReducedMotionPreference } from '../../lib/motionSystem';
 
 export type ByteAssistantState =
@@ -25,10 +23,10 @@ export type ByteAssistantState =
 
 export const BYTE_STATE_LABELS: Record<ByteAssistantState, string> = {
   ready: 'Ready',
-  receiving_input: 'Composing',
+  receiving_input: 'Listening / Composing',
   thinking: 'Analyzing Context',
   generating: 'Streaming Response',
-  operating: 'Verifying Sources',
+  operating: 'Verifying Sources & Data',
   finished: 'Response Complete',
   error: 'Attention Needed'
 };
@@ -43,11 +41,10 @@ export const ByteStatusAvatar: React.FC<ByteStatusAvatarProps> = ({ state, size 
 
   const dimensions =
     size === 'sm' ? 'w-8 h-8 rounded-xl' : size === 'lg' ? 'w-14 h-14 rounded-2xl' : 'w-10 h-10 rounded-xl';
-  const glyphSize = size === 'sm' ? 'w-4 h-4' : size === 'lg' ? 'w-6 h-6' : 'w-4.5 h-4.5';
-  const veylentraSize = size === 'sm' ? 18 : size === 'lg' ? 28 : 22;
+  const iconSize = size === 'sm' ? 'w-4 h-4' : size === 'lg' ? 'w-6 h-6' : 'w-5 h-5';
 
   const toneClasses: Record<ByteAssistantState, string> = {
-    ready: 'bg-indigo-500/12 border-indigo-500/35 text-indigo-300',
+    ready: 'bg-indigo-500/15 border-indigo-500/35 text-indigo-300',
     receiving_input: 'bg-sky-500/15 border-sky-400/45 text-sky-300',
     thinking: 'bg-violet-500/20 border-violet-400/50 text-violet-200',
     generating: 'bg-indigo-500/20 border-indigo-400/55 text-indigo-200',
@@ -57,28 +54,26 @@ export const ByteStatusAvatar: React.FC<ByteStatusAvatarProps> = ({ state, size 
   };
 
   const renderGlyph = () => {
-    if (state === 'error') return <AlertCircle className={glyphSize} />;
-    if (state === 'finished') return <Check className={glyphSize} />;
-    if (state === 'operating') return <Globe className={glyphSize} />;
-    if (state === 'thinking') return <Cpu className={glyphSize} />;
-    if (state === 'receiving_input') return <PenLine className={glyphSize} />;
-    return <VeylentraIcon name="byte" size={veylentraSize} />;
+    if (state === 'error') return <AlertCircle className={iconSize} />;
+    if (state === 'finished') return <Check className={iconSize} />;
+    if (state === 'operating') return <Zap className={iconSize} />;
+    if (state === 'thinking') return <Cpu className={iconSize} />;
+    if (state === 'receiving_input') return <PenLine className={iconSize} />;
+    return <Sparkles className={iconSize} />;
   };
 
   const isActive = state === 'thinking' || state === 'generating' || state === 'operating';
 
   return (
-    <div
-      className={`relative inline-flex items-center justify-center border shrink-0 transition-colors ${dimensions} ${toneClasses[state]}`}
-      aria-label={`Byte state: ${BYTE_STATE_LABELS[state]}`}
-    >
-      {!reduced && isActive && (
+    <div className={`relative inline-flex items-center justify-center border shrink-0 transition-colors ${dimensions} ${toneClasses[state]}`}>
+      {/* Subtle compositor-only halo ring */}
+      {!reduced && (isActive || state === 'receiving_input') && (
         <motion.span
           aria-hidden="true"
           className="absolute inset-0 rounded-[inherit] border border-current opacity-40 pointer-events-none"
-          initial={{ scale: 0.96, opacity: 0.4 }}
-          animate={{ scale: [0.98, 1.14, 0.98], opacity: [0.42, 0.1, 0.42] }}
-          transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+          initial={{ scale: 0.96, opacity: 0.45 }}
+          animate={{ scale: isActive ? [0.98, 1.16, 0.98] : [0.98, 1.07, 0.98], opacity: [0.45, 0.12, 0.45] }}
+          transition={{ duration: isActive ? 1.4 : 2.2, repeat: Infinity, ease: 'easeInOut' }}
         />
       )}
 
@@ -88,17 +83,17 @@ export const ByteStatusAvatar: React.FC<ByteStatusAvatarProps> = ({ state, size 
           reduced
             ? undefined
             : state === 'thinking'
-              ? { rotate: [0, 8, -8, 0] }
+              ? { rotate: [0, 12, -12, 0] }
               : state === 'generating'
-                ? { scale: [1, 1.06, 1] }
+                ? { scale: [1, 1.08, 1] }
                 : state === 'finished'
-                  ? { scale: [0.92, 1.06, 1] }
+                  ? { scale: [0.9, 1.08, 1] }
                   : { scale: 1, rotate: 0 }
         }
         transition={
           state === 'thinking' || state === 'generating'
             ? { duration: 1.5, repeat: Infinity, ease: 'easeInOut' }
-            : { duration: 0.2 }
+            : { duration: 0.25 }
         }
       >
         {renderGlyph()}

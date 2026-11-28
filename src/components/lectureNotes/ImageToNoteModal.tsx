@@ -1,4 +1,3 @@
-import { getServerAuthHeaders, extractApiErrorMessage } from '../../lib/clientSession';
 import React, { useState, useRef } from 'react';
 import { 
   Camera, 
@@ -103,7 +102,7 @@ export const ImageToNoteModal: React.FC<ImageToNoteModalProps> = ({
 
       const resp = await fetch('/api/ai/image-to-note', {
         method: 'POST',
-        headers: await getServerAuthHeaders(),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           images,
           subject,
@@ -113,7 +112,7 @@ export const ImageToNoteModal: React.FC<ImageToNoteModalProps> = ({
 
       const data = await resp.json();
       if (!resp.ok || !data.success) {
-        throw new Error(extractApiErrorMessage(data, `Image-to-note failed (HTTP ${resp.status}).`));
+        throw new Error(data.error || 'Failed to extract handwriting from the uploaded image.');
       }
 
       setProcessingStep('5. Organizing document & preparing editable preview...');

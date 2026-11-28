@@ -327,8 +327,8 @@ export const ROLE_CAPABILITY_PROFILES: Record<ByteNormalizedRole, ByteRoleProfil
       },
       {
         title: 'AI Routing Architecture',
-        subtitle: 'Ministral, Groq & Z.ai (GLM-4.7 Flash) summary',
-        prompt: 'Summarize how Byte and Orion route requests across Ministral, Groq, and Z.ai GLM-4.7 Flash while keeping Orion ephemeral.',
+        subtitle: 'Ministral & Groq orchestration summary',
+        prompt: 'Summarize how Byte and Orion route requests across Ministral and Groq while keeping Orion ephemeral.',
         category: 'Diagnostics'
       },
       {
@@ -611,7 +611,7 @@ export async function buildRoleAwareByteContext(
     };
   }
 
-  const cacheKey = `${userId}:${schoolId}:${normalizedRole}:${scopeSummary}:${options.activeTab || ''}`;
+  const cacheKey = `${userId}:${normalizedRole}:${scopeSummary}:${options.activeTab || ''}`;
   const cached = roleContextCache.get(cacheKey);
   if (
     !options.supabaseClient &&
@@ -647,25 +647,6 @@ export async function buildRoleAwareByteContext(
     );
     sections.push(`Study Schedule:\n${schedLines.join('\n')}`);
     hasVeylentraData = true;
-  }
-
-  if (options.localSnapshot?.homeworkList && options.localSnapshot.homeworkList.length > 0) {
-    const rawHw = options.localSnapshot.homeworkList;
-    const scopedHw = normalizedRole === 'student'
-      ? rawHw.filter((h: any) => {
-          const hwGrade = String(h.classGrade || h.class_grade || 'All').trim();
-          return hwGrade === 'All' || hwGrade === 'All Grades' || authorizedGrades.includes(hwGrade);
-        })
-      : rawHw;
-
-    if (scopedHw.length > 0) {
-      const hwLines = scopedHw.slice(0, 8).map(
-        (h: any) =>
-          `- [ASSIGNMENT] ${sanitizeByteContextText(h.subject || 'General', 35)}: "${sanitizeByteContextText(h.title, 75)}" (${sanitizeByteContextText(h.classGrade || h.class_grade || 'All', 20)}) | Due: ${h.dueDate || h.due_date || 'Flexible'}`
-      );
-      sections.push(`Authorized Homework & Assignments (${scopedHw.length} total):\n${hwLines.join('\n')}`);
-      hasVeylentraData = true;
-    }
   }
 
   try {
@@ -936,7 +917,7 @@ export async function buildRoleAwareByteContext(
 
         if (normalizedRole === 'super_admin') {
           sections.push(
-            `Super Admin Governance Context: Active AI Providers configured for Ministral & Groq, plus Z.ai (GLM-4.7 Flash). Ephemeral privacy enforced on Orion interactions.`
+            `Super Admin Governance Context: Active AI Providers configured for Ministral & Groq. Ephemeral privacy enforced on Orion interactions.`
           );
         }
       }
@@ -1082,5 +1063,3 @@ export async function buildRoleAwareByteContext(
 
   return finalResult;
 }
-
-export const buildAuthorizedByteContext = buildRoleAwareByteContext;

@@ -1,11 +1,9 @@
 import React, { useState } from 'react';
 import { supabase } from './supabase';
-import { extractApiErrorMessage, getServerAuthHeaders } from './clientSession';
 import { persistDeckToSupabase, persistCardsBatchToSupabase } from './flashcardStorage';
 import { Flashcard, FlashcardDeck } from '../types';
 import {
   buildRoleAwareByteContext,
-  clearByteContextCache,
   doesPromptNeedRoleContext,
   BuildByteContextOptions
 } from './byteIntelligence';
@@ -56,11 +54,6 @@ if (typeof window !== 'undefined') {
   window.addEventListener('studentos-db-update', () => {
     userContextCache.clear();
   });
-}
-
-export function clearStudentOSContextCache(): void {
-  userContextCache.clear();
-  clearByteContextCache();
 }
 
 /**
@@ -135,9 +128,6 @@ export async function streamStudentOSAI(
     ragContext?: string;
     userId?: string;
     userRole?: string;
-    conversationId?: string;
-    threadId?: string;
-    reasoningMode?: boolean;
     activeTab?: string;
     intentType?: string;
     modelOverride?: string;
@@ -167,8 +157,6 @@ export async function streamStudentOSAI(
       telemetry: AIStreamTelemetry;
       webSearchUsed?: boolean;
       webSources?: WebSearchSourceInfo[];
-      finishReason?: string;
-      truncated?: boolean;
     }) => void;
   },
   abortSignal?: AbortSignal
@@ -178,17 +166,16 @@ export async function streamStudentOSAI(
   telemetry: AIStreamTelemetry;
   webSearchUsed?: boolean;
   webSources?: WebSearchSourceInfo[];
-  finishReason?: string;
-  truncated?: boolean;
 }> {
   const requestStart = Date.now();
   const dataRetrievalLatencyMs = payload.dataRetrievalLatencyMs || 0;
 
-  const reqHeaders = await getServerAuthHeaders({ acceptSse: true });
-
   const res = await fetch('/api/ai/chat', {
     method: 'POST',
-    headers: reqHeaders,
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream, application/json'
+    },
     body: JSON.stringify({
       ...payload,
       stream: true
@@ -202,7 +189,7 @@ export async function streamStudentOSAI(
 
   if (res.status === 429) {
     const limitData = await res.json().catch(() => ({}));
-    const limitErr: any = new Error(extractApiErrorMessage(limitData, 'Daily AI message limit reached.'));
+    const limitErr: any = new Error(limitData.message || limitData.error || 'Daily AI message limit reached.');
     limitErr.isLimitReached = true;
     limitErr.limitData = limitData;
     throw limitErr;
@@ -212,7 +199,7 @@ export async function streamStudentOSAI(
     let errMessage = '';
     try {
       const errData = await res.json();
-      errMessage = extractApiErrorMessage(errData, `HTTP error ${res.status}`);
+      errMessage = errData.message || errData.error || errData.details;
     } catch (_) {
       const textErr = await res.text().catch(() => '');
       errMessage = textErr.slice(0, 200) || `HTTP error ${res.status}`;
@@ -235,8 +222,6 @@ export async function streamStudentOSAI(
     let usageData: any = undefined;
     let webSearchUsed = false;
     let webSources: WebSearchSourceInfo[] = [];
-    let finishReason: string | undefined = undefined;
-    let truncated = false;
 
     while (true) {
       if (abortSignal?.aborted) {
@@ -245,10 +230,7 @@ export async function streamStudentOSAI(
       }
 
       const { done, value } = await reader.read();
-      if (done) {
-        buffer += decoder.decode();
-        break;
-      }
+      if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
@@ -304,39 +286,8 @@ export async function streamStudentOSAI(
           if (Array.isArray(eventObj.webSources) && eventObj.webSources.length > 0) {
             webSources = eventObj.webSources;
           }
-          if (typeof eventObj.finishReason === 'string') finishReason = eventObj.finishReason;
-          if (typeof eventObj.truncated === 'boolean') truncated = eventObj.truncated;
-          else if (finishReason === 'length') truncated = true;
         } else if (eventObj.type === 'error') {
-          const message = typeof eventObj.error === 'object' ? eventObj.error?.message : eventObj.error;
-          throw new Error(eventObj.message || message || eventObj.details || 'AI streaming failed.');
-        }
-      }
-    }
-
-    if (buffer.trim()) {
-      // Re-enter the same SSE frame parser for the final unterminated data line.
-      const finalLine = buffer.trim();
-      if (finalLine.startsWith('data:')) {
-        const jsonStr = finalLine.slice(5).trim();
-        if (jsonStr && jsonStr !== '[DONE]') {
-          let eventObj: any;
-          try { eventObj = JSON.parse(jsonStr); } catch { eventObj = null; }
-          if (eventObj?.type === 'token' && eventObj.token) {
-            if (firstTokenMs === null) firstTokenMs = eventObj.firstTokenLatencyMs ?? (Date.now() - requestStart);
-            accumulated += eventObj.token;
-            callbacks.onToken(eventObj.token, accumulated, firstTokenMs);
-          } else if (eventObj?.type === 'done') {
-            if (eventObj.text && !accumulated) accumulated = eventObj.text;
-            if (eventObj.usage) usageData = eventObj.usage;
-            if (eventObj.telemetry?.modelUsed) modelUsed = eventObj.telemetry.modelUsed;
-            if (eventObj.telemetry?.complexityTier) complexityTier = eventObj.telemetry.complexityTier;
-            if (typeof eventObj.finishReason === 'string') finishReason = eventObj.finishReason;
-            if (typeof eventObj.truncated === 'boolean') truncated = eventObj.truncated;
-          } else if (eventObj?.type === 'error') {
-            const message = typeof eventObj.error === 'object' ? eventObj.error?.message : eventObj.error;
-            throw new Error(eventObj.message || message || eventObj.details || 'AI streaming failed.');
-          }
+          throw new Error(eventObj.details || eventObj.error || 'AI streaming failed.');
         }
       }
     }
@@ -354,15 +305,7 @@ export async function streamStudentOSAI(
       webSources
     };
 
-    const finalResult = {
-      text: accumulated.trim(),
-      usage: usageData,
-      telemetry,
-      webSearchUsed,
-      webSources,
-      finishReason,
-      truncated
-    };
+    const finalResult = { text: accumulated.trim(), usage: usageData, telemetry, webSearchUsed, webSources };
     callbacks.onDone?.(finalResult);
     return finalResult;
   }
@@ -379,7 +322,7 @@ export async function streamStudentOSAI(
     throw new Error(parsedRes.error);
   }
 
-  const text = parsedRes.text || parsedRes.reply || '';
+  const text = parsedRes.text || '';
   const elapsed = Date.now() - requestStart;
   if (text) {
     callbacks.onToken(text, text, elapsed);
@@ -398,17 +341,12 @@ export async function streamStudentOSAI(
     webSources: parsedRes.webSources || []
   };
 
-  const finishReason = typeof parsedRes.finishReason === 'string' ? parsedRes.finishReason : undefined;
-  const truncated = typeof parsedRes.truncated === 'boolean' ? parsedRes.truncated : finishReason === 'length';
-
   const finalResult = {
     text,
     usage: parsedRes.usage,
     telemetry,
     webSearchUsed: Boolean(parsedRes.webSearchUsed),
-    webSources: parsedRes.webSources || [],
-    finishReason,
-    truncated
+    webSources: parsedRes.webSources || []
   };
   callbacks.onDone?.(finalResult);
   return finalResult;
@@ -1027,9 +965,6 @@ export async function streamAIChatClient(
     ragContext?: string;
     userId?: string;
     userRole?: string;
-    conversationId?: string;
-    threadId?: string;
-    reasoningMode?: boolean;
     activeTab?: string;
     intentType?: string;
     modelOverride?: string;
@@ -1058,8 +993,6 @@ export async function streamAIChatClient(
       usage?: any;
       webSearchUsed?: boolean;
       webSources?: WebSearchSourceInfo[];
-      finishReason?: string;
-      truncated?: boolean;
     }) => void;
   }
 ): Promise<{
@@ -1069,8 +1002,6 @@ export async function streamAIChatClient(
   telemetry: AIStreamTelemetry;
   webSearchUsed?: boolean;
   webSources?: WebSearchSourceInfo[];
-  finishReason?: string;
-  truncated?: boolean;
 }> {
   const result = await streamStudentOSAI(
     payload,
@@ -1084,9 +1015,7 @@ export async function streamAIChatClient(
           text: res.text,
           usage: res.usage,
           webSearchUsed: res.webSearchUsed,
-          webSources: res.webSources,
-          finishReason: res.finishReason,
-          truncated: res.truncated
+          webSources: res.webSources
         })
     },
     options.signal
@@ -1098,9 +1027,7 @@ export async function streamAIChatClient(
     usage: result.usage,
     telemetry: result.telemetry,
     webSearchUsed: result.webSearchUsed,
-    webSources: result.webSources,
-    finishReason: result.finishReason,
-    truncated: result.truncated
+    webSources: result.webSources
   };
 }
 

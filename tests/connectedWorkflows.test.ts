@@ -20,7 +20,6 @@ import {
 import { isUserEligibleForNotification } from '../src/lib/notifications';
 import { buildByteReminders } from '../src/lib/byteReminderEngine';
 import { UserProfile } from '../src/types';
-import { createSignedSessionToken } from '../server/sessionAuth';
 
 let passed = 0;
 
@@ -30,64 +29,57 @@ async function runAsyncTest(name: string, fn: () => Promise<void> | void) {
   console.log(`✅ [PASS] ${name}`);
 }
 
-function bearer(claims: Parameters<typeof createSignedSessionToken>[0]) {
-  return {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${createSignedSessionToken(claims).token}`,
-  };
-}
+const teacherHeaders = {
+  'Content-Type': 'application/json',
+  'x-veylentra-uid': 'fac-elena-1',
+  'x-veylentra-name': 'Dr. Elena Rostova',
+  'x-veylentra-role': 'teacher',
+  'x-veylentra-grade': 'Grade 10',
+  'x-veylentra-section': 'Solara',
+  'x-veylentra-assigned-grades': 'Grade 10',
+  'x-veylentra-assigned-sections': 'Solara'
+};
 
-const teacherHeaders = bearer({
-  uid: 'fac-elena-1',
-  name: 'Dr. Elena Rostova',
-  role: 'teacher',
-  grade: 'Grade 10',
-  section: 'Solara',
-  assignedGrades: ['Grade 10'],
-  assignedSections: ['Solara'],
-  sessionType: 'login',
-});
+const outOfScopeTeacherHeaders = {
+  'Content-Type': 'application/json',
+  'x-veylentra-uid': 'fac-out-2',
+  'x-veylentra-name': 'Prof. Orion Locke',
+  'x-veylentra-role': 'teacher',
+  'x-veylentra-grade': 'Grade 12',
+  'x-veylentra-section': 'Vega',
+  'x-veylentra-assigned-grades': 'Grade 12',
+  'x-veylentra-assigned-sections': 'Vega'
+};
 
-const outOfScopeTeacherHeaders = bearer({
-  uid: 'fac-out-2',
-  name: 'Prof. Orion Locke',
-  role: 'teacher',
-  grade: 'Grade 12',
-  section: 'Vega',
-  assignedGrades: ['Grade 12'],
-  assignedSections: ['Vega'],
-  sessionType: 'login',
-});
+const studentSolaraHeaders = {
+  'Content-Type': 'application/json',
+  'x-veylentra-uid': 'stu-solara-1',
+  'x-veylentra-name': 'Aarav Patel',
+  'x-veylentra-email': 'aarav@school.edu',
+  'x-veylentra-role': 'student',
+  'x-veylentra-grade': 'Grade 10',
+  'x-veylentra-section': 'Solara'
+};
 
-const studentSolaraHeaders = bearer({
-  uid: 'stu-solara-1',
-  name: 'Aarav Patel',
-  email: 'aarav@school.edu',
-  role: 'student',
-  grade: 'Grade 10',
-  section: 'Solara',
-  sessionType: 'login',
-});
+const studentSolaraPeerHeaders = {
+  'Content-Type': 'application/json',
+  'x-veylentra-uid': 'stu-solara-2',
+  'x-veylentra-name': 'Diya Sharma',
+  'x-veylentra-email': 'diya@school.edu',
+  'x-veylentra-role': 'student',
+  'x-veylentra-grade': 'Grade 10',
+  'x-veylentra-section': 'Solara'
+};
 
-const studentSolaraPeerHeaders = bearer({
-  uid: 'stu-solara-2',
-  name: 'Diya Sharma',
-  email: 'diya@school.edu',
-  role: 'student',
-  grade: 'Grade 10',
-  section: 'Solara',
-  sessionType: 'login',
-});
-
-const studentAstraHeaders = bearer({
-  uid: 'stu-astra-3',
-  name: 'Liam Chen',
-  email: 'liam@school.edu',
-  role: 'student',
-  grade: 'Grade 11',
-  section: 'Astra',
-  sessionType: 'login',
-});
+const studentAstraHeaders = {
+  'Content-Type': 'application/json',
+  'x-veylentra-uid': 'stu-astra-3',
+  'x-veylentra-name': 'Liam Chen',
+  'x-veylentra-email': 'liam@school.edu',
+  'x-veylentra-role': 'student',
+  'x-veylentra-grade': 'Grade 11',
+  'x-veylentra-section': 'Astra'
+};
 
 async function apiJson(baseUrl: string, route: string, options: RequestInit = {}) {
   const resp = await fetch(`${baseUrl}${route}`, options);

@@ -10,7 +10,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { extractApiErrorMessage, getServerAuthHeaders } from '../lib/clientSession';
 import {
   ResponsiveContainer,
   BarChart,
@@ -673,10 +672,14 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
     const currentDraft = evalDrafts[key] || { score: '', feedback: '' };
     setEvalDrafts(prev => ({ ...prev, [key]: { ...currentDraft, orionLoading: true, error: undefined } }));
     try {
-      const headers = await getServerAuthHeaders();
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
       const resp = await fetch('/api/ai/orion-assist', {
         method: 'POST',
-        headers,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+        },
         body: JSON.stringify({
           userId,
           userRole: effectiveRole,
@@ -687,9 +690,9 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
           contextData: `Assignment max score: ${hw.maxScore || 100}. Proposed score: ${currentDraft.score || 'Pending'}. Student response: ${(sub.submissionText || '').slice(0, 1200)}`
         })
       });
-      const json = await resp.json().catch(() => ({}));
+      const json = await resp.json();
       if (!resp.ok || !json.success || !json.text) {
-        throw new Error(extractApiErrorMessage(json, `Orion returned status ${resp.status}`));
+        throw new Error(json.error || `Orion returned status ${resp.status}`);
       }
       setEvalDrafts(prev => ({
         ...prev,
@@ -810,11 +813,15 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
       : 'Provide constructive, encouraging, actionable 2-week next steps.';
 
     try {
-      const headers = await getServerAuthHeaders();
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
 
       const resp = await fetch('/api/ai/orion-assist', {
         method: 'POST',
-        headers,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+        },
         body: JSON.stringify({
           userId,
           userRole: effectiveRole,
@@ -828,7 +835,7 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
 
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || !data.success || !data.text) {
-        throw new Error(extractApiErrorMessage(data, `Orion returned status ${resp.status}`));
+        throw new Error(data.error || `Orion returned status ${resp.status}`);
       }
       setRosterFeedbackText(String(data.text).trim());
       setRosterFeedbackProvider(data.providerUsed ? `${data.providerUsed}${data.modelUsed ? ` · ${data.modelUsed}` : ''}` : null);
@@ -912,11 +919,15 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
         : `Faculty role: ${effectiveRole}. Authorized grades: ${authorizedGrades.join(', ')}. Cohort size: ${scopedStudents.length}.`;
 
     try {
-      const headers = await getServerAuthHeaders();
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
 
       const resp = await fetch('/api/ai/orion-assist', {
         method: 'POST',
-        headers,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+        },
         body: JSON.stringify({
           userId,
           userRole: effectiveRole,
@@ -928,9 +939,9 @@ export const FacultyExperienceWorkspace: React.FC<FacultyExperienceWorkspaceProp
         })
       });
 
-      const data = await resp.json().catch(() => ({}));
+      const data = await resp.json();
       if (!resp.ok || !data.success || !data.text) {
-        throw new Error(extractApiErrorMessage(data, `Orion returned status ${resp.status}`));
+        throw new Error(data.error || `Orion returned status ${resp.status}`);
       }
 
       const defaultTitleMap: Record<OrionFacultyIntent, string> = {
