@@ -996,7 +996,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
           serverRes.webSources.map((s: any) => ({
             title: s.title || s.domain || 'Web Source',
             uri: s.url || s.uri || '#',
-            published_source: s.sourceType === 'academic' ? `Academic · ${s.domain}` : s.domain,
+            published_source: s.sourceType === 'academic' ? `Academic Â· ${s.domain}` : s.domain,
           }))
         );
       }
@@ -1228,7 +1228,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
     const header = `# ${structuredOutput.title}\n\n`;
     const metricsMd = (structuredOutput.metrics || []).map((m) => `- **${m.label}:** ${m.value}`).join('\n');
     const rowsMd = (structuredOutput.rows || [])
-      .map((r) => `- ${Object.entries(r).map(([k, v]) => `${k}: ${v}`).join(' · ')}`)
+      .map((r) => `- ${Object.entries(r).map(([k, v]) => `${k}: ${v}`).join(' Â· ')}`)
       .join('\n');
     navigator.clipboard.writeText(`${header}${metricsMd}\n\n${rowsMd}`.trim());
     showNotification('Copied structured summary to clipboard.');
@@ -1270,7 +1270,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
             </div>
             <p className="text-[11px] text-slate-400 inline-flex items-center gap-1 truncate">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-              <span>Ephemeral session · Zero chat persistence</span>
+              <span>Ephemeral session Â· Zero chat persistence</span>
             </p>
           </div>
         </div>
@@ -1380,10 +1380,10 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
               Dismiss
             </button>
           </div>
-          <p>mediaDevices: {String(!!navigator.mediaDevices)} · SpeechRecognition: {String(!!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition))}</p>
+          <p>mediaDevices: {String(!!navigator.mediaDevices)} Â· SpeechRecognition: {String(!!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition))}</p>
           {diagnosticError && (
             <p className="text-rose-300">
-              Last Error: {diagnosticError.name} — {diagnosticError.message}
+              Last Error: {diagnosticError.name} â€” {diagnosticError.message}
             </p>
           )}
         </div>
@@ -1558,7 +1558,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
                             <Sparkles className="w-3.5 h-3.5" />
                             <span>Orion Final Response</span>
                             {turn.modelUsed && (
-                              <span className="text-[11px] font-mono text-slate-400">· {turn.modelUsed}</span>
+                              <span className="text-[11px] font-mono text-slate-400">Â· {turn.modelUsed}</span>
                             )}
                           </div>
                           <div className="flex items-center gap-1.5">
@@ -1991,7 +1991,7 @@ export const StudentOSJarvis: React.FC<StudentOSJarvisProps> = ({
                   <div>
                     <h4 className="text-base font-semibold text-white">{selectedStudent.name}</h4>
                     <p className="text-xs text-slate-400">
-                      {selectedStudent.classGrade} · {selectedStudent.section} Section · {selectedStudent.house} House
+                      {selectedStudent.classGrade} Â· {selectedStudent.section} Section Â· {selectedStudent.house} House
                     </p>
                   </div>
                   <button
