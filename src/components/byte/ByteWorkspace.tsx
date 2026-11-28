@@ -376,7 +376,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
   );
 
   return (
-    <div className="h-[calc(100dvh-195px)] md:h-[calc(100dvh-130px)] flex rounded-3xl border border-white/10 bg-slate-950/90 shadow-xl relative w-full overflow-hidden">
+    <div data-testid="byte-workspace" className="h-full flex-1 min-h-0 flex rounded-3xl border border-white/10 bg-slate-950/90 shadow-xl relative w-full overflow-hidden">
       {/* Slide-out Mobile Session Drawer */}
       <AnimatePresence>
         {showAiHistoryDrawer && (
@@ -468,9 +468,9 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
       )}
 
       {/* Main Studio Column */}
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
         {/* Clean 3-Zone Top Header */}
-        <header className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-white/10 bg-slate-950/70 shrink-0">
+        <header data-testid="byte-primary-toolbar" className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-white/10 bg-slate-950/70 shrink-0">
           {/* Zone 1: Identity & Rail Toggle */}
           <div className="flex items-center gap-2.5 min-w-0">
             <button
@@ -799,7 +799,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
         <div
           id="ai-dialog-scroll"
           ref={scrollContainerRef}
-          className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-5"
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y px-4 sm:px-6 py-5"
         >
           <div className="max-w-3xl mx-auto w-full space-y-5">
             {/* Empty State: Role-Aware Welcome Canvas */}

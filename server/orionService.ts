@@ -14,8 +14,9 @@ import {
   getGroqApiKey,
   getMinistralApiKey,
   getZaiApiKey,
-} from './aiClient';
-import { performControlledWebSearch } from './webSearchEngine';
+} from './aiClient.js';
+import { performControlledWebSearch } from './webSearchEngine.js';
+import { verifySignedSessionToken } from './sessionAuth.js';
 
 export interface SupabaseCfg {
   url: string;
@@ -533,127 +534,89 @@ export async function resolveVerifiedOrionActor(
   const authHeader = String(req.headers.authorization || req.headers['x-supabase-auth'] || '').trim();
   const token = authHeader.replace(/^Bearer\s+/i, '').trim();
 
-  if (token) {
-    try {
-      const userRes = await fetch(`${cfg.url}/auth/v1/user`, {
-        headers: {
-          apikey: cfg.key,
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      if (!userRes.ok) {
-        return { ok: false, status: 401, error: 'Invalid or expired authentication token.' };
-      }
-      const user: any = await userRes.json();
-      if (!user?.id) {
-        return { ok: false, status: 401, error: 'Invalid authentication session.' };
-      }
+  if (!token) {
+    return { ok: false, status: 401, error: 'Authentication required. Please sign in to continue.' };
+  }
 
-      const email = String(user.email || '').toLowerCase().trim();
-      let role = String(user.user_metadata?.role || 'student').toLowerCase().trim();
-      let name = String(user.user_metadata?.name || user.user_metadata?.full_name || email.split('@')[0] || 'Campus Member');
-      let grade = String(user.user_metadata?.grade || '');
-      let section = String(user.user_metadata?.section || '');
-      let schoolId = String(user.user_metadata?.school_id || '');
+  if (token.startsWith('vlt_sess.')) {
+    const claims = verifySignedSessionToken(token);
+    if (!claims) {
+      return { ok: false, status: 401, error: 'Invalid or expired session token.' };
+    }
+    return {
+      ok: true,
+      actor: {
+        userId: claims.uid,
+        email: claims.email,
+        name: claims.name,
+        role: claims.role,
+        grade: claims.grade || '',
+        section: claims.section || '',
+        schoolId: claims.schoolId || '',
+        authenticated: true,
+      },
+    };
+  }
 
-      if (email && WHITELISTED_SUPER_ADMIN_EMAILS.includes(email)) {
-        role = 'super_admin';
-      } else {
-        try {
-          const profRes = await fetch(
-            `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(user.id)},uid.eq.${encodeURIComponent(user.id)},email.eq.${encodeURIComponent(email)})&select=id,name,role,grade,section,school_id`,
-            { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
-          );
-          if (profRes.ok) {
-            const rows: any = await profRes.json();
-            if (Array.isArray(rows) && rows[0]) {
-              if (rows[0].role) role = String(rows[0].role).toLowerCase().trim();
-              if (rows[0].name) name = String(rows[0].name);
-              if (rows[0].grade) grade = String(rows[0].grade);
-              if (rows[0].section) section = String(rows[0].section);
-              if (rows[0].school_id) schoolId = String(rows[0].school_id);
-            }
+  try {
+    const userRes = await fetch(`${cfg.url}/auth/v1/user`, {
+      headers: {
+        apikey: cfg.key,
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!userRes.ok) {
+      return { ok: false, status: 401, error: 'Invalid or expired authentication token.' };
+    }
+    const user: any = await userRes.json();
+    if (!user?.id) {
+      return { ok: false, status: 401, error: 'Invalid authentication session.' };
+    }
+
+    const email = String(user.email || '').toLowerCase().trim();
+    let role = String(user.user_metadata?.role || 'student').toLowerCase().trim();
+    let name = String(user.user_metadata?.name || user.user_metadata?.full_name || email.split('@')[0] || 'Campus Member');
+    let grade = String(user.user_metadata?.grade || '');
+    let section = String(user.user_metadata?.section || '');
+    let schoolId = String(user.user_metadata?.school_id || '');
+
+    if (email && WHITELISTED_SUPER_ADMIN_EMAILS.includes(email)) {
+      role = 'super_admin';
+    } else {
+      try {
+        const profRes = await fetch(
+          `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(user.id)},uid.eq.${encodeURIComponent(user.id)},email.eq.${encodeURIComponent(email)})&select=id,name,role,grade,section,school_id`,
+          { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
+        );
+        if (profRes.ok) {
+          const rows: any = await profRes.json();
+          if (Array.isArray(rows) && rows[0]) {
+            if (rows[0].role) role = String(rows[0].role).toLowerCase().trim();
+            if (rows[0].name) name = String(rows[0].name);
+            if (rows[0].grade) grade = String(rows[0].grade);
+            if (rows[0].section) section = String(rows[0].section);
+            if (rows[0].school_id) schoolId = String(rows[0].school_id);
           }
-        } catch (_) {}
-      }
-
-      return {
-        ok: true,
-        actor: {
-          userId: user.id,
-          email,
-          name,
-          role,
-          grade,
-          section,
-          schoolId,
-          authenticated: true,
-        },
-      };
-    } catch {
-      return { ok: false, status: 401, error: 'Unable to validate authentication token.' };
-    }
-  }
-
-  // Fallback ONLY for DB-verified PIN/demo identities via user_profiles (never trusting role headers)
-  const uidHeader = String(req.headers['x-veylentra-uid'] || '').trim();
-  const emailHeader = String(req.headers['x-veylentra-email'] || '').toLowerCase().trim();
-  const actorId = uidHeader || emailHeader;
-
-  if (actorId && actorId !== 'guest' && actorId !== 'anonymous' && actorId !== 'user_guest') {
-    if (
-      WHITELISTED_SUPER_ADMIN_EMAILS.includes(emailHeader) ||
-      WHITELISTED_SUPER_ADMIN_EMAILS.includes(actorId.toLowerCase()) ||
-      actorId === 'superadmin-master-uid'
-    ) {
-      return {
-        ok: true,
-        actor: {
-          userId: actorId,
-          email: emailHeader || undefined,
-          name: 'Super Administrator',
-          role: 'super_admin',
-          authenticated: true,
-        },
-      };
-    }
-
-    try {
-      const profRes = await fetch(
-        `${cfg.url}/rest/v1/user_profiles?or=(id.eq.${encodeURIComponent(actorId)},uid.eq.${encodeURIComponent(actorId)},email.eq.${encodeURIComponent(emailHeader || actorId)})&select=id,name,role,grade,section,school_id`,
-        { headers: { apikey: cfg.key, Authorization: `Bearer ${cfg.key}` } }
-      );
-      if (profRes.ok) {
-        const rows: any = await profRes.json();
-        if (Array.isArray(rows) && rows[0]) {
-          return {
-            ok: true,
-            actor: {
-              userId: String(rows[0].id || actorId),
-              email: emailHeader || undefined,
-              name: String(rows[0].name || 'Campus Member'),
-              role: String(rows[0].role || 'student').toLowerCase().trim(),
-              grade: rows[0].grade ? String(rows[0].grade) : undefined,
-              section: rows[0].section ? String(rows[0].section) : undefined,
-              schoolId: rows[0].school_id ? String(rows[0].school_id) : undefined,
-              authenticated: true,
-            },
-          };
         }
-      }
-    } catch (_) {}
-  }
+      } catch (_) {}
+    }
 
-  return {
-    ok: true,
-    actor: {
-      userId: actorId || 'guest',
-      email: emailHeader || undefined,
-      name: 'Guest User',
-      role: 'student',
-      authenticated: false,
-    },
-  };
+    return {
+      ok: true,
+      actor: {
+        userId: user.id,
+        email,
+        name,
+        role,
+        grade,
+        section,
+        schoolId,
+        authenticated: true,
+      },
+    };
+  } catch {
+    return { ok: false, status: 401, error: 'Unable to validate authentication token.' };
+  }
 }
 
 export function normalizeMappedAction(rawAction: string, commandLower: string): OrionServerActionType {

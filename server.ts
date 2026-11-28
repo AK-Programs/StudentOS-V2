@@ -90,6 +90,7 @@ import {
   redeemAiVoucherAsync,
   updateRoleLimitsAsync,
 } from './server/aiQuotaService';
+import { resolveVerifiedActor } from './server/sessionAuth.js';
 
 dotenv.config();
 

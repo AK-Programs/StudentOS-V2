@@ -20,18 +20,19 @@ import {
   buildCanonicalAiHealthPayload,
   resolveCanonicalChatAccess,
   isParentOrGuardianRole,
-} from '../server/canonicalAiHandlers';
+} from '../server/canonicalAiHandlers.js';
+import { resolveVerifiedActor } from '../server/sessionAuth.js';
 import {
   cancelOrionTask,
   getOrionTaskForActor,
   listOrionTasksForActor,
   retryOrionTask,
   executeOrionServerRequest,
-} from '../server/orionService';
+} from '../server/orionService.js';
 import {
   handleAskMaterialsRequest,
   handleMaterialRecommendationsRequest,
-} from '../server/materialIntelligenceService';
+} from '../server/materialIntelligenceService.js';
 import {
   handleNotebookIntelligence,
   handleAiAssignmentBuilder,
@@ -49,7 +50,7 @@ import {
   updateProjectMilestone,
   submitGroupProject,
   gradeGroupProject,
-} from '../server/assignmentIntelligenceService';
+} from '../server/assignmentIntelligenceService.js';
 
 export type AIProviderName = 'groq' | 'ministral' | 'zai';
 export type TaskComplexityTier = 'short' | 'fast' | 'general' | 'complex' | 'tool';

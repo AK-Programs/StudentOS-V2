@@ -131,3 +131,16 @@ export function isStreamSessionStillOwned(params: {
   if (params.currentEpoch !== params.capturedEpoch) return false;
   return curUid === capUid;
 }
+
+export function deduplicateThreadsById<T extends { id?: string; updatedAt?: number }>(threads: T[]): T[] {
+  if (!Array.isArray(threads)) return [];
+  const map = new Map<string, T>();
+  for (const t of threads) {
+    if (!t || !t.id) continue;
+    const existing = map.get(t.id);
+    if (!existing || Number(t.updatedAt || 0) >= Number(existing.updatedAt || 0)) {
+      map.set(t.id, t);
+    }
+  }
+  return Array.from(map.values());
+}

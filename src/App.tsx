@@ -599,6 +599,20 @@ export default function App() {
     }
   });
 
+  const isByteViewportLocked = activeTab === 'ai_teacher';
+
+  useEffect(() => {
+    if (isByteViewportLocked) {
+      document.documentElement.classList.add('byte-viewport-locked');
+      window.scrollTo(0, 0);
+    } else {
+      document.documentElement.classList.remove('byte-viewport-locked');
+    }
+    return () => {
+      document.documentElement.classList.remove('byte-viewport-locked');
+    };
+  }, [isByteViewportLocked]);
+
   const [whatsNewUnreadCount, setWhatsNewUnreadCount] = useState<number>(0);
   const [dueCardsCount, setDueCardsCount] = useState<number>(0);
   const [studyHubSubTab, setStudyHubSubTab] = useState<'dashboard' | 'tasks' | 'planner' | 'flashcards'>('dashboard');
@@ -8449,7 +8463,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
       )}
 
       {currentUser && !isLocked && (
-        <div className="flex min-h-screen relative">
+        <div className={isByteViewportLocked ? "fixed inset-0 h-dvh max-h-dvh w-full overflow-hidden flex flex-col" : "flex min-h-screen relative"}>
           <WinterThemeLayer currentUser={currentUser} />
           
           {/* Sidebar Overlay (Closes sidebar on outside click for Mobile/Tablet) */}
@@ -9378,7 +9392,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
           </aside>
 
           {/* Main workspace frame */}
-          <div className={`flex-1 flex flex-col min-h-screen min-w-0 max-w-full transition-all duration-300 ${sidebarOpen ? 'md:ml-64' : 'md:ml-20'}`}>
+          <div className={`flex-1 flex flex-col min-w-0 max-w-full transition-all duration-300 ${isByteViewportLocked ? 'h-full min-h-0 overflow-hidden' : 'min-h-screen'} ${sidebarOpen ? 'md:ml-64' : 'md:ml-20'}`}>
             {/* BEAUTIFUL DEMO MODE BANNER */}
             {isDemoMode && (
               <div className="bg-gradient-to-r from-red-600 via-amber-600 to-indigo-600 text-white py-2 px-4 shadow-lg z-50 flex flex-col sm:flex-row items-center justify-between gap-3 border-b border-white/10 shrink-0">
@@ -9452,7 +9466,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
             />
 
             {/* Base View Layout Wrapper */}
-            <main className={`flex-1 p-2 sm:p-6 md:p-8 pb-24 sm:pb-12 max-w-7xl w-full mx-auto space-y-4 sm:space-y-8 min-w-0 ${fontSize === 'large' ? 'text-lg' : fontSize === 'huge' ? 'text-xl' : 'text-sm'}`}>
+            <main className={`flex-1 p-2 sm:p-6 md:p-8 max-w-7xl w-full mx-auto min-w-0 ${isByteViewportLocked ? 'min-h-0 overflow-hidden flex flex-col pb-[calc(4.75rem+env(safe-area-inset-bottom))] md:pb-6' : 'pb-24 sm:pb-12 space-y-4 sm:space-y-8'} ${fontSize === 'large' ? 'text-lg' : fontSize === 'huge' ? 'text-xl' : 'text-sm'}`}>
               <AnimatePresence mode="wait">
                 <motion.div
                   key={activeTab}
@@ -9460,7 +9474,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
                   transition={{ duration: 0.2 }}
-                  className="space-y-4 sm:space-y-8"
+                  className={isByteViewportLocked ? "min-h-0 overflow-hidden flex flex-col flex-1" : "space-y-4 sm:space-y-8"}
                 >
               {/* Tab: Panel Mode Launcher */}
               {activeTab === 'panel_mode' && effectiveRole !== 'student' && (

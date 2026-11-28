@@ -45,6 +45,7 @@ import { supabase } from '../lib/supabase';
 import { saveVaultNoteToSupabase } from '../lib/supabaseNotes';
 import { recordEngagementActivity } from '../lib/engagementService';
 import { AcademicRichRenderer } from './ui/AcademicRichRenderer';
+import { getServerAuthHeaders } from '../lib/clientSession';
 
 interface ByteOrionAssistantModalProps {
   isOpen: boolean;
@@ -244,8 +245,7 @@ export const ByteOrionAssistantModal: React.FC<ByteOrionAssistantModalProps> = (
     setOrionProviderMeta(null);
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
+      const serverHeaders = await getServerAuthHeaders();
 
       const isFaculty = ['teacher', 'coordinator', 'hod', 'admin', 'super_admin'].includes(
         String(effectiveRole || '').toLowerCase()
@@ -255,7 +255,7 @@ export const ByteOrionAssistantModal: React.FC<ByteOrionAssistantModalProps> = (
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+          ...serverHeaders,
         },
         body: JSON.stringify({
           userId,
