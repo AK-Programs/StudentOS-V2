@@ -811,7 +811,9 @@ export async function callRoutedCompletion(
     });
   }
 
-  // 1. Z.ai explicit route (fallback to Ministral -> Groq)
+  const explicit = Boolean((options?.modelOverride || '').trim());
+
+  // 1. Z.ai explicit route. A chosen model does not silently switch.
   if (provider === 'zai') {
     try {
       return await callZaiCompletion(prompt, systemPrompt, history, {
@@ -820,6 +822,7 @@ export async function callRoutedCompletion(
         requestId: options?.requestId
       });
     } catch (zaiErr: any) {
+      if (explicit) throw zaiErr;
       if (getMinistralApiKey()) {
         try {
           return await callMinistralCompletion(prompt, systemPrompt, history, {
@@ -851,6 +854,7 @@ export async function callRoutedCompletion(
         requestId: options?.requestId
       });
     } catch (minErr: any) {
+      if (explicit) throw minErr;
       if (getGroqApiKey()) {
         try {
           return await callGroqCompletion(prompt, systemPrompt, history, {
@@ -883,6 +887,7 @@ export async function callRoutedCompletion(
       requestId: options?.requestId
     });
   } catch (groqErr: any) {
+    if (explicit) throw groqErr;
     if (getMinistralApiKey()) {
       try {
         return await callMinistralCompletion(prompt, systemPrompt, history, {
@@ -2608,14 +2613,14 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
     ];
 
     const authHeader = String(req.headers?.authorization || req.headers?.['x-supabase-auth'] || '').trim();
-    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    let token = authHeader.replace(/^Bearer\s+/i, '').trim();
     let actor = { userId: 'guest', email: '', name: 'Guest User', role: 'student', grade: '', section: '', authenticated: false };
+    let tokenOk = false;
 
     if (token) {
       const uRes = await fetch(`${cfg.url}/auth/v1/user`, { headers: { apikey: cfg.key, Authorization: `Bearer ${token}` } }).catch(() => null);
-      if (!uRes || !uRes.ok) {
-        return sendJson(res, 401, { success: false, status: 'unauthorized', error: 'Invalid or expired authentication token.', requestId });
-      }
+      if (uRes && uRes.ok) {
+      tokenOk = true;
       const user: any = await uRes.json().catch(() => null);
       if (!user?.id) {
         return sendJson(res, 401, { success: false, status: 'unauthorized', error: 'Invalid authentication session.', requestId });
@@ -2637,7 +2642,9 @@ Return the complete note. Do not stop early. Do not summarize unless asked. Keep
         }
       }
       actor = { userId: user.id, email, name, role, grade: String(user.user_metadata?.grade || ''), section: String(user.user_metadata?.section || ''), authenticated: true };
-    } else {
+      }
+    }
+    if (!tokenOk) {
       const uidH = String(req.headers?.['x-veylentra-uid'] || '').trim();
       const emailH = String(req.headers?.['x-veylentra-email'] || '').toLowerCase().trim();
       const actorId = uidH || emailH;
