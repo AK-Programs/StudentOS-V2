@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Byte AI Workspace â€” Complete Architectural Studio Redesign
+ * Byte AI Workspace — Complete Architectural Studio Redesign
  * - Collapsible desktop left session rail (with long-press context menu hooks preserved) + mobile drawer
  * - Clean 3-zone header + Preferences popover (Persona, Learning Mode, Deep Reasoning, Web Grounding, Super Admin Z.ai Provider selector)
  * - Editorial max-w-3xl dialogue stream with streaming-safe AcademicRichRenderer, inline Error + Retry, math widgets & flashcards
@@ -500,7 +500,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
               </div>
               <p className="text-[11px] text-slate-400 truncate flex items-center gap-1.5">
                 <span>{BYTE_STATE_LABELS[assistantState]}</span>
-                <span aria-hidden="true">Â·</span>
+                <span aria-hidden="true">·</span>
                 <span className="truncate">{activePersonaObj?.name}</span>
               </p>
             </div>
@@ -715,15 +715,15 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
           <div className="max-w-3xl mx-auto flex items-center justify-between gap-3 text-[11px] text-slate-400 flex-wrap">
             <div className="flex items-center gap-2 min-w-0 flex-wrap">
               <span>Mode: {activeModeObj.label}</span>
-              <span aria-hidden="true">Â·</span>
+              <span aria-hidden="true">·</span>
               <span>Reasoning: {aiReasoningMode ? 'Deep' : 'Standard'}</span>
-              <span aria-hidden="true">Â·</span>
+              <span aria-hidden="true">·</span>
               <span>
                 Web: {aiWebSearchMode === 'force' ? 'Always' : aiWebSearchMode === 'off' ? 'Off' : 'Auto'}
               </span>
               {isSuperAdmin && (
                 <>
-                  <span aria-hidden="true">Â·</span>
+                  <span aria-hidden="true">·</span>
                   <span className="text-indigo-300">
                     Router: {PROVIDER_DISPLAY[aiModelOverride || 'auto'] || aiModelOverride}
                   </span>
@@ -803,7 +803,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                     <span className="inline-flex items-center gap-1 text-emerald-300">
                       <ShieldCheck className="w-3.5 h-3.5" /> {roleProfile.displayLabel} Scope
                     </span>
-                    <span aria-hidden="true">Â·</span>
+                    <span aria-hidden="true">·</span>
                     <span>LaTeX Math &amp; Chemistry Ready</span>
                   </div>
                 </div>
@@ -928,13 +928,13 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                       )}
                       {isLatestAssistant && aiGroundedInData && (
                         <>
-                          {m.webSearchUsed && <span aria-hidden="true">Â·</span>}
+                          {m.webSearchUsed && <span aria-hidden="true">·</span>}
                           <span className="text-emerald-300">Veylentra Context</span>
                         </>
                       )}
                       {isLatestAssistant && aiActiveModelLabel && (
                         <>
-                          {(m.webSearchUsed || aiGroundedInData) && <span aria-hidden="true">Â·</span>}
+                          {(m.webSearchUsed || aiGroundedInData) && <span aria-hidden="true">·</span>}
                           <span>{aiActiveModelLabel.split('/').pop()}</span>
                         </>
                       )}
@@ -1022,7 +1022,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                               </div>
                               <div className="text-[11px] font-mono text-slate-400 truncate">
                                 {src.domain}
-                                {src.sourceType === 'academic' ? ' Â· Academic' : ''}
+                                {src.sourceType === 'academic' ? ' · Academic' : ''}
                               </div>
                             </div>
                           </a>
@@ -1150,8 +1150,8 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                     <span className="text-xs text-slate-400 truncate block">
                       {aiStatusMessage ||
                         (aiReasoningMode
-                          ? 'Synthesizing multi-step analysisâ€¦'
-                          : 'Processing request and Veylentra scopeâ€¦')}
+                          ? 'Synthesizing multi-step analysis…'
+                          : 'Processing request and Veylentra scope…')}
                     </span>
                   </div>
                 </div>
@@ -1255,10 +1255,10 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                 }}
                 placeholder={
                   aiUsageState.remaining <= 0
-                    ? 'Daily quota exhausted â€” boost to unlock more queries.'
+                    ? 'Daily quota exhausted — boost to unlock more queries.'
                     : attachedFiles && attachedFiles.length > 0
                       ? `Ask Byte about ${attachedFiles.map((f) => f.name).join(', ')}...`
-                      : `Ask Byte (${roleProfile.displayLabel} Assistant) â€” Shift+Enter for new line...`
+                      : `Ask Byte (${roleProfile.displayLabel} Assistant) — Shift+Enter for new line...`
                 }
                 disabled={aiLoading || aiUsageState.remaining <= 0}
                 className={`flex-1 bg-transparent px-2.5 py-2.5 text-sm leading-relaxed resize-none max-h-36 focus:outline-none text-white placeholder-slate-500 ${
