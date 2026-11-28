@@ -85,7 +85,7 @@ export const AssignmentCenter: React.FC = () => {
     { id: 'upload', label: 'Upload Center', icon: <Upload className="w-3.5 h-3.5" /> },
     { id: 'qgen', label: 'Question Generator', icon: <HelpCircle className="w-3.5 h-3.5" /> },
     { id: 'checker', label: 'Homework Checker', icon: <FileCheck className="w-3.5 h-3.5" /> },
-    { id: 'upgrades', label: 'AI Upgrades', icon: <BookOpen className="w-3.5 h-3.5" /> }
+    { id: 'upgrades', label: 'Assignment Tools', icon: <BookOpen className="w-3.5 h-3.5" /> }
   ];
 
   return (
@@ -101,7 +101,7 @@ export const AssignmentCenter: React.FC = () => {
           <div className="space-y-1">
             <div className="flex items-center gap-2 text-xs text-blue-400 font-semibold">
               <span>Academic Resource Suite</span>
-              <span aria-hidden="true">Â·</span>
+              <span aria-hidden="true">·</span>
               <span className="text-slate-400">Faculty &amp; Student Tools</span>
             </div>
             <h2 className="text-xl sm:text-2xl font-bold font-display text-white tracking-tight">
