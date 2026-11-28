@@ -4,7 +4,7 @@ import { Whiteboard2 } from './components/Whiteboard2';
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { 
   Search, ChevronRight, ChevronDown, Plus, Check, Trash, Trash2, BookOpen, Award, Sparkles, 
@@ -51,8 +51,7 @@ import {
   InteractiveMathWidget,
   saveStudyOutputToFlashcards,
   formatMathematicalText,
-  extractTopicTeachingIntent,
-  clearStudentOSContextCache
+  extractTopicTeachingIntent
 } from './lib/studentosAiEngine';
 import { extractAttachmentContent } from './lib/documentExtractor';
 import { AITopicTutorModal } from './components/syllabus/AITopicTutorModal';
@@ -174,15 +173,6 @@ import {
   resolveNotificationDestination,
   stripNotificationParamsFromUrl,
 } from './lib/notificationNavigation';
-import { clearByteContextCache } from './lib/byteIntelligence';
-import {
-  readScopedAiThreadsFromStorage,
-  readScopedActiveThreadIdFromStorage,
-  writeScopedActiveThreadIdToStorage,
-  purgeLegacyUnscopedAiStorage,
-  filterThreadsForUser,
-  isStreamSessionStillOwned
-} from './lib/aiSessionIsolation';
 import { MOCK_QUIZZES, AI_PERSONAS, INITIAL_ANNOUNCEMENTS, INITIAL_FEEDBACK, INITIAL_MATERIALS, MOCK_SCHEDULES } from './mockData';
 import { FloatingByteWidget } from './components/byte/FloatingByteWidget';
 import { StudentOSOnboardingModal } from './components/onboarding/StudentOSOnboardingModal';
@@ -1508,19 +1498,47 @@ export default function App() {
       files?: any[];
       webSources?: { title: string; url: string; domain: string; snippet?: string; sourceType?: string }[];
       webSearchUsed?: boolean;
-      truncated?: boolean;
-      finishReason?: string;
     }[];
     attachedFile?: { name: string; content: string; size: number; type: string } | null;
     attachedFiles?: any[];
     userId?: string;
     createdAt?: number;
     isPinned?: boolean;
-  }[]>(() => readScopedAiThreadsFromStorage(currentUser?.uid) as any);
+  }[]>(() => {
+    try {
+      const cached = localStorage.getItem('s_os_ai_threads');
+      if (cached && cached !== "undefined") {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) {
+          const cachedUser = localStorage.getItem('s_os_user');
+          if (cachedUser) {
+            const user = JSON.parse(cachedUser);
+            if (user?.uid) {
+              return parsed.filter((t: any) => t.userId === user.uid);
+            }
+          }
+          return parsed;
+        }
+      }
+    } catch (e) {}
+    return [];
+  });
 
-  const [activeThreadId, setActiveThreadId] = useState<string>(() =>
-    readScopedActiveThreadIdFromStorage(currentUser?.uid)
-  );
+  const [activeThreadId, setActiveThreadId] = useState<string>(() => {
+    try {
+      const cachedUser = localStorage.getItem('s_os_user');
+      if (cachedUser) {
+        const user = JSON.parse(cachedUser);
+        if (user?.uid) {
+          const cachedActive = localStorage.getItem(`s_os_ai_active_id_${user.uid}`);
+          if (cachedActive) return cachedActive;
+        }
+      }
+      const cachedActive = localStorage.getItem('s_os_ai_active_id');
+      if (cachedActive) return cachedActive;
+    } catch (e) {}
+    return '';
+  });
 
   const byteThreadContext = useContextHoldMenu<string>();
   const aiThreadHoldMenu = byteThreadContext.menu ? { threadId: byteThreadContext.menu.itemId, x: byteThreadContext.menu.x, y: byteThreadContext.menu.y } : null;
@@ -1545,16 +1563,11 @@ export default function App() {
     byteThreadContext.isInteractionGuarded
   );
 
-  const scopedAiThreads = useMemo(
-    () => filterThreadsForUser(aiThreads, currentUser?.uid),
-    [aiThreads, currentUser?.uid]
-  );
-
   const handlePinThread = (threadId: string) => {
     let toggledThread: any = null;
     setAiThreads(prev => {
       const updated = prev.map(t => {
-        if (t.id !== threadId || t.userId !== currentUser?.uid) return t;
+        if (t.id !== threadId) return t;
         toggledThread = { ...t, isPinned: !t.isPinned };
         return toggledThread;
       });
@@ -1573,7 +1586,7 @@ export default function App() {
   };
 
   const handleRenameThread = async (threadId: string) => {
-    const thread = scopedAiThreads.find(t => t.id === threadId);
+    const thread = aiThreads.find(t => t.id === threadId);
     if (!thread) return;
     setRenamingByteThread({ threadId, title: thread.title || '' });
     setByteDeleteConfirmId(null);
@@ -1581,18 +1594,24 @@ export default function App() {
   };
 
   const handleConfirmRenameByteThread = async () => {
-    if (!renamingByteThread || !currentUser?.uid) return;
+    if (!renamingByteThread) return;
     const newTitle = renamingByteThread.title.trim();
     if (!newTitle) return;
     const { threadId } = renamingByteThread;
-    setAiThreads(prev => prev.map(t => (t.id === threadId && t.userId === currentUser.uid) ? { ...t, title: newTitle } : t));
-    await renameAiBuddyChat(threadId, newTitle, currentUser.uid);
+    setAiThreads(prev => prev.map(t => t.id === threadId ? { ...t, title: newTitle } : t));
+    if (currentUser?.uid) {
+      await renameAiBuddyChat(threadId, newTitle, currentUser.uid);
+    }
     showNotification('✓ Session renamed.');
     setRenamingByteThread(null);
   };
 
-  // Derived current thread state helper (strictly isolated to currentUser.uid)
-  const activeThread = scopedAiThreads.find(t => t.id === activeThreadId) || scopedAiThreads[0] || {
+
+
+
+
+  // Derived current thread state helper
+  const activeThread = aiThreads.find(t => t.id === activeThreadId) || aiThreads[0] || {
     id: 'thread-default',
     title: 'Introductory Study Unit',
     personaId: 'study_buddy',
@@ -1612,45 +1631,6 @@ export default function App() {
   const [aiModelOverride, setAiModelOverride] = useState<string>('');
   const [aiStatusMessage, setAiStatusMessage] = useState<string>('');
   const aiAbortControllerRef = useRef<AbortController | null>(null);
-  const aiSessionEpochRef = useRef<number>(0);
-  const prevAiOwnerUidRef = useRef<string | null>(currentUser?.uid || null);
-
-  const resetAiSessionState = () => {
-    if (aiAbortControllerRef.current) {
-      try { aiAbortControllerRef.current.abort(); } catch {}
-      aiAbortControllerRef.current = null;
-    }
-    aiSessionEpochRef.current += 1;
-    aiChatsSyncingFor.current = null;
-    setAiThreads([]);
-    setActiveThreadId('');
-    setAttachedFiles([]);
-    setAiInput('');
-    setAiLoading(false);
-    setAiStatusMessage('');
-    setAiActiveModelLabel('');
-    setAiGroundedInData(false);
-    setSelectedTopicForTutor(null);
-    clearByteContextCache();
-    clearStudentOSContextCache();
-    purgeLegacyUnscopedAiStorage();
-  };
-
-  useEffect(() => {
-    const nextUid = currentUser?.uid || null;
-    if (prevAiOwnerUidRef.current !== nextUid) {
-      prevAiOwnerUidRef.current = nextUid;
-      resetAiSessionState();
-      if (nextUid) {
-        const cachedThreads = readScopedAiThreadsFromStorage(nextUid);
-        if (cachedThreads.length > 0) {
-          setAiThreads(cachedThreads as any);
-          const cachedActive = readScopedActiveThreadIdFromStorage(nextUid);
-          setActiveThreadId(cachedActive || cachedThreads[0]?.id || '');
-        }
-      }
-    }
-  }, [currentUser?.uid]);
 
   // AI Quota & Limits State
   const [aiUsageState, setAiUsageState] = useState<AIUsageState>(() => 
@@ -1826,19 +1806,18 @@ export default function App() {
     }
   }, [activeTab, effectiveRole, currentUser]);
 
-  // Local cached sync for active thread, strictly scoped by currentUser.uid
+  // Local cached sync for active thread, avoiding complex initial hydration errors
   useEffect(() => {
-    if (!currentUser?.uid) return;
-    const cachedActive = readScopedActiveThreadIdFromStorage(currentUser.uid);
-    if (cachedActive) setActiveThreadId(cachedActive);
+    const cachedActive = localStorage.getItem(`s_os_ai_active_id_${currentUser?.uid}`);
+    if (cachedActive && currentUser) setActiveThreadId(cachedActive);
   }, [currentUser?.uid]);
 
-  // Sync active thread ID locally (per-user key)
+  // Sync active thread ID locally
   useEffect(() => {
-    if (currentUser?.uid && activeThreadId) {
-      writeScopedActiveThreadIdToStorage(currentUser.uid, activeThreadId);
+    if (currentUser?.uid) {
+      localStorage.setItem(`s_os_ai_active_id_${currentUser.uid}`, activeThreadId);
     }
-  }, [activeThreadId, currentUser?.uid]);
+  }, [activeThreadId, currentUser]);
 
   // Sync active mode, attached files, and active tutor when changing threads
   useEffect(() => {
@@ -2886,8 +2865,7 @@ export default function App() {
       { id: 'chat-1', name: 'Professor Elara', role: 'teacher', message: 'Welcome to the smart study group! Please feel free to ask formulas help.', createdAt: new Date(Date.now() - 3600000).toISOString() },
       { id: 'chat-2', name: 'Naitik Kashyap', role: 'student', message: 'Thank you Professor! The formulas sheet has been super helpful.', createdAt: new Date(Date.now() - 1800000).toISOString() }
     ]);
-    const demoUid = currentUser?.uid || 'demo-student-uid';
-    const demoThreadId = `demo-thread-${demoUid}`;
+    const demoThreadId = 'demo-thread-1';
     setAiThreads([
       {
         id: demoThreadId,
@@ -2895,12 +2873,10 @@ export default function App() {
         personaId: 'elara',
         mode: 'explanatory',
         messages: [
-          { role: 'assistant', content: "Hello! Welcome to your Study Session. I am Professor Elara, your AI Science & Engineering specialist. Choose a learning mode or ask a question to begin our deep-dive exploration!" }
+          { role: 'assistant', content: "Hello Naitik! Welcome to your Study Session. I am Professor Elara, your AI Science & Engineering specialist. Choose a learning mode or ask a question to begin our deep-dive exploration!" }
         ],
         attachedFile: null,
-        attachedFiles: [],
-        userId: demoUid,
-        createdAt: Date.now()
+        attachedFiles: []
       }
     ]);
     setActiveThreadId(demoThreadId);
@@ -3219,35 +3195,26 @@ export default function App() {
   // We don't save the entire list to localStorage anymore in an effect, 
   // because each action (add, complete, delete) will call saveSupabaseHomework individually.
 
-  // AI Buddy Chats Sync — loads when user is authenticated, strictly guarded against stale cross-account writes
+  // AI Buddy Chats Sync — loads when user is authenticated (staggered delay to prevent connection flood)
   useEffect(() => {
     if (!currentUser) {
       aiChatsSyncingFor.current = null;
       return;
     }
-    const uid = currentUser.uid;
+    // Use Firebase auth UID consistently (same as what saveAiBuddyChat uses)
+    const uid = currentUser?.uid || currentUser.uid;
     if (!uid) return;
     
     // Prevent parallel/duplicate syncing for the same user ID
     if (aiChatsSyncingFor.current === uid) return;
     aiChatsSyncingFor.current = uid;
-    const syncEpoch = aiSessionEpochRef.current;
     
     const timer = setTimeout(() => {
       console.log("[SUPABASE-CHAT] Syncing aiBuddyChats for user:", uid);
       
       getAiBuddyChats(uid).then((list) => {
-        if (!isStreamSessionStillOwned({
-          currentEpoch: aiSessionEpochRef.current,
-          capturedEpoch: syncEpoch,
-          currentOwnerUid: currentUserRef.current?.uid,
-          capturedOwnerUid: uid
-        })) {
-          return;
-        }
-        const scopedList = filterThreadsForUser(list || [], uid);
-        if (scopedList.length > 0) {
-          const uniqueList = Array.from(new Map(scopedList.map(t => [t.id, t])).values());
+        if (list && list.length > 0) {
+          const uniqueList = Array.from(new Map(list.map(t => [t.id, t])).values());
           const sortedList = uniqueList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)) as any;
           setAiThreads(sortedList);
           setActiveThreadId(prev => {
@@ -3279,28 +3246,18 @@ What can I clarify today?` }
             createdAt: Date.now()
           };
           saveAiBuddyChat(defaultT).then(() => {
-            if (!isStreamSessionStillOwned({
-              currentEpoch: aiSessionEpochRef.current,
-              capturedEpoch: syncEpoch,
-              currentOwnerUid: currentUserRef.current?.uid,
-              capturedOwnerUid: uid
-            })) {
-              return;
-            }
             setAiThreads([defaultT]);
             setActiveThreadId(userDefaultId);
           });
         }
       }).catch(error => {
         console.error("[SUPABASE-CHAT] Error loading AI buddy chats:", error);
-        if (aiChatsSyncingFor.current === uid) {
-          aiChatsSyncingFor.current = null; // Allow retry on failure
-        }
+        aiChatsSyncingFor.current = null; // Allow retry on failure
       });
-    }, 100);
+    }, 900);
 
     return () => clearTimeout(timer);
-  }, [currentUser?.uid]);
+  }, [currentUser]); // Load when user logs in — not gated on tab so chats survive refresh
 
   // Educational Materials Hub Sync — loads for all tabs and re-syncs on user switch
   useEffect(() => {
@@ -3584,31 +3541,20 @@ What can I clarify today?` }
       }).catch(console.error);
     });
 
-    // Realtime Postgres Changes: AI Buddy Chats (strictly guarded by active user UID)
+    // Realtime Postgres Changes: AI Buddy Chats
     channel.on('postgres_changes', { event: '*', schema: 'public', table: 'ai_buddy_chats' }, (payload) => {
       const uid = currentUserRef.current?.uid;
-      const capturedEpoch = aiSessionEpochRef.current;
       if (!uid) return;
       if (payload.eventType === 'DELETE') {
-        if (payload.old?.id && (!payload.old?.user_id || payload.old.user_id === uid)) {
-          setAiThreads(prev => prev.filter(t => t.id !== payload.old.id && t.userId === uid));
+        if (payload.old?.id) {
+          setAiThreads(prev => prev.filter(t => t.id !== payload.old.id));
         }
       } else if (payload.new && payload.new.user_id === uid) {
         getAiBuddyChats(uid).then(threads => {
-          if (!isStreamSessionStillOwned({
-            currentEpoch: aiSessionEpochRef.current,
-            capturedEpoch,
-            currentOwnerUid: currentUserRef.current?.uid,
-            capturedOwnerUid: uid
-          })) {
-            return;
-          }
-          const scopedRemote = filterThreadsForUser(threads || [], uid);
-          if (scopedRemote.length > 0) {
+          if (threads && threads.length > 0) {
             setAiThreads(prev => {
-              const ownedPrev = filterThreadsForUser(prev, uid);
-              const map = new Map(ownedPrev.map(t => [t.id, t]));
-              for (const remote of scopedRemote as any[]) {
+              const map = new Map(prev.map(t => [t.id, t]));
+              for (const remote of threads as any[]) {
                 const local: any = map.get(remote.id);
                 if (!local || remote.messages.length >= local.messages.length) {
                   map.set(remote.id, remote);
@@ -4380,13 +4326,10 @@ ${resultText}
   const handleLogout = async () => {
     try {
       (window as any).__studentos_explicit_logout__ = true;
-      resetAiSessionState();
-      clearChatCache();
-      clearSupabaseUserProfileCache();
       await supabase.auth.signOut();
+      clearSupabaseUserProfileCache();
       localStorage.removeItem('s_os_user');
       localStorage.removeItem('s_os_active_tab');
-      purgeLegacyUnscopedAiStorage();
       try {
         sessionStorage.removeItem('s_os_startup_shown');
       } catch (_) {}
@@ -4401,6 +4344,7 @@ ${resultText}
       setFeedbackPosts([]);
       setAnnouncements([]);
       setChats([]);
+      setAiThreads([]);
       setHomeworkList([]);
       setSchedules([]);
       setStudents([]);
@@ -5409,10 +5353,10 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
       saveSupabaseUserProfile(outgoingProfile).catch(() => {});
     }
 
-    // 2. Clear role simulation overrides, abort active AI streams, wipe AI/chat/user caches before switching accounts
+    // 2. Clear role simulation overrides & chat/AI/user caches so new user's data loads cleanly
     setSimulatedRole(null);
     setIsSuperAdmin(matched.role === 'super_admin');
-    resetAiSessionState();
+    aiChatsSyncingFor.current = null;
     clearChatCache();
     clearSupabaseUserProfileCache();
     setActiveChatTargetId('group-all');
@@ -5459,15 +5403,6 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
     } catch (_) {}
 
     // 4. Immediately activate the new profile & sync per-user states
-    prevAiOwnerUidRef.current = nextProfile.uid;
-    currentUserRef.current = nextProfile;
-    const switchEpoch = aiSessionEpochRef.current;
-    const scopedCachedThreads = readScopedAiThreadsFromStorage(nextProfile.uid);
-    if (scopedCachedThreads.length > 0) {
-      setAiThreads(scopedCachedThreads as any);
-      setActiveThreadId(readScopedActiveThreadIdFromStorage(nextProfile.uid) || scopedCachedThreads[0].id);
-    }
-
     setCurrentUser(nextProfile);
     localStorage.setItem('s_os_user', JSON.stringify(nextProfile));
     saveLocalProfileBackup(nextProfile);
@@ -5494,29 +5429,15 @@ Write your thoughts using **Markdown** formatting. Click on the reader view tab 
 
     // 6. Reload per-user Notes, AI Buddy Chats, Materials, Peer Messages, Chat Rooms, and Notifications
     const targetUid = nextProfile.uid;
-    aiChatsSyncingFor.current = targetUid;
     getSupabaseMaterials().then(list => setMaterials(list)).catch(() => {});
     getVaultNotes(targetUid).then(notes => {
-      if (currentUserRef.current?.uid !== targetUid) return;
       setVaultNotes(notes);
       setSelectedNoteId(notes[0]?.id || null);
     }).catch(() => {});
     getAiBuddyChats(targetUid).then(threads => {
-      if (!isStreamSessionStillOwned({
-        currentEpoch: aiSessionEpochRef.current,
-        capturedEpoch: switchEpoch,
-        currentOwnerUid: currentUserRef.current?.uid,
-        capturedOwnerUid: targetUid
-      })) {
-        return;
-      }
-      const ownedThreads = filterThreadsForUser(threads || [], targetUid);
-      if (ownedThreads.length > 0) {
-        setAiThreads(ownedThreads as any);
-        setActiveThreadId(ownedThreads[0].id);
-      } else {
-        setAiThreads([]);
-        setActiveThreadId('');
+      if (threads && threads.length > 0) {
+        setAiThreads(threads as any);
+        setActiveThreadId(threads[0].id);
       }
     }).catch(() => {});
     getPeerMessages(true).then(msgs => {
@@ -6272,27 +6193,21 @@ Date: ${new Date().toLocaleDateString()}
     if (!files || files.length === 0) return;
 
     // Guaranteed binding to active thread without affecting account state
-    const ownerUid = currentUser?.uid || '';
-    let targetThreadId = scopedAiThreads.some(t => t.id === activeThreadId) ? activeThreadId : '';
+    let targetThreadId = activeThreadId;
     if (!targetThreadId) {
-      if (scopedAiThreads.length > 0) {
-        targetThreadId = scopedAiThreads[0].id;
+      if (aiThreads.length > 0) {
+        targetThreadId = aiThreads[0].id;
         setActiveThreadId(targetThreadId);
       } else {
         targetThreadId = generateUniqueId();
         setActiveThreadId(targetThreadId);
-        setAiThreads(prev => [
-          {
-            id: targetThreadId,
-            title: 'Study Session with Attached Document',
-            personaId: selectedPersona || 'study_buddy',
-            mode: aiMode || 'explanatory',
-            messages: [],
-            userId: ownerUid,
-            createdAt: Date.now()
-          },
-          ...filterThreadsForUser(prev, ownerUid)
-        ]);
+        setAiThreads([{
+          id: targetThreadId,
+          title: 'Study Session with Attached Document',
+          personaId: selectedPersona || 'study_buddy',
+          mode: aiMode || 'explanatory',
+          messages: []
+        }]);
       }
     }
 
@@ -6381,10 +6296,9 @@ Date: ${new Date().toLocaleDateString()}
 
   const handleCreateNewThread = () => {
     const newId = generateUniqueId();
-    const ownerUid = currentUser?.uid || '';
     const newThread = {
       id: newId,
-      title: `Study Session #${scopedAiThreads.length + 1}`,
+      title: `Study Session #${aiThreads.length + 1}`,
       personaId: selectedPersona,
       mode: aiMode,
       messages: [
@@ -6392,15 +6306,15 @@ Date: ${new Date().toLocaleDateString()}
       ],
       attachedFile: null,
       attachedFiles: [],
-      userId: ownerUid,
+      userId: currentUser?.uid || '',
       createdAt: Date.now()
     };
-    if (ownerUid) {
+    if (currentUser?.uid) {
       saveAiBuddyChat(newThread as any).catch(error => {
         console.error("Error saving AI buddy chat:", error);
       });
     }
-    setAiThreads(prev => [newThread, ...filterThreadsForUser(prev, ownerUid)]);
+    setAiThreads(prev => [newThread, ...prev]);
     setActiveThreadId(newId);
     setAttachedFiles([]);
     showNotification('New study thread initialized!');
@@ -6409,13 +6323,13 @@ Date: ${new Date().toLocaleDateString()}
   const handleSwitchPersona = (personaId: string) => {
     setSelectedPersona(personaId);
     if (currentUser?.uid) {
-       const t = scopedAiThreads.find(t => t.id === activeThreadId);
+       const t = aiThreads.find(t => t.id === activeThreadId);
        if (t) {
          saveAiBuddyChat({ 
            ...t, 
            personaId, 
            title: `Study with ${AI_PERSONAS.find(p => p.id === personaId)?.name || 'Tutor'}`,
-           userId: currentUser.uid
+           userId: currentUser?.uid || "" 
          } as any).catch(error => {
            console.error("Error saving AI buddy chat persona:", error);
          });
@@ -6427,12 +6341,12 @@ Date: ${new Date().toLocaleDateString()}
   const handleSwitchMode = (mode: 'explanatory' | 'socratic' | 'coder' | 'quiz_gen') => {
     setAiMode(mode);
     if (currentUser?.uid) {
-       const t = scopedAiThreads.find(t => t.id === activeThreadId);
+       const t = aiThreads.find(t => t.id === activeThreadId);
        if (t) {
          saveAiBuddyChat({ 
            ...t, 
            mode,
-           userId: currentUser.uid
+           userId: currentUser?.uid || "" 
          } as any).catch(error => {
            console.error("Error saving AI buddy chat mode:", error);
          });
@@ -6443,17 +6357,16 @@ Date: ${new Date().toLocaleDateString()}
 
   const handleDeleteThread = (threadId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    const ownerUid = currentUser?.uid || '';
-    if (scopedAiThreads.length <= 1) {
+    if (aiThreads.length <= 1) {
       showNotification('At least one chat sequence must remain intact.');
       return;
     }
-    if (ownerUid) {
-      deleteAiBuddyChat(threadId, ownerUid).catch(error => {
+    if (currentUser?.uid) {
+      deleteAiBuddyChat(threadId, currentUser.uid).catch(error => {
         console.error("Error deleting AI buddy chat:", error);
       });
     }
-    const nextThreads = scopedAiThreads.filter(t => t.id !== threadId);
+    const nextThreads = aiThreads.filter(t => t.id !== threadId);
     setAiThreads(nextThreads);
     
     if (activeThreadId === threadId && nextThreads.length > 0) {
@@ -6474,20 +6387,18 @@ Date: ${new Date().toLocaleDateString()}
   };
 
   const handleClearThreadHistory = () => {
-    const ownerUid = currentUser?.uid || '';
-    setAiThreads(prev => filterThreadsForUser(prev, ownerUid).map(t => {
+    setAiThreads(prev => prev.map(t => {
       if (t.id === activeThreadId) {
         const clearedThread = {
           ...t,
-          userId: ownerUid,
           messages: [
             { role: 'assistant' as const, content: "Conversation segment cleared by user." }
           ],
           attachedFile: null,
           attachedFiles: []
         };
-        if (ownerUid) {
-          saveAiBuddyChat({ ...clearedThread, userId: ownerUid } as any).catch(console.error);
+        if (currentUser?.uid) {
+          saveAiBuddyChat({ ...clearedThread, userId: currentUser.uid } as any).catch(console.error);
         }
         return clearedThread;
       }
@@ -6596,16 +6507,6 @@ Date: ${new Date().toLocaleDateString()}
 
     const userRoleKey = (effectiveRole || currentUser?.role || 'student').toLowerCase();
     const userIdKey = currentUser?.uid || currentUser?.email || 'guest';
-    const requestOwnerUid = String(currentUser?.uid || userIdKey);
-    const requestEpoch = aiSessionEpochRef.current;
-
-    const isStillOwned = () =>
-      isStreamSessionStillOwned({
-        currentEpoch: aiSessionEpochRef.current,
-        capturedEpoch: requestEpoch,
-        currentOwnerUid: currentUserRef.current?.uid || currentUserRef.current?.email || 'guest',
-        capturedOwnerUid: requestOwnerUid
-      });
 
     // 1. Quota Pre-Check
     const currentUsage = getLocalUsageState(userIdKey, userRoleKey);
@@ -6667,9 +6568,8 @@ ${roleLabel}: ${userQuery}
 [Directive: The student attached the following file(s): ${fileNamesList}. You MUST explicitly mention the file name(s) (${fileNamesList}) in your response to demonstrate that the document content was reviewed.]`;
     }
 
-    const ownedThreadMatch = scopedAiThreads.find(t => t.id === activeThreadId) || scopedAiThreads[0];
-    const targetThreadId = (ownedThreadMatch?.id) || `thread_${requestOwnerUid}_${Date.now()}`;
-    let currentThread = ownedThreadMatch;
+    const targetThreadId = activeThreadId || `thread_${Date.now()}`;
+    let currentThread = aiThreads.find(t => t.id === targetThreadId) || aiThreads[0];
     
     if (!currentThread) {
       const defaultTitle = userQuery.length > 25 ? userQuery.substring(0, 25) + '...' : userQuery;
@@ -6679,7 +6579,6 @@ ${roleLabel}: ${userQuery}
         personaId: (selectedPersona as any)?.id || 'byte',
         mode: (aiMode as any) || 'explanatory',
         createdAt: Date.now(),
-        userId: requestOwnerUid,
         messages: []
       };
       setActiveThreadId(targetThreadId);
@@ -6692,10 +6591,9 @@ ${roleLabel}: ${userQuery}
 
     const updatedMessages = [...(currentThread?.messages || []), newUserMsg];
 
-    // Optimistically push user message + streaming assistant placeholder (strictly scoped to requestOwnerUid)
+    // Optimistically push user message + streaming assistant placeholder (handling zero-threads state)
     setAiThreads(prev => {
-      const ownedPrev = filterThreadsForUser(prev, requestOwnerUid);
-      const exists = ownedPrev.some(t => t.id === targetThreadId);
+      const exists = prev.some(t => t.id === targetThreadId);
       if (!exists) {
         return [
           {
@@ -6704,18 +6602,16 @@ ${roleLabel}: ${userQuery}
             personaId: (selectedPersona as any)?.id || 'byte',
             mode: (aiMode as any) || 'explanatory',
             createdAt: Date.now(),
-            userId: requestOwnerUid,
             messages: [...updatedMessages, { role: 'assistant' as const, content: '' }],
             attachedFiles: []
           },
-          ...ownedPrev
+          ...prev
         ];
       }
-      return ownedPrev.map(t => {
+      return prev.map(t => {
         if (t.id === targetThreadId) {
           return { 
             ...t, 
-            userId: requestOwnerUid,
             messages: [...updatedMessages, { role: 'assistant' as const, content: '' }],
             title: newTitle,
             attachedFiles: []
@@ -6740,9 +6636,6 @@ ${roleLabel}: ${userQuery}
 
     try {
       let answer = '';
-      let streamFinishReason: string | undefined;
-      let streamTruncated = false;
-
       // Fetch role-authorized Veylentra context ONLY when query needs workspace/role data
       const { contextString: ragContext, hasStudentOSData, intentCategory } = await buildAuthorizedStudentOSContext(
         userQuery,
@@ -6750,16 +6643,12 @@ ${roleLabel}: ${userQuery}
         userRoleKey,
         { activeTab, localSnapshot: { vaultNotes } }
       );
-      if (!isStillOwned()) return;
       setAiGroundedInData(hasStudentOSData);
 
-      const historyPayload = (currentThread?.messages || [])
-        .filter(() => !currentThread?.userId || currentThread.userId === requestOwnerUid)
-        .slice(-10)
-        .map(m => ({
-          role: m.role,
-          content: m.content
-        }));
+      const historyPayload = (currentThread?.messages || []).slice(-10).map(m => ({
+        role: m.role,
+        content: m.content
+      }));
 
       let streamedWebSources: any[] = [];
       let streamedWebUsed = false;
@@ -6776,10 +6665,8 @@ ${roleLabel}: ${userQuery}
           const searchResp = await fetch('/api/ai/search', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: userQuery }),
-            signal: abortCtrl.signal
+            body: JSON.stringify({ query: userQuery })
           });
-          if (!isStillOwned()) return;
           if (searchResp.ok) {
             const searchData = await searchResp.json();
             if (searchData.success && Array.isArray(searchData.results) && searchData.results.length > 0) {
@@ -6803,13 +6690,10 @@ CRITICAL WEB GROUNDING DIRECTIVE:
 4. NEVER invent, fabricate, or hallucinate URLs or links. Only display links explicitly provided in the search results above.`;
             }
           }
-        } catch (sErr: any) {
-          if (sErr?.name === 'AbortError') throw sErr;
+        } catch (sErr) {
           console.warn('Direct web search pre-fetch failed, falling back to server router:', sErr);
         }
       }
-
-      if (!isStillOwned()) return;
 
       const streamResult = await streamAIChatClient(
         {
@@ -6820,11 +6704,8 @@ CRITICAL WEB GROUNDING DIRECTIVE:
           subject: currentUser?.specialtySubject || 'Science',
           mode: aiMode,
           ragContext: ragContext || undefined,
-          userId: requestOwnerUid,
+          userId: userIdKey,
           userRole: userRoleKey,
-          conversationId: targetThreadId,
-          threadId: targetThreadId,
-          reasoningMode: aiReasoningMode,
           activeTab,
           intentType: intentCategory,
           modelOverride: aiModelOverride || undefined,
@@ -6834,11 +6715,9 @@ CRITICAL WEB GROUNDING DIRECTIVE:
         {
           signal: abortCtrl.signal,
           onStatus: (statusMeta) => {
-            if (!isStillOwned()) return;
             if (statusMeta.message) setAiStatusMessage(statusMeta.message);
           },
           onStart: (meta) => {
-            if (!isStillOwned()) return;
             setAiStatusMessage('');
             if (meta.model) setAiActiveModelLabel(meta.model);
             if (meta.webSearchUsed) streamedWebUsed = true;
@@ -6847,11 +6726,9 @@ CRITICAL WEB GROUNDING DIRECTIVE:
             }
           },
           onToken: (_delta, fullText) => {
-            if (!isStillOwned()) return;
             answer = fullText;
             setAiThreads(prev => {
-              const ownedPrev = filterThreadsForUser(prev, requestOwnerUid);
-              const exists = ownedPrev.some(t => t.id === targetThreadId);
+              const exists = prev.some(t => t.id === targetThreadId);
               const assistantMsg = {
                 role: 'assistant' as const,
                 content: fullText,
@@ -6865,15 +6742,13 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                   personaId: (selectedPersona as any)?.id || 'byte',
                   mode: (aiMode as any) || 'explanatory',
                   createdAt: Date.now(),
-                  userId: requestOwnerUid,
                   messages: [...updatedMessages, assistantMsg]
-                }, ...ownedPrev];
+                }, ...prev];
               }
-              return ownedPrev.map(t => {
+              return prev.map(t => {
                 if (t.id === targetThreadId) {
                   return {
                     ...t,
-                    userId: requestOwnerUid,
                     messages: [...updatedMessages, assistantMsg]
                   };
                 }
@@ -6882,24 +6757,17 @@ CRITICAL WEB GROUNDING DIRECTIVE:
             });
           },
           onDone: (finalMeta) => {
-            if (!isStillOwned()) return;
             setAiStatusMessage('');
             if (finalMeta.model) setAiActiveModelLabel(finalMeta.model);
             if (finalMeta.webSearchUsed) streamedWebUsed = true;
             if (Array.isArray(finalMeta.webSources) && finalMeta.webSources.length > 0) {
               streamedWebSources = finalMeta.webSources;
             }
-            if (finalMeta.finishReason) streamFinishReason = finalMeta.finishReason;
-            if (typeof finalMeta.truncated === 'boolean') streamTruncated = finalMeta.truncated;
           }
         }
       );
 
-      if (!isStillOwned()) return;
-
       answer = streamResult.text || answer || 'I encountered an issue processing your lesson topic.';
-      const finalFinishReason = streamResult.finishReason || streamFinishReason;
-      const finalTruncated = Boolean(streamResult.truncated || streamTruncated || finalFinishReason === 'length');
       if (streamResult.model) setAiActiveModelLabel(streamResult.model);
       const finalWebUsed = Boolean(streamResult.webSearchUsed || streamedWebUsed);
       const finalWebSources = (streamResult.webSources && streamResult.webSources.length > 0)
@@ -6933,16 +6801,13 @@ CRITICAL WEB GROUNDING DIRECTIVE:
       }
 
       setAiThreads(prev => {
-        const ownedPrev = filterThreadsForUser(prev, requestOwnerUid);
         const assistantMsg = {
           role: 'assistant' as const,
           content: answer,
           webSearchUsed: finalWebUsed,
-          webSources: finalWebSources,
-          truncated: finalTruncated,
-          finishReason: finalFinishReason
+          webSources: finalWebSources
         };
-        const exists = ownedPrev.some(t => t.id === targetThreadId);
+        const exists = prev.some(t => t.id === targetThreadId);
         if (!exists) {
           return [{
             id: targetThreadId,
@@ -6950,15 +6815,13 @@ CRITICAL WEB GROUNDING DIRECTIVE:
             personaId: (selectedPersona as any)?.id || 'byte',
             mode: (aiMode as any) || 'explanatory',
             createdAt: Date.now(),
-            userId: requestOwnerUid,
             messages: [...updatedMessages, assistantMsg]
-          }, ...ownedPrev];
+          }, ...prev];
         }
-        return ownedPrev.map(t => {
+        return prev.map(t => {
           if (t.id === targetThreadId) {
             return {
               ...t,
-              userId: requestOwnerUid,
               messages: [...updatedMessages, assistantMsg]
             };
           }
@@ -6966,11 +6829,11 @@ CRITICAL WEB GROUNDING DIRECTIVE:
         });
       });
 
-      if (currentUser?.uid && currentUser.uid === requestOwnerUid && isStillOwned()) {
+      if (currentUser?.uid) {
          saveAiBuddyChat({ 
            ...currentThread, 
            id: targetThreadId,
-           userId: requestOwnerUid,
+           userId: currentUser?.uid || "",
            title: newTitle,
            messages: [
              ...updatedMessages,
@@ -6978,9 +6841,7 @@ CRITICAL WEB GROUNDING DIRECTIVE:
                role: 'assistant',
                content: answer,
                webSearchUsed: finalWebUsed,
-               webSources: finalWebSources,
-               truncated: finalTruncated,
-               finishReason: finalFinishReason
+               webSources: finalWebSources
              }
            ] 
          } as any).catch(error => {
@@ -6988,14 +6849,13 @@ CRITICAL WEB GROUNDING DIRECTIVE:
          });
       }
 
-      if (ttsEnabled && isStillOwned()) {
+      if (ttsEnabled) {
         speakText(answer);
       }
     } catch (err: any) {
-      if (!isStillOwned()) return;
       if (err?.name === 'AbortError') {
         showNotification('Generation stopped.');
-        setAiThreads(prev => filterThreadsForUser(prev, requestOwnerUid).map(t => {
+        setAiThreads(prev => prev.map(t => {
           if (t.id === targetThreadId) {
             const msgs = t.messages.filter(m => m.content !== '');
             return { ...t, messages: msgs.length > 0 ? msgs : [...updatedMessages, { role: 'assistant', content: '[Generation stopped by user]' }] };
@@ -7019,9 +6879,8 @@ CRITICAL WEB GROUNDING DIRECTIVE:
         : `⚠️ **AI is temporarily unavailable**\n\n${err?.message || 'Please try again in a moment.'}`;
 
       setAiThreads(prev => {
-        const ownedPrev = filterThreadsForUser(prev, requestOwnerUid);
         const assistantErrMsg = { role: 'assistant' as const, content: errorContent };
-        const exists = ownedPrev.some(t => t.id === targetThreadId);
+        const exists = prev.some(t => t.id === targetThreadId);
         if (!exists) {
           return [{
             id: targetThreadId,
@@ -7029,15 +6888,13 @@ CRITICAL WEB GROUNDING DIRECTIVE:
             personaId: (selectedPersona as any)?.id || 'byte',
             mode: (aiMode as any) || 'explanatory',
             createdAt: Date.now(),
-            userId: requestOwnerUid,
             messages: [...updatedMessages, assistantErrMsg]
-          }, ...ownedPrev];
+          }, ...prev];
         }
-        return ownedPrev.map(t => {
+        return prev.map(t => {
           if (t.id === targetThreadId) {
             return { 
               ...t, 
-              userId: requestOwnerUid,
               messages: [...updatedMessages, assistantErrMsg] 
             };
           }
@@ -7045,14 +6902,12 @@ CRITICAL WEB GROUNDING DIRECTIVE:
         });
       });
     } finally {
-      if (isStillOwned()) {
-        setAiLoading(false);
-        aiAbortControllerRef.current = null;
-        setTimeout(() => {
-          const dialogBox = document.getElementById('ai-dialog-scroll');
-          if (dialogBox) dialogBox.scrollTop = dialogBox.scrollHeight;
-        }, 50);
-      }
+      setAiLoading(false);
+      aiAbortControllerRef.current = null;
+      setTimeout(() => {
+        const dialogBox = document.getElementById('ai-dialog-scroll');
+        if (dialogBox) dialogBox.scrollTop = dialogBox.scrollHeight;
+      }, 50);
     }
   };
 
@@ -13947,11 +13802,10 @@ Could you please guide me step-by-step on how to solve this, explaining the theo
               {/* Tab 7: Byte AI Role-Aware Workspace */}
               {activeTab === 'ai_teacher' && (
                 <ByteWorkspace
-                  key={currentUser?.uid || currentUser?.email || 'byte-guest'}
                   currentUser={currentUser}
                   effectiveRole={effectiveRole}
                   activeTab={activeTab}
-                  aiThreads={scopedAiThreads}
+                  aiThreads={aiThreads}
                   activeThread={activeThread}
                   activeThreadId={activeThreadId}
                   setActiveThreadId={setActiveThreadId}
