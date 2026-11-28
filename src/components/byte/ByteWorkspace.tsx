@@ -374,7 +374,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
   );
 
   return (
-    <div className="h-[calc(100dvh-130px)] flex rounded-3xl border border-white/10 bg-slate-950/90 shadow-xl relative w-full overflow-hidden">
+    <div className="h-[calc(100dvh-130px)] flex flex-col lg:flex-row rounded-3xl border border-white/10 bg-slate-950/90 shadow-xl relative w-full overflow-hidden">
       {/* Slide-out Mobile Session Drawer */}
       <AnimatePresence>
         {showAiHistoryDrawer && (
@@ -468,7 +468,7 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
       {/* Main Studio Column */}
       <div className="flex-1 min-w-0 flex flex-col">
         {/* Clean 3-Zone Top Header */}
-        <header className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-white/10 bg-slate-950/70 shrink-0">
+        <header className="flex h-12 max-h-12 shrink-0 items-center justify-between gap-2 overflow-hidden border-b border-white/10 bg-slate-950 px-3 flex-nowrap">
           {/* Zone 1: Identity & Rail Toggle */}
           <div className="flex items-center gap-2.5 min-w-0">
             <button
@@ -508,30 +508,6 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
 
           {/* Zone 2 & 3: Focused Studio Actions */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => setShowTeachTopicBar((v) => !v)}
-              className={`px-3 py-2 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 min-h-[40px] ${
-                showTeachTopicBar
-                  ? 'bg-indigo-600/25 border-indigo-400/50 text-white'
-                  : 'bg-slate-900 hover:bg-slate-800 border-white/10 text-indigo-200'
-              }`}
-              title="Launch guided interactive topic lesson"
-            >
-              <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
-              <span className="hidden md:inline">Teach Me Anything</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setIsJarvisActive(true)}
-              className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-sky-500/35 text-sky-300 hover:text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 min-h-[40px]"
-              title="Open Orion Ephemeral Action Agent"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-sky-400" />
-              <span className="hidden sm:inline">Orion Agent</span>
-            </button>
-
             {/* Preferences Popover Anchor */}
             <div className="relative" ref={prefsRef}>
               <button
@@ -560,6 +536,10 @@ export const ByteWorkspace: React.FC<ByteWorkspaceProps> = ({
                     transition={{ duration: reduced ? 0 : 0.16, ease: MOTION_EASE.easeOutExpo }}
                     className="absolute right-0 mt-2 w-80 max-w-[90vw] rounded-2xl border border-white/15 bg-slate-950/98 shadow-2xl p-4 z-40 space-y-4 backdrop-blur-xl"
                   >
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => { setShowTeachTopicBar((v) => !v); setShowPrefsPopover(false); }} className="flex-1 px-2 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white">Teach</button>
+                      <button type="button" onClick={() => { setIsJarvisActive(true); setShowPrefsPopover(false); }} className="flex-1 px-2 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white">Orion</button>
+                    </div>
                     <div className="flex items-center justify-between border-b border-white/10 pb-2">
                       <span className="text-xs font-semibold text-white">Studio Preferences</span>
                       <button
